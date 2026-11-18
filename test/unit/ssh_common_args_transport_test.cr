@@ -126,4 +126,41 @@ describe "ssh common args reach every transport argv (issue #2)" do
     rsh = argv.find(&.starts_with?("--rsh=")) || ""
     rsh.includes?("IdentitiesOnly=yes").must_equal(true)
   end
+
+  # Issue #1483: ansible_ssh_executable names the ssh client to spawn.
+  # The argv builders are where that has to show up, since every
+  # transport spawns one of them.
+  it "spawns the ansible_ssh_executable binary instead of bare ssh everywhere it builds one" do
+    host = Krikri::Host.new("target", "root", 22)
+    host.vars = {
+      "ansible_host"           => JSON::Any.new("192.0.2.10"),
+      "ansible_ssh_executable" => JSON::Any.new("/opt/wrap/ssh"),
+    } of String => JSON::Any
+    conn = Krikri::ConnectionSettings.resolve(host, host.vars)
+    conn.ssh_executable.must_equal("/opt/wrap/ssh")
+
+    ssh = Krikri::SSHManager.ssh_argv(
+      "/tmp/.krikri-playbook-ssh/cp", conn.identity_file, conn.port,
+      conn.user, conn.conn_host, ["true"], nil,
+      extra_options: conn.ssh_extra_options, ssh_executable: conn.ssh_executable
+    )
+    ssh.first.must_equal("/opt/wrap/ssh")
+
+    # scp reaches the target through its own ssh child, so -S is the
+    # only way the wrapper stays in the transfer path.
+    scp = Krikri::SSHManager.scp_argv(
+      "/tmp/.krikri-playbook-ssh/cp", conn.identity_file, conn.port,
+      conn.user, conn.conn_host, ["/local/a", "root@192.0.2.10:/b"],
+      extra_options: conn.ssh_extra_options, ssh_executable: conn.ssh_executable
+    )
+    scp.first.must_equal("scp")
+    index = scp.index!("-S")
+    scp[index + 1].must_equal("/opt/wrap/ssh")
+
+    rsync = Krikri::SSHManager.rsync_ssh_command(
+      "/tmp/.krikri-playbook-ssh/cp", conn.identity_file, conn.port, nil,
+      conn.ssh_extra_options, conn.ssh_executable
+    )
+    rsync.starts_with?(Krikri::Shell.single_quote("/opt/wrap/ssh")).must_equal(true)
+  end
 end

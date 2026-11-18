@@ -1209,7 +1209,7 @@ module Krikri
                  SCRIPT
                end
 
-      launched = SSHManager.exec_script(connection_host, user, launch, conn.port, identity_file: identity_file, extra_args: extra_args)
+      launched = SSHManager.exec_script(connection_host, user, launch, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
       if launched[:exit_code] != 0
         return JSON.parse({
           "changed" => false,
@@ -1245,7 +1245,7 @@ module Krikri
       deadline = Time.instant + (task.async_seconds || raise "BUG: async_seconds missing").seconds
       loop do
         sleep poll.seconds
-        check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", conn.port, identity_file: identity_file, extra_args: extra_args)
+        check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
         if (output = check[:stdout].strip).size > 0
           if status = (JSON.parse(output) rescue nil)
             # The file can still hold the synchronous launch stub

@@ -503,6 +503,7 @@ module Krikri
       extra_args : Array(String) = [] of String,
       fresh_connection : Bool = false,
       raise_spawn_errors : Bool = false,
+      ssh_executable : String? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
@@ -515,7 +516,7 @@ module Krikri
       # tmpdir cleanup exec uses this - a ride-along on a pooled master whose
       # remote end died mid-task would answer from the stale local pipe and
       # mask exactly the host death it exists to detect (issue #400).
-      control_path = fresh_connection ? "none" : get_control_path(host, user, port, connection_sig(identity_file, extra_args, password))
+      control_path = fresh_connection ? "none" : get_control_path(host, user, port, connection_sig(identity_file, extra_args, password, ssh_executable))
 
       # Important: We pass the command through bash -c to ensure proper shell
       # interpretation on the remote side. This prevents the local shell from
@@ -523,7 +524,7 @@ module Krikri
       # We use /bin/bash instead of /bin/sh for better compatibility
       wrapped_command = "/bin/bash -c #{shell_quote(command)}"
 
-      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, [wrapped_command], password, extra_options: extra_args)
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, [wrapped_command], password, extra_options: extra_args, ssh_executable: ssh_executable)
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -587,14 +588,15 @@ module Krikri
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
       raise_spawn_errors : Bool = false,
+      ssh_executable : String? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
 
       password = password_for(host, user, port)
-      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password))
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password, ssh_executable))
 
-      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, ["bash", "-s"], password, extra_options: extra_args)
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, ["bash", "-s"], password, extra_options: extra_args, ssh_executable: ssh_executable)
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -824,14 +826,15 @@ module Krikri
       become_password : String? = nil,
       extra_args : Array(String) = [] of String,
       daemon_scope : String? = nil,
+      ssh_executable : String? = nil,
     ) : JSON::Any
       init
-      key = {host, user, port, become_user, daemon_key_sig(connection_sig(identity_file, extra_args, password_for(host, user, port)), daemon_scope)}
+      key = {host, user, port, become_user, daemon_key_sig(connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable), daemon_scope)}
       # Provenance of the process used below - it decides how a lost
       # response is classified (see the read rescue).
       fresh_spawn = @@daemon_processes[key]?.nil?
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4])
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable)
 
       request = {"module" => module_name, "config" => config}.to_json
 
@@ -909,11 +912,12 @@ module Krikri
       become_user : String? = nil,
       become_password : String? = nil,
       extra_args : Array(String) = [] of String,
+      ssh_executable : String? = nil,
     ) : Hash(Int32, JSON::Any)
       init
-      key = {host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port))}
+      key = {host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable)}
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4])
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable)
 
       payload = steps.map do |step|
         {
@@ -939,8 +943,8 @@ module Krikri
       end
       results
     rescue ex
-      @@daemon_failures[{host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port))}] += 1
-      kill_daemon(host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port)))
+      @@daemon_failures[{host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable)}] += 1
+      kill_daemon(host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable))
       raise ex
     end
 
@@ -964,7 +968,7 @@ module Krikri
     # otherwise it spawns `sudo -S -p ''` and the password line is
     # written into this process's stdin pipe BEFORE any frame, where
     # sudo reads it and nothing else ever sees it.
-    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil, extra_args : Array(String) = [] of String, sig : String = "") : Process
+    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil, extra_args : Array(String) = [] of String, sig : String = "", ssh_executable : String? = nil) : Process
       control_path = get_control_path(host, user, port, sig)
       password = password_for(host, user, port)
 
@@ -976,13 +980,14 @@ module Krikri
           port,
           timeout: 60,
           identity_file: identity_file,
-          extra_args: extra_args
+          extra_args: extra_args,
+          ssh_executable: ssh_executable
         )
         sudo_needs_password = probe[:exit_code] != 0
       end
 
       ssh_cmd = ssh_argv(control_path, identity_file, port, user, host,
-        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password, ENV["TERM"]?)], password, extra_options: extra_args)
+        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password, ENV["TERM"]?)], password, extra_options: extra_args, ssh_executable: ssh_executable)
 
       process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
         Process.new(
@@ -1197,6 +1202,7 @@ module Krikri
       identity_file : String? = nil,
       recursive : Bool = false,
       extra_args : Array(String) = [] of String,
+      ssh_executable : String? = nil,
     )
       init
       @@stats["files_uploaded"] += 1
@@ -1205,12 +1211,12 @@ module Krikri
         raise "Local file not found: #{local_path}"
       end
 
-      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable))
       password = password_for(host, user, port)
 
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = scp_argv(control_path, identity_file, port, user, host,
-        [local_path, "#{user}@#{host}:#{remote_path}"], recursive: recursive, connect_timeout: true, password: password, extra_options: extra_args)
+        [local_path, "#{user}@#{host}:#{remote_path}"], recursive: recursive, connect_timeout: true, password: password, extra_options: extra_args, ssh_executable: ssh_executable)
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -1235,7 +1241,7 @@ module Krikri
       # files and can fold one chmod into a round trip it already makes -
       # otherwise this costs an extra round trip *per file*.
       if mode && mode != 0o644
-        exec(host, user, "chmod #{mode.to_s(8)} #{Shell.single_quote(remote_path)}", port, identity_file: identity_file, extra_args: extra_args)
+        exec(host, user, "chmod #{mode.to_s(8)} #{Shell.single_quote(remote_path)}", port, identity_file: identity_file, extra_args: extra_args, ssh_executable: ssh_executable)
       end
     end
 
@@ -1248,16 +1254,17 @@ module Krikri
       port : Int32? = nil,
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
+      ssh_executable : String? = nil,
     )
       init
       @@stats["files_downloaded"] += 1
 
-      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable))
       password = password_for(host, user, port)
 
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = scp_argv(control_path, identity_file, port, user, host,
-        ["#{user}@#{host}:#{remote_path}", local_path], recursive: false, connect_timeout: false, password: password, extra_options: extra_args)
+        ["#{user}@#{host}:#{remote_path}", local_path], recursive: false, connect_timeout: false, password: password, extra_options: extra_args, ssh_executable: ssh_executable)
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -1305,12 +1312,13 @@ module Krikri
       mode : Int32 = 0o644,
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
+      ssh_executable : String? = nil,
     ) : Bool
       init
 
       return false unless rsync_available?
 
-      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable))
       password = password_for(host, user, port)
 
       # Use rsync with SSH control master
@@ -1318,7 +1326,7 @@ module Krikri
         "rsync",
         "-az",                     # archive mode, compress
         "--chmod=#{mode.to_s(8)}", # set permissions
-        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args, ssh_executable),
         local_path,
         "#{user}@#{host}:#{remote_path}",
       ]
@@ -1364,6 +1372,7 @@ module Krikri
       password : String? = nil,
       extra_args : Array(String) = [] of String,
       mode : Int32 = 0o755,
+      ssh_executable : String? = nil,
     ) : Array(String)
       [
         "rsync",
@@ -1371,7 +1380,7 @@ module Krikri
         "--no-o",
         "--no-g",
         "--chmod=#{mode.to_s(8)}",
-        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args, ssh_executable),
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
     end
 
@@ -1386,13 +1395,14 @@ module Krikri
       mode : Int32 = 0o755,
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
+      ssh_executable : String? = nil,
     ) : Bool
       init
 
       return false if local_files.empty?
       return false unless rsync_available?
 
-      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable))
       password = password_for(host, user, port)
 
       # rsync accepts multiple sources for one destination directory
@@ -1400,7 +1410,7 @@ module Krikri
       # batch instead of one per file.
       rsync_cmd = rsync_upload_argv(
         control_path, identity_file, port, user, host, local_files,
-        remote_dir, password: password, extra_args: extra_args, mode: mode
+        remote_dir, password: password, extra_args: extra_args, mode: mode, ssh_executable: ssh_executable
       )
 
       result = TimingProfile.measure("transport.rsync", "transport") do
@@ -1466,17 +1476,19 @@ module Krikri
 
     # The connection-options fingerprint a ControlMaster socket (and a
     # resident daemon, which owns one) is keyed on: identity file, ssh
-    # extra args, and whether a password is in play. Real
+    # extra args, whether a password is in play, and the ssh binary itself
+    # (ansible_ssh_executable: two differently-wrapped clients are two
+    # different connection paths). Real
     # ansible-playbook hashes its ssh connection options into its own
     # ControlPath for the same reason: two tasks connecting to the same
     # (host, user, port) with different options must not silently share
     # one authenticated master - a task-level `-o BatchMode=yes` or a
     # different private key would otherwise be swallowed by a socket
     # established under the previous task's options.
-    def self.connection_sig(identity_file : String?, extra_args : Array(String), password : String?) : String
-      return "" if identity_file.nil? && extra_args.empty? && password.nil?
+    def self.connection_sig(identity_file : String?, extra_args : Array(String), password : String?, ssh_executable : String? = nil) : String
+      return "" if identity_file.nil? && extra_args.empty? && password.nil? && ssh_executable.nil?
       digest = OpenSSL::Digest.new("SHA256")
-      digest.update("#{identity_file}\0#{extra_args.join('\u{1}')}\0#{password ? "1" : "0"}")
+      digest.update("#{identity_file}\0#{extra_args.join('\u{1}')}\0#{password ? "1" : "0"}\0#{ssh_executable}")
       digest.final.hexstring[0, 16]
     end
 
@@ -1557,6 +1569,10 @@ module Krikri
     # and so the unit tests can pin it (including the sshpass prefix)
     # without ever spawning a real ssh. *remote_args* is what follows
     # `user@host`: the wrapped command, `bash -s`, or the daemon command.
+    # *ssh_executable* is the connection's `ansible_ssh_executable`
+    # (issue #1483): ansible's ssh plugin spawns exactly the binary that
+    # option names, wrappers included, so it replaces the bare `ssh`
+    # argv[0] instead of being passed as an option.
     # Public as a spec seam.
     def self.ssh_argv(
       control_path : String,
@@ -1567,9 +1583,10 @@ module Krikri
       remote_args : Array(String),
       password : String? = nil,
       extra_options : Array(String) = [] of String,
+      ssh_executable : String? = nil,
     ) : Array(String)
       sshpass_prefix(password) + [
-        "ssh",
+        ssh_executable || "ssh",
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600", # Keep connection alive for 10 minutes
@@ -1586,6 +1603,11 @@ module Krikri
     # option; they differ only in the `-r` flag, the ConnectTimeout
     # option - download has never carried it - and their trailing path
     # pair, hence *recursive*/*connect_timeout*/*local_args*).
+    # *ssh_executable* becomes scp's own `-S` argument: scp reaches the
+    # target through a child ssh it picks itself, so naming it there is
+    # what keeps a wrapper (the jump-host helper ansible_ssh_executable
+    # exists for) in the transfer path - ansible lands in the same place
+    # through its ssh-executable-based "piped" transfer fallback.
     # Public as a spec seam.
     def self.scp_argv(
       control_path : String,
@@ -1598,9 +1620,11 @@ module Krikri
       connect_timeout : Bool = true,
       password : String? = nil,
       extra_options : Array(String) = [] of String,
+      ssh_executable : String? = nil,
     ) : Array(String)
       sshpass_prefix(password) + [
         "scp",
+      ] + (ssh_executable ? ["-S", ssh_executable] : [] of String) + [
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
@@ -1620,10 +1644,11 @@ module Krikri
     # passes down to the sshpass child from the env this file's
     # Process.run spawned rsync with). Without sshpass the ssh stays
     # unwrapped and inherits the askpass overlay env from rsync, plus
-    # the same single-prompt bound the other builders carry. Public as a
-    # spec seam.
-    def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil, extra_args : Array(String) = [] of String) : String
-      base = "ssh -o ControlMaster=auto -o ControlPath=#{shell_quote(control_path)} -o ControlPersist=600" \
+    # the same single-prompt bound the other builders carry. The program
+    # it names is *ssh_executable* when the connection sets one, else
+    # plain `ssh`. Public as a spec seam.
+    def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil, extra_args : Array(String) = [] of String, ssh_executable : String? = nil) : String
+      base = "#{ssh_executable ? shell_quote(ssh_executable) : "ssh"} -o ControlMaster=auto -o ControlPath=#{shell_quote(control_path)} -o ControlPersist=600" \
              " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}"
       base = "sshpass -e #{base}" if password && sshpass_available?
       base += " -o NumberOfPasswordPrompts=1" if password && !sshpass_available?
