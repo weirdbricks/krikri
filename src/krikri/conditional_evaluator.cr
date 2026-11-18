@@ -4142,6 +4142,22 @@ module Krikri
         return true if rendered == "True"
         return false if rendered == "False"
 
+        # The lowercase spellings are the reverse case: a real boolean or
+        # None operand renders capitalized ("True"/"False", handled just
+        # above; "None", handled below as a bareword), so text reading
+        # exactly "true"/"false"/"null" can only have come out of a
+        # string-producing filter (`| lower`, `| to_json`, `| join`).
+        # Letting the JSON fallback re-type it into a real Bool/Nil lost
+        # that string-ness: stafwag.proxy_env's own gate
+        # `proxy.etc_profile_proxy | default(false) | lower not in ['false']`
+        # then compared Bool false against the string element 'false',
+        # found no match, and answered `not in` true - so krikri included
+        # and ran every /etc/profile and apt task ansible skips, live
+        # divergence in round29916782 (issue #1518). ansible-core 2.19 keeps
+        # the str: `(false | lower) == 'false'` and `false | lower in
+        # ['false']` are both true there (live-verified).
+        return rendered if rendered == "true" || rendered == "false" || rendered == "null"
+
         parsed = Krikri.parse_json_or_python_literal(rendered)
         # Render-then-parse cannot tell a numeric-looking STRING result
         # from a real number: "7" off dev-sec os_hardening's
