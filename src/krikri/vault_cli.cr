@@ -47,10 +47,6 @@ module Krikri
       puts "  krikri-playbook vault rekey --vault-password-file old.txt --new-vault-password-file new.txt secrets.yml"
     end
 
-    private def self.read_password_file(path : String) : String
-      File.read(path).strip
-    end
-
     # Atomic (write-to-random-temp-then-rename), 0600. Renaming replaces
     # the target itself rather than following a symlink planted at it -
     # File.write would truncate whatever the symlink points at, letting
@@ -65,9 +61,40 @@ module Krikri
       File.rename(tmp, path)
     end
 
-    # Public: also used directly by krikri-playbook.cr's --ask-vault-pass for
-    # running a playbook (not just the `vault` subcommands here).
-    def self.prompt_password(prompt : String = "Vault password: ") : String
+    # ansible loads every vault secret before anything else runs, and
+    # treats a secret it cannot load as fatal right there: a [WARNING]
+    # naming the source, then the same text as [ERROR], exit 1.
+    # `ansible-playbook` and `ansible-vault` both get the pair from the
+    # same setup_vault_secrets step, so both krikri CLIs print it here.
+    private def self.fail_secret(message : String, warning : String) : NoReturn
+      STDERR.puts "[WARNING]: #{warning}"
+      STDERR.puts "[ERROR]: #{message}"
+      exit 1
+    end
+
+    # Reads one prompt line WITHOUT interpreting it: nil means stdin hit
+    # EOF before a line (Python's getpass raises EOFError there), ""
+    # means an empty line. What an empty secret means is the caller's
+    # business - fatal for a vault password, "no password" for -k/-K.
+    private def self.read_secret(prompt : String) : String?
+      # getpass cannot control the terminal when stdin is a pipe or a
+      # file - the CI shape (`echo "$PW" | ... --ask-vault-pass`): it
+      # warns, then reads the echoed line from stdin, with the prompt on
+      # stderr. Running stty against that non-tty would only print
+      # "stty: ... isn't a terminal" on stderr; the piped password is
+      # read either way, so skipping stty is what makes that invocation
+      # quiet and identical to ansible's.
+      unless STDIN.tty?
+        STDERR.puts "Warning: Password input may be echoed."
+        STDERR.print prompt
+        STDERR.flush
+        line = STDIN.gets
+        # getpass writes its newline only after a line arrived; on EOF
+        # the EOFError propagates first, leaving the prompt unterminated.
+        STDERR.puts if line
+        return line.try(&.chomp)
+      end
+
       print prompt
       STDOUT.flush
 
@@ -79,18 +106,15 @@ module Krikri
 
       # Fail closed only where the risk is real: when stdin is a TTY but
       # echo couldn't be disabled (no stty), the typed password would be
-      # echoed into shell history/CI logs - refuse. When stdin is a
-      # pipe/file (automation), there's no terminal to echo to, so read
-      # normally. Always restore echo via ensure, so a raised read can't
-      # leave the terminal with echo permanently off.
-      if STDIN.tty? && !echo_disabled
+      # echoed into shell history/CI logs - refuse.
+      unless echo_disabled
         puts
         STDERR.puts "ERROR! Can't disable terminal echo; refusing to read the vault password insecurely (use --vault-password-file on a non-TTY stdin)"
         exit 1
       end
 
       begin
-        password = STDIN.gets.try(&.chomp) || ""
+        password = STDIN.gets.try(&.chomp)
       ensure
         begin
           Process.run("stty", ["echo"], input: Process::Redirect::Inherit, output: Process::Redirect::Inherit, error: Process::Redirect::Inherit)
@@ -102,8 +126,54 @@ module Krikri
       password
     end
 
+    # Public: a prompt with no secret checks applied - ansible's -k/-K,
+    # where an empty or EOF read simply means no password was supplied.
+    def self.prompt_password(prompt : String = "Vault password: ") : String
+      read_secret(prompt) || ""
+    end
+
+    # Public: a vault password prompt, applying the check ansible applies
+    # to a secret as it loads it - an empty (or absent) password is fatal
+    # up front instead of a later decryption failure rendered as
+    # "Unknown error.". `vault_id` labels the prompt and the warning the
+    # way ansible does for --vault-id LABEL@prompt.
+    def self.prompt_vault_password(prompt : String = "Vault password: ", vault_id : String = "default") : String
+      password = read_secret(prompt)
+
+      if password.nil?
+        message = "EOFError (ctrl-d) on prompt for (#{vault_id})"
+        fail_secret(message, "Error in vault password prompt (#{vault_id}): #{message}")
+      end
+
+      if password.empty?
+        message = "Invalid vault password was provided"
+        fail_secret(message, "Error in vault password prompt (#{vault_id}): #{message}")
+      end
+
+      password
+    end
+
+    # Public: reads a vault password file the way ansible's
+    # FileVaultSecret does - a missing file or an empty password is a
+    # fatal secret-loading error, not an empty secret handed to every
+    # later decrypt.
+    def self.read_password_file(path : String, vault_id : String = "default") : String
+      unless File.exists?(path)
+        message = "The vault password file #{path} was not found"
+        fail_secret(message, "Error getting vault password file (#{vault_id}): #{message}")
+      end
+
+      password = File.read(path).strip
+      if password.empty?
+        message = "Invalid vault password was provided from file (#{path})"
+        fail_secret(message, "Error in vault password file loading (#{vault_id}): #{message}")
+      end
+
+      password
+    end
+
     private def self.resolve_password(vault_password_file : String?) : String
-      vault_password_file ? read_password_file(vault_password_file) : prompt_password
+      vault_password_file ? read_password_file(vault_password_file) : prompt_vault_password
     end
 
     private def self.encrypt_command(args : Array(String)) : Nil

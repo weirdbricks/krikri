@@ -756,22 +756,18 @@ vault_id_args.each do |spec|
 
   secret =
     if source == "prompt"
-      print "Vault password (#{label}): "
-      Krikri::VaultCli.prompt_password
-    elsif File.exists?(File.exists?(File.expand_path(source)) ? File.expand_path(source) : source)
-      File.read(source).strip
+      Krikri::VaultCli.prompt_vault_password("Vault password (#{label}): ", label)
     else
-      puts "Error: vault-id source not found: #{source}".colorize(:red)
-      exit 1
+      Krikri::VaultCli.read_password_file(source, label)
     end
 
   Krikri::Vault.add_vault_id(label, secret)
 end
 
 if password_file = vault_password_file
-  Krikri::Vault.password = File.read(password_file).strip
+  Krikri::Vault.password = Krikri::VaultCli.read_password_file(password_file)
 elsif ask_vault_pass
-  Krikri::Vault.password = Krikri::VaultCli.prompt_password
+  Krikri::Vault.password = Krikri::VaultCli.prompt_vault_password
 end
 
 # Kept for the listing modes (--syntax-check/--list-tasks/--list-hosts/
@@ -1248,13 +1244,11 @@ if become_pw_file = become_password_file
 end
 
 if ask_pass
-  print "SSH password: "
-  password = Krikri::VaultCli.prompt_password
+  password = Krikri::VaultCli.prompt_password("SSH password: ")
   inventory.hosts.each_value { |host| host.vars["ansible_password"] = JSON::Any.new(password) }
 end
 if ask_become_pass
-  print "BECOME password: "
-  password = Krikri::VaultCli.prompt_password
+  password = Krikri::VaultCli.prompt_password("BECOME password: ")
   inventory.hosts.each_value { |host| host.vars["ansible_become_password"] = JSON::Any.new(password) }
 end
 
