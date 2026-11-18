@@ -8485,6 +8485,18 @@ module Krikri
             # empty-list/dict-member-list/JSON branches so every fail msg
             # container takes this wire. Templated values are never marked.
             params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
+          elsif module_name.split('.').last == "uri" && key.to_s == "body" && (value.as_h? || value.as_a?)
+            # uri.py hands a non-string body to json.dumps and only takes a
+            # str verbatim, but the generic wire below flattens a mapping
+            # to compact JSON text - the same text a user-authored JSON
+            # STRING body arrives as - so the plugin cannot tell them
+            # apart and re-serialize the mapping the way ansible does
+            # (spaced separators, ensure_ascii escapes, native leaf
+            # types). NON_STRING_PARAM_PREFIX keeps the container
+            # reachable for plugins/uri.cr while every other body_format
+            # (and the argspec checks) still sees the previous plain JSON
+            # text (issue #1489).
+            params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
           elsif (module_name == "ansible.builtin.set_stats" || module_name == "set_stats") && key.to_s == "data" && value.as_h?
             # set_stats is a controller-side ACTION plugin, and its `data`
             # is templated natively before the dict-shape check: a YAML

@@ -159,10 +159,16 @@ module Krikri
   # (YAML `key:` with no value) demotes to "" like stringify_value's own
   # Nil case - the explicit-null argspec flow handles real Nones.
   def self.non_string_param_text(native : JSON::Any) : String
+    # A marked container demotes to the JSON text stringify_value would
+    # have produced: JSON::Any#to_s is its raw value's Crystal to_s (a
+    # Hash#to_s-style rendering), not JSON, and a consumer that parses the
+    # demoted text (uri's form-multipart body check) would otherwise see a
+    # plain string.
     case native.raw
     when Bool                  then native.as_bool ? "True" : "False"
     when Int64, Int32, Float64 then native.raw.to_s
     when Nil                   then ""
+    when Hash, Array           then native.to_json
     else                            native.to_s
     end
   end

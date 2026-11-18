@@ -192,11 +192,33 @@ describe "uri plugin" do
     result["content"].as_s.must_equal("plain text body")
   end
 
-  it "always parses a json content-type into both content and json, regardless of return_content" do
+  it "parses a json content-type into json without adding content, matching Ansible" do
+    # uri.py's maybe_output only decides whether to PARSE; `content` itself
+    # is only ever added by its own return_content branches (live-verified
+    # vs 2.21.6: a return_content: false application/json result carries
+    # json and no content key at all).
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/json"})
-    result["content"].as_s.must_equal(%({"ok":true,"n":5}))
     result["json"]["ok"].as_bool.must_equal(true)
     result["json"]["n"].as_i.must_equal(5)
+    result.as_h.has_key?("content").must_equal(false)
+  end
+
+  it "includes content for a json response when return_content is set" do
+    result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/json", "return_content" => "true"})
+    result["content"].as_s.must_equal(%({"ok":true,"n":5}))
+    result["json"]["ok"].as_bool.must_equal(true)
+  end
+
+  it "reports a non-error status mismatch with urllib's OK byte suffix, json and no content" do
+    # live-verified vs 2.21.6: a 200 response outside status_code came
+    # through fetch_url's success path, so its info['msg'] ("OK (N bytes)")
+    # is what uri.py appends to "Status code was 200 and not [500]: ";
+    # fail_json(**uresp) carries json but no content without return_content.
+    result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/json", "status_code" => "[500]"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Status code was 200 and not [500]: OK (17 bytes)")
+    result["json"]["ok"].as_bool.must_equal(true)
+    result.as_h.has_key?("content").must_equal(false)
   end
 
   it "fails with a Status code message when the response isn't in status_code" do
@@ -288,6 +310,73 @@ describe "uri plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["status"].as_i.must_equal(201)
     result["json"]["received"].as_s.must_equal("hello")
+  end
+
+  it "serializes a json mapping body the way ansible's json.dumps does, spaced and ASCII-escaped" do
+    # issue #1489: uri.py hands a NON-str body to json.dumps, so a mapping
+    # travels as '{"a": 1, "b": ["x", "y"], "c": "\\u00e9"}' - the default
+    # separators plus ensure_ascii - while a STRING body is taken verbatim
+    # as pre-formatted JSON. Both shapes reach the plugin as the same JSON
+    # text on the strings-only param wire, so the parser marks the mapping
+    # and the executor keeps its native leaves (`{{ n }}` stays an int,
+    # because ansible templates each mapping value before serializing).
+    inventory = File.join(PluginSpecHelper::PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+    literal_path = PluginSpecHelper.tmp_path("uri-json-body-literal.txt")
+    templated_path = PluginSpecHelper.tmp_path("uri-json-body-templated.txt")
+    verbatim_path = PluginSpecHelper.tmp_path("uri-json-body-verbatim.txt")
+    null_path = PluginSpecHelper.tmp_path("uri-json-body-null.txt")
+    playbook = PluginSpecHelper.tmp_path("uri-json-body.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          n: 7
+        tasks:
+          - ansible.builtin.uri:
+              url: #{URI_BASE}/echo
+              method: POST
+              body_format: json
+              body: {a: 1, b: [x, y], c: "é"}
+              status_code: [200, 201]
+            register: literal
+          - ansible.builtin.uri:
+              url: #{URI_BASE}/echo
+              method: POST
+              body_format: json
+              body: {a: "{{ n }}", c: "é"}
+              status_code: [200, 201]
+            register: templated
+          - ansible.builtin.uri:
+              url: #{URI_BASE}/echo
+              method: POST
+              body_format: json
+              body: '{"a":1,"c":"é"}'
+              status_code: [200, 201]
+            register: verbatim
+          - ansible.builtin.uri:
+              url: #{URI_BASE}/echo
+              method: POST
+              body_format: json
+              body:
+              status_code: [200, 201]
+            register: null_body
+          - ansible.builtin.copy: {content: "{{ literal.json.received }}", dest: #{literal_path}}
+          - ansible.builtin.copy: {content: "{{ templated.json.received }}", dest: #{templated_path}}
+          - ansible.builtin.copy: {content: "{{ verbatim.json.received }}", dest: #{verbatim_path}}
+          - ansible.builtin.copy: {content: "{{ null_body.json.received }}", dest: #{null_path}}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(File.join(PluginSpecHelper::PROJECT_ROOT, "bin", "krikri-playbook"),
+      ["-i", inventory, playbook], output: output, error: output)
+    status.success?.must_equal(true)
+    File.read(literal_path).must_equal(%({"a": 1, "b": ["x", "y"], "c": "\\u00e9"}))
+    File.read(templated_path).must_equal(%({"a": 7, "c": "\\u00e9"}))
+    File.read(verbatim_path).must_equal(%({"a":1,"c":"é"}))
+    # A null body is json.dumps'd like any other non-str, live-verified
+    # against ansible-core 2.21.6 (the body arrives as the text "null").
+    File.read(null_path).must_equal("null")
   end
 
   it "form-encodes a dict body under body_format: form-urlencoded" do
