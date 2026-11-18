@@ -925,8 +925,12 @@ module Krikri
       # yum task prints five FAILED - RETRYING lines and a fatal with the
       # attempts key in check mode, and a skipped check-mode result with an
       # until: that passes on its check-mode return registers attempts: 1).
-      if until_condition = task.until_condition
-        execute_task_with_retries(task, host, vars_context, until_condition, exec_host)
+      # A task with `retries:` and no `until:` is in an attempt loop as
+      # well - ansible's condition then defaults to `not failed` - which
+      # is also the shape the ignored-strategy retry fallback takes
+      # (see #retry_plan).
+      if plan = retry_plan(task)
+        execute_task_with_retries(task, host, vars_context, plan, exec_host)
         return
       end
 

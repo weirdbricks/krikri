@@ -531,6 +531,14 @@ module Krikri
       # host_pinned is treated as free (its only difference is worker
       # affinity, which this engine has no equivalent of).
       @strategy : String? = nil,
+      # See Play#ignored_strategy_plugin / StrategyRetryFallback: the
+      # attempts and gap a task falls back to when THIS play's third-party
+      # strategy plugin had to be ignored and the task wrote neither
+      # `until:` nor `retries:`. Zero retries (the default) means the
+      # fallback is off, which is the whole-run behaviour for every play
+      # whose strategy this engine implements (issue #1542).
+      @strategy_retry_fallback : Int32 = 0,
+      @strategy_retry_delay : Int32 = 5,
       # See Play#gather_subset - forwarded to the facts plugin, which
       # does the actual family filtering.
       @gather_subset = [] of String,
@@ -577,6 +585,12 @@ module Krikri
       # (see ThrottleValue).
       @play_throttle_value : ThrottleValue = ThrottleValue::ABSENT,
     )
+      # A retry loop cannot share an SSH round trip with anything: its
+      # attempts are sequential by nature. With the ignored-strategy
+      # fallback on, EVERY task of this play may be retried, so batching
+      # is off for the play (issue #1542); a task that wrote its own
+      # retries:/until: is excluded from batching per task instead.
+      @batching_enabled = false if @strategy_retry_fallback > 0
       @results = Hash(String, Hash(String, Int32)).new
       # The caller owns run-scoped stores and hands the same ones to every
       # play's executor, so facts (and set_facts/registered vars) from

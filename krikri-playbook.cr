@@ -16,6 +16,7 @@ require "./src/krikri/output_banner"
 require "./src/krikri/profile_tasks"
 require "./src/krikri/oneline_output"
 require "./src/krikri/playbook_deadline"
+require "./src/krikri/strategy_retry_fallback"
 require "./src/krikri/run_options"
 require "./src/krikri/task_executor/output_routing"
 
@@ -1604,6 +1605,11 @@ playbook.plays.each_with_index do |play, _play_index|
   # clear_host_errors hosts don't count as failures (see the concat
   # above), matching Ansible's TQM._failed_hosts bookkeeping.
   abort_entire_run = false
+  # A play whose third-party strategy plugin this engine had to ignore
+  # runs as linear; the operator's retry fallback (see
+  # StrategyRetryFallback) is what keeps a retrying plugin's pass/fail
+  # outcome. Read per play so a normal play never consults it.
+  strategy_retry_fallback = play.ignored_strategy_plugin? ? Krikri::StrategyRetryFallback.settings : nil
   batches.each do |batch_hosts|
     # Per-batch deltas, mirroring PlaybookExecutor's
     # previously_failed/previously_unreachable counters: a host that was
@@ -1648,6 +1654,8 @@ playbook.plays.each_with_index do |play, _play_index|
       unreachable_hosts: unreachable_hosts,
       unreachable_ssh_errors: unreachable_ssh_errors,
       strategy: play.strategy,
+      strategy_retry_fallback: strategy_retry_fallback.try(&.retries) || 0,
+      strategy_retry_delay: strategy_retry_fallback.try(&.delay) || Krikri::StrategyRetryFallback::DEFAULT_DELAY,
       gather_subset: play.gather_subset,
       gather_timeout: play.gather_timeout,
       fact_path: play.fact_path,

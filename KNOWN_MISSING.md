@@ -211,7 +211,7 @@ Decided 2026-10-10.
 `ANSIBLE_STRATEGY_PLUGINS` (replacing the defaults) or the configured `plugins/strategy/` roots. A
 plugin found there is accepted and the play runs as linear, with Ansible's two-line deprecation
 warning for a non-`ansible.builtin` strategy reproduced, followed by krikri's own
-`[WARNING]: Strategy plugin '<name>' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy.`
+`[WARNING]: Strategy plugin '<name>' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy (a task's own retries:/delay:/until: still retry, and KRIKRI_STRATEGY_RETRIES/KRIKRI_STRATEGY_RETRY_DELAY retry failed tasks in the plugin's place).`
 line so the plugin's dropped behavior is never silent (issue #1456). A fully qualified collection
 strategy name (`namespace.collection.name`) is not resolved and still errors. A strategy plugin is
 Python control-plane code driving Ansible's own iterator, which this engine has no seam for; refusing
@@ -221,6 +221,19 @@ prompt on a failed task: the linear half runs, the prompt does not. A name on no
 still fails with Ansible's own `[ERROR]: Invalid play strategy specified: <name>` (rc 1), except
 that real also prints the deprecation warning and the PLAY banner before that error while krikri
 refuses at parse time. Decided 2026-11-16.
+
+The one behavior such a plugin changes in practice is retrying a failed task, and that part has a
+built-in stand-in (issue #1542). A task carrying `until:`/`retries:` always retries on its own
+keywords - `retries:` alone included, since Ansible's attempt-loop condition then defaults to
+`not utr.failed` - so the portable migration is to move the plugin's retries onto the tasks. For an
+unmodified playbook, `KRIKRI_STRATEGY_RETRIES=<n>` with `KRIKRI_STRATEGY_RETRY_DELAY=<seconds>`
+(default 5) gives every task of an ignored-strategy play that wrote neither keyword the plugin's
+attempt count and gap, reproducing Ansible's pass/fail outcome (`ok=1` with the counter at the
+attempt count, instead of a first-attempt `failed=1`). The settings are read ONLY for a play whose
+strategy plugin was ignored, so an inherited environment never reshapes a run krikri does implement,
+and an unparseable value stops the run. Anything else a plugin does - logging/decorating the linear
+run, altering worker affinity, ordering beyond linear - is still dropped with that warning.
+Decided 2026-11-18.
 
 
 ### `ansible.cfg` is read for five settings only; the rest still comes from `ANSIBLE_*` vars and play vars

@@ -12,6 +12,7 @@ require "./argspec_validator"
 require "./role_bool_keywords"
 require "./play_keywords"
 require "./throttle_value"
+require "./strategy_retry_fallback"
 require "./task_executor/error_block"
 require "./vault"
 require "./variable_substitutor"
@@ -634,6 +635,13 @@ module Krikri
     # defaults (3/5) for that case.
     property retries_template : String?
     property delay_template : String?
+    # Whether the task WROTE `retries:` at all (either form). `retries` is
+    # always populated (with ansible's implicit 3) so it cannot tell a
+    # written keyword from the default - and a written `retries:` alone
+    # puts the task in an attempt loop, with `not failed` standing in for
+    # a missing `until:` (task_executor.py's `self._task.until or [not
+    # utr.failed]`).
+    property? retries_explicit : Bool = false
     # changed_when: / failed_when: - override the module's own changed/failed
     # verdict with a condition evaluated against the task's result (accessible
     # via its own register: name, same as any other post-task condition; a
@@ -1393,6 +1401,12 @@ module Krikri
     # before any starts the next; free lets each host run the whole task
     # list independently.
     property strategy : String? = nil
+    # A third-party strategy plugin this play named and this engine cannot
+    # execute (see PlaybookParser.strategy_plugin_source): the play runs as
+    # linear, so the executor falls back to StrategyRetryFallback's retry
+    # settings for a task that wrote neither `until:` nor `retries:`
+    # (issue #1542).
+    property? ignored_strategy_plugin : Bool = false
     # `gather_subset:` - which fact families the implicit fact gathering
     # collects (all, min, network, hardware, mounts, and !negations).
     property gather_subset : Array(String) = [] of String
@@ -3024,12 +3038,15 @@ module Krikri
       # deprecates it with two stderr lines before the PLAY banner
       # (issue #1439). Real then loads and runs that plugin; this engine
       # cannot, so the deprecation is followed by krikri's own line
-      # saying the plugin is ignored (issue #1456).
+      # saying the plugin is ignored (issue #1456), and the play is
+      # marked so its tasks can pick up the retry fallback setting
+      # (issue #1542).
       if strategy = play.strategy
         unless strategy.empty? || VALID_STRATEGIES.includes?(strategy)
           if strategy_plugin_source(strategy, playbook_dir)
             warn_third_party_strategy_deprecation
             warn_unexecuted_strategy_plugin(strategy)
+            play.ignored_strategy_plugin = true
           else
             raise InvalidStrategyError.new("Invalid play strategy specified: #{strategy}")
           end
@@ -5371,6 +5388,7 @@ module Krikri
       retries_raw = task_hash["retries"]?.try { |v| safe_yaml_to_string(v) }
       task.retries = retries_raw.try(&.to_i?) || 3
       task.retries_template = retries_raw unless retries_raw.nil? || retries_raw.to_i?
+      task.retries_explicit = !retries_raw.nil?
       delay_raw = task_hash["delay"]?.try { |v| safe_yaml_to_string(v) }
       task.delay = delay_raw.try(&.to_i?) || 5
       task.delay_template = delay_raw unless delay_raw.nil? || delay_raw.to_i?
@@ -6003,7 +6021,9 @@ module Krikri
     # issue #1456 reported - a retry plugin's retries vanish and the run
     # looks normal - so each plugin name gets one krikri-specific line on
     # stderr, right after Ansible's own deprecation pair, saying it is
-    # ignored.
+    # ignored. The line also names the retry fallback (issue #1542): the
+    # common case for such a plugin is exactly "wrap linear and retry a
+    # failed task", and those settings restore that pass/fail outcome.
     STRATEGY_PLUGIN_NOT_EXECUTED_MUTEX = Mutex.new
     @@strategy_plugins_not_executed = Set(String).new
 
@@ -6011,7 +6031,7 @@ module Krikri
       STRATEGY_PLUGIN_NOT_EXECUTED_MUTEX.synchronize do
         next if @@strategy_plugins_not_executed.includes?(name)
         @@strategy_plugins_not_executed << name
-        STDERR.puts "[WARNING]: Strategy plugin '#{name}' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy."
+        STDERR.puts "[WARNING]: Strategy plugin '#{name}' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy (a task's own retries:/delay:/until: still retry, and #{Krikri::StrategyRetryFallback::RETRIES_ENV}/#{Krikri::StrategyRetryFallback::DELAY_ENV} retry failed tasks in the plugin's place)."
       end
     end
 

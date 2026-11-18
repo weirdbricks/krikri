@@ -792,8 +792,10 @@ module Krikri
     # with until:/retries: prints FAILED - RETRYING lines and a fatal
     # with the attempts key in check mode).
     private def execute_handler_plugin_once(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
-      if (until_condition = handler.until_condition) && !handler_skipped_before_attempt?(handler, host, vars_context)
-        result = run_until_retries(handler, host, vars_context, until_condition, attempt_body: -> { execute_handler_plugin_attempt(handler, host, vars_context) })
+      if (plan = retry_plan(handler)) && !handler_skipped_before_attempt?(handler, host, vars_context)
+        result = run_until_retries(handler, host, vars_context, plan[0],
+          attempt_body: -> { execute_handler_plugin_attempt(handler, host, vars_context) },
+          retry_attempts: plan[1], retry_delay: plan[2])
         # A handler attempt always returns a result (never nil), but the
         # shared core is typed for the regular-task body's nilable return.
         return result || JSON.parse({"changed" => false, "failed" => false}.to_json)

@@ -2195,13 +2195,14 @@ module Krikri
             # live-verified vs 2.21.6: a looped yum task's items
             # each print their FAILED - RETRYING lines and carry
             # the attempts key in check mode).
-            result = if until_condition = task.until_condition
+            result = if plan = retry_plan(task)
                        # Ansible retries each loop item
                        # independently under until:/retries: - the
                        # loop_items branch used to return before the
                        # until branch in execute_task, silently
                        # dropping retries for looped tasks.
-                       run_until_retries(task, host, vars_context, until_condition, item_exec_host, defer_loop_stats: true, item_label: item_label)
+                       run_until_retries(task, host, vars_context, plan[0], item_exec_host, defer_loop_stats: true, item_label: item_label,
+                         retry_attempts: plan[1], retry_delay: plan[2])
                      else
                        execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true, loop_item: item, loop_index: idx, defer_when_chain: true)
                      end
@@ -2273,6 +2274,9 @@ module Krikri
       # for it yet.
       return false if task.templated_action
       return false if task.until_condition
+      # See TaskBatcher.needs_controller_control_flow?: a `retries:`-only
+      # attempt loop is just as sequential as an until: one.
+      return false if task.retries_explicit?
       # raw:'s result is the connection's own pty capture, reshaped per item
       # only by the one-at-a-time path (see TaskBatcher::raw_task?), so a
       # batched loop of raw tasks loses that shape exactly as a grouped one
@@ -3210,11 +3214,31 @@ module Krikri
     # loop_control.label - what the per-item line shows instead of the
     # raw item. Rendered against that item's own context, so it can name
     # a field of the item.
+
+    # What a task's attempt loop should be, or nil when it runs once:
+    # `until:` gives the clause to evaluate; `retries:` on its own gives
+    # the attempts with no clause (ansible's implicit `not failed`, see
+    # run_until_retries); and a play whose third-party strategy plugin
+    # this engine had to ignore supplies the attempts for a task that
+    # wrote neither (issue #1542). Fields: {until condition, retries,
+    # delay}.
+    private def retry_plan(task : Task) : {String?, Int32, Int32}?
+      if until_condition = task.until_condition
+        {until_condition, task.retries, task.delay}
+      elsif task.retries_explicit?
+        {nil, task.retries, task.delay}
+      elsif @strategy_retry_fallback > 0
+        {nil, @strategy_retry_fallback, @strategy_retry_delay}
+      end
+    end
+
     # Shared `until:` retry core - drives task.retries/task.delay attempts
     # of execute_task_once (or the caller's attempt_body) until the rendered
     # condition passes. Used both by execute_task_with_retries (single task,
     # displays its final result) and, per item, by execute_looped_task's
     # non-batched path (Ansible retries each loop item independently).
+    # A nil condition is a `retries:`-only loop (retry_plan's own comment):
+    # there is nothing to render, and a failed attempt is the retry signal.
     # The attempt_body Proc overrides the per-attempt body: execute_handler_
     # plugin_once passes its own single-attempt body so a handler's
     # until:/retries:/delay: retries too - real prints the same
@@ -3266,11 +3290,13 @@ module Krikri
       task : Task,
       host : Host,
       vars_context : Hash(String, JSON::Any),
-      until_condition : String,
+      until_condition : String?,
       exec_host : Host = host,
       defer_loop_stats : Bool = false,
       item_label : String? = nil,
       attempt_body : Proc(JSON::Any?)? = nil,
+      retry_attempts : Int32? = nil,
+      retry_delay : Int32? = nil,
     ) : JSON::Any?
       register_name = task.register
       # Real task_executor's attempt loop (task_executor.py): total runs =
@@ -3294,8 +3320,8 @@ module Krikri
       # any OTHER reason (unknown filter, syntax) keeps the lenient
       # fallback default: failing those here would turn an evaluator
       # coverage gap into a task failure real reports differently.
-      retries_value = task.retries
-      delay_value = task.delay
+      retries_value = retry_attempts || task.retries
+      delay_value = retry_delay || task.delay
       if raw = task.retries_template
         begin
           retries_value = templated_retry_int(raw, retries_value, "retries", host, vars_context)
@@ -3460,47 +3486,58 @@ module Krikri
         end
 
         if total_runs > 1
-          substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-          maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
-          begin
-            # The clause's value position rides the fiber as its templated
-            # param site, so a top-level fact alias read while the clause
-            # resolves deprecates with the until: value's own Origin
-            # (live-verified vs 2.21.6) - the position the delimiters
-            # deprecation above already reports.
-            condition_met = with_conditional_param_site(task, "until", until_condition) do
-              substituted_condition = substitutor.substitute(until_condition)
-              # strict/raise_undefined: real evaluates an until: like a when: -
-              # an undefined name raises, and the final result must be a real
-              # boolean (live-verified vs 2.21.6: `until: r.stdout` on
-              # "hi" fails "An 'until' expression failed: Conditional result
-              # (True) was derived from value of type 'str' ...").
-              ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
+          if condition = until_condition
+            substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+            maybe_conditional_delimiters_deprecation(task, condition, "until", vars_context)
+            begin
+              # The clause's value position rides the fiber as its templated
+              # param site, so a top-level fact alias read while the clause
+              # resolves deprecates with the until: value's own Origin
+              # (live-verified vs 2.21.6) - the position the delimiters
+              # deprecation above already reports.
+              condition_met = with_conditional_param_site(task, "until", condition) do
+                substituted_condition = substitutor.substitute(condition)
+                # strict/raise_undefined: real evaluates an until: like a when: -
+                # an undefined name raises, and the final result must be a real
+                # boolean (live-verified vs 2.21.6: `until: r.stdout` on
+                # "hi" fails "An 'until' expression failed: Conditional result
+                # (True) was derived from value of type 'str' ...").
+                ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
+              end
+              break if condition_met
+            rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError | UndefinedVariableError | ConditionalEvaluator::UndefinedVariableError | ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::OrderingTypeError | RenderExpressionError | Krikri::FilterPluginError | Krikri::TestPluginError
+              # An ansible-compiled until: condition fails the WHOLE task the
+              # first time it raises: one fatal "Task failed: An 'until'
+              # expression failed: <detail>" after the first attempt's run,
+              # recap failed=1, host halts (unless ignore_errors:) - the same
+              # clause-labelled shape the when: evaluator uses, live-captured
+              # vs 2.21.6 for an unknown filter, an unknown test, an undefined
+              # name and a raising filter. The raise must be caught HERE too:
+              # at top level it used to crash the whole process with an
+              # unhandled-exception stack trace, and from an include_tasks:
+              # file the include's generic rescue mislabeled it "Failed to
+              # load included tasks: ...". The chain's caused-by Origin is
+              # pinned at the until: value token, the position real reports
+              # for it (issue #318).
+              until_error = until_expression_failure(ex, task, host, condition)
+              emit_when_error_chain(task, until_error, host, clause_key: "until", clause_raw: condition)
+              failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host, clause_key: "until", clause_raw: condition)
+              if register_name && !register_name.empty?
+                register_result(host, register_name, failed_result)
+                vars_context[register_name] = @registered_vars[host.name][register_name]
+              end
+              return attach_looped_retry_lines(failed_result, retry_lines) if defer_loop_stats
+              return failed_result
             end
-            break if condition_met
-          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError | UndefinedVariableError | ConditionalEvaluator::UndefinedVariableError | ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::OrderingTypeError | RenderExpressionError | Krikri::FilterPluginError | Krikri::TestPluginError
-            # An ansible-compiled until: condition fails the WHOLE task the
-            # first time it raises: one fatal "Task failed: An 'until'
-            # expression failed: <detail>" after the first attempt's run,
-            # recap failed=1, host halts (unless ignore_errors:) - the same
-            # clause-labelled shape the when: evaluator uses, live-captured
-            # vs 2.21.6 for an unknown filter, an unknown test, an undefined
-            # name and a raising filter. The raise must be caught HERE too:
-            # at top level it used to crash the whole process with an
-            # unhandled-exception stack trace, and from an include_tasks:
-            # file the include's generic rescue mislabeled it "Failed to
-            # load included tasks: ...". The chain's caused-by Origin is
-            # pinned at the until: value token, the position real reports
-            # for it (issue #318).
-            until_error = until_expression_failure(ex, task, host, until_condition)
-            emit_when_error_chain(task, until_error, host, clause_key: "until", clause_raw: until_condition)
-            failed_result = when_error_result(WhenEvaluationError.new(until_error), task, host, clause_key: "until", clause_raw: until_condition)
-            if register_name && !register_name.empty?
-              register_result(host, register_name, failed_result)
-              vars_context[register_name] = @registered_vars[host.name][register_name]
-            end
-            return attach_looped_retry_lines(failed_result, retry_lines) if defer_loop_stats
-            return failed_result
+          elsif !Krikri.result_failed_flag(result)
+            # A `retries:`-only attempt loop has no clause to evaluate:
+            # ansible's condition is literally `self._task.until or [not
+            # utr.failed]` (task_executor.py), so a successful attempt
+            # ends the loop here while a failed one falls through to the
+            # retry line below. The same shape backs the ignored-strategy
+            # retry fallback (issue #1542).
+            condition_met = true
+            break
           end
         end
 
@@ -3630,10 +3667,11 @@ module Krikri
       task : Task,
       host : Host,
       vars_context : Hash(String, JSON::Any),
-      until_condition : String,
+      plan : {String?, Int32, Int32},
       exec_host : Host = host,
     )
-      result = run_until_retries(task, host, vars_context, until_condition, exec_host)
+      result = run_until_retries(task, host, vars_context, plan[0], exec_host,
+        retry_attempts: plan[1], retry_delay: plan[2])
 
       return unless result
 
