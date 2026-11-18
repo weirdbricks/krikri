@@ -223,18 +223,26 @@ that real also prints the deprecation warning and the PLAY banner before that er
 refuses at parse time. Decided 2026-11-16.
 
 
-### `ansible.cfg` is located but never parsed: settings come from `ANSIBLE_*` vars and play vars
+### `ansible.cfg` is read for five settings only; the rest still comes from `ANSIBLE_*` vars and play vars
 
-- krikri finds `ansible.cfg` the way Ansible does (its path shows on the `-v` config line and in the
-  `-vv`+ banner) but reads no INI values out of it. A setting that exists only in that file therefore
-  has no effect here. Seen in practice: `[defaults] inject_invocation = True` (2.21's default is off;
-  real then echoes `invocation`, krikri does not - the #909/#910 repro shape), `stdout_callback`,
-  `callbacks_enabled` and the `profile_tasks` knobs.
+- krikri locates `ansible.cfg` the way Ansible does (`$ANSIBLE_CONFIG`, `./ansible.cfg`,
+  `~/.ansible.cfg`, `/etc/ansible/ansible.cfg`) and reads exactly the settings whose absence
+  changes a run's outcome rather than its decoration: `[defaults] inventory`, `roles_path`,
+  `library`, `remote_user` and `[ssh_connection] ssh_args`, plus their env forms
+  (`ANSIBLE_INVENTORY`, `ANSIBLE_ROLES_PATH`, `ANSIBLE_LIBRARY`, `ANSIBLE_REMOTE_USER`,
+  `ANSIBLE_SSH_ARGS`), which outrank the file. Env var > ini > default, and a relative ini path
+  resolves against the config file's own directory, as Ansible's `ConfigManager` does.
+- Every OTHER ini key is still ignored. Seen in practice: `[defaults] inject_invocation = True`
+  (2.21's default is off; real then echoes `invocation`, krikri does not - the #909/#910 repro
+  shape), `stdout_callback`, `callbacks_enabled`, the `profile_tasks` knobs and
+  `deprecation_warnings`.
 - The same switches do work through their environment variable (`ANSIBLE_INJECT_INVOCATION`,
   `ANSIBLE_STDOUT_CALLBACK`, `ANSIBLE_CALLBACKS_ENABLED`, ...) or a play var where Ansible has one
   (`ansible_inject_invocation`); those are what krikri reads.
-- No INI parser is planned: the file's key/merge semantics are a large surface for settings that
-  mostly have an env-var equivalent. Decided 2026-11-07.
+- No general INI parser is planned: the file's key/merge semantics are a large surface for settings
+  that mostly have an env-var equivalent. The five above were added because dropping them made a
+  playbook target the wrong inventory, lose its roles/modules or open ssh as the wrong user
+  (issue #1478). Decided 2026-11-07, amended 2026-11-17.
 
 
 ### Console-output differences from ansible-core 2.21.6 that cannot be matched

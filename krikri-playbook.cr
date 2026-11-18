@@ -40,17 +40,11 @@ require "./src/krikri/inventory_parser"
 require "./src/krikri/task_executor"
 require "./src/krikri/vault"
 require "./src/krikri/vault_cli"
+require "./src/krikri/ansible_config"
 
-# Locates the active ansible.cfg the same way ansible-playbook does:
-# $ANSIBLE_CONFIG, ./ansible.cfg, ~/.ansible.cfg, /etc/ansible/ansible.cfg.
-def locate_ansible_config : String?
-  from_env = ENV["ANSIBLE_CONFIG"]?
-  return File.expand_path(from_env) if from_env && !from_env.empty?
-  {"ansible.cfg", File.join(ENV["HOME"]? || ".", ".ansible.cfg"), "/etc/ansible/ansible.cfg"}.each do |candidate|
-    return File.expand_path(candidate) if File.exists?(candidate)
-  end
-  nil
-end
+# ansible loads ansible.cfg, and resolves every relative path in it, from
+# the directory it was started in - before any playbook-relative chdir.
+Krikri::AnsibleConfig.base_dir = Dir.current
 
 # The host-pattern terms of *pattern* that match no inventory host, named
 # the way ansible-core names them in "[WARNING]: Could not match supplied
@@ -205,7 +199,8 @@ def print_startup_banner(cfg_path : String?) : Nil
   home = ENV["HOME"]? || ""
   puts "ansible-playbook [core #{Krikri::ANSIBLE_TARGET_VERSION}]"
   puts "  config file = #{cfg_path ? cfg_path : "None"}"
-  module_paths = [ENV["ANSIBLE_LIBRARY"]?, "#{home}/.ansible/plugins/modules", "/usr/share/ansible/plugins/modules"].compact.reject(&.empty?)
+  module_paths = Krikri::AnsibleConfig.library_paths ||
+                 ["#{home}/.ansible/plugins/modules", "/usr/share/ansible/plugins/modules"]
   puts "  configured module search path = [#{module_paths.map { |path| "'#{path}'" }.join(", ")}]"
   probe = python_environment_probe
   puts "  ansible python module location = #{probe["ansible_location"]? || "/usr/lib/python3/dist-packages/ansible"}"
@@ -298,7 +293,10 @@ playbook_file = ""
 inventory_file = "inventory.ini"
 # Whether -i was actually given. Ansible warns "Unable to parse X as
 # an inventory source" only for a source the USER named; with no -i at
-# all it simply reports that nothing was parsed.
+# all it simply reports that nothing was parsed. A source named by
+# ansible.cfg or ANSIBLE_INVENTORY counts as user-named too, and is
+# filled in after option parsing since -i outranks both (ansible's
+# CLI > env > ini order).
 inventory_explicit = false
 check_mode = false
 diff_mode = false
@@ -330,7 +328,7 @@ forks = 5
 # facts. "smart": each host is gathered at most once per run, so a
 # multi-play playbook stops paying N_plays x N_hosts fact round trips.
 # Ansible's own config source for this is ANSIBLE_GATHERING (or
-# ansible.cfg's [defaults] gathering, which this project doesn't parse -
+# ansible.cfg's [defaults] gathering, which AnsibleConfig does not read -
 # see ssh_manager.cr's own note on that), not a CLI flag; --gathering
 # below is this project's own pragmatic addition on top of that, and
 # wins if both are given.
@@ -678,6 +676,21 @@ rescue ex : OptionParser::InvalidOption
 rescue ex : Exception
   puts "Error: #{ex.message}".colorize(:red)
   exit 1
+end
+
+# With no -i, ansible.cfg's `[defaults] inventory` (or the env form,
+# ANSIBLE_INVENTORY) decides the inventory; -i having already won above is
+# the CLI half of ansible's CLI > env > ini order. ansible's `inventory`
+# is a pathlist, but krikri's parser takes one source - a single file is
+# the common case (issue #1478).
+unless inventory_explicit
+  if configured_inventory = Krikri::AnsibleConfig.inventory_sources
+    if configured_source = configured_inventory.first?
+      inventory_file = configured_source
+      inventory_explicit = true
+      Krikri::RunOptions.inventory_sources << configured_source
+    end
+  end
 end
 
 # One code path, two entry points: either (or both) of the env vars and
@@ -1285,7 +1298,7 @@ Krikri::RunOptions.verbosity = verbosity_level
 # ansible-playbook -v opens with its config-file line; -vv and above
 # additionally print the startup banner block (before it) and the two
 # "Skipping callback" lines (after it).
-cfg_path = locate_ansible_config
+cfg_path = Krikri::AnsibleConfig.path
 if verbosity_level >= 2
   print_startup_banner(cfg_path)
 end

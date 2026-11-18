@@ -704,10 +704,12 @@ module Krikri
       # variable supplies either - verified 2.21.6: with only
       # ANSIBLE_REMOTE_USER=root in the environment (issue #1067),
       # `{{ ansible_user }}` and `{{ ansible_ssh_user }}` both render
-      # root, and with no user anywhere both stay undefined. Filled
+      # root, and with no user anywhere both stay undefined. The same
+      # holds for `[defaults] remote_user` in ansible.cfg, which
+      # ConnectionSettings.configured_remote_user also reports. Filled
       # after every variable layer so inventory/play/task/extra-vars
-      # values all outrank it - the exact slot ANSIBLE_REMOTE_USER holds
-      # in ansible's own remote_user resolution (vars before env).
+      # values all outrank it - the exact slot the remote_user setting
+      # holds in ansible's own resolution (vars before config).
       # Withheld from the alias-free snapshots (the
       # include_legacy_ssh_aliases: false rebuilds) like the synthesized
       # aliases themselves: ansible's fill is the same task-arg-only
