@@ -133,11 +133,13 @@ module Krikri
       current_policy = extract(original, "SELINUXTYPE")
 
       changed = false
+      config_changed = false
       messages = [] of String
 
       if state && state != current_state
         messages << "state #{current_state.inspect} -> #{state}"
         changed = true
+        config_changed = true
         if @check_mode
           # predict only
         else
@@ -159,9 +161,43 @@ module Krikri
         end
         messages << "policy #{current_policy.inspect} -> #{policy}"
         changed = true
+        config_changed = true
       end
 
-      if changed && !@check_mode
+      # selinux.py:290-324's runtime-state block, whose warnings are what
+      # a krikri run was missing on hosts with SELinux ENABLED at
+      # runtime: disabling drops the runtime to permissive for the rest
+      # of this boot (warned, and the flip itself only outside check
+      # mode), an already-permissive runtime only warns, and enabling/
+      # permissive reaches the kernel immediately - each reporting
+      # reboot_required and flipping `changed` exactly as real does. The
+      # runtime-disabled half (below) warns that the next boot applies
+      # it.
+      warnings = [] of String
+      reboot_required = false
+      if state != runtime_state
+        if runtime_enabled
+          if state == "disabled"
+            if runtime_state != "permissive"
+              set_runtime_state(permissive: true, enforce_path: enforce_path) unless @check_mode
+              warnings << "SELinux state temporarily changed from '#{runtime_state}' to 'permissive'. State change will take effect next reboot."
+              changed = true
+            else
+              warnings << "SELinux state change will take effect next reboot"
+            end
+            reboot_required = true
+          else
+            set_runtime_state(permissive: state == "permissive", enforce_path: enforce_path) unless @check_mode
+            messages << "SELinux state changed from '#{runtime_state}' to '#{state}'"
+            changed = true
+          end
+        else
+          warnings << "Reboot is required to set SELinux state to '#{state}'"
+          reboot_required = true
+        end
+      end
+
+      if config_changed && !@check_mode
         File.write(config_path, lines.join("\n"))
       end
 
@@ -169,23 +205,12 @@ module Krikri
       msg += " (check mode)" if @check_mode && changed
 
       result = PluginResult.new(changed: changed, failed: false, msg: msg)
-      if state != runtime_state && !runtime_enabled
-        # selinux.py:322-324's runtime-disabled branch: krikri applies the
-        # config write the module also applies, but with the runtime off
-        # the state reaches the kernel only on the next boot, which the
-        # module surfaces as module.warn(...) + reboot_required=true -
-        # check mode included (that branch has no check_mode guard), and
-        # without flipping `changed` on its own. The runtime-ENABLED
-        # branches around it (setenforce / temporary-permissive-then-
-        # reboot) are deliberately left un-implemented.
-        existing = result.extra["warnings"]?.try(&.as_a?) || [] of JSON::Any
-        result.extra["warnings"] = JSON::Any.new(existing + [JSON::Any.new("Reboot is required to set SELinux state to '#{state}'")])
-        result.extra["reboot_required"] = JSON::Any.new(true)
-      else
-        # Every exit_json carries reboot_required, false whenever the
-        # disabled branches didn't fire.
-        result.extra["reboot_required"] = JSON::Any.new(false)
+      unless warnings.empty?
+        result.extra["warnings"] = JSON::Any.new(warnings.map { |warning| JSON::Any.new(warning) })
       end
+      # Every exit_json carries reboot_required, false whenever none of
+      # the branches above fired.
+      result.extra["reboot_required"] = JSON::Any.new(reboot_required)
       result
     end
 
@@ -222,6 +247,16 @@ module Krikri
       rescue
         false
       end
+    end
+
+    # selinux.py:181-190's set_state: security_setenforce(1) for
+    # enforcing, (0) for permissive - the same boolean the kernel flag
+    # file holds, so writing it is the binding-free equivalent. Real
+    # calls it only outside check mode and ignores its return value.
+    private def set_runtime_state(permissive : Bool, enforce_path : String) : Nil
+      File.write(enforce_path, permissive ? "0" : "1")
+    rescue
+      # The C binding's failure is not inspected by real either.
     end
 
     private def extract(content : String, key : String) : String

@@ -130,6 +130,90 @@ describe "selinux plugin runtime-state warning" do
     result["changed"].as_bool.must_equal(false)
   end
 
+  # Issue #1520's check-phase shape: the role's cold run dropped the
+  # runtime to permissive but the host was never rebooted, so its check
+  # run sees SELINUX=disabled in the config beside a PERMISSIVE runtime.
+  # Real warns that the next boot is what applies it (its check_ansible
+  # output carries that [WARNING] line); krikri treated the runtime-
+  # enabled half of the block as unimplemented and printed nothing.
+  it "warns that the next reboot applies it when a disabled runtime is permissive (issue #1520)" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
+    scratch = PluginSpecHelper.tmp_path("selinux-runtime-perm-disabled")
+    Dir.mkdir_p(scratch)
+
+    result = run_selinux(scratch, "SELINUX=disabled\nSELINUXTYPE=targeted\n",
+      {"state" => "disabled", "_ansible_check_mode" => "true"}, enforce_content: "0\n")
+
+    warnings = result["warnings"]?.try(&.as_a?) || [] of JSON::Any
+    warnings.map(&.as_s).must_equal(["SELinux state change will take effect next reboot"])
+    result["reboot_required"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  # The cold-phase counterpart of the same block: an enforcing runtime
+  # is dropped to permissive for the rest of the boot, which real
+  # reports as changed (the runtime changed, even though the config file
+  # already says disabled) plus its own warning. Check mode predicts it
+  # and must leave the flag file alone.
+  it "predicts the temporary permissive drop on an enforcing runtime in check mode" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
+    scratch = PluginSpecHelper.tmp_path("selinux-runtime-enf-disabled-check")
+    Dir.mkdir_p(scratch)
+
+    result = run_selinux(scratch, "SELINUX=disabled\nSELINUXTYPE=targeted\n",
+      {"state" => "disabled", "_ansible_check_mode" => "true"}, enforce_content: "1\n")
+
+    warnings = result["warnings"]?.try(&.as_a?) || [] of JSON::Any
+    warnings.map(&.as_s).must_equal(["SELinux state temporarily changed from 'enforcing' to 'permissive'. State change will take effect next reboot."])
+    result["reboot_required"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.read(File.join(scratch, "enforce")).must_equal("1\n")
+  end
+
+  it "drops an enforcing runtime to permissive when not in check mode" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
+    scratch = PluginSpecHelper.tmp_path("selinux-runtime-enf-disabled-real")
+    Dir.mkdir_p(scratch)
+
+    result = run_selinux(scratch, "SELINUX=disabled\nSELINUXTYPE=targeted\n",
+      {"state" => "disabled"}, enforce_content: "1\n")
+
+    result["reboot_required"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.read(File.join(scratch, "enforce")).must_equal("0")
+  end
+
+  # Both directions of the setenforce path: real applies the requested
+  # runtime state immediately and reports changed on every run whose
+  # runtime differs (selinux.py skips the write in check mode only).
+  it "flips a permissive runtime to enforcing and reports changed" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
+    scratch = PluginSpecHelper.tmp_path("selinux-runtime-set-enforcing")
+    Dir.mkdir_p(scratch)
+
+    result = run_selinux(scratch, "SELINUX=enforcing\nSELINUXTYPE=targeted\n",
+      {"state" => "enforcing", "policy" => "targeted"}, enforce_content: "0\n")
+
+    result["warnings"]?.must_be_nil
+    result["reboot_required"].as_bool.must_equal(false)
+    result["changed"].as_bool.must_equal(true)
+    File.read(File.join(scratch, "enforce")).must_equal("1")
+  end
+
+  it "keeps a permissive runtime untouched in check mode while reporting the change" do
+    skip "host cannot import the selinux bindings, so the gate fails first" unless selinux_bindings_importable?
+    scratch = PluginSpecHelper.tmp_path("selinux-runtime-set-enforcing-check")
+    Dir.mkdir_p(scratch)
+
+    result = run_selinux(scratch, "SELINUX=enforcing\nSELINUXTYPE=targeted\n",
+      {"state" => "enforcing", "policy" => "targeted", "_ansible_check_mode" => "true"}, enforce_content: "0\n")
+
+    result["warnings"]?.must_be_nil
+    result["reboot_required"].as_bool.must_equal(false)
+    result["changed"].as_bool.must_equal(true)
+    File.read(File.join(scratch, "enforce")).must_equal("0\n")
+  end
+
   # ansible.posix.selinux's `configfile` (aliases conf/file) picks the
   # file every check and rewrite uses. Ignoring it made a `configfile:
   # jssvzf` task fall through to /etc/selinux/config and fail with the
