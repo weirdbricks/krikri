@@ -95,9 +95,12 @@ module Krikri
         # resolves the depending role's module names, so both ride the
         # same registry the filter/test/library consumers already read.
         # connection_plugins/ is one of those subdirs too - Role.load puts
-        # it on the connection loader for the whole run (issue #1457).
+        # it on the connection loader for the whole run (issue #1457) -
+        # and so is callback_plugins/, which decides whether a callback
+        # named in ANSIBLE_CALLBACKS_ENABLED resolves to a role's own
+        # plugin (issue #1473).
         {"filter_plugins", "test_plugins", "library", "lookup_plugins",
-         "action_plugins", "connection_plugins"}.each do |subdir|
+         "action_plugins", "connection_plugins", "callback_plugins"}.each do |subdir|
           dir = File.join(role_path, subdir)
           next unless Dir.exists?(dir)
           roots = @@loaded_role_plugin_roots[subdir] ||= [] of String
