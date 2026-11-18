@@ -1476,19 +1476,24 @@ module Krikri
 
     # The connection-options fingerprint a ControlMaster socket (and a
     # resident daemon, which owns one) is keyed on: identity file, ssh
-    # extra args, whether a password is in play, and the ssh binary itself
+    # extra args, whether a password is in play, the ssh binary itself
     # (ansible_ssh_executable: two differently-wrapped clients are two
-    # different connection paths). Real
-    # ansible-playbook hashes its ssh connection options into its own
-    # ControlPath for the same reason: two tasks connecting to the same
+    # different connection paths), and the transport options the
+    # inventory cannot see - `[ssh_connection] ssh_args` (or
+    # ANSIBLE_SSH_ARGS) and the CLI's --ssh-common-args/--ssh-extra-args.
+    # Real ansible-playbook hashes its ssh connection options into its own
+    # ControlPath for the same reason: two runs connecting to the same
     # (host, user, port) with different options must not silently share
-    # one authenticated master - a task-level `-o BatchMode=yes` or a
-    # different private key would otherwise be swallowed by a socket
-    # established under the previous task's options.
+    # one authenticated master - a task-level `-o BatchMode=yes`, a
+    # different private key, or a whole-run `-o ProxyCommand=false`
+    # (issue #1543) would otherwise be swallowed by a socket established
+    # under other options, and the mux would answer for a transport that
+    # was never dialed.
     def self.connection_sig(identity_file : String?, extra_args : Array(String), password : String?, ssh_executable : String? = nil) : String
-      return "" if identity_file.nil? && extra_args.empty? && password.nil? && ssh_executable.nil?
+      global_args = configured_ssh_args
+      return "" if identity_file.nil? && extra_args.empty? && password.nil? && ssh_executable.nil? && global_args.empty?
       digest = OpenSSL::Digest.new("SHA256")
-      digest.update("#{identity_file}\0#{extra_args.join('\u{1}')}\0#{password ? "1" : "0"}\0#{ssh_executable}")
+      digest.update("#{identity_file}\0#{extra_args.join('\u{1}')}\0#{password ? "1" : "0"}\0#{ssh_executable}\0#{global_args.join('\u{1}')}")
       digest.final.hexstring[0, 16]
     end
 
@@ -1544,12 +1549,20 @@ module Krikri
 
     private def self.identity_args(identity_file : String?) : Array(String)
       base = identity_file ? ["-i", identity_file] : [] of String
-      # ansible puts the configured ssh_args first, then ssh_common_args /
-      # ssh_extra_args (ssh.py's _build_command). krikri's own connection
-      # options are built independently, so a project that sets
-      # `[ssh_connection] ssh_args` gets those args added on top
-      # (issue #1478: they were dropped entirely).
-      base + ConnectionSettings.split_ssh_args(AnsibleConfig.ssh_args) + CliOptions.extra_ssh_args
+      base + configured_ssh_args
+    end
+
+    # The ssh options that come from outside the inventory: the project's
+    # `[ssh_connection] ssh_args` (ansible puts them first, before
+    # ssh_common_args/ssh_extra_args - ssh.py's _build_command) and then
+    # the CLI's --ssh-common-args/--ssh-extra-args. krikri's own
+    # connection options are built independently, so this is where a
+    # project that sets ssh_args gets those args added on top (issue
+    # #1478: they were dropped entirely). One definition because the
+    # ControlMaster signature (see #connection_sig) must fingerprint
+    # exactly the options the argv carries (issue #1543).
+    private def self.configured_ssh_args : Array(String)
+      ConnectionSettings.split_ssh_args(AnsibleConfig.ssh_args) + CliOptions.extra_ssh_args
     end
 
     # Same as identity_args, but as a string fragment for rsync's `-e`
@@ -1558,8 +1571,7 @@ module Krikri
     private def self.identity_ssh_opt(identity_file : String?) : String
       parts = [] of String
       parts << " -i #{shell_quote(identity_file)}" if identity_file
-      ConnectionSettings.split_ssh_args(AnsibleConfig.ssh_args).each { |arg| parts << " #{shell_quote(arg)}" }
-      CliOptions.extra_ssh_args.each { |arg| parts << " #{shell_quote(arg)}" }
+      configured_ssh_args.each { |arg| parts << " #{shell_quote(arg)}" }
       parts.join
     end
 

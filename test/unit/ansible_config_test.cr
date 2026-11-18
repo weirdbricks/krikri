@@ -102,6 +102,32 @@ describe "ansible.cfg reading" do
     end
   end
 
+  # Issue #1543: ssh_args decides how the client dials, so a warm
+  # ControlMaster must not answer for a run whose args differ. krikri's
+  # sockets outlive the process on purpose (a second run rides the first
+  # one's master), and ansible hashes its own ssh options into the
+  # ControlPath for exactly this reason: live, a host reached with no
+  # ssh_args and then re-run under `ssh_args = -o ProxyCommand=false` is
+  # UNREACHABLE for ansible-playbook but was `ok=1` here, the mux reusing
+  # the earlier master instead of dialing the broken transport.
+  it "keys the connection signature on the configured ssh args" do
+    proxy_off = ""
+    with_ansible_cfg("[ssh_connection]\nssh_args = -o ProxyCommand=false\n") do
+      proxy_off = Krikri::SSHManager.connection_sig(nil, [] of String, nil)
+      proxy_off.wont_equal("")
+      # Same options twice: the same socket, no gratuitous reconnects.
+      Krikri::SSHManager.connection_sig(nil, [] of String, nil).must_equal(proxy_off)
+
+      # The env form of the same setting is part of the fingerprint too.
+      ENV["ANSIBLE_SSH_ARGS"] = "-o ConnectTimeout=9"
+      Krikri::SSHManager.connection_sig(nil, [] of String, nil).wont_equal(proxy_off)
+    end
+
+    with_ansible_cfg("[ssh_connection]\nssh_args = -o ConnectTimeout=7\n") do
+      Krikri::SSHManager.connection_sig(nil, [] of String, nil).wont_equal(proxy_off)
+    end
+  end
+
   # DEFAULT_FORKS is the setting behind the fork count: the ini spelling
   # is what ansible reads by default and ANSIBLE_FORKS outranks it.
   it "reads [defaults] forks as DEFAULT_FORKS, below a non-empty ANSIBLE_FORKS" do
