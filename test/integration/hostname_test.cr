@@ -47,6 +47,12 @@ describe "hostname plugin" do
     result["msg"]?.must_equal(nil)
     result["name"].as_s.must_equal(target)
     result["diff"].as_h.keys.must_equal(["before", "after"])
+    # Ansible's diff holds two plain strings the diff callback unifies
+    # into `-hostname = old` / `+hostname = new`, not a facts map
+    # (live-verified vs 2.21.6).
+    result["diff"]["after"].as_s.must_equal("hostname = #{target}\n")
+    result["diff"]["before"].as_s.starts_with?("hostname = ").must_equal(true)
+    result["diff"]["before"].as_s.ends_with?("\n").must_equal(true)
     result["ansible_facts"]["ansible_hostname"].as_s.must_equal(target)
     result["ansible_facts"]["ansible_nodename"].as_s.must_equal(target)
     # Live hostname is untouched in check_mode.
