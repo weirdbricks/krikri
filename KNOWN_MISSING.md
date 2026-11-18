@@ -524,6 +524,16 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   that cannot be is a `Templar`: `self._templar` stays `None`, so a plugin that templates through it
   fails instead of resolving (ansible-core refuses to render strings it did not mark itself, so a
   stand-in would silently return unrendered text).
+- **Custom `vars_plugins/` plugins run once, at inventory-parse time** (`PythonVarsRunner`): legacy
+  `.py` files under the playbook-adjacent `vars_plugins/`, the `ANSIBLE_VARS_PLUGINS` list (it
+  REPLACES the defaults, and `~` is expanded) or `~/.ansible/plugins/vars` +
+  `/usr/share/ansible/plugins/vars` have their `VarsModule.get_vars(loader, path, entities)` called
+  with ansible's own `Host`/`Group` objects and ansible's per-host precedence (a plugin's vars beat
+  inline inventory vars and group_vars-file values; a host_vars-file value beats the plugin).
+  `REQUIRES_ENABLED` plugins run only when named by `ANSIBLE_VARS_ENABLED` (default
+  `host_group_vars`). Deliberate limits: role-adjacent `vars_plugins/` are not scanned (roles load
+  after the inventory), and a plugin whose `get_vars()` raises is warned about with its vars dropped
+  instead of aborting the run the way ansible does.
 - **Arbitrary-Python-module support is scoped to role-private `library/*.py` sources** (plus the
   playbook-adjacent `library/`): a module with a resolvable source RUNS on the target with the
   target's own python3 through the py_module plugin. Still cut: a module reference with NO library

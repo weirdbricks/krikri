@@ -5,6 +5,7 @@ require "./host"
 require "./var_origin"
 require "./inventory_plugins"
 require "./controller_python"
+require "./python_vars_runner"
 
 module Krikri
   # Inventory - represents the complete inventory
@@ -388,6 +389,18 @@ module Krikri
     # the Ansible module) silently lost every playbook-adjacent
     # group_vars var before this parameter existed.
     def self.parse(path : String, playbook_dir : String? = nil) : Inventory
+      inventory = parse_source(path, playbook_dir)
+      # Custom vars plugins run once per top-level parse, after every
+      # source has been merged and group_vars/host_vars applied - the
+      # same shape ansible's VariableManager sees (see PythonVarsRunner).
+      PythonVarsRunner.apply(inventory, path, playbook_dir)
+      inventory
+    end
+
+    # The format dispatch behind #parse, WITHOUT the custom vars plugin
+    # pass: directory parsing calls this per source file so a multi-file
+    # inventory pays for one plugin run, not one per file.
+    private def self.parse_source(path : String, playbook_dir : String? = nil) : Inventory
       # `-i "web1,web2,"` - Ansible's host_list source. The trailing
       # comma is what disambiguates a single-host list from a filename
       # (`-i localhost` is a file; `-i localhost,` is a host list), which
@@ -465,7 +478,7 @@ module Krikri
           next
         end
 
-        merge_inventory(merged, doc ? parse_yaml(source, doc, playbook_dir, merged_map) : parse(source, playbook_dir))
+        merge_inventory(merged, doc ? parse_yaml(source, doc, playbook_dir, merged_map) : parse_source(source, playbook_dir))
       end
 
       deferred_constructed.each do |(source, doc)|
