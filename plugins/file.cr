@@ -1295,21 +1295,48 @@ module Krikri
         return result
       end
 
-      # Remove files, directories, and links (like rm -rf)
-      removed = begin
-        FileUtils.rm_rf(path)
-        true
-      rescue ex
-        @last_error = ex.message
-        false
-      end
-      unless removed
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to remove path",
-          stderr: @last_error || ""
-        )
+      # Ansible's ensure_absent splits by prev_state: a real directory
+      # (symlinks to one included in the unlink branch) goes through
+      # shutil.rmtree and fails with "rmtree failed: <OSError>", every
+      # other entry through os.unlink and fails with "Unlinking failed.".
+      # Crystal's FileUtils.rm_rf rescues every File::Error, so the old
+      # code reported changed while leaving the path untouched when the
+      # connecting user cannot delete it (issue #1485) - a false success
+      # that never converges.
+      if !File.symlink?(path) && Dir.exists?(path)
+        begin
+          FileUtils.rm_r(path)
+        rescue ex : File::Error
+          # No path:/dest: kwarg here, matching Ansible's bare
+          # fail_json(msg=...) - so no add_path_info stat block rides
+          # along either.
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "rmtree failed: #{rmtree_oserror_text(path, ex)}"
+          )
+        end
+      else
+        begin
+          File.delete(path)
+        rescue File::NotFoundError
+          # Ansible passes over a path that vanished between its
+          # lexists check and the unlink, still reporting changed.
+        rescue ex : File::Error
+          # fail_json(path=...) lets add_path_info merge the (still
+          # existing) path's stats; the OSError text never enters the
+          # result (the registered exception stays the placeholder) but
+          # does ride the failure banner after the msg, as 2.21's
+          # fail_json(exception=...) composes it.
+          result = PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Unlinking failed.",
+            path: path
+          )
+          result.extra["_ansible_error_exception"] = JSON::Any.new(oserror_repr(path, ex))
+          return result
+        end
       end
 
       PluginResult.new(
@@ -1318,6 +1345,16 @@ module Krikri
         path: path,
         key_order: ABSENT_KEY_ORDER
       )
+    end
+
+    # shutil.rmtree's OSError text carries a plain (non-bytes) path repr,
+    # unlike os.unlink's b'...' one - live-verified vs ansible-core
+    # 2.21.5: "rmtree failed: [Errno 13] Permission denied: '/path'".
+    private def rmtree_oserror_text(path : String, ex : File::Error) : String
+      failing_path = ex.file || path
+      error = ex.os_error
+      return ex.message || "OSError" unless error
+      "[Errno #{error.value}] #{error.message}: '#{failing_path}'"
     end
 
     # Check if attributes need updating. Uses a raw `lstat` (not

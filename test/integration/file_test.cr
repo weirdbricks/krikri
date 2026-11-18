@@ -669,6 +669,60 @@ describe "file plugin" do
         File.chmod(locked, 0o755)
       end
     end
+
+    # Ansible's ensure_absent fails the task ("Unlinking failed.") when
+    # os.unlink refuses; krikri used to swallow the error through
+    # FileUtils.rm_rf and report changed over an untouched path (issue
+    # #1485), so the play never converged.
+    it "fails with Unlinking failed. when the file cannot be unlinked" do
+      # Root unlinks through a read-only parent, so this needs a real lockout.
+      skip "root unlinks inside a 0555 parent" if PluginSpecHelper.running_as_root?
+
+      locked = tmp_path("unlink-locked")
+      Dir.mkdir_p(locked)
+      path = File.join(locked, "stuck.txt")
+      File.write(path, "x")
+
+      begin
+        File.chmod(locked, 0o555)
+        result = PluginSpecHelper.run("file", {"path" => path, "state" => "absent"})
+
+        result["failed"].as_bool.must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        result["msg"].as_s.must_equal("Unlinking failed.")
+        result["path"].as_s.must_equal(path)
+        # The still-existing path's stats ride along (add_path_info).
+        result["state"].as_s.must_equal("file")
+        File.exists?(path).must_equal(true)
+      ensure
+        File.chmod(locked, 0o755)
+      end
+    end
+
+    # shutil.rmtree's failure text (and its lack of a path: kwarg, hence
+    # no stat block) differs from os.unlink's.
+    it "fails with rmtree failed: when the directory cannot be removed" do
+      skip "root removes inside a 0555 parent" if PluginSpecHelper.running_as_root?
+
+      locked = tmp_path("rmtree-locked")
+      Dir.mkdir_p(locked)
+      path = File.join(locked, "stuckdir")
+      Dir.mkdir_p(path)
+
+      begin
+        File.chmod(locked, 0o555)
+        result = PluginSpecHelper.run("file", {"path" => path, "state" => "absent"})
+
+        result["failed"].as_bool.must_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        result["msg"].as_s.must_equal(
+          "rmtree failed: [Errno 13] Permission denied: '#{path}'")
+        result["path"]?.must_be_nil
+        Dir.exists?(path).must_equal(true)
+      ensure
+        File.chmod(locked, 0o755)
+      end
+    end
   end
 
   describe "owner/group" do
