@@ -102,9 +102,13 @@ describe "connection CLI flags" do
   end
 
   it "accepts --private-key, -T, --ssh-extra-args, --flush-cache, -M and --vault-id" do
+    # --vault-id LABEL@prompt needs a secret on stdin: ansible's prompt
+    # fails on EOF ("EOFError (ctrl-d) on prompt for (foo)") rather than
+    # running with an empty one.
     status, _ = run_with(
       ["--private-key", "/dev/null", "-T", "25", "--ssh-extra-args", "-o LogLevel=ERROR",
-       "--flush-cache", "-M", "/tmp/x", "--vault-id", "foo@prompt"], SHOW_VARS)
+       "--flush-cache", "-M", "/tmp/x", "--vault-id", "foo@prompt"], SHOW_VARS,
+      input: "unused-secret\n")
     status.exit_code.must_equal(0)
   end
 
@@ -134,11 +138,17 @@ describe "connection CLI flags" do
 
   # Ansible's own long aliases (both still listed in ansible-core
   # 2.19.4's --help) - a command line copied from a ansible-playbook
-  # invocation must parse here too.
+  # invocation must parse here too. The password file has to hold a real
+  # secret: ansible also treats an empty vault password file as fatal
+  # ("Invalid vault password was provided from file (...)").
   it "accepts --inventory-file and --vault-pass-file as aliases" do
-    status, output = run_with(["--inventory-file", INVENTORY, "--vault-pass-file", "/dev/null"], SHOW_VARS)
+    password_file = File.tempname("cli-flags-pw")
+    File.write(password_file, "unused-secret\n")
+    status, output = run_with(["--inventory-file", INVENTORY, "--vault-pass-file", password_file], SHOW_VARS)
     status.exit_code.must_equal(0)
     output.must_include("PLAY")
+  ensure
+    File.delete(password_file) if password_file && File.exists?(password_file)
   end
 end
 
