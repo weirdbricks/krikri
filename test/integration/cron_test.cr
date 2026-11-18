@@ -249,6 +249,43 @@ describe "cron plugin" do
     result["msg"].as_s.wont_include("You must specify 'job'")
   end
 
+  it "reports crontab's rc/stdout/stderr when installing the crontab fails" do
+    # cron.py's write() rejects an installation with
+    # fail_json(msg="Failed to install new cronfile: <path>", stderr=err,
+    # stdout=out, rc=rc): the message names only the tmp file, and
+    # crontab's own output rides in the usual command fields, so a
+    # rescue/ignore_errors task can read result.rc and result.stderr
+    # (live-verified against ansible-core 2.21.5).
+    shim_dir = tmp_path("cron-failing-install-bin")
+    Dir.mkdir_p(shim_dir)
+    shim = File.join(shim_dir, "crontab")
+    File.write(shim, <<-'SH'
+      #!/bin/sh
+      case "$1" in
+        -l) exit 0 ;;
+      esac
+      echo '"/tmp/crontabXXXXXXXX":2: bad minute' >&2
+      echo "Invalid crontab file, can't install." >&2
+      exit 1
+      SH
+    )
+    File.chmod(shim, 0o755)
+
+    result = PluginSpecHelper.run("cron", {
+      "name"   => "demo-bad-minute",
+      "minute" => "99",
+      "job"    => "/bin/true",
+      # /usr/bin:/bin after the shim: the binary probe itself runs
+      # through bash and needs coreutils (`tr`/`printf`).
+    }, env: {"PATH" => "#{shim_dir}:/usr/bin:/bin"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(%r{\AFailed to install new cronfile: /tmp/crontab[0-9a-f]{8}\z})
+    result["rc"].as_i.must_equal(1)
+    result["stdout"].as_s.must_equal("")
+    result["stderr"].as_s.must_equal(%("/tmp/crontabXXXXXXXX":2: bad minute\nInvalid crontab file, can't install.\n))
+  end
+
   describe "env: yes" do
     it "writes a NAME=\"value\" line at the top of the file" do
       path = tmp_path("cron-env-create.txt")
