@@ -118,4 +118,50 @@ describe "loop: item whose native-type value is itself unrendered Jinja" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Issue #1516, cchurch.uwsgi: a with_items: entry dict whose `value:` is
+  # `{{ uwsgi_emperor_tyrant | bool }}`, with uwsgi_emperor_tyrant a default
+  # defined as `{{ (uwsgi_install == 'pip') | bool }}`. The filter-chain
+  # branch here evaluated against the RAW vars hash (KrikriJinja's eager
+  # context conversion), so `bool` received the unrendered template text
+  # instead of the value it renders to: it printed a spurious "coerced
+  # invalid value" deprecation and answered False for every install method
+  # (live-verified against ansible-core 2.21.6: `True` for 'pip').
+  it "renders a filter-chain item value through the lazy scope, not the raw template text" do
+    dir = PluginSpecHelper.tmp_path("deep-render-item-filter-chain-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          install: pip
+          tyrant: "{{ (install == 'pip') | bool }}"
+        tasks:
+          - name: loop over an entry dict with a filter-chain value
+            ansible.builtin.debug:
+              msg: "{{ item.name }} = {{ item.value }}"
+            with_items:
+              - name: emperor-tyrant
+                value: "{{ tyrant | bool }}"
+              - name: cap
+                value: "setgid,setuid"
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results[0].msg == "emperor-tyrant = True"
+                - result.results[1].msg == "cap = setgid,setuid"
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("All assertions passed")
+    output.to_s.includes?("bool` filter coerced invalid value").must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end

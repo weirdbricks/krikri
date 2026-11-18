@@ -2868,6 +2868,26 @@ module Krikri
       end
     end
 
+    # Emits the INJECT_FACTS_AS_VARS deprecation for every top-level fact an
+    # expression MENTIONS, before the engine evaluates it. jinja2 compiles
+    # every name a template loads into a `resolve()` call at the frame's
+    # start, so a fact in an arm `and`/`or` short-circuits, or one the
+    # expression's result never depends on, is still READ - and real prints
+    # its block (issue #1225, the when:-clause half; cchurch.uwsgi's
+    # `set_fact` values `uwsgi_install != 'pkg' and (... ansible_os_family
+    # ...)` print theirs even though `uwsgi_install` is 'pkg', issue #1516).
+    # krikri-jinja resolves names lazily, so those reads are made here
+    # instead, in appearance order; the per-operation record collapses them
+    # to the single block real prints for the same value, and a read whose
+    # Origin cannot be placed stays silent without spending it.
+    def self.emit_expression_fact_deprecations(expr : KrikriJinja::Nodes::ExprNode, vars : Hash(String, JSON::Any)) : Nil
+      return if VariableSubstitutor::JinjaVarResolver.materializing_vars?
+      ConditionalEvaluator.referenced_names_in(expr).each do |name|
+        next unless top_level_fact_name?(name, vars)
+        emit_fact_deprecation(fact_read_origin(name))
+      end
+    end
+
     # INJECT_FACTS_AS_VARS readings captured while a task's `vars:` values
     # render eagerly at vars-context build (TaskExecutor#render_task_vars):
     # ansible-core templates those values LAZILY, at whichever render
