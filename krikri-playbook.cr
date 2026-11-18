@@ -51,24 +51,53 @@ def locate_ansible_config : String?
   nil
 end
 
+# The host-pattern terms of *pattern* that match no inventory host, named
+# the way ansible-core names them in "[WARNING]: Could not match supplied
+# host pattern, ignoring: <term>". Two details of manager.py's
+# _evaluate_patterns are load-bearing here, both live-verified against
+# 2.21.6:
+#
+# - A term is matched and reported WITHOUT its `&`/`!` sigil
+#   (_match_one_pattern strips it first), which is the whole point of the
+#   warning: `--limit 'be-1:!nope'` warns about `nope`, so a typo in an
+#   excluded group name is visible instead of silently selecting too many
+#   hosts.
+# - order_patterns visits every regular term, then the `&` intersections,
+#   then the `!` exclusions regardless of written order, so
+#   `all:!nope:&nosuch` warns about nosuch before nope.
+#
+# 'all' and 'ungrouped' always resolve to a group (even an empty one), so
+# they never warn.
+def unmatched_pattern_terms(inventory : Krikri::Inventory, pattern : String) : Array(String)
+  regular = [] of String
+  intersections = [] of String
+  exclusions = [] of String
+  pattern.split(/[,:]/).map(&.strip).reject(&.empty?).each do |token|
+    case token[0]
+    when '!' then exclusions << token[1..]
+    when '&' then intersections << token[1..]
+    else          regular << token
+    end
+  end
+
+  (regular + intersections + exclusions).select do |term|
+    next false if term.empty?
+    next false if term == "all" || term == "ungrouped"
+    inventory.get_hosts(term).empty?
+  end
+end
+
 # ansible-playbook warns once per unmatched host-pattern token in a
-# play's `hosts:` - "[WARNING]: Could not match supplied host pattern,
-# ignoring: <token>" - in execution AND in every listing mode. Verified
-# against 2.19.11: the warning fires for named patterns that match no
-# host ('a', 'web', 'nosuch2' split on , and :), never for 'all',
-# 'ungrouped' or the ! / & restricted forms. Emitted through ResultDisplay,
-# not a raw STDERR.puts, because Ansible's Display dedupes identical
-# warning lines across the whole run: the same token warned by a lookup
-# and by a play's hosts: field prints once.
+# play's `hosts:` - in execution AND in every listing mode (verified
+# against 2.21.6). Emitted through ResultDisplay, not a raw STDERR.puts,
+# because Ansible's Display dedupes identical warning lines across the
+# whole run: the same token warned by a lookup and by a play's hosts:
+# field prints once.
 def warn_unmatched_play_patterns(inventory : Krikri::Inventory, play : Krikri::Play, warned : Set(String)) : Nil
   hosts_field = play.hosts
   pattern = hosts_field.is_a?(Array) ? hosts_field.join(":") : hosts_field
-  pattern_tokens = pattern.split(/[,:]/).map(&.strip).reject(&.empty?)
-  pattern_tokens.each do |token|
-    next if token.starts_with?('!') || token.starts_with?('&')
-    next if token == "all" || token == "ungrouped"
-    next unless inventory.get_hosts(token).empty?
-    message = "Could not match supplied host pattern, ignoring: #{token}"
+  unmatched_pattern_terms(inventory, pattern).each do |term|
+    message = "Could not match supplied host pattern, ignoring: #{term}"
     next unless warned.add?(message)
     Krikri::ResultDisplay.emit_display_warning(message)
   end
@@ -82,10 +111,8 @@ end
 # (--list-hosts/--list-tasks/--list-tags/--syntax-check) abort the same way,
 # before any play-pattern warning or listing line.
 def limit_host_names(inventory : Krikri::Inventory, limit_hosts : String) : Set(String)
-  limit_hosts.split(/[,:]/).map(&.strip).reject(&.empty?).each do |token|
-    next if token.starts_with?('!') || token.starts_with?('&')
-    next unless inventory.get_hosts(token).empty?
-    Krikri::ResultDisplay.emit_display_warning("Could not match supplied host pattern, ignoring: #{token}")
+  unmatched_pattern_terms(inventory, limit_hosts).each do |term|
+    Krikri::ResultDisplay.emit_display_warning("Could not match supplied host pattern, ignoring: #{term}")
   end
 
   limited = inventory.get_hosts(limit_hosts)
