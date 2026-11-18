@@ -4488,6 +4488,15 @@ module Krikri
       # (mrlesmithjr.lsi-megaraid).
       legacy_key_first = false
       module_from_directive = false
+      # An action:/local_action: directive ANYWHERE in the task is resolved
+      # before ModuleArgsParser's key walk, so it is always the
+      # already-chosen action - no other key can become the type-checked
+      # action itself. ansibl3.ubuntu_sunjava writes `sudo: yes` ABOVE
+      # `action: apt_repository ...`; real 2.21.6 reports the conflict
+      # ("conflicting action statements: apt_repository, sudo"), not the
+      # `sudo: yes` bool type error a directive-less task would get.
+      action_directive_present = !directive(task_hash, "action").nil? ||
+                                 !directive(task_hash, "local_action").nil?
 
       task_hash.each do |key, value|
         key_str = key.to_s
@@ -4496,8 +4505,10 @@ module Krikri
           # attributes, so one written BEFORE the real module key is taken
           # as the action itself and type-checked first: `sudo: yes` above
           # `apt:` dies "unexpected parameter type in action: <class
-          # 'bool'>", not the conflict (sprylab.tomcat-ubuntu).
-          if module_name.nil? && legacy_conflict_key.nil? &&
+          # 'bool'>", not the conflict (sprylab.tomcat-ubuntu) - unless a
+          # directive already chose the action (see
+          # action_directive_present above).
+          if !action_directive_present && module_name.nil? && legacy_conflict_key.nil? &&
              (class_name = unexpected_meta_param_type(value))
             raise MetaActionTypeError.new(origin_error_render(
               "unexpected parameter type in action: <class '#{class_name}'>",
