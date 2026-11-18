@@ -3187,7 +3187,29 @@ module Krikri
       source = ConnectionPluginLoader.find_source(raw, playbook_dir)
       return nil unless source
 
-      ConnectionPluginLoader.local_source?(source) ? "local" : "ssh"
+      transport = ConnectionPluginLoader.local_source?(source) ? "local" : "ssh"
+      warn_unexecuted_connection_plugin(raw, transport)
+      transport
+    end
+
+    # Ansible loads the plugin FILE and then runs its connection
+    # lifecycle; this engine substitutes the transport that class implies
+    # and never calls exec_command/put_file/fetch_file. Doing that
+    # silently is what issue #1541 reported: an SSM-style plugin with
+    # `ansible_host=<instance id>` made krikri ssh to the instance id and
+    # report UNREACHABLE, with nothing saying the plugin was never used.
+    # One line per plugin name, like the strategy and callback plugin
+    # warnings - resolution runs per host and per task, so without the
+    # dedupe this would repeat dozens of times per play.
+    CONNECTION_PLUGIN_NOT_EXECUTED_MUTEX = Mutex.new
+    @@connection_plugins_not_executed = Set(String).new
+
+    private def self.warn_unexecuted_connection_plugin(name : String, transport : String) : Nil
+      CONNECTION_PLUGIN_NOT_EXECUTED_MUTEX.synchronize do
+        next if @@connection_plugins_not_executed.includes?(name)
+        @@connection_plugins_not_executed << name
+        STDERR.puts "[WARNING]: Connection plugin '#{name}' cannot be executed by krikri-playbook and is ignored; tasks run over the #{transport} connection instead."
+      end
     end
 
     # The playbook directory the executor's vars_context carries as the

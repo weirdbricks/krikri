@@ -348,6 +348,7 @@ describe "custom Python connection plugins on Ansible's loader paths" do
       status.success?.must_equal(true, output)
       output.must_include("ok: [host1]", output)
       output.must_include("ok=1", output)
+      output.must_include("tasks run over the local connection instead", output)
     end
   end
 
@@ -366,5 +367,20 @@ describe "custom Python connection plugins on Ansible's loader paths" do
     output.wont_include("was not found", output)
     status.success?.must_equal(false, output)
     output.must_include("UNREACHABLE", output)
+  end
+
+  # Issue #1541: real ansible calls the plugin's own exec_command/put_file,
+  # so a plugin's side effects and any tunnelling it does are part of the
+  # run; this engine never executes them, and substituting a transport
+  # quietly is how an SSM-style plugin ended up ssh'ing to its instance id.
+  # One line per plugin name: resolution re-runs per host, task and eager
+  # upload, so an undeduped warning would repeat dozens of times a play.
+  it "warns once that a resolved custom connection plugin is not executed" do
+    _status, output = run_custom_connection_play(plugins_next_to_playbook: false,
+      plugin: ssh_wrapper_plugin, plugin_name: "myssh")
+    warning = "[WARNING]: Connection plugin 'myssh' cannot be executed by krikri-playbook and is ignored; " \
+              "tasks run over the ssh connection instead."
+    output.must_include(warning, output)
+    output.scan(warning).size.must_equal(1, output)
   end
 end
