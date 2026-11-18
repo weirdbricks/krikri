@@ -636,6 +636,39 @@ describe "file plugin" do
       result["changed"].as_bool.must_equal(false)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     end
+
+    # Ansible's additional_parameter_handling and ensure_absent both call
+    # get_state(), which treats EACCES as absent-with-warning, so a
+    # state=absent task whose path sits behind an unreadable ancestor is
+    # ok/changed=false for real - never "Unable to get file info: ...
+    # Permission denied" (live-verified vs ansible-core 2.21.6).
+    it "treats a path behind an unreadable ancestor as absent (2.21 warning, no failure)" do
+      # Root reads through mode 0000, so the EACCES this spec pins never
+      # happens (CI runs the suite as root inside its container).
+      skip "root reads through the 0000 ancestor this spec needs" if PluginSpecHelper.running_as_root?
+
+      locked = tmp_path("absent-locked-ancestor")
+      Dir.mkdir_p(locked)
+      child = File.join(locked, "root-owned.txt")
+      File.write(child, "x")
+
+      begin
+        File.chmod(locked, 0o000)
+
+        [nil, "true"].each do |check_mode|
+          params = {"path" => child, "state" => "absent"}
+          params["_ansible_check_mode"] = check_mode if check_mode
+          result = PluginSpecHelper.run("file", params)
+
+          falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+          result["changed"].as_bool.must_equal(false)
+          result["warnings"].as_a.map(&.as_s).must_include(
+            "Insufficient permissions to access #{child}. Treating as absent")
+        end
+      ensure
+        File.chmod(locked, 0o755)
+      end
+    end
   end
 
   describe "owner/group" do
