@@ -426,7 +426,7 @@ module Krikri
       # (and the stat block add_path_info merges onto it) names the
       # TARGET - the bare msg plus the errno text in the display-only
       # `exception` key is exactly the shape real emits (issue #603).
-      target = attribute_failure_target(path)
+      target = follow_resolved_path(path)
       result = PluginResult.new(
         changed: false,
         failed: true,
@@ -447,16 +447,17 @@ module Krikri
         changed: false,
         failed: true,
         msg: ex.message || "Unknown error",
-        path: attribute_failure_target(path)
+        path: follow_resolved_path(path)
       )
     end
 
-    # The path the failure result and its exception text name: only when
+    # The path Ansible's load_file_common_arguments resolves to: only when
     # follow: true (the default) AND the dest itself is a symlink does it
     # resolve to the link's target (a broken link keeps the dest itself,
     # like Ansible failing on the link). A regular dest under a symlinked
     # parent directory keeps its own path, matching Ansible's file module.
-    private def attribute_failure_target(path : String) : String
+    # A failure result names this path, and so does a directory's diff.
+    private def follow_resolved_path(path : String) : String
       return path unless follow_symlinks? && File.symlink?(path)
       File.realpath(path)
     rescue File::Error
@@ -491,10 +492,18 @@ module Krikri
           changed = recursive_attributes_need_update?(path)
         end
 
+        # file.py's ensure_directory seeds initial_diff() before applying
+        # anything and lets each set_*_if_different setter add its own
+        # before/after pair as it runs, so the diff is built while the
+        # attributes are still stale. A follow:-resolved dest symlink is
+        # what real diffs (its `path` is reassigned to the target).
+        diff_data = changed ? get_attribute_diff(follow_resolved_path(path)) : nil
+
         if @check_mode
           result = PluginResult.new(
             changed: changed,
             failed: false,
+            diff: diff_data,
             path: path,
             key_order: SUCCESS_KEY_ORDER
           )
@@ -517,24 +526,48 @@ module Krikri
           changed: changed,
           failed: false,
           msg: "",
+          diff: diff_data,
           path: path,
           key_order: SUCCESS_KEY_ORDER
         )
       end
+
+      # Ansible's ensure_directory builds initial_diff(path, 'directory',
+      # prev_state) before either of its branches, and get_state() is what
+      # supplies prev_state.
+      prev_state = path_state(path)
 
       if @check_mode
         return PluginResult.new(
           changed: true,
           failed: false,
           msg: "",
+          # The check-mode return happens right after that seeding, so only
+          # the state transition diffs - no mode:/owner: entry even when
+          # they were requested (issue #1482).
+          diff: directory_transition_diff(path, prev_state),
           key_order: SUCCESS_KEY_ORDER
         )
       end
 
-      create_directory(path)
+      create_directory(path, prev_state)
     end
 
-    private def create_directory(path : String) : PluginResult
+    # file.py's initial_diff(): both sides seeded with the path, plus the
+    # state pair ONLY when the requested state differs from prev_state. A
+    # directory that would be created diffs absent -> directory; nothing
+    # else, because ensure_directory's check-mode return comes first.
+    private def directory_transition_diff(path : String, prev_state : String) : JSON::Any?
+      return nil unless @diff_mode
+      skeleton = attribute_diff_skeleton(path)
+      before = skeleton[:before]
+      after = skeleton[:after]
+      before["state"] = JSON::Any.new(prev_state)
+      after["state"] = JSON::Any.new("directory")
+      generate_attribute_diff(before, after)
+    end
+
+    private def create_directory(path : String, prev_state : String) : PluginResult
       # Create directory (like mkdir -p), applying owner/group/mode to
       # each newly-created path COMPONENT along the way, not just the
       # leaf. Ansible's own file module (ensure_directory) walks
@@ -557,6 +590,7 @@ module Krikri
       create_failure_exception = nil
       create_failure_result = nil
       failing_component = path
+      diff_data : JSON::Any? = nil
       created = begin
         missing_components = [] of String
         cursor = path
@@ -566,8 +600,7 @@ module Krikri
         end
         missing_components.reverse_each do |component|
           failing_component = component
-          Dir.mkdir(component) unless Dir.exists?(component)
-          apply_file_attributes(component, recursive: false)
+          diff_data = create_component(component, path, prev_state, diff_data)
         end
         true
       rescue ex : AttributeSyscallError
@@ -624,9 +657,22 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
+        diff: diff_data,
         path: path,
         key_order: SUCCESS_KEY_ORDER
       )
+    end
+
+    # Create one missing path component and apply its attributes. file.py
+    # diffs each newly created component BEFORE applying them, so the before
+    # side is the umask-derived mode the bare mkdir just produced. The leaf
+    # is created last and its entries are the ones real's diff ends up
+    # carrying, so earlier components keep the diff they were handed.
+    private def create_component(component : String, path : String, prev_state : String, diff_data : JSON::Any?) : JSON::Any?
+      Dir.mkdir(component) unless Dir.exists?(component)
+      diff = component == path ? get_attribute_diff(component, prev_state, "directory") : diff_data
+      apply_file_attributes(component, recursive: false)
+      diff
     end
 
     # Handle state=file
@@ -1048,7 +1094,7 @@ module Krikri
     # Handle state=touch
     private def handle_touch(path : String) : PluginResult
       exists = File.exists?(path)
-      prev_state = touch_prev_state(path)
+      prev_state = path_state(path)
 
       if exists
         # File exists - Ansible's own idempotency here: touching
@@ -2172,11 +2218,12 @@ module Krikri
       System::Group.find_by?(id: gid.to_s).try(&.name) || gid.to_s
     end
 
-    # file.py's get_state() reports the path's own lstat type, and
-    # execute_touch seeds its diff with that as before.state against the
-    # literal "touch" after.state - so a touch on an existing file always
-    # diffs a state transition too, even when no attribute changes.
-    private def touch_prev_state(path : String) : String
+    # file.py's get_state(): the path's own lstat type. Both diff builders
+    # that record a state transition use it - execute_touch against the
+    # literal "touch" after.state (a touch on an existing file always diffs
+    # the transition, even when no attribute changes), and ensure_directory
+    # against "directory".
+    private def path_state(path : String) : String
       info = lstat(path)
       return "absent" unless info
       kind = info.st_mode & LibC::S_IFMT
@@ -2254,7 +2301,7 @@ module Krikri
       parse_touch_timestamp(param, format).to_unix_f
     end
 
-    # Generate attribute diff for an existing file. Ansible's shape comes
+    # Generate attribute diff for an existing path. Ansible's shape comes
     # from two places: file.py's initial_diff() seeds before/after with
     # {"path": ...} unconditionally (every state handler builds its diff
     # that way), and basic.py's set_*_if_different setters each add their
@@ -2265,7 +2312,7 @@ module Krikri
     # also the raw numeric uid/gid, never the resolved name:
     # diff['before']['owner'] = orig_uid (an int) in
     # set_owner_if_different/set_group_if_different.
-    private def get_attribute_diff(path : String, prev_state : String? = nil) : JSON::Any?
+    private def get_attribute_diff(path : String, prev_state : String? = nil, new_state : String = "touch") : JSON::Any?
       return nil unless @diff_mode
       info = lstat(path)
       return nil unless info
@@ -2278,11 +2325,13 @@ module Krikri
       before = skeleton[:before]
       after = skeleton[:after]
 
-      # state=touch's initial_diff always records the transition, since
-      # get_state() never reports "touch" for a path that exists.
+      # initial_diff() records the transition whenever the requested state
+      # differs from prev_state: touch never matches an existing path's
+      # get_state(), and a directory created in this same run transitions
+      # from whatever the path was before to "directory".
       if prev_state
         before["state"] = JSON::Any.new(prev_state)
-        after["state"] = JSON::Any.new("touch")
+        after["state"] = JSON::Any.new(new_state)
       end
 
       # Get current owner

@@ -45,6 +45,70 @@ describe "file plugin" do
       Dir.exists?(path).must_equal(false)
     end
 
+    # file.py's ensure_directory returns straight after initial_diff() in
+    # check mode, so a directory that would be created diffs ONLY the
+    # absent -> directory transition - no mode: entry even though the
+    # task requests one (live-verified vs ansible-core 2.21.5).
+    it "diffs an absent directory's state transition in check mode (issue #1482)" do
+      path = tmp_path("checkmodedir-diff")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0700", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["before"].as_h.keys.must_equal(["path", "state"])
+      result["diff"]["before"]["path"].as_s.must_equal(path)
+      result["diff"]["before"]["state"].as_s.must_equal("absent")
+      result["diff"]["after"].as_h.keys.must_equal(["path", "state"])
+      result["diff"]["after"]["state"].as_s.must_equal("directory")
+    end
+
+    # A real (non-check) creation records each newly created directory's
+    # mode BEFORE the requested attributes are applied, so the diff's
+    # before side is the mode the bare mkdir produced.
+    it "diffs a created directory as absent -> directory with its umask mode (issue #1482)" do
+      path = tmp_path("createddir-diff")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0700", "_ansible_diff" => "true"}, umask: 0o022)
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["before"]["state"].as_s.must_equal("absent")
+      result["diff"]["after"]["state"].as_s.must_equal("directory")
+      result["diff"]["before"]["mode"].as_s.must_equal("0755")
+      result["diff"]["after"]["mode"].as_s.must_equal("0700")
+    end
+
+    it "diffs an existing directory's mode change (issue #1482)" do
+      path = tmp_path("existingdir-diff")
+      Dir.mkdir_p(path)
+      File.chmod(path, 0o755)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0700", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["before"].as_h.keys.must_equal(["path", "mode"])
+      result["diff"]["before"]["mode"].as_s.must_equal("0755")
+      result["diff"]["after"]["mode"].as_s.must_equal("0700")
+    end
+
+    # recursive_set_attributes calls set_fs_attributes_if_different with no
+    # diff argument, so a change carried only by a recursed child leaves the
+    # top-level diff as the bare path pair (which the callback never
+    # renders, having no differing line).
+    it "carries only the path pair when just a recursed child changes (issue #1482)" do
+      path = tmp_path("recursed-child-diff")
+      sub = File.join(path, "sub")
+      Dir.mkdir_p(sub)
+      File.chmod(path, 0o755)
+      File.chmod(sub, 0o755)
+      child = File.join(sub, "f")
+      File.write(child, "x")
+      File.chmod(child, 0o600)
+
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0755", "recurse" => "yes", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      result["diff"]["before"].as_h.keys.must_equal(["path"])
+      result["diff"]["after"].as_h.keys.must_equal(["path"])
+    end
+
     it "warns instead of failing in check mode when owner:/group: name an unknown user/group" do
       # ansible-core 2.19 check mode resolves the names and warns
       # "failed to look up user X. Create user up to this point in real play".
