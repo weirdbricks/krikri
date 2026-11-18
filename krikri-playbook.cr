@@ -1905,7 +1905,13 @@ Krikri::TimingProfile.report
 # ansible-playbook returns 4 whenever a host was unreachable,
 # whether or not other hosts also failed (verified against ansible-core
 # 2.19.4 for all-unreachable, mixed-with-ok, and mixed-with-failed).
-unless unreachable_hosts.empty?
+# The run-scoped unreachable_hosts set cannot answer this on its own: the
+# pre-upload pass adds every host it merely could not reach before any
+# task ran, and an ignore_unreachable: task then books that host ok+
+# ignored. With the flag on every task, ansible (which has no pre-upload
+# pass) exits 0, so the recap stats - the counters ansible's own rc is
+# keyed on - decide here instead (issue #1480).
+if combined_results.any? { |_name, host_stats| (host_stats["unreachable"]? || 0) > 0 }
   exit 4
 end
 

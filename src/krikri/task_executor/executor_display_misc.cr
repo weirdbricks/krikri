@@ -79,6 +79,13 @@ module Krikri
         end
       end
 
+      if task.try(&.ignore_unreachable?) && !Krikri::Oneline.enabled?
+        # Ansible prints a bare "...ignoring" line right after the fatal
+        # UNREACHABLE! line for an ignored unreachable task
+        # (live-verified vs ansible-core 2.21.5, issue #1480).
+        report += "#{"...ignoring".colorize(:red)}\n"
+      end
+
       if print
         print report
       else
