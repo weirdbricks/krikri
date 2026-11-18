@@ -13,7 +13,7 @@ require "../minitest_helper"
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
-private def run_listing(flag : String, inventory : String, yaml : String)
+private def run_listing(flag : String, inventory : String, yaml : String, extra_args : Array(String) = [] of String)
   dir = File.tempname("list-hosts-tags")
   Dir.mkdir_p(dir)
   inv = File.join(dir, "inv.ini")
@@ -22,7 +22,7 @@ private def run_listing(flag : String, inventory : String, yaml : String)
   File.write(playbook, yaml)
 
   stdout_io = IO::Memory.new
-  status = Process.run(BINARY, ["-i", "inv.ini", flag, "pb.yml"],
+  status = Process.run(BINARY, ["-i", "inv.ini"] + extra_args + [flag, "pb.yml"],
     output: stdout_io, error: stdout_io, chdir: dir)
   {status, stdout_io.to_s}
 ensure
@@ -84,6 +84,56 @@ describe "--list-hosts" do
     output.wont_include("PLAY RECAP")
     output.wont_include("KRIKRI")
     output.wont_include("Inventory Warnings")
+  end
+
+  # A real run honors --limit, so the listing must show exactly the hosts
+  # that run would touch - not every host the play pattern matches.
+  it "restricts every play's hosts to --limit" do
+    status, output = run_listing("--list-hosts", INVENTORY, PLAYBOOK, ["--limit", "web1"])
+    status.exit_code.must_equal(0)
+    output.must_equal(<<-OUT + "\n")
+
+      playbook: pb.yml
+
+        play #1 (web): Web play\tTAGS: []
+          pattern: ['web']
+          hosts (1):
+            web1
+
+        play #2 (all): All play\tTAGS: []
+          pattern: ['all']
+          hosts (1):
+            web1
+      OUT
+  end
+
+  it "lists no host for a play the limit leaves empty" do
+    status, output = run_listing("--list-hosts", INVENTORY, PLAYBOOK, ["--limit", "db1"])
+    status.exit_code.must_equal(0)
+    output.must_equal(<<-OUT + "\n")
+
+      playbook: pb.yml
+
+        play #1 (web): Web play\tTAGS: []
+          pattern: ['web']
+          hosts (0):
+
+        play #2 (all): All play\tTAGS: []
+          pattern: ['all']
+          hosts (1):
+            db1
+      OUT
+  end
+
+  # Real aborts a --limit that matches no inventory host before printing any
+  # listing (and before any play-pattern warning), with the same warning and
+  # error a run gives.
+  it "aborts before listing when --limit matches no host" do
+    status, output = run_listing("--list-hosts", INVENTORY, PLAYBOOK, ["--limit", "nosuch"])
+    status.exit_code.must_equal(1)
+    output.must_include("[WARNING]: Could not match supplied host pattern, ignoring: nosuch")
+    output.must_include("[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.")
+    output.wont_include("playbook:")
   end
 end
 
