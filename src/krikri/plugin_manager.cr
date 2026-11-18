@@ -957,6 +957,10 @@ module Krikri
       "ansible_connection", "ansible_host",
       "ansible_ssh_private_key_file", "ansible_private_key_file",
       "ansible_ssh_common_args", "ansible_ssh_extra_args",
+      # A controller-only plugin's dial-out must spawn the same ssh binary
+      # the controller itself would (issue #1483); a path carries no
+      # secret, so shipping it to the remote binary is harmless.
+      "ansible_ssh_executable",
       "playbook_dir", "ansible_pkg_mgr",
       # The interpreter keys the mysql_* plugins' driver gate probes with
       # (mysql_connection.cr): a task pinning ansible_python_interpreter
@@ -1072,7 +1076,7 @@ module Krikri
         true
         SCRIPT
       remote_md5s = Hash(String, String).new
-      list_result = SSHManager.exec_script(connection_host, user, list_script, conn.port, identity_file: identity_file, extra_args: extra_args)
+      list_result = SSHManager.exec_script(connection_host, user, list_script, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
       if list_result[:exit_code] == 75
         raise "Refusing to use plugin staging dir #{staging_base} on #{connection_host}: " \
               "a local user appears to have planted it (foreign-owned or symlinked). " \
@@ -1190,7 +1194,8 @@ module Krikri
           conn.port,
           mode: 0o755,
           identity_file: identity_file,
-          extra_args: extra_args
+          extra_args: extra_args,
+          ssh_executable: conn.ssh_executable
         )
 
         unless rsync_ok
@@ -1208,7 +1213,8 @@ module Krikri
               conn.port,
               mode: nil,
               identity_file: identity_file,
-              extra_args: extra_args
+              extra_args: extra_args,
+              ssh_executable: conn.ssh_executable
             )
           end
         end
@@ -1242,7 +1248,7 @@ module Krikri
           str << "echo " << Shell.single_quote(local_md5s[plugin_name].to_s) << " > " << Shell.single_quote("#{staging_dir}/#{plugin_name}.md5") << "\n"
         end
       end
-      SSHManager.exec_script(connection_host, user, write_script, conn.port, identity_file: identity_file, extra_args: extra_args)
+      SSHManager.exec_script(connection_host, user, write_script, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
 
       plugins_to_upload.each { |name| @@uploaded_plugins[host_key].add(name) }
 
@@ -1670,7 +1676,7 @@ module Krikri
       if ok.nil?
         ok = begin
           r = SSHManager.exec_script(conn.conn_host, conn.user, chown_probe_script(become_user), conn.port,
-            timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options)
+            timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable)
           # Only a refused chown on a user that exists counts; 255 is ssh.
           r[:exit_code] != 1 || !user_exists_remote?(conn, become_user)
         rescue
@@ -1702,7 +1708,7 @@ module Krikri
 
     private def self.user_exists_remote?(conn : ConnectionSettings, user : String) : Bool
       r = SSHManager.exec_script(conn.conn_host, conn.user, "getent passwd #{Shell.quote_arg(user)} >/dev/null", conn.port,
-        timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options)
+        timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable)
       r[:exit_code] == 0
     end
 
@@ -2020,7 +2026,8 @@ module Krikri
         conn.port,
         identity_file: conn.identity_file,
         extra_args: conn.ssh_extra_options,
-        fresh_connection: false
+        fresh_connection: false,
+        ssh_executable: conn.ssh_executable
       )
     end
 
@@ -2196,7 +2203,8 @@ module Krikri
         conn.port,
         timeout: remaining_exec_timeout(started, task_timeout),
         identity_file: conn.identity_file,
-        extra_args: extra_args
+        extra_args: extra_args,
+        ssh_executable: conn.ssh_executable
       )
 
       return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, result)
@@ -2247,7 +2255,8 @@ module Krikri
           conn.port,
           timeout: remaining_exec_timeout(started, task_timeout),
           identity_file: conn.identity_file,
-          extra_args: extra_args
+          extra_args: extra_args,
+          ssh_executable: conn.ssh_executable
         )
         return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, retry_result)
         if become_needed?(become, become_user, conn.user) &&
@@ -2342,7 +2351,8 @@ module Krikri
           become_user: daemon_user,
           become_password: Passwords.become(vars, host),
           extra_args: extra_args,
-          daemon_scope: daemon_scope
+          daemon_scope: daemon_scope,
+          ssh_executable: conn.ssh_executable
         )
       rescue ex : SSHManager::DaemonDispatchUnknownError
         # The request reached the daemon but its response did not come

@@ -276,6 +276,17 @@ describe Krikri::ConnectionSettings do
       Krikri::SSHManager.connection_sig("/k", [] of String, nil)
         .must_equal(Krikri::SSHManager.connection_sig("/k", [] of String, nil))
     end
+
+    # Issue #1483: a different ssh client is a different connection path,
+    # so an existing ControlMaster (and a resident daemon keyed on the
+    # same signature) must not be reused after a task switches it.
+    it "differs when the ssh executable differs" do
+      base = Krikri::SSHManager.connection_sig(nil, [] of String, nil)
+      with_exe = Krikri::SSHManager.connection_sig(nil, [] of String, nil, "/opt/wrap/ssh")
+      base.wont_equal(with_exe)
+      Krikri::SSHManager.connection_sig(nil, [] of String, nil, "/opt/wrap/ssh")
+        .must_equal(Krikri::SSHManager.connection_sig(nil, [] of String, nil, "/opt/wrap/ssh"))
+    end
   end
 
   describe "split_ssh_args" do
@@ -313,6 +324,56 @@ describe Krikri::ConnectionSettings do
     base.fingerprint.wont_equal(with_common.fingerprint)
     base.fingerprint.wont_equal(with_extra.fingerprint)
     with_common.fingerprint.wont_equal(with_extra.fingerprint)
+  end
+
+  # Issue #1483: ansible's ssh plugin spawns whatever
+  # ansible_ssh_executable names (a jump-host wrapper in the reported
+  # case) instead of the `ssh` on PATH, so it is a per-task connection
+  # option like the user/key/args above - not a process-wide default.
+  it "resolves ansible_ssh_executable from the task vars, then the inventory" do
+    previous = ENV["ANSIBLE_SSH_EXECUTABLE"]?
+    ENV.delete("ANSIBLE_SSH_EXECUTABLE")
+    begin
+      host = conn_host("web1", nil, nil,
+        {"ansible_ssh_executable" => jv("/inv/ssh-wrapper")} of String => JSON::Any)
+      Krikri::ConnectionSettings.resolve(host, nil).ssh_executable.must_equal("/inv/ssh-wrapper")
+
+      task_vars = {"ansible_ssh_executable" => jv("/task/ssh-wrapper")} of String => JSON::Any
+      Krikri::ConnectionSettings.resolve(host, task_vars).ssh_executable.must_equal("/task/ssh-wrapper")
+
+      # No variable anywhere leaves ansible's own default (bare `ssh`),
+      # represented as nil so the spawn sites keep using PATH.
+      Krikri::ConnectionSettings.resolve(conn_host("web1"), nil).ssh_executable.must_be_nil
+    ensure
+      ENV["ANSIBLE_SSH_EXECUTABLE"] = previous if previous
+    end
+  end
+
+  it "falls back to ANSIBLE_SSH_EXECUTABLE only when no variable is set" do
+    previous = ENV["ANSIBLE_SSH_EXECUTABLE"]?
+    ENV["ANSIBLE_SSH_EXECUTABLE"] = "/env/ssh-wrapper"
+    begin
+      Krikri::ConnectionSettings.resolve(conn_host("web1"), nil)
+        .ssh_executable.must_equal("/env/ssh-wrapper")
+
+      host = conn_host("web1", nil, nil,
+        {"ansible_ssh_executable" => jv("/inv/ssh-wrapper")} of String => JSON::Any)
+      Krikri::ConnectionSettings.resolve(host, nil).ssh_executable.must_equal("/inv/ssh-wrapper")
+    ensure
+      if previous
+        ENV["ANSIBLE_SSH_EXECUTABLE"] = previous
+      else
+        ENV.delete("ANSIBLE_SSH_EXECUTABLE")
+      end
+    end
+  end
+
+  it "fingerprints differ when the ssh executable differs" do
+    host = conn_host("web1", "invuser", 2222)
+    base = Krikri::ConnectionSettings.resolve(host, nil)
+    with_exe = Krikri::ConnectionSettings.resolve(host,
+      {"ansible_ssh_executable" => jv("/opt/wrapper/ssh")} of String => JSON::Any)
+    base.fingerprint.wont_equal(with_exe.fingerprint)
   end
 end
 

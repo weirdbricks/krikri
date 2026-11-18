@@ -49,6 +49,10 @@ module Krikri
     getter password : String?
     getter common_args : Array(String)
     getter extra_args : Array(String)
+    # The ssh client binary this connection must dial with - ansible's
+    # ssh_executable option (`ansible_ssh_executable`; issue #1483). nil is
+    # that option's own default: plain `ssh` from PATH.
+    getter ssh_executable : String?
 
     # Every variable name that can change the actual SSH connection (or
     # its escalation) for a task. TaskBatcher solos any task whose own
@@ -62,13 +66,15 @@ module Krikri
       "ansible_host", "ansible_ssh_host",
       "ansible_ssh_private_key_file", "ansible_private_key_file",
       "ansible_ssh_common_args", "ansible_ssh_extra_args",
+      "ansible_ssh_executable",
       "ansible_become", "ansible_become_user",
       "ansible_become_password", "ansible_become_pass", "ansible_sudo_pass",
     ]
 
     def initialize(@conn_host : String, @user : String, @port : Int32?,
                    @identity_file : String?, @password : String?,
-                   @common_args : Array(String), @extra_args : Array(String))
+                   @common_args : Array(String), @extra_args : Array(String),
+                   @ssh_executable : String? = nil)
     end
 
     def self.resolve(host : Host, vars : Hash(String, JSON::Any)?) : ConnectionSettings
@@ -105,7 +111,15 @@ module Krikri
       password = Passwords.connection(vars, host)
       common_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_common_args"))
       extra_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_extra_args"))
-      new(conn_host, user, port, identity_file, password, common_args, extra_args)
+      new(conn_host, user, port, identity_file, password, common_args, extra_args,
+        executable_setting(vars, host))
+    end
+
+    # ansible's ssh_executable option. It has no deprecated alias, and its
+    # ANSIBLE_SSH_EXECUTABLE env form sits below every variable
+    # (ConfigManager's vars-before-env order, like the identity file above).
+    private def self.executable_setting(vars : Hash(String, JSON::Any)?, host : Host) : String?
+      tiered_var(vars, host, "ansible_ssh_executable") || configured_ssh_executable
     end
 
     # With no user anywhere in the ladder (no ansible_user var, no
@@ -157,6 +171,10 @@ module Krikri
       ENV["ANSIBLE_PRIVATE_KEY_FILE"]?.presence
     end
 
+    def self.configured_ssh_executable : String?
+      ENV["ANSIBLE_SSH_EXECUTABLE"]?.presence
+    end
+
     # WHY: every connection key is resolved through the SAME two
     # tiers - the task's rendered vars context (task > block > play
     # > ..., already merged into one hash by build_vars_context)
@@ -202,7 +220,8 @@ module Krikri
     # exact same way.
     def fingerprint : String
       [conn_host, user, port.to_s, identity_file.to_s, password.to_s,
-       common_args.join('\u{1}'), extra_args.join('\u{1}')].join('\u{2}')
+       common_args.join('\u{1}'), extra_args.join('\u{1}'),
+       ssh_executable.to_s].join('\u{2}')
     end
 
     # The `-o`-style argv every ssh/scp/rsync invocation for THIS
