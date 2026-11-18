@@ -83,6 +83,24 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(false)
   end
 
+  # issue #1492: real's collection finder caches the FIRST search path
+  # holding `<ns>/<coll>` and reads the plugin files from that copy alone.
+  # A partial earlier copy therefore shadows a complete later one and the
+  # name is unresolvable, however complete the later copy is
+  # (live-verified against ansible-core 2.21.6: a ~/.ansible/collections
+  # amazon.aws holding only plugins/module_utils/ made ansible-playbook
+  # refuse amazon.aws.ec2_key although the dist-packages copy ships it).
+  it "refuses an FQCN whose first installed collection copy lacks the module, though a later copy ships it" do
+    shadow_root = PluginSpecHelper.tmp_path("collection-index-shadow")
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "testns", "shadow", "plugins", "module_utils"))
+    FileUtils.mkdir_p(File.join(shadow_root, "ansible_collections", "testns", "shadow", "plugins", "modules"))
+    File.write(File.join(shadow_root, "ansible_collections", "testns", "shadow", "plugins", "modules", "thing.py"), "# fixture module\n")
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = "#{@fixture_root}:#{shadow_root}"
+    Krikri::CollectionIndex.reset!
+
+    Krikri::CollectionIndex.controller_resolves?("testns.shadow.thing")[:resolves].must_equal(false)
+  end
+
   # issue #1253: an FQCR may carry plugin-type SUBDIR segments
   # (`ns.coll.subdir.resource`). ansible-core imports the subdir as a
   # package under plugins/modules/ and looks the resource up beside it; a

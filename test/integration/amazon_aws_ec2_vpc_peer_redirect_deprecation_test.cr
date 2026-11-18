@@ -43,6 +43,38 @@ private DEPRECATION_LINE = "[DEPRECATION WARNING]: amazon.aws.ec2_vpc_peer has b
 # [DEPRECATION WARNING]: prefix (ResultDisplay adds it).
 private TABLE_TEXT = DEPRECATION_LINE.sub("[DEPRECATION WARNING]: ", "")
 
+# The collection tree the spawned playbook resolves against. Real reads
+# plugin files and meta/runtime.yml from the FIRST search path holding a
+# collection and never a later copy (issue #1492), so a machine-wide
+# amazon.aws/community.aws copy that is incomplete would shadow the real
+# one and leave these names unresolvable. A fixture pins the two rename
+# hops these specs need: ansible_builtin_runtime.yml sends the bare
+# `ec2_vpc_peer` spelling to community.aws.ec2_vpc_peer, whose runtime.yml
+# redirects onto amazon.aws.ec2_vpc_peer, which amazon.aws's own
+# runtime.yml renames to ec2_vpc_peering.
+private def collections_fixture : String
+  root = PluginSpecHelper.tmp_path("aws-vpc-peer-collections")
+  aws = File.join(root, "ansible_collections", "amazon", "aws")
+  FileUtils.mkdir_p(File.join(aws, "plugins", "modules"))
+  FileUtils.mkdir_p(File.join(aws, "meta"))
+  File.write(File.join(aws, "meta", "runtime.yml"), <<-YAML)
+    plugin_routing:
+      modules:
+        ec2_vpc_peer:
+          redirect: amazon.aws.ec2_vpc_peering
+    YAML
+  File.write(File.join(aws, "plugins", "modules", "ec2_vpc_peering.py"), "# fixture module\n")
+  community = File.join(root, "ansible_collections", "community", "aws")
+  FileUtils.mkdir_p(File.join(community, "meta"))
+  File.write(File.join(community, "meta", "runtime.yml"), <<-YAML)
+    plugin_routing:
+      modules:
+        ec2_vpc_peer:
+          redirect: amazon.aws.ec2_vpc_peer
+    YAML
+  root
+end
+
 private def run_play(task_lines : Array(String)) : {Bool, String}
   playbook = File.tempname("aws-ec2-vpc-peer-deprecation", ".yml")
   body = [
@@ -53,7 +85,9 @@ private def run_play(task_lines : Array(String)) : {Bool, String}
   ] + task_lines
   File.write(playbook, body.join("\n") + "\n")
   output = IO::Memory.new
-  status = Process.run("sh", ["-c", "exec \"$0\" \"$@\" 2>&1", BINARY, "-i", INVENTORY, playbook], output: output, input: IO::Memory.new)
+  status = Process.run("sh", ["-c", "exec \"$0\" \"$@\" 2>&1", BINARY, "-i", INVENTORY, playbook],
+    output: output, input: IO::Memory.new,
+    env: {"ANSIBLE_COLLECTIONS_PATH" => collections_fixture})
   {status.success?, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
