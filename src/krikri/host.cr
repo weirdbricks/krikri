@@ -25,6 +25,13 @@ module Krikri
     # hostvars builder enriches such hosts' entries with the play magic
     # variables Ansible exposes on every hostvars entry.
     property? from_add_host : Bool = false
+    # The vault failure reason ("Decryption failed ...") of a
+    # group_vars/host_vars file that applies to this host and no supplied
+    # secret could open. ansible reads those vars lazily, when a play
+    # first touches the host, so this is recorded at inventory-parse time
+    # and only surfaced by the play loop (a play whose hosts never touch
+    # the file runs normally) - see InventoryParser.apply_vars_file.
+    property vault_error : String? = nil
 
     def initialize(@name : String, @user : String? = nil, @port : Int32? = nil)
       @vars = Hash(String, JSON::Any).new

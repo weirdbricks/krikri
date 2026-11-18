@@ -1016,6 +1016,15 @@ rescue ex : Krikri::VaultFileError
   # site; print it verbatim.
   STDERR.print ex.render
   exit 1
+rescue ex : Krikri::VarsFilesVaultError
+  # A vault-encrypted vars_files entry no supplied secret can open is
+  # ansible's vars-manager refusal before any PLAY output: the wrapped
+  # two-level "[ERROR]: Invalid vars_files file ..." block on STDERR and
+  # rc=1 (live-verified vs 2.21.6, issue #1462). Raised during play
+  # finalization for a literal path; the runtime loader raises its
+  # deferred shape for a fact-templated one.
+  STDERR.print ex.render
+  exit ex.exit_code
 rescue ex : Krikri::YamlSyntaxError
   # Rendered the way ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line
@@ -1404,6 +1413,16 @@ playbook.plays.each_with_index do |play, _play_index|
 
   Krikri::OutputBanner.banner("PLAY [#{play.name}]")
 
+  if vault_error = hosts.compact_map(&.vault_error).first?
+    # ansible loads a host's group_vars/host_vars when the play first
+    # touches the host, which is here - after the banner, before any
+    # task: one "[ERROR]" line at rc=4, no PLAY RECAP. A host whose
+    # encrypted vars belong to an unrelated group never reaches this
+    # (live-verified vs 2.21.6, issue #1462).
+    STDERR.puts "[ERROR]: #{vault_error}".colorize(:red)
+    exit 4
+  end
+
   if matched_hosts.empty?
     puts "skipping: no hosts matched".colorize(:cyan)
     next
@@ -1599,6 +1618,14 @@ playbook.plays.each_with_index do |play, _play_index|
       # comment.
       Krikri::ErrorBlock.emit_rendered_stderr(ex.render)
       exit 1
+    rescue ex : Krikri::VarsFilesVaultError
+      # A vars_files path templated against host facts only resolves
+      # once the play is running, so ansible's late vars-manager refusal
+      # surfaces here rather than before the PLAY banner: the bare
+      # reason line at rc=4, not the wrapped play-finalization block
+      # (issue #1462).
+      STDERR.print ex.render
+      exit ex.exit_code
     rescue ex : Krikri::IncludeTasksNonStringFileError
       # A non-string include_tasks: file: value is real's uncaught
       # path_dwim TypeError at include-result processing time: the
