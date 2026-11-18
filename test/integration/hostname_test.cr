@@ -69,4 +69,37 @@ describe "hostname plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     System.hostname.must_equal(current)
   end
+
+  # The kpg harness compares a `--check --diff` run's console bytes across
+  # two different containers, and this hunk's before side is the run
+  # host's own name: podman gives each engine's container its own default
+  # 12-hex hostname, so the two sides describe two different machines and
+  # can never agree - two real ansible runs in two containers disagree the
+  # same way (kpg issue #1547). Everything around the value is fixed, so a
+  # mask can anchor on `hostname = ` plus that value; this pins the shape
+  # and that the value is the run host's own hostname, never one derived
+  # from the requested `name`.
+  it "prints the run host's own hostname as the --diff before value" do
+    target = "krikri-playbook-hostname-diff-spec"
+    playbook = PluginSpecHelper.tmp_path("hostname_check_diff.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - ansible.builtin.hostname:
+              name: #{target}
+      YAML
+    engine = File.expand_path("../../bin/krikri-playbook", __DIR__)
+    inventory = File.expand_path("../fixtures/inventory-explicit-localhost.ini", __DIR__)
+
+    output = IO::Memory.new
+    status = Process.run(engine, ["-i", inventory, "--check", "--diff", playbook], output: output, error: output)
+
+    status.success?.must_equal(true, output.to_s)
+    output.to_s.must_include(
+      "--- before\n+++ after\n@@ -1 +1 @@\n" \
+      "-hostname = #{System.hostname}\n" \
+      "+hostname = #{target}\n"
+    )
+  end
 end
