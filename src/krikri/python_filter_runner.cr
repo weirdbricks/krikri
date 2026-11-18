@@ -607,7 +607,7 @@ module Krikri
     # reads.
     def configured_roots(subdir : String, env_var : String) : Array(String)
       if custom = ENV[env_var]?
-        return custom.split(':').map(&.strip).reject(&.empty?).map { |entry| expand_home(entry) }
+        return custom.split(':').map(&.strip).reject(&.empty?).map { |entry| resolve_configured_root(entry) }
       end
       roots = [] of String
       if home = ansible_home
@@ -615,6 +615,34 @@ module Krikri
       end
       roots << "/usr/share/ansible/plugins/#{subdir}"
       roots
+    end
+
+    # Ansible resolves a relative entry in a path-list setting like
+    # ANSIBLE_STRATEGY_PLUGINS against the directory ansible-playbook was
+    # INVOKED from (config is loaded at startup, before any playbook path
+    # is known), live-verified against 2.21.6 with a playbook in a
+    # subdirectory and `ANSIBLE_STRATEGY_PLUGINS=./strategy_plugins`.
+    # krikri-playbook chdirs into the playbook's directory, so resolving
+    # against Dir.current at this point would re-base every such entry
+    # (issue #1460); invocation_dir is captured before that chdir.
+    private def resolve_configured_root(entry : String) : String
+      File.expand_path(expand_home(entry), invocation_dir)
+    end
+
+    # The directory krikri-playbook started in, before it chdirs into the
+    # playbook's directory. Lazily falls back to Dir.current for callers
+    # that never chdir (the unit tests, the lint CLI).
+    @@invocation_dir : String? = nil
+    INVOCATION_DIR_MUTEX = Mutex.new
+
+    def invocation_dir : String
+      INVOCATION_DIR_MUTEX.synchronize { @@invocation_dir ||= Dir.current }
+    end
+
+    def invocation_dir=(dir : String?)
+      INVOCATION_DIR_MUTEX.synchronize do
+        @@invocation_dir = dir.try { |value| File.expand_path(value) }
+      end
     end
 
     # ANSIBLE_HOME's own default is `~/.ansible`; a `~`-relative override is
