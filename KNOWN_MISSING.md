@@ -519,19 +519,24 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   file name, so no introspection pass is needed. Search roots follow Ansible's loader: the role's own
   directory, the playbook-adjacent one, every role LOADED this run, then the CONFIGURED paths -
   `ANSIBLE_LOOKUP_PLUGINS` when set (it REPLACES the defaults, and `~` is expanded) and otherwise
-  `~/.ansible/plugins/lookup` + `/usr/share/ansible/plugins/lookup`. The interpreter is that same
-  python3, retried once under the interpreter `ansible-playbook` itself runs under when the PATH one
-  cannot import `ansible` (the pipx/Homebrew layout). Wired into BOTH templating engines separately:
-  the hand-rolled `{{ }}` evaluator's `evaluate_custom_python_lookup` and the krikri-jinja side
-  (`krikri_jinja_lookups.cr`, which also serves `query()`/`q()`). Unhelpable cases (no python3 at all,
-  `ansible` importable by none of the candidate interpreters, no `LookupModule` class) degrade to
-  undefined/`[]`; a plugin that RAN and raised fails the task with its own error, like real. Two
-  pieces of Ansible's environment are reproduced because real plugins use them: `self._loader` is a
-  real `DataLoader` (so `find_file_in_search_path` resolves through `ansible_search_path`), and
-  `self.set_options()`/`self.get_option()` work off the plugin's own `DOCUMENTATION`. The one piece
-  that cannot be is a `Templar`: `self._templar` stays `None`, so a plugin that templates through it
-  fails instead of resolving (ansible-core refuses to render strings it did not mark itself, so a
-  stand-in would silently return unrendered text).
+  `~/.ansible/plugins/lookup` + `/usr/share/ansible/plugins/lookup`. Wired into BOTH templating
+  engines separately: the hand-rolled `{{ }}` evaluator's `evaluate_custom_python_lookup` and the
+  krikri-jinja side (`krikri_jinja_lookups.cr`, which also serves `query()`/`q()`). The interpreter is
+  that same python3, retried once under the interpreter `ansible-playbook` itself runs under when the
+  PATH one cannot import `ansible` (the pipx/Homebrew layout). A controller with no `ansible` package
+  at all (the normal krikri deployment) still runs a plugin whose imports are the common ones - the
+  wrapper installs a built-in stand-in for `ansible.plugins.lookup.LookupBase`/`AnsiblePlugin`,
+  `ansible.errors` and `ansible.utils.display.Display`, the same shim approach the module runner uses
+  for `module_utils` on a bare target. What still degrades to undefined/`[]`: no python3 at all, a
+  plugin importing more of ansible than the stand-in (e.g. `ansible.module_utils`), or no
+  `LookupModule` class; a plugin that RAN and raised fails the task with its own error, like real.
+  Two pieces of Ansible's environment are reproduced because real plugins use them when ansible IS
+  installed: `self._loader` is a real `DataLoader` (so `find_file_in_search_path` resolves through
+  `ansible_search_path`), and `self.set_options()`/`self.get_option()` work off the plugin's own
+  `DOCUMENTATION` (under the stand-in only values the plugin set itself resolve, since reading
+  `DOCUMENTATION` needs PyYAML). The one piece that cannot be is a `Templar`: `self._templar` stays
+  `None`, so a plugin that templates through it fails instead of resolving (ansible-core refuses to
+  render strings it did not mark itself, so a stand-in would silently return unrendered text).
 - **Custom `vars_plugins/` plugins run once, at inventory-parse time** (`PythonVarsRunner`): legacy
   `.py` files under the playbook-adjacent `vars_plugins/`, the `ANSIBLE_VARS_PLUGINS` list (it
   REPLACES the defaults, and `~` is expanded) or `~/.ansible/plugins/vars` +
