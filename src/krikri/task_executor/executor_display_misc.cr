@@ -1006,11 +1006,35 @@ module Krikri
         break if Time.instant >= deadline
       end
 
+      # On a local connection ansible's poll loop burns its async budget at
+      # the same instant async_wrapper's own timer would fire, and the
+      # controller's read wins that race: the last poll still sees the launch
+      # stub, so ansible's task_executor synthesizes a failure around a result
+      # it never parsed. That is why 2.21 words a local timeout "async task
+      # produced unparsable results" (live-verified: `async: 2, poll: 1`); the
+      # synthesis has no ErrorSummary behind it, so the registered result
+      # nests the last poll under async_result, carries no exception key and
+      # the callback prints no [ERROR] block.
+      print_async_outcome(exec_host.name, jid, true)
       JSON.parse({
-        "changed"        => false,
-        "failed"         => true,
-        "msg"            => "async task did not complete within #{task.async_seconds} seconds",
-        "ansible_job_id" => jid,
+        "failed"       => true,
+        "changed"      => false,
+        "msg"          => "async task produced unparsable results",
+        "async_result" => {
+          "started"        => true,
+          "finished"       => false,
+          "stdout"         => "",
+          "stderr"         => "",
+          "stdout_lines"   => [] of String,
+          "stderr_lines"   => [] of String,
+          "ansible_job_id" => jid,
+          "results_file"   => AsyncJobs.status_path(jid),
+          "changed"        => false,
+          "failed"         => false,
+          "warnings"       => [] of String,
+          "deprecations"   => [] of String,
+        },
+        "_ansible_no_exception_backfill" => true,
       }.to_json)
     end
 
@@ -1018,6 +1042,11 @@ module Krikri
     # target's async dir with, so it can be picked out of the script's own
     # stdout without mistaking an ssh login banner or any other output for it.
     ASYNC_DIR_MARKER = "KRIKRI_ASYNC_DIR="
+
+    # Same trick for the pid of the detached worker, which is what a remote
+    # async timeout reports: ansible's async_wrapper puts the pid of the
+    # module it killed in its "Timeout exceeded" record (child_pid).
+    ASYNC_CHILD_PID_MARKER = "KRIKRI_ASYNC_CHILD_PID="
 
     # ansible-playbook's default callback announces every polled job's fate
     # once the poll loop ends: "ASYNC OK on <host>: jid=<jid>" for a success
@@ -1160,6 +1189,7 @@ module Krikri
                    echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
                    echo '#{inner_encoded}' | base64 -d > #{dir}/#{jid}.run
                    nohup sh #{dir}/#{jid}.run >/dev/null 2>&1 &
+                   printf '#{ASYNC_CHILD_PID_MARKER}%s\\n' "$!"
                  SCRIPT
                else
                  <<-SCRIPT
@@ -1168,6 +1198,7 @@ module Krikri
                    echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
                    echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
                    nohup sh -c '#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' >/dev/null 2>&1 &
+                   printf '#{ASYNC_CHILD_PID_MARKER}%s\\n' "$!"
                  SCRIPT
                end
 
@@ -1187,6 +1218,10 @@ module Krikri
       # wrapped result had no path to report at all (issue #1397).
       remote_async_dir = launched[:stdout].lines.find(&.starts_with?(ASYNC_DIR_MARKER)).try(&.lchop(ASYNC_DIR_MARKER).strip)
       results_file = remote_async_dir ? File.join(remote_async_dir, jid) : AsyncJobs.status_path(jid)
+      # The detached worker's own pid, reported the same way - a remote async
+      # timeout names it as child_pid, exactly the slot async_wrapper's
+      # timeout record fills with the pid of the module it killed.
+      remote_child_pid = launched[:stdout].lines.find(&.starts_with?(ASYNC_CHILD_PID_MARKER)).try(&.lchop(ASYNC_CHILD_PID_MARKER).strip).try(&.to_i64?)
 
       poll = task.poll_seconds || 10
       if poll <= 0
@@ -1233,12 +1268,26 @@ module Krikri
         break if Time.instant >= deadline
       end
 
-      JSON.parse({
-        "changed"        => false,
-        "failed"         => true,
-        "msg"            => "async task did not complete within #{task.async_seconds} seconds",
-        "ansible_job_id" => jid,
-      }.to_json)
+      # An ssh round trip pushes the final read past the instant the budget
+      # expires, so here it lands AFTER async_wrapper's own timer wrote its
+      # timeout record: the last poll sees a FINISHED job whose module result
+      # is {"msg": "Timeout exceeded", "failed": true, "child_pid": <pid>},
+      # and the async_status wrapper carries that record plus
+      # started/finished/stdout/stderr (live-verified vs ansible-core 2.21.6
+      # over ssh with `async: 5, poll: 3`).
+      print_async_outcome(exec_host.name, jid, true)
+      # The wrapper's own record has neither changed nor failed: both are
+      # plain bool fields on ansible's exported result, so the callback dump
+      # and the register still show changed/failed (live-verified).
+      timeout_status = {
+        "msg"     => JSON::Any.new("Timeout exceeded"),
+        "failed"  => JSON::Any.new(true),
+        "changed" => JSON::Any.new(false),
+      } of String => JSON::Any
+      if pid = remote_child_pid
+        timeout_status["child_pid"] = JSON::Any.new(pid)
+      end
+      async_status_wrapped_result(jid, JSON::Any.new(timeout_status), results_file)
     end
 
     # ansible.builtin.reboot - entirely unimplemented before (silently
