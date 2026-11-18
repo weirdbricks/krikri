@@ -131,6 +131,7 @@ module Krikri
       failed = hosts.count { |host| @halted_hosts.includes?(host.name) }
       return false if failed == 0
 
+      threshold_crossed = false
       triggered =
         if @any_errors_fatal
           true
@@ -147,7 +148,7 @@ module Krikri
               !@chain_pending_failures.includes?(host.name) &&
               !@unreachable_hosts.includes?(host.name)
           end
-          (counted * 100.0 / hosts.size) > limit
+          threshold_crossed = (counted * 100.0 / hosts.size) > limit
         else
           false
         end
@@ -156,7 +157,29 @@ module Krikri
 
       @play_aborted = true
       hosts.each { |host| @halted_hosts << host.name }
+      print_no_more_hosts_left if threshold_crossed && failed_hosts_present?(hosts)
       true
+    end
+
+    # Ansible's default callback prints this banner TWICE when
+    # `max_fail_percentage:` ends the play: its linear strategy sends it
+    # from the threshold check and then again from the "all hosts have
+    # failed" check right below, which the threshold check's own
+    # mark-every-host-failed just made true. `any_errors_fatal:` aborts
+    # without printing anything - it never enters that block
+    # (live-verified vs ansible-core 2.21.6, both for a failing task and
+    # for a failing handler, the shape issue #1534 was filed for).
+    private def print_no_more_hosts_left : Nil
+      Krikri::OutputBanner.banner("NO MORE HOSTS LEFT")
+      Krikri::OutputBanner.banner("NO MORE HOSTS LEFT")
+    end
+
+    # Ansible sends the banner only once _tqm._failed_hosts is non-empty.
+    # A halted host is not automatically a FAILED one - `meta: end_host`
+    # halts without booking any failure - so the recap's own failed
+    # count is what decides it here.
+    private def failed_hosts_present?(hosts : Array(Host)) : Bool
+      hosts.any? { |host| (@results[host.name]? || {"failed" => 0})["failed"] > 0 }
     end
 
     # ansible warns a task's reserved-name vars/register from

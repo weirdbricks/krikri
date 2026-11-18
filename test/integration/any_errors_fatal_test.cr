@@ -141,6 +141,70 @@ ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
 
+# Issue #1534: a play that max_fail_percentage: ends gets the default
+# callback's "NO MORE HOSTS LEFT" banner - TWICE, because Ansible's
+# linear strategy sends it from the threshold check and then again from
+# the "all hosts have failed" check right below, which the first check's
+# own mark-every-host-failed made true. Returns the exit code and how
+# many banners printed (live-verified vs ansible-core 2.21.6).
+private def run_banner_play(keywords : String) : {Int32, Int32}
+  dir = File.tempname("aef")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "inv.ini"), "[g]\nh1 ansible_connection=local\n")
+  File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+    #{keywords}
+      tasks:
+        - name: fails
+          ansible.builtin.command: /bin/false
+    YAML
+
+  stdout_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+    output: stdout_io, error: stdout_io, chdir: dir)
+  {status.exit_code, stdout_io.to_s.scan(/^NO MORE HOSTS LEFT \*+$/m).size}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+# Issue #1534's own shape: the failure that crosses the threshold is the
+# play's HANDLER, run by `meta: flush_handlers` as the play's last task -
+# no later task iteration is left for the between-tasks check, and the
+# banner pair still belongs right after the handler's fatal, before the
+# recap (live-verified vs ansible-core 2.21.6). Returns the exit code and
+# the whole output.
+private def run_handler_banner_play(keywords : String) : {Int32, String}
+  dir = File.tempname("aef")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "inv.ini"), "[g]\nh1 ansible_connection=local\n")
+  File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: all
+      gather_facts: false
+    #{keywords}
+      tasks:
+        - name: notifier
+          ansible.builtin.command:
+            cmd: /bin/true
+          changed_when: true
+          notify: Kpg handler
+        - name: flush
+          ansible.builtin.meta: flush_handlers
+      handlers:
+        - name: Kpg handler
+          ansible.builtin.command:
+            cmd: /bin/false
+          changed_when: false
+    YAML
+
+  stdout_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+    output: stdout_io, error: stdout_io, chdir: dir)
+  {status.exit_code, stdout_io.to_s}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
 describe "any_errors_fatal:" do
   # One host failing stops the play for ALL of them - no later task runs
   # anywhere, including on the hosts that were fine.
@@ -148,6 +212,15 @@ describe "any_errors_fatal:" do
     code, later = run_play("  any_errors_fatal: true")
     code.must_equal(2)
     later.empty?.must_equal(true)
+  end
+
+  # Ansible's any_errors_fatal: branch marks the fleet failed but never
+  # enters the max_fail_percentage: block that sends the banner, so this
+  # abort is silent while a threshold abort is not (live-verified).
+  it "ends the play without the no-more-hosts banner" do
+    code, banners = run_banner_play("  any_errors_fatal: true")
+    code.must_equal(2)
+    banners.must_equal(0)
   end
 
   # Per BATCH: h1's batch completes, h2's fails, h3's never starts.
@@ -172,6 +245,35 @@ describe "max_fail_percentage:" do
 
   it "aborts on any failure at 0" do
     run_play("  max_fail_percentage: 0")[1].empty?.must_equal(true)
+  end
+
+  # Issue #1534: the banner pair, in its own paragraph before the recap.
+  it "prints the no-more-hosts banner twice when the threshold ends the play" do
+    code, banners = run_banner_play("  max_fail_percentage: 0")
+    code.must_equal(2)
+    banners.must_equal(2)
+  end
+
+  it "prints no banner when the failure stays within the limit" do
+    code, banners = run_banner_play("  max_fail_percentage: 100")
+    code.must_equal(2)
+    banners.must_equal(0)
+  end
+
+  # A failure with no max_fail_percentage: at all never reaches Ansible's
+  # threshold block either - the play just runs out of hosts.
+  it "prints no banner for a failure without the threshold" do
+    code, banners = run_banner_play("")
+    code.must_equal(2)
+    banners.must_equal(0)
+  end
+
+  # Issue #1534's shape: the aborting failure is a HANDLER, so the
+  # between-tasks check has no later task to run on.
+  it "prints the banner twice when a handler failure crosses the threshold" do
+    code, output = run_handler_banner_play("  max_fail_percentage: 0")
+    code.must_equal(2)
+    output.must_match(/NO MORE HOSTS LEFT \*+\n\nNO MORE HOSTS LEFT \*+\n\nPLAY RECAP/)
   end
 
   it "does not count an unreachable host toward the threshold" do
