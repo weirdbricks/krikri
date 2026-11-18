@@ -2938,7 +2938,14 @@ module Krikri
 
       remote_connection = params.try(&.["_remote_connection"]?).try(&.as_s?) == "true"
       first_gather = params.try(&.["_first_gather"]?).try(&.as_s?) == "true"
-      host_name = config.try(&.["host"]?).try(&.["name"]?).try(&.as_s?) || ""
+      # discover_interpreter names the host from task_vars['inventory_hostname'],
+      # not from the connection it just probed. Under `delegate_to:` those
+      # differ: the inventory host stays the play's host while the connection
+      # goes to the delegate, and real ansible's warning names the FORMER
+      # (live-verified vs 2.21.6, issue #1501). The wire payload's `host`
+      # entry is the delegate, so prefer the task vars and fall back to it.
+      host_name = config.try(&.["vars"]?).try(&.["inventory_hostname"]?).try(&.as_s?) ||
+                  config.try(&.["host"]?).try(&.["name"]?).try(&.as_s?) || ""
 
       # Ansible's setup module runs under the host's configured
       # ansible_python_interpreter and fails Gathering Facts with rc 127

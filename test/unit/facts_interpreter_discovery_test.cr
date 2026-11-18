@@ -63,6 +63,17 @@ describe "Krikri::FactsGatherer interpreter discovery (facts_interpreter_discove
       warnings[0].as_s.must_equal("Host 'localhost' is using the discovered Python interpreter at '#{stamp}', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.21/reference_appendices/interpreter_discovery.html for more information.")
     end
 
+    it "names the inventory host, not the delegate_to connection host, in the discovery warning" do
+      config = JSON.parse(%({"host":{"name":"target2","user":"root","port":22},"params":{"_first_gather":"true"},"vars":{"inventory_hostname":"target"}}))
+      result = JSON.parse(Krikri::FactsGatherer.run(config))
+      stamp = result["ansible_facts"]["discovered_interpreter_python"].as_s
+      # Real's discover_interpreter reads task_vars['inventory_hostname']
+      # (interpreter_discovery.py), which keeps naming the PLAY's host under
+      # delegate_to - the connection goes to the delegate, the warning never
+      # does (live-verified vs 2.21.6, issue #1501).
+      result["_ansible_discovery_warning"].as_a[0].as_s.must_equal("Host 'target' is using the discovered Python interpreter at '#{stamp}', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.21/reference_appendices/interpreter_discovery.html for more information.")
+    end
+
     it "points the discovery help link at the emulated ansible-core major.minor, not a stale one" do
       config = JSON.parse(%({"host":{"name":"localhost","user":"root","port":22},"params":{"_first_gather":"true"},"vars":{}}))
       result = JSON.parse(Krikri::FactsGatherer.run(config))
