@@ -4452,6 +4452,21 @@ module Krikri
           .to_h.to_json
       end
 
+      # A module importing a COLLECTION's module_utils (the standard
+      # `from ansible_collections.amazon.aws.plugins.module_utils.retries
+      # import AWSRetry` of custom AnsibleAWSModule-based modules) ships
+      # those files too: AnsiballZ bundles them into the payload, so real
+      # runs the module on a host with no collections installed, while
+      # this engine's PYTHONPATH trick only reaches the CONTROLLER's
+      # install and fails over SSH (issue #1476). Resolved here, on the
+      # controller, where the collections really live.
+      collection_utils = PythonModuleRunner.collect_collection_module_utils_files(source_text)
+      unless collection_utils.empty?
+        py_params["collection_module_utils_files"] = collection_utils
+          .to_a.map { |rel, path| {rel, Base64.strict_encode(File.read(path))} }
+          .to_h.to_json
+      end
+
       # build_plugin_config takes the effective become_user this caller
       # already carries (the var-aware resolve_task_become_user result -
       # the normal plugin path and the batch path pass the same value);
