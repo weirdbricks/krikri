@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "system/user"
 
 # The connection/become/misc CLI flags added in 0.9.565. Behavior checked
 # against a ansible-core 2.19.4 where observable.
@@ -6,13 +7,14 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_with(args : Array(String), yaml : String, input : String? = nil)
+private def run_with(args : Array(String), yaml : String, input : String? = nil, env : Hash(String, String)? = nil)
   playbook = File.tempname("cli-flags", ".yml")
   File.write(playbook, yaml)
   stdout_io = IO::Memory.new
   status = Process.run(BINARY, ["-i", INVENTORY] + args + [playbook],
     output: stdout_io, error: stdout_io,
-    input: input ? IO::Memory.new(input) : Process::Redirect::Close)
+    input: input ? IO::Memory.new(input) : Process::Redirect::Close,
+    env: env)
   {status, stdout_io.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -46,6 +48,57 @@ describe "connection CLI flags" do
   it "-b does not expose itself as the ansible_become variable" do
     _, output = run_with(["-b"], SHOW_VARS)
     output.must_include("b=False")
+  end
+
+  # Issue #1479: -b/--become-user are Ansible's base defaults for the
+  # become family, so a task that writes no become: keyword of its own
+  # must actually escalate through sudo. Same-user escalation is the only
+  # one every sudo/PAM default allows without a password, and
+  # ANSIBLE_BECOME_ALLOW_SAME_USER is Ansible's own opt-out from its
+  # same-user no-op gate - with it, sudo really wraps the command and
+  # sets SUDO_USER in the child's environment.
+  it "-b and --become-user escalate a task that sets no become: keyword" do
+    user = System::User.find_by?(id: LibC.getuid.to_s).try(&.username) || raise "cannot determine invoking user"
+    status, output = run_with(
+      ["-b", "--become-user", user], <<-YAML,
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: show SUDO_USER
+              ansible.builtin.command: printenv SUDO_USER
+              register: r
+              changed_when: false
+              failed_when: false
+            - ansible.builtin.debug: {var: r.stdout}
+        YAML
+      env: {"ANSIBLE_BECOME_ALLOW_SAME_USER" => "1"})
+
+    status.exit_code.must_equal(0)
+    output.must_match(/"r.stdout": "#{Regex.escape(user)}"/)
+  end
+
+  # The flags supply the DEFAULT only: a play or task that writes its own
+  # become: keyword still wins (ansible-core's FieldAttribute rules).
+  it "lets an explicit become: false keyword override -b" do
+    user = System::User.find_by?(id: LibC.getuid.to_s).try(&.username) || raise "cannot determine invoking user"
+    _, output = run_with(
+      ["-b", "--become-user", user], <<-YAML,
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: opts out
+              become: false
+              ansible.builtin.command: printenv SUDO_USER
+              register: r
+              changed_when: false
+              failed_when: false
+            - ansible.builtin.debug: {var: r.stdout}
+        YAML
+      env: {"ANSIBLE_BECOME_ALLOW_SAME_USER" => "1"})
+
+    output.must_include(%("r.stdout": ""))
   end
 
   it "accepts --private-key, -T, --ssh-extra-args, --flush-cache, -M and --vault-id" do

@@ -371,6 +371,52 @@ describe Krikri::PlaybookParser do
       tasks[1].become?.must_equal(true)
     end
 
+    it "applies the command line's -b/--become-user as the base default for plays, blocks and tasks" do
+      # Issue #1479: the CLI used to assign play.become AFTER the parse,
+      # but each task's become-family keywords are resolved against the
+      # play while parsing, so every already-parsed task kept become:
+      # false and -b did nothing. Ansible makes the flags the BASE
+      # FieldAttribute default (base.py's
+      # `default=context.cliargs_deferred_get('become')`), which any
+      # keyword written in the playbook still overrides.
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML, default_become: true, default_become_user: "nobody")
+        - name: plain
+          hosts: all
+          tasks:
+            - name: inherits
+              ansible.builtin.debug: {msg: hi}
+            - name: opts out
+              become: false
+              become_user: root
+              ansible.builtin.debug: {msg: hi}
+            - block:
+                - name: block child
+                  ansible.builtin.debug: {msg: hi}
+        - name: explicit play
+          hosts: all
+          become: false
+          tasks:
+            - name: child of explicit play
+              ansible.builtin.debug: {msg: hi}
+        YAML
+
+      plain = playbook.plays[0]
+      plain.become?.must_equal(true)
+      plain.become_user.must_equal("nobody")
+      plain.tasks[0].become?.must_equal(true)
+      plain.tasks[0].become_user.must_equal("nobody")
+      plain.tasks[1].become?.must_equal(false)
+      plain.tasks[1].become_user.must_equal("root")
+      block_child = plain.tasks[2].block_tasks.try(&.first) || raise "block child missing"
+      block_child.become?.must_equal(true)
+      block_child.become_user.must_equal("nobody")
+
+      explicit = playbook.plays[1]
+      explicit.become?.must_equal(false)
+      explicit.tasks[0].become?.must_equal(false)
+      explicit.tasks[0].become_user.must_equal("nobody")
+    end
+
     it "orders pre_tasks:, roles:, tasks:, and post_tasks: correctly, matching Ansible" do
       # Real gap found benchmarking every one of geerlingguy.docker/mysql/
       # postgresql/nginx/php/security: pre_tasks:/post_tasks: were

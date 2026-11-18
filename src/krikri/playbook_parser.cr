@@ -2424,15 +2424,26 @@ module Krikri
       "#{parts[0]}.#{parts[1]}.#{parts[-1]}"
     end
 
-    # Parse playbook from file
-    def self.parse(path : String) : Playbook
+    # Parse playbook from file.
+    #
+    # *default_become*/*default_become_user* are the command line's
+    # -b/--become and --become-user. Ansible makes those the BASE
+    # FieldAttribute default that every play, block and task inherits
+    # (base.py's `default=context.cliargs_deferred_get('become')`), so a
+    # keyword written anywhere in the playbook still wins. They are parse
+    # inputs rather than a post-parse assignment on the Play because each
+    # task's become-family keywords are resolved against the play WHILE
+    # parsing (see apply_become_keywords) - setting play.become afterwards
+    # left every already-parsed task on its old value, which is how -b
+    # ended up ignored (issue #1479).
+    def self.parse(path : String, default_become : Bool = false, default_become_user : String? = nil) : Playbook
       collecting_reserved_warnings do
         unless File.exists?(path)
           raise "Playbook file not found: #{path}"
         end
 
         content = Vault.maybe_decrypt(File.read(path))
-        parse_string(content, path)
+        parse_string(content, path, default_become, default_become_user)
       end
     end
 
@@ -2471,13 +2482,13 @@ module Krikri
     end
 
     # Parse playbook from string
-    def self.parse_string(content : String, path : String = "playbook.yml") : Playbook
+    def self.parse_string(content : String, path : String = "playbook.yml", default_become : Bool = false, default_become_user : String? = nil) : Playbook
       collecting_reserved_warnings do
-        parse_string_uncollected(content, path)
+        parse_string_uncollected(content, path, default_become, default_become_user)
       end
     end
 
-    private def self.parse_string_uncollected(content : String, path : String = "playbook.yml") : Playbook
+    private def self.parse_string_uncollected(content : String, path : String = "playbook.yml", default_become : Bool = false, default_become_user : String? = nil) : Playbook
       playbook = Playbook.new(path)
 
       begin
@@ -2545,7 +2556,7 @@ module Krikri
             raise_non_dict_vars("PlaybookInclude", File.expand_path(path), source_map, index.to_s)
           end
           begin
-            imported = parse(File.expand_path(import_path, playbook_dir))
+            imported = parse(File.expand_path(import_path, playbook_dir), default_become, default_become_user)
             playbook.plays.concat(imported.plays)
           rescue ex : RemovedActionError
             raise ex
@@ -2605,7 +2616,7 @@ module Krikri
         end
 
         begin
-          play = parse_play(play_yaml, index, playbook_dir, File.expand_path(path), source_map)
+          play = parse_play(play_yaml, index, playbook_dir, File.expand_path(path), source_map, default_become, default_become_user)
           playbook.plays << play
         rescue ex : RemovedActionError
           # Bypasses the graceful per-play degradation below - see its
@@ -2839,7 +2850,7 @@ module Krikri
       end
     end
 
-    private def self.parse_play(yaml : YAML::Any, index : Int32, playbook_dir : String, source_file : String? = nil, source_map : YamlSourceMap? = nil) : Play
+    private def self.parse_play(yaml : YAML::Any, index : Int32, playbook_dir : String, source_file : String? = nil, source_map : YamlSourceMap? = nil, default_become : Bool = false, default_become_user : String? = nil) : Play
       unless yaml.as_h?
         raise "Play must be a YAML mapping (hash)"
       end
@@ -2879,8 +2890,17 @@ module Krikri
       end
 
       # Parse play-level settings
-      play.become = parse_become_value(yaml["become"]?) || false
-      play.become_user = yaml["become_user"]?.try(&.as_s)
+      # -b/--become and --become-user are Ansible's base defaults for the
+      # become-family keywords (base.py: FieldAttribute(default=
+      # cliargs_deferred_get('become'))), so a play, block or task that
+      # writes its own value still wins - resolve_become's "written
+      # value, else play, else command line" ladder. `become: false`
+      # written on the play must therefore stay false; only an ABSENT
+      # key falls through to the command line (same false-vs-nil trap
+      # resolve_become exists to avoid).
+      written_become = parse_become_value(yaml["become"]?)
+      play.become = written_become.nil? ? default_become : written_become
+      play.become_user = yaml["become_user"]?.try(&.as_s) || default_become_user
       play.become_flags = yaml["become_flags"]?.try(&.as_s)
       gather_facts_yaml = yaml["gather_facts"]?
       gather_facts_parsed = parse_become_value(gather_facts_yaml)
