@@ -2483,6 +2483,43 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     end
   end
 
+  # issue #1511: on a controller with NO ansible-core (the podman benchmark's
+  # krikri-only containers) `{{ lookup('kpg_undefined') }}` rendered the
+  # literal "undefined" and the task ran green, where real ansible fails it
+  # at arg finalization with "The lookup plugin 'kpg_undefined' was not
+  # found.". The bare-name gate used to answer "unsure" there; the baked
+  # 2.21.6 lookup names/redirects make it the definite refusal real gives.
+  # exclusive!: the seam changes the memoized builtin resolution every other
+  # in-process parse in this process reads.
+  describe "unknown bare lookup with no ansible-core installed (issue #1511)" do
+    exclusive!
+
+    private def evaluator
+      Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
+    end
+
+    before_each do
+      ENV["KRIKRI_TEST_NO_ANSIBLE_CORE"] = "1"
+      Krikri::CollectionIndex.reset!
+    end
+
+    after_each do
+      ENV.delete("KRIKRI_TEST_NO_ANSIBLE_CORE")
+      Krikri::CollectionIndex.reset!
+    end
+
+    it "fails it with Ansible's not-found message instead of rendering the 'undefined' sentinel" do
+      ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+        evaluator.evaluate("lookup('kpg_undefined')")
+      end
+      ex.message.must_equal("The lookup plugin 'kpg_undefined' was not found.")
+    end
+
+    it "keeps a native builtin lookup working (the baked name set must not refuse them)" do
+      evaluator.evaluate("lookup('env', 'PATH')").wont_equal("undefined")
+    end
+  end
+
   describe "lookup() with non-string results keeps the list (issue #695)" do
     private def ansible_importable : Bool
       python = Krikri::PythonLookupRunner.python_executable
