@@ -208,6 +208,7 @@ module Krikri
           # render's variable reads to pick up (play_hosts_read_origin).
           VarSubstitutor.push_current_template_file(resolved_path)
           begin
+            fail_template_render_undefined(template_content, render_vars, resolved_path)
             rendered = renderer.render(template_content)
           ensure
             VarSubstitutor.pop_current_template_file
@@ -215,8 +216,27 @@ module Krikri
           missing = (template_content.size - template_content.rstrip('\n').size) - (rendered.size - rendered.rstrip('\n').size)
           rendered += "\n" * missing if !rendered.empty? && missing > 0
           rendered
+        rescue e : UndefinedVariableError
+          raise e
         rescue
           "undefined"
+        end
+      end
+
+      # The template lookup's engine is STRICT-undefined (ansible-core
+      # 2.21's template.py templates through `_engine.template` with no
+      # lenient override), so a file that reads a variable nothing defines
+      # fails the calling task. Anthony25.kubernetes-netbox's
+      # configmap.yml.j2 reads an undefined
+      # `kubernetes_netbox_cors_origin_whitelist` and real ansible stops
+      # there, while the lenient render silently wrote an empty value into
+      # the loop item. The strict probe re-renders once and reports exactly
+      # the undefined ansible names, without turning an evaluator
+      # capability gap into a task failure.
+      private def fail_template_render_undefined(template_content : String, render_vars : Hash(String, JSON::Any), resolved_path : String) : Nil
+        return if Krikri.probe_has_side_effecting_call?(template_content)
+        if message = JinjaRenderer.strict_render_undefined_message(template_content, render_vars)
+          raise TemplateRenderUndefinedError.new(message, resolved_path)
         end
       end
 

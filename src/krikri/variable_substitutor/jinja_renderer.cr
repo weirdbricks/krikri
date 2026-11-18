@@ -268,7 +268,7 @@ module Krikri
           raise FilterEngine::UnknownFilterError.new("No filter named '#{filter_name}'.")
         end
         text
-      rescue e : Krikri::FirstFoundLookupError | Krikri::PipeLookupError | Krikri::PythonLookupRunner::LookupError
+      rescue e : Krikri::FirstFoundLookupError | Krikri::PipeLookupError | Krikri::PythonLookupRunner::LookupError | Krikri::TemplateRenderUndefinedError
         # Same reasoning as the unknown-filter case above: first_found's own
         # no-match failure is a hard task failure in Ansible, never the
         # lenient give-back-the-text fallback (which turned it into the
@@ -279,6 +279,10 @@ module Krikri
         # that RAN and raised is Ansible's own task failure (only an
         # unavailable mechanism degrades, and it degrades inside the
         # dispatch, never as this exception).
+        # TemplateRenderUndefinedError likewise - a lookup('template') file
+        # reading an undefined variable is a hard failure in real, and the
+        # lenient fallback let its empty render through as if the variable
+        # had been defined (issue #1512).
         raise e
       rescue e
         # Same recursion carve-out as the TemplateError arm above: a raw

@@ -1142,6 +1142,23 @@ module Krikri
       end
     end
 
+    # The WhenEvaluationError for an UndefinedVariableError raised while a
+    # loop source or item renders, carrying the "Origin:" stanza its cause
+    # link should print when the miss belongs to something other than a
+    # playbook line: a lookup('template') render reports the template FILE
+    # itself, the way real's own render failure does (live-verified vs
+    # 2.21.6, issue #1512), not the loop source that invoked it.
+    private def when_error_for(ex : UndefinedVariableError) : WhenEvaluationError
+      err = WhenEvaluationError.new(ex.message)
+      if ex.is_a?(TemplateRenderUndefinedError)
+        # Newline-terminated like origin_context_block, so the chain
+        # printer's own trailing newline still leaves the blank line
+        # before the fatal result line.
+        err.cause_origin = ErrorBlock.origin_context(File.expand_path(ex.template_path), 0, nil, show_content: false) + "\n"
+      end
+      err
+    end
+
     private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
       # A source that resolves but is never executed (a when:-false block's
       # skip printer) must not leave its one-element-array fact tether for
@@ -1312,7 +1329,7 @@ module Krikri
         return nil if skippable
       end
 
-      raise WhenEvaluationError.new(ex.message)
+      raise when_error_for(ex)
     ensure
       if loop_param_registered
         VarSubstitutor.pop_loop_source_site
@@ -1838,7 +1855,7 @@ module Krikri
           end
           return nil if skippable
         end
-        raise WhenEvaluationError.new(ex.message)
+        raise when_error_for(ex)
       rescue ex : Exception
         # A lookup failure inside a loop item's own template (`lookup('file',
         # '~/.ssh/id_rsa.pub')` on a host without that file, ngine_io.

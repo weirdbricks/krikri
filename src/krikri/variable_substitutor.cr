@@ -75,6 +75,27 @@ module Krikri
   # would turn an evaluator limitation into a spurious task failure.
   class UndefinedVariableError < Exception
     include TemplatedOriginSpan
+
+    # The template FILE a `lookup('template', ...)` render was reading
+    # when it consumed the undefined value, set on the param-level wrapper
+    # (see Executor#resolving_value_error) so the finalization chain's
+    # innermost stanza points there instead of at the calling task param.
+    property template_origin : String?
+  end
+
+  # A `lookup('template', ...)` file that READS a variable nothing
+  # defines. ansible-core's template lookup renders through its strict
+  # `_engine.template`, so the miss fails the calling task and the
+  # resulting "caused by" stanza's Origin is the template FILE itself
+  # (path alone, no line/column - live-verified vs 2.21.6), not the
+  # calling task param. Carries that path so the failure-chain display
+  # can point there.
+  class TemplateRenderUndefinedError < UndefinedVariableError
+    getter template_path : String
+
+    def initialize(message : String, @template_path : String)
+      super(message)
+    end
   end
 
   # A task KEYWORD's rendered value that ansible's boolean() refuses

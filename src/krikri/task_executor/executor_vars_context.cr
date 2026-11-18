@@ -2483,6 +2483,12 @@ module Krikri
       # record (live-verified vs 2.21.6).
       property cause_text : String?
 
+      # The rendered "Origin:" stanza a failure chain's cause link points
+      # at, when it is not a playbook source position: a
+      # lookup('template') render that read an undefined variable reports
+      # the template FILE itself (see TemplateRenderUndefinedError).
+      property cause_origin : String?
+
       def initialize(message : String? = nil, @cause_text : String? = nil)
         super(message)
       end
@@ -3406,6 +3412,11 @@ module Krikri
               (cause.is_a?(TemplatedOriginSpan) || cause.is_a?(KrikriJinja::TemplateError))
       if split
         err.span = (cause.is_a?(TemplatedOriginSpan) ? cause.span : nil) || VarSubstitutor.failing_span
+      end
+      # A lookup('template') miss belongs to the template FILE, which the
+      # innermost stanza Origins at (see finalization_error_block_text).
+      if cause.is_a?(TemplateRenderUndefinedError)
+        err.template_origin = cause.template_path
       end
       err
     end
@@ -4626,6 +4637,20 @@ module Krikri
                       origin_context_block(vault_origin.path, File.read_lines(vault_origin.path), vault_origin.line, vault_origin.column)
       end
 
+      # A lookup('template') file that READ an undefined variable splits
+      # the same way: real renders the file through its strict engine, so
+      # the params stanza shortens to "Error while resolving value for
+      # 'KEY'." and a fourth stanza carries the bare miss with the
+      # template FILE as its Origin (live-verified vs 2.21.6, issue
+      # #1512). Any other lookup failure stays three stanzas.
+      template_miss_cause = nil
+      if (template_path = ex.template_origin) &&
+         (m = msg.match(/\A(Error while resolving value for '[^']+'): (.*)\z/m))
+        l3 = m[1] + "."
+        template_miss_cause = m[2] + "\n" +
+                              ErrorBlock.origin_context(File.expand_path(template_path), 0, nil, show_content: false) + "\n"
+      end
+
       name_line = locate_name_line(lines, task)
       if name_line
         name_idx, name_col = name_line
@@ -4701,8 +4726,10 @@ module Krikri
 
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely
-      # into the chained stanza (live-verified p12 vs 2.19.11).
-      chain_stanza = chain_value_failure_stanza(task, msg, host, vars_context)
+      # into the chained stanza (live-verified p12 vs 2.19.11). A
+      # template-lookup miss already owns its fourth stanza (above), so
+      # the var-definition scan must not claim it.
+      chain_stanza = ex.template_origin ? nil : chain_value_failure_stanza(task, msg, host, vars_context)
       if chain_stanza && (cm = msg.match(/\A(Error while resolving value for '[^']+'): /))
         l3 = cm[1] + "."
       end
@@ -4737,7 +4764,7 @@ module Krikri
       # which the message alone cannot always name.
       mapping_key_pos : {Int32, Int32}? = nil
       mapping_val_stanza : String? = nil
-      if chain_stanza.nil? &&
+      if chain_stanza.nil? && template_miss_cause.nil? &&
          (pm = msg.match(/\AError while resolving value for '([^']+)': (.*)\z/m))
         param_key = pm[1]
         inner_msg = pm[2]
@@ -4803,6 +4830,10 @@ module Krikri
         elsif vault_cause
           io << "\n<<< caused by >>>\n\n"
           io << vault_cause
+          io << "\n"
+        elsif template_miss_cause
+          io << "\n<<< caused by >>>\n\n"
+          io << template_miss_cause
           io << "\n"
         else
           io << "\n"
@@ -8023,7 +8054,7 @@ module Krikri
     # rather than a mislabeled one. The caller marks the failed result
     # (_ansible_loop_error_emitted) so ResultDisplay does not print a
     # second, differently-shaped block for the same failure.
-    private def emit_loop_error_chain(task : Task, msg : String, host : Host? = nil) : Nil
+    private def emit_loop_error_chain(task : Task, msg : String, host : Host? = nil, cause_origin : String? = nil) : Nil
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
       path = task.source_file || @playbook_file
       return unless path && File.file?(path)
@@ -8050,7 +8081,11 @@ module Krikri
         # A literal item list has no loop_template to seed from, so the
         # all-layers scan below sees every var that references the name
         # and stays ambiguous; the first failing item's chain decides it.
-        if origin = literal_loop_item_origin(task, m[1], host)
+        # A lookup('template') miss already knows its own file, which
+        # overrides every playbook-var heuristic here.
+        if cause_origin
+          cause_context = cause_origin
+        elsif origin = literal_loop_item_origin(task, m[1], host)
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
         elsif origin = undef_chain_var_origin(task, m[1], reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?, host: host)
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)

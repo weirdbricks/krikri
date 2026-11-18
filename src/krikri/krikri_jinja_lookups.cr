@@ -620,6 +620,26 @@ module Krikri
       # file as Origin (path alone, no line/column), not to the calling
       # task param - registered on the fiber for the render's variable
       # reads to pick up (play_hosts_read_origin).
+      # The template lookup's engine is STRICT-undefined (ansible-core
+      # 2.21's template.py templates through `_engine.template` with no
+      # lenient override), so a file reading a variable nothing defines
+      # fails the calling task there - Anthony25.kubernetes-netbox's
+      # configmap.yml.j2 reads an undefined
+      # `kubernetes_netbox_cors_origin_whitelist` and real ansible stops
+      # with "'kubernetes_netbox_cors_origin_whitelist' is undefined"
+      # pointing at the template file, while the lenient render below
+      # wrote an empty value into the rendered text instead. Same
+      # strict-undefined probe the double-templated lookup TERM path
+      # (#prepare_lookup_terms) uses; skipped when the template itself
+      # carries a lookup/query call, whose strict re-render would
+      # execute it twice.
+      unless content.includes?("lookup(") || content.includes?("query(")
+        probe_vars = term_probe_vars(ctx)
+        extra.each { |key, value| probe_vars[key] = KrikriJinja.to_json_any(value) }
+        if message = VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(content, probe_vars)
+          raise TemplateRenderUndefinedError.new(message, resolved)
+        end
+      end
       VarSubstitutor.push_current_template_file(resolved)
       begin
         rendered = render_nested(ctx, content, extra)
