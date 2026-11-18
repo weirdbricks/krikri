@@ -37,15 +37,13 @@ require "./plugin_helpers/facts_gatherer"
 module Krikri::FiletreeLookup
   # Lib bindings, mostly aliased to unique Crystal-side names: lib funs
   # are effectively global in Crystal (the check keys on the C symbol,
-  # not the fun name), and a second declaration of getpwuid already
-  # exists at top level - `PASSWD::getpwuid` in
-  # `plugin_helpers/facts_gatherer.cr`, required (and reused directly)
-  # above, with a struct of identical layout, verified against
-  # getpwuid(3). getgrgid and lstat have no other declaration anywhere,
-  # but get the same alias treatment for consistency. lstat is needed
-  # raw because File::Info surfaces no ctime and no numeric uid/gid,
-  # and file_props needs the raw uid/gid/mode/mtime/ctime tuple exactly
-  # like os.lstat.
+  # not the fun name). getgrgid and lstat have no other declaration
+  # anywhere, but get the alias treatment anyway for consistency. lstat
+  # is needed raw because File::Info surfaces no ctime and no numeric
+  # uid/gid, and file_props needs the raw uid/gid/mode/mtime/ctime tuple
+  # exactly like os.lstat. The uid->name lookup goes through
+  # FactsGatherer.passwd_entry, which reads the platform's own struct
+  # passwd (a hand-written glibc-shaped one breaks on macOS, issue #1544).
   lib LibFT
     struct FTGroup
       gr_name : UInt8*
@@ -248,8 +246,9 @@ module Krikri::FiletreeLookup
   end
 
   private def self.owner_name(uid : LibC::UidT) : JSON::Any
-    if pw = PASSWD.getpwuid(uid.to_u32)
-      name = String.new(pw.value.pw_name)
+    if pw = FactsGatherer.passwd_entry(uid)
+      name_ptr = pw.pw_name
+      name = name_ptr.null? ? "" : String.new(name_ptr)
       return JSON::Any.new(name) unless name.empty?
     end
     JSON::Any.new(uid.to_i64)

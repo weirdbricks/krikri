@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "system/user"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
 require "../../src/krikri/variable_substitutor/jinja_renderer"
 require "../../src/krikri/krikri_jinja_filters"
@@ -439,6 +440,59 @@ describe Krikri::FactsGatherer do
         TPL
 
       renderer.render(template).strip.must_equal("DRIVE1 /dev/sda")
+    end
+  end
+
+  describe "user_facts passwd reading (issue #1544)" do
+    private def entry_with(name : String?, gecos : String?, dir : String?, shell : String?)
+      entry = uninitialized LibC::Passwd
+      entry.pw_name = name.try(&.to_unsafe) || Pointer(UInt8).null
+      entry.pw_passwd = "x".to_unsafe
+      entry.pw_uid = 1001_u32
+      entry.pw_gid = 1001_u32
+      entry.pw_gecos = gecos.try(&.to_unsafe) || Pointer(UInt8).null
+      entry.pw_dir = dir.try(&.to_unsafe) || Pointer(UInt8).null
+      entry.pw_shell = shell.try(&.to_unsafe) || Pointer(UInt8).null
+      entry
+    end
+
+    # The crash on macOS came from the hand-written glibc struct: the
+    # platform's own entry was read at the wrong offsets, and the resulting
+    # NULL pointer blew up in String.new. An entry whose pointers are
+    # legitimately NULL must simply leave those facts unset.
+    it "leaves a fact unset instead of raising when its passwd pointer is NULL" do
+      facts = Krikri::FactsGatherer::FactSet.new
+      Krikri::FactsGatherer.apply_passwd_facts(facts, entry_with(nil, nil, nil, nil))
+
+      facts["ansible_user_id"]?.must_be_nil
+      facts["ansible_user_dir"]?.must_be_nil
+      facts["ansible_user_shell"]?.must_be_nil
+      facts["ansible_user_gecos"]?.must_be_nil
+    end
+
+    it "copies pw_gecos verbatim rather than splitting it on commas" do
+      facts = Krikri::FactsGatherer::FactSet.new
+      Krikri::FactsGatherer.apply_passwd_facts(facts, entry_with("specuser", "Spec User,Room 1", "/home/specuser", "/bin/zsh"))
+
+      facts["ansible_user_id"].must_equal("specuser")
+      facts["ansible_user_dir"].must_equal("/home/specuser")
+      facts["ansible_user_shell"].must_equal("/bin/zsh")
+      facts["ansible_user_gecos"].must_equal("Spec User,Room 1")
+    end
+
+    # Independent oracle for the platform's struct passwd: the stdlib's own
+    # System::User reads it through the right per-platform layout. Comparing
+    # against it is what would have caught the macOS offsets on a Darwin host
+    # (gather_user_facts itself raised there before the fix).
+    it "matches the platform's own passwd entry for the current uid" do
+      if expected = System::User.find_by?(id: LibC.getuid.to_s)
+        facts = Krikri::FactsGatherer::FactSet.new
+        Krikri::FactsGatherer.gather_user_facts(facts)
+
+        facts["ansible_user_id"].must_equal(expected.username)
+        facts["ansible_user_dir"].must_equal(expected.home_directory)
+        facts["ansible_user_shell"].must_equal(expected.shell)
+      end
     end
   end
 
