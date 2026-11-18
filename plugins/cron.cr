@@ -449,8 +449,11 @@ module Krikri
     private def install_user_crontab(crontab_target : String, new_content : String) : PluginResult?
       # Random::Secure (not Random.rand): the predictable numeric suffix
       # let any local user pre-create/symlink the path and get root to
-      # write through it. Same class of fix copy.cr already made.
-      tmp_path = "/tmp/.krikri-playbook-crontab-#{Random::Secure.hex(8)}"
+      # write through it. Same class of fix copy.cr already made, and the
+      # same "/tmp/crontabXXXXXXXX" naming write_backup already uses for
+      # cron.py's tempfile(prefix='crontab') - the path is part of the
+      # failure message, so it must look like Ansible's.
+      tmp_path = "/tmp/crontab#{Random::Secure.hex(4)}"
       begin
         # CronTable.upsert already appends its own single trailing "\n"
         # to a non-empty new_content - adding another here produced a
@@ -471,7 +474,21 @@ module Krikri
         File.chmod(tmp_path, 0o600)
         install_result = remote_exec("crontab #{crontab_target} #{shell_single_quote(tmp_path)}")
         unless install_result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "crontab install failed: #{install_result[:stderr]}")
+          # cron.py's write(): fail_json(msg=f"Failed to install new
+          # cronfile: {path}", stderr=err, stdout=out, rc=rc) - the
+          # wording names the tmp file alone, and crontab's own output
+          # rides in the usual command fields so a rescue/ignore_errors
+          # task can read result.rc and result.stderr (live-verified
+          # against ansible-core 2.21.5).
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Failed to install new cronfile: #{tmp_path}",
+            rc: install_result[:exit_code],
+            stderr: install_result[:stderr],
+            stdout: install_result[:stdout],
+            key_order: ["msg", "rc", "stderr", "stdout"]
+          )
         end
       ensure
         File.delete(tmp_path) rescue nil
