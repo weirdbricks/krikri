@@ -173,6 +173,8 @@ describe "hostname plugin - use: parameter coverage" do
         })
         expect_ok(result)
         result["changed"].as_bool.must_equal(false)
+        # Ansible builds kw['diff'] only when changed.
+        result["diff"]?.must_equal(nil)
         read_calls(log).must_equal([
           "hostnamectl --transient status",
           "hostnamectl --static status",
@@ -188,6 +190,35 @@ describe "hostname plugin - use: parameter coverage" do
         expect_ok(result)
         result["changed"].as_bool.must_equal(true)
         read_calls(log).none?(&.includes?("set-hostname")).must_equal(true)
+      end
+    end
+
+    # Ansible's diff is a pair of STRINGS (basic.py's diff callback renders
+    # them as a `hostname = old` / `hostname = new` text diff), not the
+    # attribute map of facts krikri used to return - live-verified against
+    # 2.21.6 with a shimmed hostnamectl.
+    it "diffs the pre-update transient name as text, not the facts map (live-verified shape)" do
+      with_hostname_shims("oldstatic", "oldtrans") do |env, _log|
+        result = PluginSpecHelper.run("hostname", {
+          "name" => "newhost", "use" => "systemd", "_ansible_check_mode" => "true", "_environment" => env,
+        })
+        expect_ok(result)
+        result["diff"]["before"].as_s.must_equal("hostname = oldtrans\n")
+        result["diff"]["after"].as_s.must_equal("hostname = newhost\n")
+      end
+    end
+
+    # Only the static half differs, so Ansible's name_before falls back to
+    # the permanent hostname (live-verified with a shimmed hostnamectl).
+    it "diffs the static name when the transient already matches" do
+      with_hostname_shims("oldstatic", "newhost") do |env, _log|
+        result = PluginSpecHelper.run("hostname", {
+          "name" => "newhost", "use" => "debian", "_ansible_check_mode" => "true", "_environment" => env,
+        })
+        expect_ok(result)
+        result["changed"].as_bool.must_equal(true)
+        result["diff"]["before"].as_s.must_equal("hostname = oldstatic\n")
+        result["diff"]["after"].as_s.must_equal("hostname = newhost\n")
       end
     end
 

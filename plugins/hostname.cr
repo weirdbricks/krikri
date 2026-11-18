@@ -53,7 +53,15 @@
 # (auto path on Debian-family: /etc/hostname's content, not the live
 # kernel hostname). Returns ansible_facts
 # (ansible_hostname, ansible_nodename, ansible_fqdn, ansible_domain)
-# matching Ansible's convention.
+# matching Ansible's convention, and - only when the hostname actually
+# changes - Ansible's diff, which is a pair of STRINGS rendered by the
+# diff callback as a `hostname = old` / `hostname = new` text diff, not
+# a before/after attribute map (live-verified: the module builds
+# `{'before': 'hostname = %s\n' % name_before, 'after': ...}`).
+# name_before is the strategy's CURRENT hostname captured before the
+# update, falling back to its PERMANENT one only when the current one
+# already equals the requested name (systemd's transient can match while
+# its static does not) - live-verified with a shimmed hostnamectl.
 #
 # Verified against ansible-playbook behavior (not ansible-doc alone):
 # - Returns ansible_facts at the result top level, not nested under a
@@ -160,7 +168,7 @@ module Krikri
     # backfill.
     private HOSTNAME_SUCCESS_KEY_ORDER = ["changed", "name", "ansible_facts", "diff"]
 
-    private def hostname_success(changed : Bool, name : String, old_facts : Hash(String, String)?) : PluginResult
+    private def hostname_success(changed : Bool, name : String, name_before : String?) : PluginResult
       # The facts are built HERE, at call time, not precomputed: Ansible
       # reads the live hostname after its update, so the value must be
       # sampled after each strategy's set/write - a precomputed hash kept
@@ -169,10 +177,10 @@ module Krikri
       # reads the old live name, as ansible's check mode does.
       hostname_facts = build_facts(name)
       name_echo = @params["name"].to_s
-      if ofacts = old_facts
+      if before = name_before
         PluginResult.new(changed: changed, failed: false, msg: "",
           ansible_facts: hostname_facts,
-          diff: generate_attribute_diff(ofacts, hostname_facts),
+          diff: hostname_diff(before, name),
           name: name_echo,
           key_order: HOSTNAME_SUCCESS_KEY_ORDER)
       else
@@ -181,6 +189,16 @@ module Krikri
           name: name_echo,
           key_order: HOSTNAME_SUCCESS_KEY_ORDER)
       end
+    end
+
+    # Ansible's hostname diff is plain text, not an attribute map: the
+    # diff callback unifies these two strings into the familiar
+    # `-hostname = old` / `+hostname = new` output.
+    private def hostname_diff(before_name : String, name : String) : JSON::Any
+      JSON.parse({
+        "before" => "hostname = #{before_name}\n",
+        "after"  => "hostname = #{name}\n",
+      }.to_json)
     end
 
     private def build_facts(hostname : String) : Hash(String, String)
@@ -303,10 +321,8 @@ module Krikri
         return hostname_success(false, name, nil)
       end
 
-      old_facts = build_facts(permanent)
-
       if @check_mode
-        return hostname_success(true, name, old_facts)
+        return hostname_success(true, name, permanent)
       end
 
       begin
@@ -316,7 +332,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, name, old_facts)
+      hostname_success(true, name, permanent)
     end
 
     # SystemdStrategy (use: systemd / use: debian - Ansible's STRATS
@@ -353,16 +369,20 @@ module Krikri
         return hostname_success(false, name, nil)
       end
 
-      old_facts = build_facts(transient_name)
+      # Ansible picks the pre-update CURRENT hostname for the diff's
+      # before side, and only falls back to the permanent one when the
+      # current already matches the requested name (the transient can
+      # match while the static does not).
+      name_before = transient_name != name ? transient_name : permanent_name
 
       if @check_mode
-        return hostname_success(true, name, old_facts)
+        return hostname_success(true, name, name_before)
       end
 
       set_failure = systemd_set_phase(name, transient_name, permanent_name)
       return set_failure if set_failure
 
-      hostname_success(true, name, old_facts)
+      hostname_success(true, name, name_before)
     end
 
     # The set-phase half of the systemd strategy: permanent first, then
@@ -417,10 +437,8 @@ module Krikri
         return hostname_success(false, name, nil)
       end
 
-      old_facts = build_facts(permanent)
-
       if @check_mode
-        return hostname_success(true, name, old_facts)
+        return hostname_success(true, name, permanent)
       end
 
       # Ansible's set_permanent_hostname: rewrite the file line by
@@ -448,7 +466,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, name, old_facts)
+      hostname_success(true, name, permanent)
     end
 
     # AlpineStrategy (use: alpine) - runs `hostname -F /etc/hostname` FIRST
@@ -475,10 +493,8 @@ module Krikri
         return hostname_success(false, name, nil)
       end
 
-      old_facts = build_facts(permanent)
-
       if @check_mode
-        return hostname_success(true, name, old_facts)
+        return hostname_success(true, name, permanent)
       end
 
       result = remote_exec("hostname -F #{Shell.single_quote(hostname_file)}")
@@ -491,7 +507,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, name, old_facts)
+      hostname_success(true, name, permanent)
     end
 
     # OpenRCStrategy (use: openrc) - edits /etc/conf.d/hostname's
@@ -531,10 +547,8 @@ module Krikri
         return hostname_success(false, name, nil)
       end
 
-      old_facts = build_facts(permanent)
-
       if @check_mode
-        return hostname_success(true, name, old_facts)
+        return hostname_success(true, name, permanent)
       end
 
       lines = File.exists?(conf_file) ? File.read(conf_file).lines.map(&.strip) : [] of String
@@ -554,7 +568,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      hostname_success(true, name, old_facts)
+      hostname_success(true, name, permanent)
     end
 
     # Run one of the strategy's hostnamectl reads; returns the stripped
