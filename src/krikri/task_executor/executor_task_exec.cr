@@ -1644,7 +1644,9 @@ module Krikri
     # result field like "result.rc" does). Same substitute-then-evaluate
     # pipeline as when_condition/until_condition.
     private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host,
-                                   vars_context : Hash(String, JSON::Any)? = nil, exec_host : Host? = nil) : Nil
+                                   vars_context : Hash(String, JSON::Any)? = nil, exec_host : Host? = nil,
+                                   item_label : String? = nil, loop_item : JSON::Any? = nil,
+                                   loop_var_name : String? = nil, defer_stats : Bool = false) : Nil
       result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"), task)
       # Real's TaskExecutor puts every controller-side deprecation the task
@@ -1743,13 +1745,16 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil, source_task: task)
+        ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil, source_task: task, item_label: item_label, loop_item: loop_item, loop_var_name: loop_var_name)
       end
       # A non-adhoc display already consumed the held deprecation window at
       # its own flush point (inside display_result, after the module's
       # warnings); the adhoc shape has no such point, so drop any window
       # here rather than leak it into a later task's display.
       ResultDisplay.flush_task_deprecation_capture_for_display
+      # A looped caller books the whole task ONCE, after its last item
+      # (real's loop aggregate) rather than per item.
+      return if defer_stats
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed, result, ignore_errors: ignore_errors)
     end
