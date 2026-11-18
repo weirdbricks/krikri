@@ -57,6 +57,23 @@ describe "YAML syntax error reporting" do
       OUT
   end
 
+  # libyaml's `---i` complaint has no "while ..." context half, so it
+  # exercised the branch where ansible capitalizes the problem text
+  # itself (akshayavb99.k8sworker_setup_sample_role, issue #1514).
+  it "matches Ansible for a malformed document start marker" do
+    status, output = syntax_check("---i\n# c\n- name: \"quoted\"\n")
+    status.exit_code.must_equal(4)
+    output.must_equal(<<-OUT + "\n\n")
+      [ERROR]: YAML parsing failed: Did not find expected <document start>.
+      Origin: PB:3:1
+
+      1 ---i
+      2 # c
+      3 - name: "quoted"
+        ^ column 1
+      OUT
+  end
+
   # A tab indent: Ansible substitutes its own hint for libyaml's
   # wording, echoes the PRECEDING line as context, and renders the tab as
   # a single space.
