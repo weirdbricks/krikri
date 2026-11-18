@@ -418,4 +418,139 @@ describe "a templated become: that renders to a non-boolean fails the task" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #1505: include_vars: is parsed by its own dedicated parser,
+  # which never applied become: - so an unconvertible play- or task-level
+  # become: left the task's become_invalid nil, the executor's keyword
+  # probe never fired, and the task reported ok where real post-validates
+  # the keyword and fails it before loading anything.
+  it "fails an include_vars: task on an unconvertible play become:" do
+    root = File.tempname("become-bool-include-vars")
+    Dir.mkdir(root)
+    File.write(File.join(root, "vars.yml"), "loaded_var: hi\n")
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        become: kpg-maybe
+        tasks:
+          - name: load vars
+            include_vars:
+              file: vars.yml
+              name: loaded
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("TASK [load vars]").must_equal(true, output_text)
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("Error processing keyword 'become'.").must_equal(true, output_text)
+    output_text.includes?("ok: [localhost]").must_equal(false, output_text)
+    output_text.includes?(File.join(root, "pb.yml") + ":4:11").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # A delegated include_vars: labels its fatal line `host -> delegate`
+  # (CallbackBase.host_label) even though the keyword failure happens
+  # controller-side before any connection is built.
+  it "labels a delegated include_vars: keyword failure with the delegate:" do
+    root = File.tempname("become-bool-include-vars-delegate")
+    Dir.mkdir(root)
+    File.write(File.join(root, "vars.yml"), "loaded_var: hi\n")
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: hostone
+        connection: local
+        gather_facts: false
+        become: kpg-maybe
+        tasks:
+          - name: load vars
+            include_vars:
+              file: vars.yml
+              name: loaded
+            delegate_to: hosttwo
+      YAML
+
+    inventory = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-two-local-hosts.ini")
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", inventory, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("fatal: [hostone -> hosttwo]: FAILED!").must_equal(true, output_text)
+    output_text.includes?("ok: [hostone").must_equal(false, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # validate_argument_spec: shares include_vars:'s dedicated-parser gap
+  # (issue #1505): real treats it as an ordinary task, so its become: is
+  # post-validated before the action's own argument checking runs.
+  it "fails a validate_argument_spec: task on an unconvertible play become:" do
+    root = File.tempname("become-bool-validate-args")
+    Dir.mkdir(root)
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        become: kpg-maybe
+        tasks:
+          - name: validate args
+            validate_argument_spec:
+              argument_spec:
+                foo:
+                  type: str
+              provided_arguments:
+                foo: bar
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("TASK [validate args]").must_equal(true, output_text)
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("ok: [localhost]").must_equal(false, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # Real post-validates the keywords per loop ITEM, so a looped
+  # include_vars: prints one failed item line per iteration (the [ERROR]
+  # block dedupes to one) and books a single failed=1, with no aggregate
+  # "One or more items failed" fatal for the action.
+  it "fails each item of a looped include_vars: on an unconvertible become:" do
+    root = File.tempname("become-bool-include-vars-loop")
+    Dir.mkdir(root)
+    File.write(File.join(root, "vars.yml"), "loaded_var: hi\n")
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        become: kpg-maybe
+        tasks:
+          - name: load vars
+            include_vars:
+              file: "{{ item }}"
+              name: loaded
+            loop:
+              - vars.yml
+              - vars.yml
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.scan(/failed: \[localhost\] \(item=vars.yml\) => \{"ansible_loop_var": "item", "changed": false, "item": "vars.yml", "msg": "Task failed: Error processing keyword 'become'/).size.must_equal(2, output_text)
+    output_text.includes?("One or more items failed").must_equal(false, output_text)
+    output_text.includes?("failed=1").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end

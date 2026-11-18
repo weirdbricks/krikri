@@ -1136,6 +1136,31 @@ module Krikri
             next
           end
 
+          # Real post-validates the task's boolean keywords per ITEM, before
+          # include_vars reads anything, so an unconvertible become:/
+          # run_once:/check_mode:/diff: fails each item the loop reaches
+          # (live-verified vs 2.21.6: two identical items share one [ERROR]
+          # block via ansible's own block dedupe, and the register gets one
+          # result per item - issue #1505).
+          if error = boolean_keyword_invalid_error(task, item_context)
+            result = keyword_failure_json(error, task)
+            finish_single_task(task, host, result, vars_context: item_context,
+              item_label: item_label, loop_item: item, loop_var_name: task.loop_var,
+              delegate_target: delegate_display_target(task, host, item_context),
+              defer_stats: true)
+            failed = true
+            var_name = task.loop_var.try { |name| name.empty? ? "item" : name } || "item"
+            item_result = {
+              "ansible_loop_var" => JSON::Any.new(var_name),
+              "changed"          => JSON::Any.new(false),
+              "failed"           => JSON::Any.new(true),
+              "msg"              => result["msg"]? || JSON::Any.new(""),
+            } of String => JSON::Any
+            item_result[var_name] = item
+            item_results << JSON::Any.new(item_result)
+            next
+          end
+
           if early = include_vars_early_failure(task, name_unhashable)
             message, arg_level = early
             unless arg_level
@@ -1409,10 +1434,11 @@ module Krikri
       # The conditional has passed, so real now runs the action and hits
       # its own argument validation / null-file lookup. Its task keywords
       # are post-validated before any of that, so an unconvertible
-      # run_once:/check_mode:/diff: fails the include_vars: statement
-      # first (live-verified vs 2.21.6, issue #1467).
+      # run_once:/check_mode:/diff:/become: fails the include_vars:
+      # statement first (live-verified vs 2.21.6, issue #1467).
       if error = boolean_keyword_invalid_error(task, vars_context)
-        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context,
+          delegate_target: delegate_display_target(task, host, vars_context))
         return
       end
       if early = include_vars_early_failure(task, name_unhashable)
@@ -1559,7 +1585,8 @@ module Krikri
       # its own argument validation (see include_vars_early_failure) -
       # after post-validating the task's own boolean keywords (issue #1467).
       if error = boolean_keyword_invalid_error(task, vars_context)
-        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context,
+          delegate_target: delegate_display_target(task, host, vars_context))
         return
       end
       if early = include_vars_early_failure(task, nil)
