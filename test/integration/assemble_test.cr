@@ -336,6 +336,49 @@ describe "assemble plugin" do
     diff["after_header"].as_s.wont_equal(dest)
   end
 
+  # The kpg harness compares a `--check --diff` run's console bytes, and
+  # that header is a per-run value no engine can reproduce: Ansible stages
+  # the fragments into a tempfile.mkstemp FILE directly in DEFAULT_LOCAL_TMP,
+  # so two runs of real Ansible disagree on it exactly the same way (issue
+  # #1539). What a mask CAN anchor on is its shape - and it is file-shaped,
+  # ending at the `tmp<rnd>` component, unlike a template: diff's header,
+  # which names the staged directory AND the source's basename below it.
+  it "prints a file-shaped staged after header on a check-mode --diff run" do
+    playbook = as_path("assemble_check_diff.yml")
+    src = as_path("assemble_check_diff_src")
+    dest = as_path("assemble_check_diff_dest.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "one\n")
+    File.delete(dest) if File.exists?(dest)
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - ansible.builtin.assemble:
+              src: #{src}
+              dest: #{dest}
+              remote_src: "false"
+      YAML
+    engine = File.expand_path("../../bin/krikri-playbook", __DIR__)
+    inventory = File.expand_path("../fixtures/inventory-explicit-localhost.ini", __DIR__)
+
+    output = IO::Memory.new
+    status = Process.run(engine, ["-i", inventory, "--check", "--diff", playbook], output: output, error: output)
+
+    status.success?.must_equal(true, output.to_s)
+    File.exists?(dest).must_equal(false)
+    text = output.to_s
+    text.must_include("--- before\n")
+    text.wont_include("--- before: #{dest}")
+    text.must_include("+one\n")
+
+    header = text.lines.find!(&.starts_with?("+++ after: "))
+    staged = Regex.escape(Path.home.to_s) + "/\\.ansible/tmp/ansible-local-\\d+[a-z0-9_]{8}/tmp[a-z0-9_]{8}"
+    header.must_match(Regex.new("\\A\\+\\+\\+ after: #{staged}\\z"))
+    header.ends_with?('/').must_equal(false)
+  end
+
   # TaskExecutor#stage_assemble_dir decides the staged path on the
   # CONTROLLER and passes it along: the plugin binary runs on the target
   # for an ssh connection, where ~ is a different home than the one real
