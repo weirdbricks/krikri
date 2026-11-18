@@ -168,24 +168,30 @@ connection password it uses `sshpass -e` when the program exists and otherwise O
 `ansible_ssh_password_mechanism: sshpass` without `sshpass` installed succeeds here where real fails.
 Decided 2026-10-08: lenient direction, not worth emulating.
 
-### Callback-plugin emulation covers exactly two shapes, and errors on everything else
+### Callback-plugin emulation covers exactly two shapes; everything else is skipped with a warning
 
-There is no generic callback-plugin architecture. `ANSIBLE_CALLBACKS_ENABLED` recognizes exactly
-`ansible.posix.profile_tasks` (plus the legacy short form `profile_tasks`) and
+There is no generic callback-plugin architecture. `ANSIBLE_CALLBACKS_ENABLED` implements exactly
+`ansible.posix.profile_tasks` (plus the legacy short form `profile_tasks`);
 `ANSIBLE_STDOUT_CALLBACK` recognizes exactly `oneline` (plus a no-op `default`, which is what
-krikri's hardcoded display already is); every other value is a hard startup error
-(`[ERROR]: Could not load 'X' callback plugin.`, rc 1) instead of upstream's behavior. Real 2.21.6
-warns-and-SKIPS an unknown `callbacks_enabled` entry (`[WARNING]: Skipping callback plugin 'X',
-unable to load`) and fails hard only for an unloadable stdout callback - krikri errors hard for
-BOTH, on purpose (product decision, 2026-10-10): a run that silently produces different output
-than the callback the user asked for is worse than no run. Consequences of that decision:
+krikri's hardcoded display already is) and every other value there is a hard startup error. Every
+other `ANSIBLE_CALLBACKS_ENABLED` entry is warn-and-skipped instead, like upstream: a name no
+loader path (the playbook's and roles' `callback_plugins/`, `ANSIBLE_CALLBACK_PLUGINS`, the
+configured roots, a collection's `plugins/callback/`) provides gets Ansible's own
+`[WARNING]: Skipping callback plugin 'X', unable to load`, and a callback ansible would load gets
+krikri's own `[WARNING]: Callback plugin 'X' cannot be executed by krikri-playbook and is ignored.`
+Neither aborts the run (issue #1473: a reporting plugin must not stop the play). Custom callback
+plugins are therefore never EXECUTED, so their own output lines (and any behavior they add, e.g. a
+custom stdout callback named via `ANSIBLE_STDOUT_CALLBACK`) are missing from the run. Listing modes
+(`--syntax-check`/`--list-*`) print no callback warning, matching upstream. Consequences:
 
 - `profile_tasks`' own config surface is not implemented: `PROFILE_TASKS_TASK_OUTPUT_LIMIT` stays
   at the default 20 rows, `PROFILE_TASKS_SORT_ORDER` stays at the default descending, and
   `PROFILE_TASKS_SUMMARY_ONLY` is not honored. The -vv+ per-row `task path:` line under each recap
   row is not rendered either.
 - Other aggregate callbacks (`profile_roles`, `profile_json`, `community.general.*` timings) and
-  other stdout callbacks (`minimal`, `dense`, `json`, `-t/--tree`) are not implemented and error.
+  custom aggregate callbacks are skipped with a warning rather than run, so the lines they would
+  print are absent.
+- Other stdout callbacks (`minimal`, `dense`, `json`, `-t/--tree`) are not implemented and error.
 - `ANSIBLE_CALLBACK_WHITELIST` (removed upstream >= 2.12) is deliberately NOT read.
 
 On the oneline side, two scope bounds: -v/-vv/-vvv output is not reshaped by the callback beyond

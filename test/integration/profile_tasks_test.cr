@@ -140,21 +140,45 @@ describe "profile_tasks callback emulation" do
     end
   end
 
-  describe "error-on-unknown" do
-    it "exits 1 with the loader error for an unrecognized callback" do
+  describe "unknown callbacks are skipped" do
+    it "runs the play with Ansible's own warning for a name no loader path provides" do
       status, output = run_playbook(DEMO_PLAYBOOK, {"ANSIBLE_CALLBACKS_ENABLED" => "unreal_callback"})
 
-      status.success?.must_equal(false)
-      status.exit_code.must_equal(1)
-      output.must_include("[ERROR]: Could not load 'unreal_callback' callback plugin.")
-      output.wont_include("PLAY [")
+      status.success?.must_equal(true)
+      output.must_include("[WARNING]: Skipping callback plugin 'unreal_callback', unable to load")
+      output.must_include("PLAY RECAP")
+      output.wont_include("[ERROR]: Could not load")
     end
 
-    it "errors on any unrecognized entry in a comma-separated list" do
+    it "runs the play and reports a resolvable custom callback as unexecutable" do
+      dir = PluginSpecHelper.tmp_path("custom-callback-plugins")
+      Dir.mkdir_p(dir)
+      File.write(File.join(dir, "mycb.py"), <<-PYTHON)
+        from ansible.plugins.callback import CallbackBase
+
+        class CallbackModule(CallbackBase):
+            CALLBACK_VERSION = 2.0
+            CALLBACK_TYPE = "notification"
+            CALLBACK_NAME = "mycb"
+            CALLBACK_NEEDS_ENABLED = True
+        PYTHON
+
+      status, output = run_playbook(DEMO_PLAYBOOK, {
+        "ANSIBLE_CALLBACKS_ENABLED" => "mycb",
+        "ANSIBLE_CALLBACK_PLUGINS"  => dir,
+      })
+
+      status.success?.must_equal(true)
+      output.must_include("[WARNING]: Callback plugin 'mycb' cannot be executed by krikri-playbook and is ignored.")
+      output.must_include("PLAY RECAP")
+    end
+
+    it "still honors a recognized entry in a comma-separated list" do
       status, output = run_playbook(DEMO_PLAYBOOK, {"ANSIBLE_CALLBACKS_ENABLED" => "ansible.posix.profile_tasks, dense"})
 
-      status.success?.must_equal(false)
-      output.must_include("[ERROR]: Could not load 'dense' callback plugin.")
+      status.success?.must_equal(true)
+      output.must_include("[WARNING]: Skipping callback plugin 'dense', unable to load")
+      output.must_include("TASKS RECAP ")
     end
   end
 

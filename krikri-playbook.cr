@@ -27,6 +27,7 @@ require "./src/krikri/yaml_bigint"
 require "./src/krikri/unsafe_values"
 require "./src/krikri/timing_profile"
 require "./src/krikri/playbook_parser"
+require "./src/krikri/callback_plugin_loader"
 require "./src/krikri/collection_index"
 require "./src/krikri/tag_filter"
 require "./src/krikri/extra_vars_parser"
@@ -340,21 +341,22 @@ gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]
 #
 # ANSIBLE_CALLBACKS_ENABLED is a comma-separated list like Ansible's
 # (split on commas, whitespace stripped). Only ansible.posix.profile_tasks
-# and its legacy short form are implemented; any other value is a HARD
-# startup error - real ansible only warns-and-skips an unrecognizable
-# aggregate callback, but a run that silently produces different output
-# than the callback the user asked for is worse than no run (deliberate
-# product decision, 2026-10-10).
+# and its legacy short form are implemented; every other entry is
+# warn-and-skipped, exactly as real ansible treats a callback it cannot
+# load - the entry is collected here and reported once the playbook
+# directory (a loader root) is known, just before the first PLAY banner.
+# Failing the whole run over a reporting plugin is worse than the missing
+# lines: the play itself is unaffected (issue #1473).
 profile_tasks_enabled = false
+skipped_callback_plugins = [] of String
 if callbacks_enabled_raw = ENV["ANSIBLE_CALLBACKS_ENABLED"]?
-  enabled_callbacks = callbacks_enabled_raw.split(",").map(&.strip).reject(&.empty?)
-  enabled_callbacks.each do |callback|
-    unless {"ansible.posix.profile_tasks", "profile_tasks"}.includes?(callback)
-      STDERR.puts "[ERROR]: Could not load '#{callback}' callback plugin."
-      exit 1
+  callbacks_enabled_raw.split(",").map(&.strip).reject(&.empty?).each do |callback|
+    if {"ansible.posix.profile_tasks", "profile_tasks"}.includes?(callback)
+      profile_tasks_enabled = true
+    else
+      skipped_callback_plugins << callback
     end
   end
-  profile_tasks_enabled = true unless enabled_callbacks.empty?
 end
 
 # ANSIBLE_STDOUT_CALLBACK: only oneline (and a no-op default) is
@@ -1177,6 +1179,22 @@ if quiet_listing_mode
     end
   end
   exit 0
+end
+
+# Real loads ANSIBLE_CALLBACKS_ENABLED's callbacks in the TaskQueueManager,
+# after the inventory and playbook have loaded and before the first PLAY
+# banner (live-verified vs ansible-core 2.21.5, including the listing
+# modes, which print no callback warning at all and have already exited
+# above). A name no loader path carries gets ansible's own warning; a
+# callback ansible could load is skipped with krikri's own line instead,
+# since this engine's display is hardcoded and cannot run it (issue
+# #1473). Either way the play runs.
+skipped_callback_plugins.each do |callback|
+  if Krikri::CallbackPluginLoader.find_source(callback, File.dirname(playbook_file))
+    STDERR.puts "[WARNING]: Callback plugin '#{callback}' cannot be executed by krikri-playbook and is ignored."
+  else
+    STDERR.puts "[WARNING]: Skipping callback plugin '#{callback}', unable to load"
+  end
 end
 
 # The connection/become flags are, in Ansible, exactly "set this
