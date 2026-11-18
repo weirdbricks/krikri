@@ -227,6 +227,19 @@ module Krikri
         # resolve_loop_items_or_raise, so the round174 skip-vs-fail-by-
         # when: matrix applies unchanged.
         if undefined_name = Krikri.undefined_filter_chain_source(bare, vars_context)
+          # `undefined | mandatory` is not a plain undefined variable here:
+          # ansible hands the undefined value to the mandatory FILTER
+          # PLUGIN, whose own wrapper fails the loop source. Real reports
+          # that as a lookup-shaped loop-source error - the bare plugin
+          # message, an Origin at the keyword's VALUE token, no
+          # "Task failed:" prefix and no "Provide a list" tail
+          # (live-verified vs 2.21.6, issue #1528).
+          if Krikri.chain_first_filter?(bare, "mandatory")
+            raise LoopLookupError.new(
+              Krikri::MANDATORY_FAILED_PREFIX + Krikri.mandatory_message(bare, undefined_name),
+              origin_known: true
+            )
+          end
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, vars_context))
         end
 
