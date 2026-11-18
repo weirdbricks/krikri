@@ -416,26 +416,80 @@ module Krikri
 
     def self.daemon_eligible?(plugin_name : String, become : Bool, become_flags : String? = nil) : Bool
       _ = become
-      # A login-shell escalation (`become_flags: --login`) must run through
-      # the per-step sudo wrapper that honours the flags - a daemon spawns
-      # once under plain `sudo -n -u <user>` and would run every later
-      # dispatch WITHOUT the login profile that become_flags asked for
-      # (issue #716: the become user's ~/.bash_profile builds the PATH a
-      # venv-installed command needs).
-      return false if become_login_shell?(become_flags)
+      # A daemon spawns ONCE under fixed sudo flags and never sees a task's
+      # become_flags, so any configured flag list has to take the one-shot
+      # path whose per-step wrapper carries it - a login profile for
+      # `become_flags: --login` (issue #716), env preservation for `-E`
+      # (issue #1486: an escalated command only keeps SSH_AUTH_SOCK when
+      # sudo was told to preserve the environment), or whatever else the
+      # task tuned.
+      return false if become_flags_set?(become_flags)
       !DAEMON_INELIGIBLE_PLUGINS.includes?(simple_plugin_name(plugin_name))
     end
 
-    # Whether a task's resolved become_flags ask sudo for a login shell
-    # (`--login` or `-i` as a whole token, Ansible's sudo plugin passes
-    # the flags through verbatim, so token position doesn't matter).
-    # Under -i sudo runs `$SHELL -c <command>` after sourcing the become
-    # user's login profile, so PATH (venv bin dirs etc.) comes from that
-    # profile exactly as it does under ansible-playbook.
-    def self.become_login_shell?(become_flags : String?) : Bool
-      return false unless become_flags
-      tokens = become_flags.split
-      tokens.includes?("--login") || tokens.includes?("-i")
+    # Whether the task actually configured become_flags; nil and a blank
+    # string are both "unset", the way Ansible's own
+    # `self.get_option('become_flags') or ''` reads them.
+    def self.become_flags_set?(become_flags : String?) : Bool
+      return false unless flags = become_flags
+      !flags.strip.empty?
+    end
+
+    # Ansible's sudo become plugin uses a task's `become_flags` as its
+    # WHOLE sudo option set: `build_become_command` joins the effective
+    # flags where its own `-H -S -n` defaults would otherwise sit, so
+    # `become_flags: '-E'` runs `sudo -E -u root ...` and the escalated
+    # command keeps SSH_AUTH_SOCK (issue #1486: without it a `git clone`
+    # of a `git@github.com:` URL as root loses the forwarded agent and
+    # fails with "Permission denied (publickey)").
+    #
+    # krikri's own default stays `-H -n`, not Ansible's `-H -S -n`: an
+    # unpaired -S would let sudo read the plugin's config payload off
+    # stdin as its password. With *password_stdin* the wrapper IS feeding
+    # sudo a password, so the default becomes `-H -S -p ''` and a
+    # configured list loses -n/--non-interactive - Ansible strips those
+    # too once it has a password to supply, since -n makes sudo fail
+    # instead of read it.
+    def self.sudo_become_flags(become_flags : String?, password_stdin : Bool) : Array(String)
+      unless flags = become_flags
+        return password_stdin ? ["-H", "-S", "-p", ""] : ["-H", "-n"]
+      end
+
+      tokens = Shell.shlex_split(flags)
+      return tokens unless password_stdin
+
+      tokens = tokens.compact_map do |flag|
+        if flag == "-n" || flag == "--non-interactive"
+          nil
+        elsif flag.starts_with?("-") && !flag.starts_with?("--")
+          # Ansible also strips an `n` inside a combined short-flag
+          # cluster (`-Hn` -> `-H`), not just a standalone `-n`.
+          flag.sub(/^(-\w*)n(\w*.*)$/, "\\1\\2")
+        else
+          flag
+        end
+      end
+      tokens += ["-p", ""] if sudo_flags_read_stdin?(tokens)
+      tokens
+    end
+
+    # Whether *flags* make sudo read its password from stdin (`-S` or
+    # `--stdin`, alone or inside a combined short-flag cluster). It is the
+    # only way krikri's non-interactive wrappers can hand sudo a password:
+    # without it a password-prefixed stdin stream would reach the plugin
+    # as config bytes, so those wrappers fall back to the plain form and
+    # let sudo fail the way Ansible's would.
+    def self.sudo_flags_read_stdin?(flags : Array(String)) : Bool
+      flags.any? do |flag|
+        flag == "--stdin" || (flag.starts_with?("-") && !flag.starts_with?("--") && flag.includes?('S'))
+      end
+    end
+
+    # A sudo flag token list rejoined as one shell-embedded command
+    # fragment (each token quoted on its own, so a value with spaces stays
+    # a single argv element for sudo).
+    private def self.sudo_flags_command(flags : Array(String)) : String
+      flags.map { |flag| Shell.quote_arg(flag) }.join(' ')
     end
 
     # Pre-upload all plugins needed for a playbook to all remote hosts
@@ -1531,22 +1585,16 @@ module Krikri
     # stdin, so -K with passwordless sudo behaves exactly as before.
     # Public as a spec seam: pinned directly in the unit tests.
     # *become_flags* is the task's resolved `become_flags:` keyword (or
-    # `ansible_become_flags` var): when it asks for a login shell
-    # (`--login`/`-i`), `-i` replaces `-H` - sudo then sources the become
-    # user's login profile before exec'ing the plugin, which is where a
-    # PATH pointing at a venv's bin dir comes from under ansible-playbook
-    # (issue #716: `shell: nautobot-server migrate` with
-    # `become_flags: --login` found the command there; plain `sudo -H`
-    # kept root's PATH and died with rc 127 "command not found").
+    # `ansible_become_flags` var). Ansible's sudo plugin hands the list to
+    # sudo as-is in place of its own defaults, so krikri does the same:
+    # `--login`/`-i` sources the become user's login profile (issue #716:
+    # a PATH built there is where `shell: nautobot-server migrate` found a
+    # venv-installed command, rc 127 without it), and `-E` preserves the
+    # environment (issue #1486: SSH_AUTH_SOCK for an agent-authenticated
+    # `git clone` as root).
     # Public as a spec seam: pinned directly in the unit tests.
     def self.local_sudo_argv(sudo_user : String, plugin_path : String, interactive : Bool, become_flags : String? = nil) : Array(String)
-      # -H mirrors ansible's sudo become (HOME = become user's), so
-      # ~/.ansible/tmp and its warning behave as ansible's (issue #536).
-      # -i (login shell) goes further: it also reads the become user's
-      # login profile, which ansible's sudo plugin reaches when the
-      # task's become_flags include --login/-i (issue #716).
-      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
-      interactive ? [home_flag, "-S", "-p", "", "-u", sudo_user, "--", plugin_path] : [home_flag, "-n", "-u", sudo_user, "--", plugin_path]
+      sudo_become_flags(become_flags, interactive) + ["-u", sudo_user, "--", plugin_path]
     end
 
     # What goes into the local plugin process's stdin: the config, or
@@ -1728,6 +1776,14 @@ module Krikri
       interactive = false
       if sudo_user && become_password
         interactive = !sudo_noninteractive?(sudo_user)
+      end
+      # A task's own become_flags replace sudo's default flags, and only
+      # -S/--stdin lets sudo take its password off the pipe. Without it,
+      # prefixing the plugin's config with the password would feed the
+      # password to the PLUGIN as config - fall back to the plain form and
+      # let sudo refuse, exactly as Ansible's sudo does with those flags.
+      if interactive && !sudo_flags_read_stdin?(sudo_become_flags(become_flags, true))
+        interactive = false
       end
 
       begin
@@ -2584,14 +2640,14 @@ module Krikri
       # -H matches ansible's sudo become plugin (sets HOME to the become
       # user's), so ~/.ansible/tmp resolves like ansible's and its
       # unusable-tempdir warning reproduces (issue #536; the daemon path
-      # already did this in ssh_manager since issue #629).
-      # -i (login shell) when the task's become_flags ask for one
-      # (ansible's sudo plugin appends become_flags to its fixed
-      # argument set): the login profile the become user's shell then
-      # reads is where a profile-built PATH (venv bin dirs) comes from
-      # (issue #716).
-      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
-      return "sudo #{home_flag} -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" unless become_password
+      # already did this in ssh_manager since issue #629). A task's own
+      # become_flags replace that default set outright, as ansible's sudo
+      # plugin does - the login profile of `--login` (issue #716), the env
+      # preservation of `-E` (issue #1486), and any other sudo option the
+      # task tuned.
+      unless become_password
+        return "sudo #{sudo_flags_command(sudo_become_flags(become_flags, false))} -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}"
+      end
       sudo_password_become_wrapper(remote_plugin_path, become_user.to_s, become_password, become_flags)
     end
 
@@ -2641,15 +2697,24 @@ module Krikri
       q_user = Shell.quote_arg(become_user)
       # -H (HOME = the become user's) matches ansible's sudo become
       # plugin, so ~/.ansible/tmp and its warning behave as ansible's
-      # (issue #536) - same reason as ssh_manager's daemon command.
-      # -i (login shell) when the task's become_flags ask for one: the
-      # become user's login profile is where a profile-built PATH comes
-      # from under ansible-playbook (issue #716).
-      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
+      # (issue #536) - same reason as ssh_manager's daemon command. A
+      # task's become_flags replace that default set outright, exactly as
+      # ansible's sudo plugin joins them: the login profile of `--login`
+      # (issue #716), the env preservation of `-E` (issue #1486), and so
+      # on.
+      plain_flags = sudo_flags_command(sudo_become_flags(become_flags, false))
+      password_flags = sudo_become_flags(become_flags, true)
+      # Custom flags without -S give sudo no way to read the password, so
+      # the password line must not claim a stdin slot it will never be
+      # consumed from: sudo refuses and fails the task, as it does under
+      # ansible-playbook with the same flags.
+      unless sudo_flags_read_stdin?(password_flags)
+        return "sudo #{plain_flags} -u #{q_user} -- #{plugin_path}"
+      end
       "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
-      "then sudo #{home_flag} -n -u #{q_user} -- #{plugin_path}; " \
+      "then sudo #{plain_flags} -u #{q_user} -- #{plugin_path}; " \
       "else { printf '%s\\n' #{Shell.single_quote(become_password)} 2>/dev/null; cat 2>/dev/null; } | " \
-      "sudo #{home_flag} -S -p '' -u #{q_user} -- #{plugin_path}; fi"
+      "sudo #{sudo_flags_command(password_flags)} -u #{q_user} -- #{plugin_path}; fi"
     end
 
     # The plain-command equivalent of the wrapper above (no staged plugin
@@ -2668,18 +2733,27 @@ module Krikri
                                   become_password : String? = nil, become_flags : String? = nil) : NamedTuple(command: String, via_stdin: Bool)
       return {command: command, via_stdin: false} unless become_needed?(become, become_user, remote_user)
 
-      home_flag = become_login_shell?(become_flags) ? "-i" : "-H"
       q_user = Shell.quote_arg(become_user.to_s)
       target = "/bin/sh -c #{Shell.quote_arg(command)}"
-      return {command: "sudo #{home_flag} -n -u #{q_user} -- #{target}", via_stdin: false} unless become_password
+      # The task's own become_flags replace sudo's default set the way
+      # ansible's sudo plugin uses them (issue #1486: `-E` keeps
+      # SSH_AUTH_SOCK; issue #716: `--login` sources the become user's
+      # login profile).
+      plain_flags = sudo_flags_command(sudo_become_flags(become_flags, false))
+      return {command: "sudo #{plain_flags} -u #{q_user} -- #{target}", via_stdin: false} unless become_password
 
       # Same probe-then-fallback shape as sudo_password_become_wrapper,
       # but no `cat`: nothing downstream reads stdin, so the only bytes
-      # that ever flow there are the password printf produces.
+      # that ever flow there are the password printf produces - and only
+      # when the flags give sudo a way to read them (-S).
+      password_flags = sudo_become_flags(become_flags, true)
+      unless sudo_flags_read_stdin?(password_flags)
+        return {command: "sudo #{plain_flags} -u #{q_user} -- #{target}", via_stdin: false}
+      end
       wrapper = "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
-                "then sudo #{home_flag} -n -u #{q_user} -- #{target}; " \
+                "then sudo #{plain_flags} -u #{q_user} -- #{target}; " \
                 "else printf '%s\\n' #{Shell.single_quote(become_password)} | " \
-                "sudo #{home_flag} -S -p '' -u #{q_user} -- #{target}; fi"
+                "sudo #{sudo_flags_command(password_flags)} -u #{q_user} -- #{target}; fi"
       {command: wrapper, via_stdin: true}
     end
 

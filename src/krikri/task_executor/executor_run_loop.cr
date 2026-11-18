@@ -2381,10 +2381,12 @@ module Krikri
 
       become_user = steps.first.become_user
       return nil unless steps.all? { |step| step.become_user == become_user }
-      # A login-shell escalation only the script transport's per-step sudo
-      # wrapper honours (the daemon spawns once under plain `sudo -n -u`,
-      # with no become_flags ever reaching sudo) must not take the daemon.
-      return nil if steps.any? { |step| PluginManager.become_login_shell?(step.become_flags) }
+      # Any task-configured become_flags only the script transport's
+      # per-step sudo wrapper honours (the daemon spawns once under fixed
+      # flags, with no become_flags ever reaching sudo) must not take the
+      # daemon - issue #1486's `-E` loses SSH_AUTH_SOCK there, just as
+      # issue #716's `--login` loses the become user's login profile.
+      return nil if steps.any? { |step| PluginManager.become_flags_set?(step.become_flags) }
       return nil if steps.any?(&.module_name.empty?)
 
       ssh_user = conn.user
