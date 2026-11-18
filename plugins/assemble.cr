@@ -181,15 +181,16 @@ module Krikri
     # runs on the target, whose home is not where real Ansible stages);
     # without it (a local connection, or the plugin invoked directly) the
     # synthesized shape is the correct one.
+    #
+    # Built through the shared _get_diff_data entry helper, so assemble gets
+    # the same per-side skip markers as copy's diff: a fragment holding a NUL
+    # byte reports `src_binary` instead of the raw bytes, which the plugin
+    # wire could not even carry as JSON (live-verified vs 2.21.6 - an
+    # assemble of such a fragment prints "diff skipped: source file appears
+    # to be binary").
     private def assemble_action_diff(existing : String?, content : String, dest : String) : JSON::Any
       after_header = @params["__assemble_staged_path"]?.presence || Krikri::LocalTmp.staged_file
-      return generate_unified_diff(existing, content, dest, after_header) if existing
-
-      JSON::Any.new({
-        "before"       => JSON::Any.new(""),
-        "after_header" => JSON::Any.new(after_header),
-        "after"        => JSON::Any.new(content),
-      })
+      action_plugin_diff_entry(existing || "", content, dest, after_header)
     end
 
     # Ansible.builtin.assemble's registered-result key order

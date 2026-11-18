@@ -1542,6 +1542,64 @@ module Krikri
       }.to_json)
     end
 
+    # Ansible's ActionBase#_get_diff_data, the single-entry dict an action
+    # plugin reports for a file it staged on the controller (copy's src, a
+    # rendered template, assemble's assembled fragments). Key order is
+    # _get_diff_data's own assignment order: before, before_header,
+    # after_header, after. `before_header` is the dest ONLY when the dest
+    # could be slurped - a dest that did not exist gets a bare `before`,
+    # which the callback prints as `--- before` with no path - and a NUL
+    # byte in the dest's first 8192 bytes (file.py's execute_diff_peek) or
+    # a side past max_diff_size replaces that side with its skip marker
+    # instead of content (live-verified vs ansible-core 2.21.6).
+    protected def action_plugin_diff_entry(before_content : String, after_content : String, dest : String, after_header : String) : JSON::Any
+      entry = {} of String => JSON::Any
+      if File.exists?(dest)
+        if diff_side_binary?(before_content, diff_peek_bytes)
+          entry["dst_binary"] = JSON::Any.new(1)
+        elsif before_content.bytesize > max_diff_size
+          entry["dst_larger"] = JSON::Any.new(max_diff_size)
+        else
+          entry["before_header"] = JSON::Any.new(dest)
+          entry["before"] = JSON::Any.new(before_content)
+        end
+      else
+        entry["before"] = JSON::Any.new("")
+      end
+
+      if after_content.bytesize > max_diff_size
+        entry["src_larger"] = JSON::Any.new(max_diff_size)
+      elsif diff_side_binary?(after_content)
+        entry["src_binary"] = JSON::Any.new(1)
+      else
+        entry["after_header"] = JSON::Any.new(after_header)
+        entry["after"] = JSON::Any.new(after_content)
+      end
+
+      JSON::Any.new(entry)
+    end
+
+    # MAX_FILE_SIZE_FOR_DIFF - ansible's `max_diff_size` config default
+    # (base.yml) - the exact number _get_diff_data stores in the marker.
+    private def max_diff_size : Int64
+      104448_i64
+    end
+
+    # execute_diff_peek's guess window for the dest side; the source side
+    # scans the whole content (live-verified: a NUL past 8192 bytes still
+    # prints no diff for the dest but does for the source).
+    private def diff_peek_bytes : Int32
+      8192
+    end
+
+    # Byte-level (not char-level) because the whole point is content that
+    # is not valid UTF-8; optionally limited to the head, like the peek.
+    protected def diff_side_binary?(content : String, limit : Int32 = Int32::MAX) : Bool
+      bytes = content.to_slice
+      bytes = bytes[0, Math.min(limit, bytes.size)]
+      bytes.any? { |byte| byte.zero? }
+    end
+
     # The diff dict shape replace.py and yum_repository.py build: headers
     # FIRST (before_header, before, after_header, after), bare - the
     # callback adds "before: "/"after: " when printing (live-verified vs
