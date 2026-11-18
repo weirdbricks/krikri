@@ -33,6 +33,15 @@ module Krikri
     CONFIG_PATH  = "/etc/selinux/config"
     ENFORCE_PATH = "/sys/fs/selinux/enforce"
 
+    # ansible.posix's module_utils/_respawn.py SYSTEM_PYTHON_INTERPRETERS,
+    # verbatim - the order respawn_module("selinux") probes.
+    SYSTEM_PYTHON_INTERPRETERS = [
+      "/usr/bin/libexec/platform-python",
+      "/usr/bin/python3",
+      "/usr/bin/python2",
+      "/usr/bin/python",
+    ]
+
     def initialize(config : JSON::Any)
       super(config)
       @check_mode = true?(@params["_ansible_check_mode"]?)
@@ -78,9 +87,13 @@ module Krikri
       # selinux bindings fails with that message no matter what
       # configfile: says. This plugin needs no python bindings, so it
       # used to carry on to its own "Unable to find file" failure
-      # instead.
+      # instead. That failure is not unconditional in real, though: the
+      # gate first respawns the module under a system interpreter that
+      # DOES have the bindings (see respawnable_python?), which is how
+      # a Rocky 9 host whose discovered python3.12 lacks them still
+      # reports changed via /usr/bin/python3 (issue #1513).
       if gate = Krikri.missing_python_library("libselinux-python", "selinux")
-        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg]) unless respawnable_python?
       end
 
       # Ansible.posix.selinux ALWAYS fails when the config file is
@@ -187,6 +200,28 @@ module Krikri
     private def config_file_path : String
       @params["conf"]? || @params["file"]? || @params["configfile"]? ||
         ENV["KRIKRI_SELINUX_CONFIG_PATH"]? || CONFIG_PATH
+    end
+
+    # selinux.py:240-243's `respawn_module("selinux")`: when the task's
+    # interpreter cannot import the bindings, the module re-executes
+    # itself under the first SYSTEM_PYTHON_INTERPRETERS entry that can,
+    # and that copy's flow is the same config read/rewrite this plugin
+    # already runs - so finding one makes the task proceed exactly as if
+    # the task interpreter had the bindings. Only when no candidate
+    # carries them does real fall through to its missing_required_lib
+    # failure. The env override is a spec seam, like the config/enforce
+    # path overrides above: a colon-separated list replaces the probe
+    # order.
+    private def respawnable_python? : Bool
+      candidates = ENV["KRIKRI_SELINUX_RESPAWN_INTERPRETERS"]?.try(&.split(':')) || SYSTEM_PYTHON_INTERPRETERS
+      candidates.any? do |interpreter|
+        next false if interpreter.empty?
+
+        Process.run(interpreter, {"-c", "import selinux"},
+          output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+      rescue
+        false
+      end
     end
 
     private def extract(content : String, key : String) : String

@@ -190,12 +190,44 @@ describe "selinux plugin - libselinux-python gate (kpg34)" do
     Dir.mkdir_p(scratch)
     write_failing_python_shim(scratch, "python3.13")
 
+    # Real only reaches this failure when no system interpreter can
+    # import the bindings either; pin that so a dev host carrying
+    # python3-libselinux still sees the gate text.
     result = PluginSpecHelper.run("selinux",
       {"configfile" => "/tmp/kpg34-nosuch-config", "policy" => "nkhzav", "state" => "enforcing"},
-      env: {"PATH" => "#{scratch}:/nonexistent-kpg34-path"})
+      env: {"PATH"                                => "#{scratch}:/nonexistent-kpg34-path",
+            "KRIKRI_SELINUX_RESPAWN_INTERPRETERS" => "/nonexistent-kpg34-python"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_match(/\AFailed to import the required Python library \(libselinux-python\) on /)
+  end
+
+  # ansible.posix.selinux respawns itself under the first of
+  # SYSTEM_PYTHON_INTERPRETERS that imports the bindings when the
+  # task's interpreter cannot - the shape a Rocky 9 host produces when
+  # interpreter discovery picks a python3.12 with no python3-libselinux
+  # beside a python3.9 that has it (issue #1513: real reported
+  # changed/ok, krikri failed the whole role).
+  it "proceeds when a system interpreter can import the bindings (issue #1513)" do
+    scratch = PluginSpecHelper.tmp_path("kpg34-sel-respawn")
+    Dir.mkdir_p(scratch)
+    write_failing_python_shim(scratch, "python3.13")
+    system_python = File.join(scratch, "system-python")
+    File.write(system_python, "#!/bin/sh\nexit 0\n")
+    File.chmod(system_python, 0o755)
+
+    config = File.join(scratch, "config")
+    File.write(config, "SELINUX=enforcing\nSELINUXTYPE=targeted\n")
+
+    result = PluginSpecHelper.run("selinux",
+      {"configfile" => config, "state" => "disabled"},
+      env: {"PATH"                                => "#{scratch}:/nonexistent-kpg34-path",
+            "KRIKRI_SELINUX_RESPAWN_INTERPRETERS" => system_python,
+            "KRIKRI_SELINUX_ENFORCE_PATH"         => File.join(scratch, "enforce")})
+
+    result["failed"]?.try(&.as_bool?).must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    File.read(config).must_include("SELINUX=disabled")
   end
 end
 
