@@ -379,14 +379,23 @@ module Krikri
           display_host = active_hosts.first? || hosts.first
           task_display_name = render_task_name_for_display(task, display_host)
           emit_action_plugin_import_deprecations(task)
-          Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{task_display_name}]")
+          # Under free/host_pinned ansible's default callback prints the
+          # task banner LAZILY, on the task's first result line, and a
+          # meta: task produces no result line at all unless its own when:
+          # skips it - so real shows no banner for one (live-verified vs
+          # ansible-core 2.21.6, issue #1500). perform_skip prints the
+          # banner and task path for the skipped shape.
+          deferred_meta_banner = free_strategy? && task.meta?
+          unless deferred_meta_banner
+            Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{task_display_name}]")
+          end
           # The profile_tasks aggregate callback's per-task timestamp line
           # fires here too - banner or no banner (under the oneline stdout
           # callback the banner itself is suppressed but the timestamp
           # line still prints, live-verified), and handlers/facts get the
           # same treatment at their own banner sites.
           Krikri::ProfileTasks.record_task_start(task, task_display_name)
-          print_task_path(task)
+          print_task_path(task) unless deferred_meta_banner
         end
         # The buffered unreachable reports go under the banner, before
         # the reachable hosts' results - a refused connection completes
@@ -1581,6 +1590,14 @@ module Krikri
       skip_deprecations = ResultDisplay.pending_result_deprecations
 
       unless defer_display
+        # free/host_pinned's lazily-printed banner (see run_task_batch's
+        # own deferral): a skipped meta: task is the one meta shape with a
+        # result line, so real prints the banner - and, at -vv, the task
+        # path - above it (live-verified vs ansible-core 2.21.6).
+        if free_strategy? && task.meta?
+          Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(task)}#{render_task_name_for_display(task, host)}]")
+          print_task_path(task)
+        end
         # A solo skip's own fact reads (the clause itself, templated no_log:)
         # print before the skipping line - real displays the captured blocks
         # with the skipped result, ahead of it. Batch members (defer_display)
@@ -5704,8 +5721,13 @@ module Krikri
         end
 
         emit_action_plugin_import_deprecations(nested_task)
-        Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
-        print_task_path(nested_task)
+        # free/host_pinned's lazily-printed banner - this is the per-host
+        # path free runs every task through, so the same meta: deferral
+        # run_task_batch's banner site documents applies here (issue #1500).
+        unless free_strategy? && nested_task.meta?
+          Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
+          print_task_path(nested_task)
+        end
         execute_task(nested_task, host)
       end
     end

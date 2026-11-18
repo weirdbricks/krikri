@@ -282,4 +282,49 @@ describe "strategy:" do
       FileUtils.rm_rf(dir) if Dir.exists?(dir)
     end
   end
+
+  # Under free/host_pinned the default callback prints a task's banner
+  # lazily, on its first RESULT line - so a meta: task, which produces no
+  # result at all, shows no banner in real. The one exception is a meta:
+  # whose own when: skips it: that DOES have a `skipping:` result, and
+  # real prints the banner above it (live-verified against ansible-core
+  # 2.21.6, issue #1500).
+  it "prints no task banner for a meta task without a result with host_pinned" do
+    dir = File.tempname("strategy-meta-banner")
+    begin
+      Dir.mkdir_p(dir)
+      File.write(File.join(dir, "inv.ini"), "[g]\nh1 ansible_connection=local\n")
+      File.write(File.join(dir, "pb.yml"), <<-YAML)
+        - hosts: all
+          gather_facts: false
+          strategy: host_pinned
+          tasks:
+            - name: noop task
+              ansible.builtin.meta: noop
+            - name: flush handlers
+              ansible.builtin.meta: flush_handlers
+            - name: flush with a false when
+              ansible.builtin.meta: flush_handlers
+              when: false
+            - name: after
+              ansible.builtin.debug:
+                msg: after
+        YAML
+      output = IO::Memory.new
+      status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+        output: output, error: output, chdir: dir, env: {"ANSIBLE_STRATEGY" => nil})
+      status.exit_code.must_equal(0)
+      text = output.to_s
+      text.wont_include("TASK [noop task]")
+      text.wont_include("TASK [flush handlers]")
+      banner = text.index!("TASK [flush with a false when]")
+      skipped = text.index!("skipping: [h1]")
+      banner.wont_be_nil
+      skipped.wont_be_nil
+      (banner.as(Int32) < skipped.as(Int32)).must_equal(true)
+      text.must_include("TASK [after]")
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
 end
