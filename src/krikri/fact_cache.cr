@@ -13,16 +13,17 @@ module Krikri
   # since @facts already IS that in-run cache; `redis`/`memcached`
   # would need real client libraries this project doesn't carry).
   #
-  # Ansible only ever CONSULTS the cache under `gathering: smart`
-  # (or explicit + a play that skips gather_facts:) - `gathering:
-  # implicit` (the default) always re-gathers regardless of a
-  # configured cache, verified live against ansible-core 2.19.12: a
-  # warm fact-cache with default implicit gathering still re-ran
-  # `setup.py` every play. So this module is only ever consulted from
-  # the executor's existing `@smart_gathering` path (see
-  # `gather_facts_for_all_hosts`), never for implicit/explicit
-  # gathering - that mirrors Ansible's own gating rather than
-  # reintroducing a second, independent on/off switch.
+  # Ansible's VariableManager merges the configured cache into every
+  # host's vars on every play, gathering mode regardless: a play with
+  # `gather_facts: false` still sees the cached facts from an earlier
+  # run, and a re-gather merges fresh discovery over them (verified
+  # live against ansible-core 2.21.6). Only SKIPPING the gather itself
+  # is gated on `gathering: smart` - `implicit` (the default) and
+  # `explicit` still re-run `setup.py` for a gathering play even with a
+  # warm cache (verified against 2.19.12 and 2.21.6). The executor
+  # therefore seeds @facts from this module for every play (see its
+  # constructor) and writes back after any gather, while
+  # `gathered_facts_for?` decides whether the gather can be skipped.
   module FactCache
     # Matches Ansible's `fact_caching_timeout` default (24h, in
     # seconds). `0` means never expire, same as Ansible.
@@ -145,6 +146,18 @@ module Krikri
         # marker through the bigint-aware parse.
         io.write(Krikri.unquote_bigint_json(facts.to_json).to_slice)
       end
+    rescue
+    end
+
+    # Drops the persisted facts for *host_name* - what `meta:
+    # clear_facts` does to the cache in Ansible (its clear_facts calls
+    # the plugin's delete, which unlinks the jsonfile entry). Without
+    # this the next play's seeding would resurrect facts the run was
+    # told to forget. Best-effort, like #write.
+    def self.delete(host_name : String) : Nil
+      return unless enabled?
+      path = path_for(host_name)
+      File.delete(path) if File.exists?(path)
     rescue
     end
   end

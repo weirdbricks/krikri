@@ -1731,6 +1731,10 @@ module Krikri
         @facts[host.name].clear
         @set_facts[host.name].clear
         @set_fact_origins[host.name]?.try(&.clear)
+        # Real's clear_facts calls the cache plugin's delete, so the
+        # persisted entry goes too - otherwise the next play's seeding
+        # from the fact cache would bring back what this cleared.
+        FactCache.delete(host.name)
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
       end
