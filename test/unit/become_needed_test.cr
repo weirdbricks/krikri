@@ -90,75 +90,129 @@ describe "Krikri::PluginManager (become_needed_test.cr)" do
       target.must_include("sudo -H -n -u 'root; rm -rf /' --")
     end
 
-    it "uses sudo -i when become_flags ask for a login shell" do
-      # Ansible's sudo become plugin appends the task's become_flags to
-      # its own fixed argument set, so `become_flags: --login` runs
-      # `sudo --login`: the become user's login profile is sourced before
-      # the command, which is where a profile-built PATH (a venv bin dir)
-      # comes from (issue #716: `shell: nautobot-server migrate` with
-      # `become_flags: --login` resolved the command there, rc 127
-      # "command not found" without it).
+    it "passes become_flags to sudo in place of its own defaults" do
+      # Ansible's sudo become plugin joins the effective become_flags where
+      # its built-in `-H -S -n` defaults would sit - the configured list
+      # REPLACES them, it is not appended. Live-verified against
+      # ansible-core 2.21.6 with a logging sudo shim: `become_flags: '-E'`
+      # runs `sudo -E -u root ...` (issue #1486: SSH_AUTH_SOCK survives
+      # that, so an agent-authenticated `git clone` as root works).
+      target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil, "-E")
+      target.must_equal("sudo -E -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+    end
+
+    it "uses sudo --login when become_flags ask for a login shell" do
+      # `--login` is handed to sudo verbatim, so the become user's login
+      # profile is sourced before the command - that is where a
+      # profile-built PATH (a venv bin dir) comes from (issue #716:
+      # `shell: nautobot-server migrate` with `become_flags: --login`
+      # resolved the command there, rc 127 "command not found" without
+      # it). Ansible passes no -n alongside it, and neither does this.
       target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil, "--login")
-      target.must_equal("sudo -i -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+      target.must_equal("sudo --login -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
     end
 
     it "accepts -i as the login-shell token too" do
       target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil, "-i")
-      target.must_include("sudo -i -n -u appuser --")
+      target.must_include("sudo -i -u appuser --")
     end
 
-    it "keeps plain -H when the flags carry no login token" do
-      # Other become_flags (e.g. sudo options we do not model) must not
-      # flip the invocation away from the historical -H shape.
+    it "passes every configured flag through, not just the ones we model" do
+      # `--setenv`/other sudo options used to be dropped on the floor; the
+      # whole list now reaches sudo, as it does under ansible-playbook.
       target = Krikri::PluginManager.remote_plugin_target("copy", true, "appuser", "root", nil, "-n --setenv FOO=bar")
-      target.must_equal("sudo -H -n -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
+      target.must_equal("sudo -n --setenv FOO=bar -u appuser -- #{Krikri::PluginManager.remote_plugin_dir(nil)}/copy")
     end
 
-    it "keeps the password wrapper's shape but swaps -H for -i on login flags" do
-      wrapper = Krikri::PluginManager.sudo_password_become_wrapper("/tmp/copy", "appuser", "s3cret", "--login")
-      wrapper.must_include("sudo -i -n -u appuser -- /tmp/copy")
-      wrapper.must_include("sudo -i -S -p '' -u appuser -- /tmp/copy")
+    it "keeps the password wrapper's shape without become_flags" do
+      wrapper = Krikri::PluginManager.sudo_password_become_wrapper("/tmp/copy", "appuser", "s3cret")
+      wrapper.must_include("sudo -H -n -u appuser -- /tmp/copy")
+      wrapper.must_include("sudo -H -S -p '' -u appuser -- /tmp/copy")
       wrapper.must_include("sudo -n -u appuser -- true")
+    end
+
+    it "does not claim a stdin password slot when become_flags give sudo no -S" do
+      # `-E` replaces the default `-H -S -p ''`, leaving sudo no way to
+      # read a password off stdin - so the password line must not be
+      # prefixed to the plugin's config payload (that would feed the
+      # password to the module as config). Sudo refuses, as it does under
+      # ansible-playbook with the same flags.
+      wrapper = Krikri::PluginManager.sudo_password_become_wrapper("/tmp/copy", "appuser", "s3cret", "-E")
+      wrapper.must_equal("sudo -E -u appuser -- /tmp/copy")
+    end
+
+    it "keeps a configured -S prompt silent for the password wrapper" do
+      wrapper = Krikri::PluginManager.sudo_password_become_wrapper("/tmp/copy", "appuser", "s3cret", "-E -S")
+      wrapper.must_include("sudo -E -S -p '' -u appuser -- /tmp/copy")
+      wrapper.must_include("printf '%s\\n' 's3cret'")
     end
   end
 
-  describe ".local_sudo_argv (login become_flags)" do
-    it "swaps -H for -i when the flags ask for a login shell" do
+  describe ".local_sudo_argv (become_flags)" do
+    it "replaces the default -H/-n with the task's flags" do
+      Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", false, "-E")
+        .must_equal(["-E", "-u", "appuser", "--", "/tmp/copy"])
       Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", false, "--login")
-        .must_equal(["-i", "-n", "-u", "appuser", "--", "/tmp/copy"])
-      Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", true, "--login")
-        .must_equal(["-i", "-S", "-p", "", "-u", "appuser", "--", "/tmp/copy"])
+        .must_equal(["--login", "-u", "appuser", "--", "/tmp/copy"])
     end
 
-    it "keeps the historical -H argv without login flags" do
+    it "adds the silent prompt when the configured flags read stdin" do
+      Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", true, "-S -H")
+        .must_equal(["-S", "-H", "-p", "", "-u", "appuser", "--", "/tmp/copy"])
+    end
+
+    it "keeps the historical -H argv without become_flags" do
       Krikri::PluginManager.local_sudo_argv("appuser", "/tmp/copy", false, nil)
         .must_equal(["-H", "-n", "-u", "appuser", "--", "/tmp/copy"])
     end
   end
 
-  describe ".daemon_eligible? (login become_flags)" do
-    it "refuses the daemon for a login-shell escalation" do
-      # The daemon spawns once under plain `sudo -n -u <user>` and never
-      # sees the task's become_flags, so a login-shell escalation has to
-      # take the one-shot path whose sudo wrapper carries -i.
-      Krikri::PluginManager.daemon_eligible?("copy", true, "--login").must_equal(false)
-      Krikri::PluginManager.daemon_eligible?("copy", true, "-i").must_equal(false)
+  describe ".sudo_become_flags" do
+    it "defaults the no-password form to -H -n" do
+      Krikri::PluginManager.sudo_become_flags(nil, false).must_equal(["-H", "-n"])
     end
 
-    it "stays eligible without login flags" do
-      Krikri::PluginManager.daemon_eligible?("copy", true, nil).must_equal(true)
-      Krikri::PluginManager.daemon_eligible?("copy", true, "-n").must_equal(true)
+    it "defaults the password form to -H -S -p ''" do
+      Krikri::PluginManager.sudo_become_flags(nil, true).must_equal(["-H", "-S", "-p", ""])
+    end
+
+    it "strips -n/--non-interactive from configured flags when a password is fed" do
+      # Ansible strips them the same way once it has a become password: -n
+      # would make sudo fail instead of read it.
+      Krikri::PluginManager.sudo_become_flags("-H -S -n", true).must_equal(["-H", "-S", "-p", ""])
+      Krikri::PluginManager.sudo_become_flags("--non-interactive -H -S", true).must_equal(["-H", "-S", "-p", ""])
+      Krikri::PluginManager.sudo_become_flags("-HnS", true).must_equal(["-HS", "-p", ""])
+      Krikri::PluginManager.sudo_become_flags("-H -n", false).must_equal(["-H", "-n"])
+    end
+
+    it "splits quoted flag values into single argv tokens" do
+      Krikri::PluginManager.sudo_become_flags("-p 'say hi' -H", false).must_equal(["-p", "say hi", "-H"])
     end
   end
 
-  describe ".become_login_shell?" do
-    it "matches whole tokens only, in any position" do
-      Krikri::PluginManager.become_login_shell?("--login").must_equal(true)
-      Krikri::PluginManager.become_login_shell?("-H -S -n --login").must_equal(true)
-      Krikri::PluginManager.become_login_shell?("-i").must_equal(true)
-      Krikri::PluginManager.become_login_shell?("--loglevel=debug").must_equal(false)
-      Krikri::PluginManager.become_login_shell?(nil).must_equal(false)
-      Krikri::PluginManager.become_login_shell?("").must_equal(false)
+  describe ".become_flags_set?" do
+    it "treats nil and blank as unset" do
+      Krikri::PluginManager.become_flags_set?(nil).must_equal(false)
+      Krikri::PluginManager.become_flags_set?("").must_equal(false)
+      Krikri::PluginManager.become_flags_set?("   ").must_equal(false)
+      Krikri::PluginManager.become_flags_set?("-E").must_equal(true)
+    end
+  end
+
+  describe ".daemon_eligible? (become_flags)" do
+    it "refuses the daemon for any configured become_flags" do
+      # The daemon spawns once under fixed sudo flags and never sees the
+      # task's become_flags, so it cannot honour -i (issue #716) or -E
+      # (issue #1486) - both have to take the one-shot path whose sudo
+      # wrapper carries the flags.
+      Krikri::PluginManager.daemon_eligible?("copy", true, "--login").must_equal(false)
+      Krikri::PluginManager.daemon_eligible?("copy", true, "-i").must_equal(false)
+      Krikri::PluginManager.daemon_eligible?("copy", true, "-E").must_equal(false)
+    end
+
+    it "stays eligible without become_flags" do
+      Krikri::PluginManager.daemon_eligible?("copy", true, nil).must_equal(true)
+      Krikri::PluginManager.daemon_eligible?("copy", true, "").must_equal(true)
     end
   end
 end
