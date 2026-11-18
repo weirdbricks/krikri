@@ -353,4 +353,22 @@ describe "validate_argument_spec output parity" do
     output.must_include("ran")
     output.must_include("ignored=1")
   end
+
+  it "labels a delegated inline task's result lines with the delegate (issue #1530)" do
+    status, output = run_playbook("pb.yml", {
+      "pb.yml" => "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Validating arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec: {}\n      delegate_to: target2\n    - name: Failing arguments\n      ansible.builtin.validate_argument_spec:\n        argument_spec:\n          a: {type: str, required: true}\n      ignore_errors: true\n      delegate_to: target2\n",
+    })
+
+    # CallbackBase.host_label stamps `host -> delegate` from the task keyword
+    # even for a controller-side action, so both the ok and the fatal line
+    # read `[localhost -> target2]` (live-verified vs 2.19.11, which does not
+    # require the delegate to be in inventory). The dedicated inline parser
+    # dropped delegate_to:, so krikri printed a bare `[localhost]` - the kpg
+    # generator's diff.
+    status.exit_code.must_equal(0)
+    output.must_include("ok: [localhost -> target2]")
+    output.must_include("fatal: [localhost -> target2]: FAILED!")
+    output.wont_include("ok: [localhost]\n")
+    output.must_include("ignored=1")
+  end
 end
