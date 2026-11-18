@@ -101,7 +101,7 @@ module Krikri
     # unsafe-dest-hostname guard stays ahead of it - it protects krikri's
     # own dest handling and Ansible has no equivalent failure.
     private def action_preflight_result(src : String?, dest : String?) : PluginResult?
-      return unsafe_host_result(src ? src : "") if !lenient_bool(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
+      return unsafe_host_result(src ? src : "") if !lenient_bool(@params["flat"]?) && unsafe_host_dir_name?(dest_host_name)
       return check_mode_result if true?(@params["_ansible_check_mode"]?)
       msg = nil
       msg = "Invalid type supplied for source option, it must be a string" if non_string_param("src")
@@ -136,9 +136,21 @@ module Krikri
     private def unsafe_host_result(src : String) : PluginResult
       PluginResult.new(
         changed: false, failed: true,
-        msg: "inventory hostname '#{@host.name}' cannot be used as a fetch destination directory (path separators or '..' would escape dest)",
+        msg: "inventory hostname '#{dest_host_name}' cannot be used as a fetch destination directory (path separators or '..' would escape dest)",
         file: src,
       )
+    end
+
+    # Ansible's non-flat layout is dest/<task_vars['inventory_hostname']>/
+    # <src> (fetch.py:159-163), and inventory_hostname keeps naming the
+    # PLAY's host under `delegate_to:` - the delegate's own name never
+    # enters the path, even though the file is read from it. @host.name is
+    # the delegate here, so the origin host's inventory_hostname has to
+    # come from the task vars instead (issue #1502: fetch delegated to
+    # target2 was written under dest/target2/ where ansible wrote
+    # dest/target/).
+    private def dest_host_name : String
+      @vars["inventory_hostname"]?.try(&.as_s?) || @host.name
     end
 
     private def check_mode_result : PluginResult
@@ -243,7 +255,7 @@ module Krikri
       composed = if lenient_bool(@params["flat"]?)
                    dest.ends_with?(File::SEPARATOR) ? File.join(dest, File.basename(src)) : dest
                  else
-                   File.join(dest, @host.name, src)
+                   File.join(dest, dest_host_name, src)
                  end
       normalized = File.expand_path(composed)
       return {path: normalized, error: nil} if contained_in_dest?(dest, normalized)

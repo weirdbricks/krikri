@@ -152,4 +152,25 @@ describe "fetch plugin" do
   ensure
     FileUtils.rm_rf(dest_root) if dest_root
   end
+
+  it "names the dest directory after inventory_hostname, not the delegated-to host" do
+    src = File.tempname("fetch-spec-src")
+    File.write(src, "fetched\n")
+    dest_root = File.tempname("fetch-spec-delegate")
+    Dir.mkdir_p(dest_root)
+
+    result = PluginSpecHelper.run(
+      "fetch",
+      {"src" => src, "dest" => dest_root},
+      {"ansible_connection" => "local", "inventory_hostname" => "target"},
+      host_name: "target2",
+    )
+
+    result["dest"].as_s.must_equal(File.expand_path(File.join(dest_root, "target", src)))
+    File.read(File.expand_path(File.join(dest_root, "target", src))).must_equal("fetched\n")
+    File.exists?(File.join(dest_root, "target2")).must_equal(false)
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    FileUtils.rm_rf(dest_root) if dest_root
+  end
 end
