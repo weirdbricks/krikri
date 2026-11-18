@@ -11,7 +11,9 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env : Bool = false,
-                         env : Hash(String, String?) = {} of String => String?) : {Int32, Array(String), String}
+                         env : Hash(String, String?) = {} of String => String?,
+                         playbook_subdir : String? = nil,
+                         relative_plugin_env : Bool = false) : {Int32, Array(String), String}
   dir = File.tempname("strategy")
   Dir.mkdir_p(dir)
   File.write(File.join(dir, "inv.ini"),
@@ -26,7 +28,9 @@ private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env 
     File.write(File.join(plugin_dir, "#{plugin_name}.py"), "")
   end
   line = strategy ? "  strategy: #{strategy}\n" : ""
-  File.write(File.join(dir, "pb.yml"), <<-YAML)
+  playbook_rel = playbook_subdir ? File.join(playbook_subdir, "pb.yml") : "pb.yml"
+  Dir.mkdir_p(File.dirname(File.join(dir, playbook_rel)))
+  File.write(File.join(dir, playbook_rel), <<-YAML)
     - hosts: all
       gather_facts: false
     #{line.rstrip}
@@ -41,8 +45,10 @@ private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env 
   # Pin ANSIBLE_STRATEGY as unset unless a test supplies it, so a
   # developer's own exported value cannot change these expectations.
   child_env = {"ANSIBLE_STRATEGY" => nil}.merge(env)
-  child_env["ANSIBLE_STRATEGY_PLUGINS"] = plugin_dir if plugin_env
-  status = Process.run(BINARY, ["-i", "inv.ini", "-f", "5", "pb.yml"],
+  if plugin_env
+    child_env["ANSIBLE_STRATEGY_PLUGINS"] = relative_plugin_env ? "./plugin_env" : plugin_dir
+  end
+  status = Process.run(BINARY, ["-i", "inv.ini", "-f", "5", playbook_rel],
     output: stdout_io, error: stdout_io, chdir: dir, env: child_env)
   # The banner/result sequence IS the observable difference.
   lines = stdout_io.to_s.lines.compact_map do |lv2|
@@ -127,6 +133,18 @@ describe "strategy:" do
   # uses. Passed as a child env so no process-wide ENV is touched.
   it "accepts a strategy plugin from ANSIBLE_STRATEGY_PLUGINS" do
     code, lines, _ = run_strategy("custom_demo", plugin: "custom_demo", plugin_env: true)
+    code.must_equal(0)
+    lines.count(&.starts_with?("TASK [slow")).must_equal(1)
+  end
+
+  # A RELATIVE ANSIBLE_STRATEGY_PLUGINS entry is resolved against the
+  # directory ansible-playbook was invoked from, not the playbook's own
+  # directory (issue #1460). This engine chdirs into the playbook dir at
+  # startup, so a playbook in a subdirectory must still find the plugin
+  # named relative to the invocation cwd, exactly as ansible does.
+  it "resolves a relative ANSIBLE_STRATEGY_PLUGINS from the invocation directory" do
+    code, lines, _ = run_strategy("custom_demo", plugin: "custom_demo", plugin_env: true,
+      playbook_subdir: "sub", relative_plugin_env: true)
     code.must_equal(0)
     lines.count(&.starts_with?("TASK [slow")).must_equal(1)
   end

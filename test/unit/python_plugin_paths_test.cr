@@ -30,6 +30,26 @@ describe "configured plugin paths (issue #793)" do
     end
   end
 
+  # A relative entry follows ansible in resolving against the directory
+  # ansible-playbook was invoked from - not the playbook's own directory,
+  # which this engine chdirs into before any plugin lookup (issue #1460).
+  it "resolves a relative path-list entry against the invocation directory" do
+    root = PluginSpecHelper.tmp_path("relative-configured-root")
+    invoked = File.join(root, "invoked")
+    previous = Krikri::PythonFilterRunner.invocation_dir
+    begin
+      Krikri::PythonFilterRunner.invocation_dir = invoked
+      with_env({"ANSIBLE_FILTER_PLUGINS" => "./filter_plugins", "HOME" => root}) do
+        Krikri::PythonFilterRunner.configured_roots("filter", "ANSIBLE_FILTER_PLUGINS")
+          .must_equal([File.join(invoked, "filter_plugins")])
+      end
+    ensure
+      Krikri::PythonFilterRunner.invocation_dir = previous
+    end
+  ensure
+    FileUtils.rm_r(root) if root && Dir.exists?(root)
+  end
+
   it "settles each plugin type on its own env var and subdir" do
     with_env({"ANSIBLE_TEST_PLUGINS" => "/tests", "ANSIBLE_ACTION_PLUGINS" => nil,
               "HOME" => "/home/tester", "ANSIBLE_HOME" => nil}) do
