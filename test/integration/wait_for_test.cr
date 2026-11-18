@@ -76,6 +76,21 @@ describe "wait_for plugin" do
     File.delete(path) if path && File.exists?(path)
   end
 
+  it "matches search_regex against a file whose content is not valid UTF-8" do
+    # wait_for.py matches the file's raw bytes (mmap, or read() on the
+    # fallback) against a bytes-compiled pattern, so a binary file holding
+    # the search string still succeeds - ansible-verified against this exact
+    # shape. Decoding it as UTF-8 first raised "Regex match error: UTF-8
+    # error: illegal byte" instead.
+    path = PluginSpecHelper.tmp_path("binary-with-needle.bin")
+    File.write(path, Bytes[0x00, 0xfe, 0xff, 0x80, 0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0xff])
+
+    result = PluginSpecHelper.run("wait_for", {"path" => path, "search_regex" => "needle", "timeout" => "3"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["match_groups"].as_a.must_equal([] of JSON::Any)
+  end
+
   it "times out with a search-string message when search_regex never matches" do
     path = File.tempname("wait-for-spec")
     File.write(path, "no match in here\n")

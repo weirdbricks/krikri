@@ -305,12 +305,7 @@ module Krikri
     private def check_port_regex(port : Int32, regex : String, deadline : Time::Instant) : {Bool, Regex::MatchData?}
       host = @params["host"]? || "127.0.0.1"
       connect_timeout = connect_timeout_for(deadline)
-      # Ansible compiles search_regex with re.MULTILINE (wait_for.py) -
-      # Python's re.M only moves ^/$ to line boundaries; `.` must NOT cross
-      # newlines. Crystal's MULTILINE constant implies DOTALL (regex.cr maps
-      # it to PCRE MULTILINE | DOTALL), so MULTILINE_ONLY is the
-      # Python-equivalent flag.
-      compiled = Regex.new(regex, Regex::CompileOptions::MULTILINE_ONLY)
+      compiled = compile_search_regex(regex)
 
       socket = TCPSocket.new(host, port, connect_timeout: connect_timeout)
       begin
@@ -337,6 +332,23 @@ module Krikri
       {false, nil}
     end
 
+    # wait_for.py compiles the pattern from bytes and matches it against the
+    # file's raw mmap (or read) bytes and against raw socket bytes, so data
+    # that is not valid UTF-8 still matches - ansible-verified against a
+    # binary file holding "kpg" among 0xfe/0xff bytes. A plain Crystal
+    # String match raises "UTF-8 error: illegal byte" on it instead, hence
+    # MATCH_INVALID_UTF: it splits the subject into valid segments and never
+    # lets an invalid byte match (Python's bytes regex can only differ by
+    # spanning one, which a literal ASCII pattern cannot do anyway).
+    #
+    # Ansible also compiles with re.MULTILINE (wait_for.py) - Python's re.M
+    # only moves ^/$ to line boundaries; `.` must NOT cross newlines.
+    # Crystal's MULTILINE constant implies DOTALL (regex.cr maps it to PCRE
+    # MULTILINE | DOTALL), so MULTILINE_ONLY is the Python-equivalent flag.
+    private def compile_search_regex(regex : String) : Regex
+      Regex.new(regex, Regex::CompileOptions::MULTILINE_ONLY | Regex::CompileOptions::MATCH_INVALID_UTF)
+    end
+
     private def port_connectable?(port : Int32, deadline : Time::Instant) : Bool
       host = @params["host"]? || "127.0.0.1"
       connect_timeout = connect_timeout_for(deadline)
@@ -355,7 +367,7 @@ module Krikri
         return {false, nil} unless up # search_regex only makes sense for present/started
         return {false, nil} unless exists
 
-        match = Regex.new(regex, Regex::CompileOptions::MULTILINE_ONLY).match(File.read(path))
+        match = compile_search_regex(regex).match(File.read(path))
         {!match.nil?, match}
       else
         {exists == up, nil}
