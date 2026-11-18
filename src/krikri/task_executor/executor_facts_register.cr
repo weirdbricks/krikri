@@ -12,26 +12,13 @@ module Krikri
       # fresh facts, which is exactly why this is opt-in rather than a
       # silent default flip.
       #
-      # Also under --gathering smart: a persisted fact-cache
-      # (ANSIBLE_CACHE_PLUGIN=jsonfile) is consulted for any host this
-      # RUN hasn't already gathered, populating @facts from a still-warm
-      # earlier PROCESS's cache the same way an earlier play in this
-      # same run would - see FactCache's own comment for why this is
-      # gated on smart_gathering specifically (Ansible's own
-      # `implicit` gathering ignores the cache entirely). This is what
-      # makes a warm rerun show `ok=0`/no banner for a fully-cached host
-      # instead of always re-gathering - see KNOWN_MISSING.md.
-      if @smart_gathering && FactCache.enabled?
-        @hosts.each do |host|
-          next if gathered_facts_for?(host)
-          if cached = FactCache.read(host.name)
-            @facts[host.name] = cached
-            @facts_dict_cache.delete(host.name)
-            @hv_generation += 1
-          end
-        end
-      end
-
+      # Under --gathering smart the pre-seeding in the constructor means
+      # a host covered by a still-warm persisted fact cache already has
+      # facts in @facts, so gathered_facts_for? excludes it here too -
+      # that is what makes a warm rerun show `ok=0`/no banner for a
+      # fully-cached host instead of always re-gathering. The cache is
+      # READ for every gathering mode (see the constructor);
+      # `implicit` still gathers over it, matching ansible-playbook.
       targets = if @smart_gathering
                   @hosts.reject { |host| gathered_facts_for?(host) }
                 else
@@ -569,7 +556,19 @@ module Krikri
         facts.each { |key, value| @facts[host.name][key] = value }
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
-        FactCache.write(host.name, facts) if @smart_gathering
+        # Ansible persists every gather into the configured cache plugin,
+        # not just the ones `smart` could later skip - a run with the
+        # default implicit gathering still leaves the next run a warm
+        # cache (live-verified vs 2.21.6). It also MERGES a re-gather
+        # into whatever the entry already held (VariableManager's
+        # set_host_facts does `host_cache |= facts`), so a gather_subset
+        # run grows the cache rather than shrinking it.
+        persisted = Hash(String, JSON::Any).new
+        if cached = FactCache.read(host.name)
+          cached.each { |key, value| persisted[key] = value }
+        end
+        facts.each { |key, value| persisted[key] = value }
+        FactCache.write(host.name, persisted)
       end
 
       {true, nil, false}

@@ -624,6 +624,22 @@ module Krikri
         @set_fact_origins[host.name] ||= {} of String => VarOrigin
       end
 
+      # Ansible's VariableManager merges the configured fact cache into
+      # every host's vars on every play, gathering mode regardless - a
+      # play with `gather_facts: false` still sees what an earlier RUN
+      # cached (live-verified vs 2.21.6). Seed only hosts with nothing
+      # in the run-scoped store: facts gathered or set_fact'ed by an
+      # earlier play of this same run outrank the older cache.
+      if FactCache.enabled?
+        @hosts.each do |host|
+          next unless @facts[host.name].empty?
+          next unless cached = FactCache.read(host.name)
+          @facts[host.name] = cached
+          @facts_dict_cache.delete(host.name)
+          @hv_generation += 1
+        end
+      end
+
       # See flatten_handler_blocks's own comment: a block:-wrapped
       # handler (handlers/main.yml entries using block:/rescue: purely
       # to add rescue-time diagnostics around the real handler) must be

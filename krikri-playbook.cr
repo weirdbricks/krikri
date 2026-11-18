@@ -1291,12 +1291,13 @@ end
 # Execute playbook
 all_hosts = [] of Krikri::Host
 combined_results = Hash(String, Hash(String, Int32)).new
-# --flush-cache clears any persisted fact cache before the run. This
-# engine keeps facts only in the run-scoped store below (there is no
-# on-disk fact cache to invalidate), so a fresh store IS a flushed one -
-# the flag is accepted and correct here, it simply has nothing older to
-# discard.
-_ = flush_cache
+# --flush-cache clears any persisted fact cache before the run. Real
+# walks the inventory and deletes each host's cache entry
+# (PlaybookCLI._flush_cache), so a warm jsonfile cache cannot seed the
+# first play's facts.
+if flush_cache && inventory
+  inventory.hosts.each_key { |name| Krikri::FactCache.delete(name) }
+end
 # Run-scoped fact store, shared by every play's TaskExecutor in every
 # gathering mode: Ansible keeps each host's facts in memory for the
 # WHOLE run, so a fact gathered (or set_fact'd) in play 1 is still visible
