@@ -1,5 +1,6 @@
 require "./host"
 require "./passwords"
+require "./ansible_config"
 require "system/user"
 
 module Krikri
@@ -140,17 +141,16 @@ module Krikri
     end
 
     # The two connection settings ansible resolves from its config
-    # (DEFAULT_REMOTE_USER / PRIVATE_KEY_FILE). This engine reads only
-    # the ENV forms of config settings by design - there is no
-    # ansible.cfg INI parsing at all (see ssh_manager.cr's
-    # strict_host_key_checking comment) - so exactly the env names
-    # ansible-config lists are honored. Presence-checked because
-    # ansible's ssh plugin only applies a TRUTHY value (`if self.user:` /
-    # `elif key := self.get_option('private_key_file')`): an empty
-    # variable is the same as none there, leaving ssh to pick its own
-    # default user/identities.
+    # (DEFAULT_REMOTE_USER / PRIVATE_KEY_FILE). remote_user also comes
+    # from ansible.cfg's `[defaults] remote_user` (AnsibleConfig), which
+    # outranks the local-uid fallback but still loses to every connection
+    # variable and -u; private_key_file stays env-only. Presence-checked
+    # because ansible's ssh plugin only applies a TRUTHY value
+    # (`if self.user:` / `elif key := self.get_option('private_key_file')`):
+    # an empty variable is the same as none there, leaving ssh to pick its
+    # own default user/identities.
     def self.configured_remote_user : String?
-      ENV["ANSIBLE_REMOTE_USER"]?.presence
+      ENV["ANSIBLE_REMOTE_USER"]?.presence || AnsibleConfig.remote_user
     end
 
     def self.configured_private_key_file : String?

@@ -5,6 +5,7 @@ require "json"
 require "yaml"
 require "./builtin_module_names_data"
 require "./python_filter_runner"
+require "./ansible_config"
 
 # Controller collection-set awareness (real's module-name resolution,
 # discovered from the controller this engine runs on rather than
@@ -1057,6 +1058,12 @@ module Krikri
       roots << File.join(role_path, "library") if role_path
       roots.concat(PythonFilterRunner.loaded_role_roots("library"))
       roots << File.join(playbook_dir, "library") if playbook_dir && !playbook_dir.empty?
+      # ansible's configured module path (ansible.cfg `[defaults]
+      # library` / ANSIBLE_LIBRARY) is searched after the role- and
+      # playbook-local extra dirs, which is why `library = ./library` in
+      # ansible.cfg used to fail at parse time with "couldn't resolve
+      # module/action" (issue #1478).
+      roots.concat(AnsibleConfig.library_paths || [] of String)
 
       roots.each do |root|
         return true if File.file?(File.join(root, "#{short}.py"))

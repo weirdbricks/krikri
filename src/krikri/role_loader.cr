@@ -4,6 +4,7 @@ require "json"
 require "system/user"
 require "./playbook_parser"
 require "./vault"
+require "./ansible_config"
 
 module Krikri
   # RoleLoader - resolves and loads roles: entries for a play.
@@ -1335,10 +1336,9 @@ module Krikri
       nil
     end
 
-    # Ansible's role search also checks `ANSIBLE_ROLES_PATH` (colon-
-    # separated, like `ANSIBLE_ROLES_PATH`/`ANSIBLE_COLLECTIONS_PATH`) and
-    # its own default `roles_path`, which is where `ansible-galaxy role
-    # install <namespace>.<name>` (the standard way to fetch a plain,
+    # Ansible's role search also checks its configured `roles_path` and
+    # its own default, which is where `ansible-galaxy role install
+    # <namespace>.<name>` (the standard way to fetch a plain,
     # non-collection Galaxy role) puts things by default:
     # `~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles`.
     # `resolve_role_dir` previously only ever checked playbook-relative
@@ -1348,13 +1348,17 @@ module Krikri
     # wasn't also where the role happened to be vendored locally - the
     # collection-role lookup right above already got this treatment for
     # collection-shipped roles; bare Galaxy roles never did.
+    #
+    # `ANSIBLE_ROLES_PATH` and ansible.cfg's `[defaults] roles_path` both
+    # REPLACE that default list rather than extending it, so when either
+    # names paths they are the whole search path (issue #1478: a role
+    # installed under `roles_path = ./myroles` was "not found").
     private def self.roles_paths : Array(String)
-      paths = [] of String
-
-      if env_path = ENV["ANSIBLE_ROLES_PATH"]?
-        paths.concat(env_path.split(':').reject(&.empty?))
+      if configured = AnsibleConfig.roles_paths
+        return configured
       end
 
+      paths = [] of String
       paths << expand_home_path("~/.ansible/roles")
       paths << "/usr/share/ansible/roles"
       paths << "/etc/ansible/roles"

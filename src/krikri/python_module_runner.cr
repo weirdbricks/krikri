@@ -72,6 +72,10 @@ module Krikri
       roots << File.join(role_path, "library") if role_path
       roots.concat(PythonFilterRunner.loaded_role_roots("library"))
       roots << File.join(playbook_dir, "library") if playbook_dir && !playbook_dir.empty?
+      # The configured module path (ansible.cfg `[defaults] library` /
+      # ANSIBLE_LIBRARY) sits after the role/playbook extra dirs, the
+      # same order ansible's loader uses (issue #1478).
+      roots.concat(AnsibleConfig.library_paths || [] of String)
 
       roots.each do |root|
         candidate = File.join(root, "#{short}.py")

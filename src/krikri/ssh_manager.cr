@@ -11,6 +11,8 @@ require "./spawn_error"
 require "./timing_profile"
 require "./bigint_json"
 require "./plugin_daemon"
+require "./connection_settings"
+require "./ansible_config"
 
 module Krikri
   class SSHManager
@@ -1519,11 +1521,9 @@ module Krikri
     # this engine's own default - it accepts a CHANGED key too, which
     # matters for exactly the scenario that surfaced this: an ephemeral
     # cloud host whose IP got reused with a different host key from an
-    # earlier run still in this machine's known_hosts. This engine has
-    # no ansible.cfg INI parsing at all (see krikri-playbook.cr's own
-    # show_custom_stats comment for why - env-var-only by design), so
-    # only the env var forms are honored here, matching how every other
-    # env-var-only setting in this codebase already works.
+    # earlier run still in this machine's known_hosts. AnsibleConfig reads
+    # only inventory/roles_path/library/remote_user/ssh_args out of
+    # ansible.cfg, so `host_key_checking` stays env-only here.
     private def self.strict_host_key_checking : String
       value = ENV["ANSIBLE_HOST_KEY_CHECKING"]? || ENV["ANSIBLE_SSH_HOST_KEY_CHECKING"]?
       return "accept-new" unless value
@@ -1532,7 +1532,12 @@ module Krikri
 
     private def self.identity_args(identity_file : String?) : Array(String)
       base = identity_file ? ["-i", identity_file] : [] of String
-      base + CliOptions.extra_ssh_args
+      # ansible puts the configured ssh_args first, then ssh_common_args /
+      # ssh_extra_args (ssh.py's _build_command). krikri's own connection
+      # options are built independently, so a project that sets
+      # `[ssh_connection] ssh_args` gets those args added on top
+      # (issue #1478: they were dropped entirely).
+      base + ConnectionSettings.split_ssh_args(AnsibleConfig.ssh_args) + CliOptions.extra_ssh_args
     end
 
     # Same as identity_args, but as a string fragment for rsync's `-e`
@@ -1541,6 +1546,7 @@ module Krikri
     private def self.identity_ssh_opt(identity_file : String?) : String
       parts = [] of String
       parts << " -i #{shell_quote(identity_file)}" if identity_file
+      ConnectionSettings.split_ssh_args(AnsibleConfig.ssh_args).each { |arg| parts << " #{shell_quote(arg)}" }
       CliOptions.extra_ssh_args.each { |arg| parts << " #{shell_quote(arg)}" }
       parts.join
     end
