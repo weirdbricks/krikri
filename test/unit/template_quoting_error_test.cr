@@ -175,6 +175,24 @@ describe "Krikri::PlaybookParser.check_template_quoting (template_quoting_error_
     )
   end
 
+  # akshayavb99.k8sworker_setup_sample_role (issue #1514) ships a
+  # `---i` document-start typo: libyaml reports a context-less problem
+  # there, and ansible still capitalizes its first byte.
+  it "capitalizes libyaml's context-less problem text" do
+    ex = Krikri::YamlSyntaxError.new("pb.yml", "---i\n# c\n- name: \"quoted\"\n",
+      YAML::ParseException.new("did not find expected <document start>", 3, 1, nil))
+    ex.render.must_equal(
+      "[ERROR]: YAML parsing failed: Did not find expected <document start>.\n" \
+      "Origin: #{File.expand_path("pb.yml")}:3:1\n" \
+      "\n" \
+      "1 ---i\n" \
+      "2 # c\n" \
+      "3 - name: \"quoted\"\n" \
+      "  ^ column 1\n" \
+      "\n"
+    )
+  end
+
   it "keeps the colon error's worked example byte-identical" do
     ex = Krikri::YamlSyntaxError.new("pb.yml", "this: is: bad: [\n",
       YAML::ParseException.new("mapping values are not allowed in this context", 1, 9, nil))

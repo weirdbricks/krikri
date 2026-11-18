@@ -1532,7 +1532,12 @@ module Krikri
         "#{context[0].upcase}#{context[1..]} #{problem}."
       else
         stripped = message.sub(/ at line \d+, column \d+\z/, "")
-        stripped.ends_with?(".") ? stripped : "#{stripped}."
+        # Ansible upper-cases the first byte of the joined message and
+        # leaves the rest alone (String#capitalize would lower-case it),
+        # so libyaml's context-less problems ("did not find expected
+        # <document start>") read capitalized too.
+        capitalized = stripped.empty? ? stripped : "#{stripped[0].upcase}#{stripped[1..]}"
+        capitalized.ends_with?(".") ? capitalized : "#{capitalized}."
       end
     end
 
