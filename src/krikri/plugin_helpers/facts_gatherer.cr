@@ -5,27 +5,15 @@ require "../version"
 require "./distribution_facts"
 require "./service_mgr_fact"
 require "./getfqdn"
+require "c/pwd"
 
-# The two C bindings stay at TOP level, outside the module below, and
-# have to: nesting them makes `lib LibC` a brand-new lib rather than a
-# re-opening of the stdlib's, which loses `GidT` (and everything else
-# the stdlib declares). Several other plugins in the fat binary already
-# re-open `lib LibC` the same way - `openssl_csr`/`x509_certificate`
-# both add `umask` - and nothing else in the tree declares `uname`,
-# `getgid` or `getpwuid`, so there is no collision to avoid here.
-lib PASSWD
-  struct Passwd
-    pw_name : UInt8*
-    pw_passwd : UInt8*
-    pw_uid : UInt32
-    pw_gid : UInt32
-    pw_gecos : UInt8*
-    pw_dir : UInt8*
-    pw_shell : UInt8*
-  end
-
-  fun getpwuid(uid : UInt32) : Passwd*
-end
+# The C bindings stay at TOP level, outside the module below, and have to:
+# nesting them makes `lib LibC` a brand-new lib rather than a re-opening of
+# the stdlib's, which loses `GidT` (and everything else the stdlib declares).
+# Several other plugins in the fat binary already re-open `lib LibC` the same
+# way - `openssl_csr`/`x509_certificate` both add `umask` - and nothing else
+# in the tree declares `uname` or `getgid`, so there is no collision to avoid
+# here.
 
 # uname(2) and getgid(2) aren't bound by Crystal's stdlib (only getuid is),
 # so they're declared here directly to avoid forking `uname`/`id -g`.
@@ -2376,16 +2364,10 @@ module Krikri
       # _dir/_shell entirely on remote hosts (buluma.ara_api's own
       # `ara_api_root_dir: "{{ ansible_facts['user_dir'] }}/.ara"` default then
       # hard-failed with 'ara_api_root_dir' is undefined remotely while the
-      # identical playbook ran clean locally, round 190). pw_name/pw_dir/
-      # pw_shell from getpwuid are always present; ENV only fills a fact the
-      # passwd entry somehow lacks. (getpwuid isn't in Crystal's own LibC
-      # bindings, hence the local lib declaration - glibc's struct passwd
-      # layout, verified against getpwuid(3).)
-      if pw = PASSWD.getpwuid(LibC.getuid.to_u32)
-        facts["ansible_user_id"] = String.new(pw.value.pw_name) unless facts["ansible_user_id"]?
-        facts["ansible_user_dir"] = String.new(pw.value.pw_dir) unless facts["ansible_user_dir"]?
-        facts["ansible_user_shell"] = String.new(pw.value.pw_shell) unless facts["ansible_user_shell"]?
-        facts["ansible_user_gecos"] = String.new(pw.value.pw_gecos) unless facts["ansible_user_gecos"]?
+      # identical playbook ran clean locally, round 190). ENV only fills a
+      # fact the passwd entry somehow lacks.
+      if pw = passwd_entry(LibC.getuid)
+        apply_passwd_facts(facts, pw)
       end
 
       if user = ENV["USER"]?
@@ -2415,6 +2397,63 @@ module Krikri
       if shell = ENV["SHELL"]?
         facts["ansible_user_shell"] ||= shell
       end
+    end
+
+    # Copies one passwd entry into the user facts. Kept separate from the
+    # lookup so a spec can hand it an entry whose pointers are NULL - which
+    # is exactly the shape that crashed every `ansible_connection=local`
+    # fact gather on macOS (issue #1544).
+    def apply_passwd_facts(facts : FactSet, pw : LibC::Passwd) : Nil
+      # Every pointer here can be NULL on some platform (CPython's own pwd
+      # module reads bionic's NULL pw_gecos as ''), and Ansible copies each
+      # pw_* field verbatim - it does not split pw_gecos on commas - so a
+      # missing field has to fall through to the ENV lookups instead of
+      # raising "Cannot create a string with a null pointer".
+      if name = c_string_or_nil(pw.pw_name)
+        facts["ansible_user_id"] ||= name
+      end
+      if dir = c_string_or_nil(pw.pw_dir)
+        facts["ansible_user_dir"] ||= dir
+      end
+      if shell = c_string_or_nil(pw.pw_shell)
+        facts["ansible_user_shell"] ||= shell
+      end
+      if gecos = c_string_or_nil(pw.pw_gecos)
+        facts["ansible_user_gecos"] ||= gecos
+      end
+    end
+
+    # The passwd entry for *uid*, or nil when there is none.
+    #
+    # The struct layout comes from the stdlib's own per-platform `c/pwd`
+    # rather than being hand-written: the glibc layout used here until
+    # issue #1544 puts pw_gecos/pw_dir/pw_shell straight after pw_gid, while
+    # macOS (and the BSDs) insert pw_change/pw_class/pw_expire between them.
+    # Reading a macOS entry through the glibc view landed pw_dir on pw_class,
+    # which getpwuid leaves NULL for ordinary accounts, so every local gather
+    # died with "Cannot create a string with a null pointer (while gathering
+    # user_facts)". getpwuid_r (not getpwuid) also keeps the entry in
+    # caller-owned storage, so the concurrently running fact families cannot
+    # see shared static passwd storage change underneath them.
+    def passwd_entry(uid : LibC::UidT) : LibC::Passwd?
+      buffer_size = 16 * 1024
+      loop do
+        buffer = Bytes.new(buffer_size)
+        entry = uninitialized LibC::Passwd
+        result = Pointer(LibC::Passwd).null
+        error = LibC.getpwuid_r(uid, pointerof(entry),
+          buffer.to_unsafe, buffer.size, pointerof(result))
+        return entry if result
+        # ERANGE means the entry (or its strings) did not fit; everything
+        # else - notably ENOENT for a uid with no passwd entry - is final.
+        return nil unless error == Errno::ERANGE.value
+        buffer_size *= 4
+        return nil if buffer_size > 1024 * 1024
+      end
+    end
+
+    private def c_string_or_nil(ptr : UInt8*) : String?
+      ptr.null? ? nil : String.new(ptr)
     end
 
     def gather_environment_facts(facts)
