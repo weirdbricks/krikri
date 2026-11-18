@@ -24,6 +24,11 @@ private INVENTORY = <<-INI
 
 # Runs a play against *pattern* and returns the hosts that actually ran.
 private def hosts_for(pattern : String, limit : String? = nil) : Array(String)
+  run_output(pattern, limit).scan(/H=([a-z0-9]+)/).map { |mat| mat[1] }.sort!
+end
+
+# The same run, keeping everything it printed (stdout and stderr merged).
+private def run_output(pattern : String, limit : String? = nil) : String
   dir = File.tempname("host-pattern")
   Dir.mkdir_p(dir)
   File.write(File.join(dir, "inv.ini"), INVENTORY)
@@ -39,7 +44,7 @@ private def hosts_for(pattern : String, limit : String? = nil) : Array(String)
   args.concat(["-l", limit]) if limit
   stdout_io = IO::Memory.new
   Process.run(BINARY, args + ["pb.yml"], output: stdout_io, error: stdout_io, chdir: dir)
-  stdout_io.to_s.scan(/H=([a-z0-9]+)/).map { |mat| mat[1] }.sort!
+  stdout_io.to_s
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
@@ -80,6 +85,32 @@ describe "host patterns" do
   it "matches nothing for an unknown pattern" do
     hosts_for("nosuchgroup").empty?.must_equal(true)
   end
+
+  # And warns about it by name (live-verified vs ansible-core 2.21.6). The
+  # sigil is stripped before matching, so a negated term reports its bare
+  # group name - that warning is what makes a typo like `!oo2` for `!oo_2`
+  # visible instead of silently selecting too many hosts (issue #1464).
+  it "warns about an unknown pattern named in hosts:" do
+    run_output("nosuchgroup").must_include(
+      "[WARNING]: Could not match supplied host pattern, ignoring: nosuchgroup")
+  end
+
+  it "warns about a negated or intersected hosts: term and reports its bare name" do
+    output = run_output("all:!nosuch:&alsonosuch")
+    output.must_include("[WARNING]: Could not match supplied host pattern, ignoring: nosuch")
+    output.must_include("[WARNING]: Could not match supplied host pattern, ignoring: alsonosuch")
+    output.wont_include("ignoring: !nosuch")
+    output.wont_include("ignoring: &alsonosuch")
+  end
+
+  # Ansible's order_patterns visits regular, then `&`, then `!` terms, so
+  # the warnings follow that order rather than the written one.
+  it "orders the warnings regular, then &, then !" do
+    output = run_output("all:!nosuch:&alsonosuch")
+    intersection_at = output.index("ignoring: alsonosuch").as(Int32)
+    exclusion_at = output.index("ignoring: nosuch").as(Int32)
+    (intersection_at < exclusion_at).must_equal(true)
+  end
 end
 
 describe "--limit patterns" do
@@ -118,5 +149,28 @@ describe "--limit patterns" do
     status.success?.must_equal(true)
   ensure
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
+  # The issue #1464 report: a negated limit term naming a group that does
+  # not exist warned nothing, so a typo silently limited less than
+  # intended. ansible-core strips the sigil and warns with the bare name
+  # (live-verified vs 2.21.6), while still running on the hosts the rest
+  # of the limit selects.
+  it "warns about a negated limit term that matches nothing, by bare name" do
+    output = run_output("all", limit: "web1:!nosuch")
+    output.must_include("[WARNING]: Could not match supplied host pattern, ignoring: nosuch")
+    output.wont_include("ignoring: !nosuch")
+    hosts_for("all", limit: "web1:!nosuch").must_equal(["web1"])
+  end
+
+  it "warns about an intersected limit term that matches nothing" do
+    run_output("all", limit: "web:&nosuch").must_include(
+      "[WARNING]: Could not match supplied host pattern, ignoring: nosuch")
+  end
+
+  # A limit term that resolves to a real group/host stays silent, sigil or
+  # not - the warning is only for terms that match nothing at all.
+  it "stays silent for negated limit terms that do match" do
+    run_output("all", limit: "web1:!db").wont_include("Could not match supplied host pattern")
   end
 end
