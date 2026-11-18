@@ -293,4 +293,66 @@ describe "assemble plugin" do
     result["changed"].as_bool.must_equal(true)
     result["diff"]?.nil?.must_equal(false)
   end
+
+  # Real's assemble action assembles the fragments into a controller-side
+  # tempfile.mkstemp file and only then hands it to the copy module, so
+  # _get_diff_data heads the after side with THAT staging path
+  # (~/.ansible/tmp/ansible-local-<pid><rnd>/tmp<rnd>), never with dest;
+  # a not-yet-existing dest gets an empty `before` and no before_header at
+  # all, which the callback prints as a bare `--- before` (live-verified
+  # vs 2.21.6, issue #1536).
+  it "diff heads the action-plugin branch's after side with the staged temp path" do
+    src = as_path("assemble_src_diff_staged")
+    dest = as_path("assemble_dest_diff_staged.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "one\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "remote_src" => "false", "_ansible_diff" => "true"})
+
+    diff = result["diff"].as_h
+    diff["before"].as_s.must_equal("")
+    diff.has_key?("before_header").must_equal(false)
+    diff["after"].as_s.must_equal("one\n")
+    staged = Regex.escape(Path.home.to_s) + "/\\.ansible/tmp/ansible-local-\\d+[a-z0-9_]{8}/tmp[a-z0-9_]{8}"
+    diff["after_header"].as_s.must_match(Regex.new("\\A#{staged}\\z"))
+  end
+
+  it "keeps dest as the before header and the controller staged path as the after header" do
+    src = as_path("assemble_src_diff_existing")
+    dest = as_path("assemble_dest_diff_existing.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "one\n")
+    File.write(dest, "old\n")
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "remote_src" => "false", "_ansible_diff" => "true"})
+
+    diff = result["diff"].as_h
+    diff["before_header"].as_s.must_equal(dest)
+    diff["before"].as_s.must_equal("old\n")
+    diff["after"].as_s.must_equal("one\n")
+    diff["after_header"].as_s.wont_equal(dest)
+  end
+
+  # TaskExecutor#stage_assemble_dir decides the staged path on the
+  # CONTROLLER and passes it along: the plugin binary runs on the target
+  # for an ssh connection, where ~ is a different home than the one real
+  # Ansible's diff header names.
+  it "uses the controller-supplied staged path when the executor provides one" do
+    src = as_path("assemble_src_diff_supplied")
+    dest = as_path("assemble_dest_diff_supplied.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "one\n")
+    File.delete(dest) if File.exists?(dest)
+    staged = "/root/.ansible/tmp/ansible-local-1234abcdefgh/tmpijklmnop"
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "remote_src" => "false",
+                                               "_ansible_diff" => "true", "__assemble_staged_path" => staged})
+
+    diff = result["diff"].as_h
+    diff["after_header"].as_s.must_equal(staged)
+  end
 end

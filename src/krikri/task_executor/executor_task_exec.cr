@@ -1,5 +1,6 @@
 require "./executor"
 require "../needle_lookup"
+require "../local_tmp"
 require "../unsafe_values"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
@@ -3358,7 +3359,15 @@ module Krikri
         return crash
       end
 
-      return params if PluginManager.local_connection?(host, vars_context)
+      # Ansible's assemble action assembles the fragments into a
+      # tempfile.mkstemp file in the CONTROLLER's DEFAULT_LOCAL_TMP and
+      # headers the diff's after side with that staged path - so the path is
+      # decided here, on the controller, not by the plugin process (which
+      # runs on the target for an ssh connection, where ~ is a different
+      # home). See assemble.cr's own comment (issue #1536).
+      resolved = params.dup
+      resolved["__assemble_staged_path"] = Krikri::LocalTmp.staged_file
+      return resolved if PluginManager.local_connection?(host, vars_context)
 
       conn = ConnectionSettings.resolve(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-assemble-#{Random::Secure.hex(8)}"
@@ -3380,7 +3389,6 @@ module Krikri
         return params
       end
 
-      resolved = params.dup
       resolved["src"] = remote_tmp
       resolved["__cleanup_after_assemble"] = "true"
       resolved

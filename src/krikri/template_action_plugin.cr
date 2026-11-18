@@ -7,6 +7,7 @@ require "./jinja_host_context"
 require "./template_search_path_loader"
 require "./surrogate_escape"
 require "./base_action_plugin"
+require "./local_tmp"
 
 module Krikri
   # Template Action Plugin
@@ -339,7 +340,7 @@ module Krikri
       # same-shaped path is synthesized here; the basename matches the
       # real source, so the dest-is-a-directory basename logic and the
       # module's `src` echo are unaffected.
-      staged_src = Path.home / ".ansible" / "tmp" / "ansible-local-#{Process.pid}#{tempfile_suffix}" / "tmp#{tempfile_suffix}" / File.basename(src)
+      staged_src = Path.new(Krikri::LocalTmp.staged_dir) / File.basename(src)
       modified_params["_rendered_from_template"] = staged_src.to_s # Track for debugging
       modified_params["_content_checksum"] = content_md5           # For idempotency
       modified_params["_template_surrogate_escape"] = "1" if surrogate_escaped
@@ -1952,15 +1953,6 @@ module Krikri
     private def true?(value : String?, default : Bool = false) : Bool
       return default unless value
       ["true", "yes", "1", "on"].includes?(value.downcase)
-    end
-
-    # The random tail of Python tempfile.mkdtemp's generated names
-    # (ansible's local-tmp staging) - only its shape is observable, in the
-    # template diff's after-header, and krikri-role-tester's Compare masks
-    # exactly these 8 characters.
-    private def tempfile_suffix : String
-      chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
-      String.build(8) { |io| 8.times { io << chars[Random::Secure.rand(chars.size)] } }
     end
   end
 end

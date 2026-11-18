@@ -41,6 +41,7 @@ require "digest/md5"
 require "digest/sha1"
 require "file_utils"
 require "../src/krikri/base_plugin"
+require "../src/krikri/local_tmp"
 
 module Krikri
   class AssemblePlugin < BasePlugin
@@ -113,7 +114,7 @@ module Krikri
       # diff even under --diff (live-verified vs 2.21.6, issue #1452).
       # Only the action plugin's controller-side branch (remote_src falsy)
       # builds one, via _get_diff_data.
-      diff = diff_mode && remote_src_delegated? ? generate_unified_diff(existing || "", content, dest, dest) : nil
+      diff = diff_mode && remote_src_delegated? ? assemble_action_diff(existing, content, dest) : nil
       backup_file = ""
 
       if changed
@@ -164,6 +165,31 @@ module Krikri
       # dest gets no fields, which add_path_info handles itself.
       add_path_info(result, dest)
       result
+    end
+
+    # The diff real Ansible prints for the controller-side branch: the
+    # assemble action assembles the fragments into a tempfile.mkstemp file
+    # under DEFAULT_LOCAL_TMP and only then hands it to the copy module, so
+    # _get_diff_data headers the after side with THAT staging path, not with
+    # dest (`+++ after: /root/.ansible/tmp/ansible-local-<pid><rnd>/tmp<rnd>`,
+    # live-verified vs 2.21.6 - issue #1536). A not-yet-existing dest gets
+    # only an empty `before`, with no before_header at all, which the
+    # callback renders as a bare `--- before` (live-verified alongside).
+    #
+    # __assemble_staged_path carries the controller's own path for a remote
+    # target (set by TaskExecutor#stage_assemble_dir - the plugin process
+    # runs on the target, whose home is not where real Ansible stages);
+    # without it (a local connection, or the plugin invoked directly) the
+    # synthesized shape is the correct one.
+    private def assemble_action_diff(existing : String?, content : String, dest : String) : JSON::Any
+      after_header = @params["__assemble_staged_path"]?.presence || Krikri::LocalTmp.staged_file
+      return generate_unified_diff(existing, content, dest, after_header) if existing
+
+      JSON::Any.new({
+        "before"       => JSON::Any.new(""),
+        "after_header" => JSON::Any.new(after_header),
+        "after"        => JSON::Any.new(content),
+      })
     end
 
     # Ansible.builtin.assemble's registered-result key order
