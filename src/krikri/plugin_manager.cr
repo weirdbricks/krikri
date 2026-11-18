@@ -1025,6 +1025,11 @@ module Krikri
       # vars too (its candidate order starts with them), so forwarding
       # them here serves it the same way.
       "ansible_python_interpreter", "discovered_interpreter_python",
+      # fetch's flat: false layout names the PLAY host's inventory name in
+      # the destination path, and under `delegate_to:` that is not the
+      # host entry's name (which carries the delegate) - see
+      # FetchPlugin#dest_host_name / issue #1502.
+      "inventory_hostname",
     ]
 
     # Same @@local_md5_cache contract (computed once per distinct local
