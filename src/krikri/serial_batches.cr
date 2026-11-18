@@ -1,4 +1,5 @@
 require "./playbook_parser"
+require "./ansible_install"
 
 module Krikri
   # `serial:` batch token that isn't an integer. Real ansible-playbook dies
@@ -110,38 +111,55 @@ module Krikri
 
     # The stderr block real ansible-playbook prints for an unconvertible
     # serial token (rc=250, no recap). Verification is issue #1446's; the
-    # install path and the tilde/caret runs are the kpg podman image's
-    # (debian:trixie-slim, pip-installed ansible-core 2.21.6, Python
-    # 3.13's PEP 657 anchors), captured per line.
+    # install path and the caret runs are the host's own ansible-core's
+    # (see AnsibleInstall): the block was captured per line from the kpg
+    # podman image (debian:trixie-slim, pip-installed ansible-core
+    # 2.21.6, Python 3.13, no carets) and re-captured for issue #1540
+    # from its rpm profile (Python 3.12, one caret run per frame).
     private def self.crash_render(value : String, percent : Bool) : String
-      pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+      pkg = AnsibleInstall.package_path
       event = "Unexpected Exception, this is probably a bug: invalid literal for int() with base 10: '#{value}'"
-      failing_frame = if percent
-                        "  File \"#{pkg}/utils/helpers.py\", line 29, in pct_to_int\n" \
-                        "    value_pct = int(value.replace(\"%\", \"\"))\n"
-                      else
-                        "  File \"#{pkg}/utils/helpers.py\", line 32, in pct_to_int\n" \
-                        "    return int(value)\n"
-                      end
+      helper_line, helper_source, helper_segment =
+        if percent
+          # pct_to_int's percentage branch int()s the text of every '%'
+          # removed, so a fractional or non-numeric percentage dies in
+          # that same first traceback frame - a different helpers.py line
+          # from the plain branch.
+          {29, %(value_pct = int(value.replace("%", ""))), %(int(value.replace("%", "")))}
+        else
+          {32, "return int(value)", "int(value)"}
+        end
       String.build do |io|
         io << "[ERROR]: " << event << "\n\n"
         io << "Traceback (most recent call last):\n"
-        io << "  File \"#{pkg}/cli/__init__.py\", line 663, in cli_executor\n"
-        io << "    exit_code = cli.run()\n"
-        io << "  File \"#{pkg}/cli/playbook.py\", line 152, in run\n"
-        io << "    results = pbex.run()\n"
-        io << "  File \"#{pkg}/executor/playbook_executor.py\", line 170, in run\n"
-        io << "    batches = self._get_serialized_batches(play)\n"
-        io << "  File \"#{pkg}/executor/playbook_executor.py\", line 281, in _get_serialized_batches\n"
-        io << "    serial = pct_to_int(serial_batch_list[cur_item], all_hosts_len)\n"
-        io << failing_frame
+        io << trace_frame(pkg, "cli/__init__.py", 663, "cli_executor", "exit_code = cli.run()", "cli.run()")
+        io << trace_frame(pkg, "cli/playbook.py", 152, "run", "results = pbex.run()", "pbex.run()")
+        io << trace_frame(pkg, "executor/playbook_executor.py", 170, "run",
+          "batches = self._get_serialized_batches(play)", "self._get_serialized_batches(play)")
+        io << trace_frame(pkg, "executor/playbook_executor.py", 281, "_get_serialized_batches",
+          "serial = pct_to_int(serial_batch_list[cur_item], all_hosts_len)",
+          "pct_to_int(serial_batch_list[cur_item], all_hosts_len)")
+        io << trace_frame(pkg, "utils/helpers.py", helper_line, "pct_to_int", helper_source, helper_segment)
         io << "ValueError: invalid literal for int() with base 10: '#{value}'\n\n"
         io << "The above exception was the direct cause of the following exception:\n\n"
         io << "Traceback (most recent call last):\n"
-        io << "  File \"#{pkg}/cli/__init__.py\", line 672, in cli_executor\n"
-        io << "    raise AnsibleError(\"Unexpected Exception, this is probably a bug.\") from ex\n"
+        io << trace_frame(pkg, "cli/__init__.py", 672, "cli_executor",
+          %(raise AnsibleError("Unexpected Exception, this is probably a bug.") from ex), nil)
         io << "ansible.errors.AnsibleError: " << event << "\n\n"
       end
+    end
+
+    # One frame of the counterfeited traceback: the `File "..."` line, its
+    # source line, and - on a pre-3.13 Python - the caret run under the
+    # failing expression. *segment* is nil for a position spanning its
+    # whole statement, which no Python version marks.
+    private def self.trace_frame(pkg : String, rel : String, line : Int32, fn : String,
+                                 source : String, segment : String?) : String
+      frame = "  File \"#{pkg}/#{rel}\", line #{line}, in #{fn}\n    #{source}\n"
+      return frame unless segment && AnsibleInstall.caret_lines?
+      offset = source.index(segment)
+      return frame unless offset
+      frame + " " * (4 + offset) + "^" * segment.size + "\n"
     end
   end
 end
