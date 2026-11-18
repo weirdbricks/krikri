@@ -1784,13 +1784,17 @@ module Krikri
       # failure) hands the block its own text via _ansible_error_detail.
       msg = result["_ansible_error_detail"]?.try(&.as_s?) || msg
       # failed_when: turned an otherwise successful module result into a
-      # failure with an EMPTY msg: Ansible's block is just "Task failed:
-      # Action failed." - an ABSENT msg gets "Unknown error." appended by
-      # normalize_result_exception and reaches the action-level chain below
-      # (the executor fills that msg in before display).
-      if result["failed_when_result"]?.try(&.as_bool?) == true && result["msg"]?.try(&.as_s?).to_s.empty?
+      # failure: real replaces the result's exception with a fixed event, so
+      # the block is the action-level chain carrying that wording whatever
+      # the task contributed (live-verified vs 2.21.6, issue #1517: a
+      # `debug:` under a True failed_when prints its own msg in the dump but
+      # this text in the block). A module that FAILED keeps the
+      # module-failure chain instead, and the executor marks only the
+      # surviving-module case.
+      if result["_ansible_failed_when_true"]?.try(&.as_bool?) == true
         root = ErrorBlock::Node.new("Task failed.", source_context: origin)
-        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.")))
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+          ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))))
         return
       end
       # A failed result carrying _ansible_fail_param names the task param

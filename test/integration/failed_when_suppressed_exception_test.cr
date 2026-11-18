@@ -59,4 +59,27 @@ describe "failed_when suppressed-exception shape" do
     output.must_include("changed: [")
     output.wont_include("[ERROR]")
   end
+
+  # Issue #1517 (monolithprojects.kasm_server): the module itself SUCCEEDED,
+  # so there is no module exception to suppress, yet real still replaces the
+  # error with the fixed event - the block shows that wording while the dump
+  # keeps the module's own msg (live-verified vs 2.21.6: a `debug:` whose msg
+  # rendered fine under a True failed_when).
+  it "replaces the error text on a healthy module that contributed a msg" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: healthy debug under a true failed_when
+            ansible.builtin.debug:
+              msg: "kasm_package is required"
+            failed_when: kasm_package is not defined
+            ignore_errors: true
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("[ERROR]: Task failed: Action failed: A 'failed_when' expression evaluated to 'True'.")
+    output.must_include(%("msg": "kasm_package is required"))
+  end
 end
