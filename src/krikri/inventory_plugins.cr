@@ -8,6 +8,7 @@ require "./vault"
 require "./host"
 require "./conditional_evaluator"
 require "./variable_substitutor/expression_evaluator"
+require "./python_inventory_runner"
 
 module Krikri
   # YAML-defined inventory plugins (`plugin: <name>` at the top level of an
@@ -53,7 +54,7 @@ module Krikri
       false
     end
 
-    def self.parse_plugin(path : String, doc : YAML::Any, name : String, existing : Inventory? = nil) : Inventory
+    def self.parse_plugin(path : String, doc : YAML::Any, name : String, existing : Inventory? = nil, playbook_dir : String? = nil) : Inventory
       case name
       when "host_list"
         parse_host_list_plugin(doc)
@@ -64,7 +65,15 @@ module Krikri
       when "aws_ec2"
         parse_aws_ec2(path, doc)
       else
-        raise "Inventory plugin '#{name}' is not supported (supported: #{SUPPORTED_PLUGINS.join(", ")})"
+        # Anything else is a CUSTOM plugin: Ansible's `auto` plugin hands
+        # the source to whatever plugin file declares that name, so a
+        # real `inventory_plugins/<name>.py` must run rather than the
+        # whole source being rejected.
+        begin
+          PythonInventoryRunner.parse(name, path, playbook_dir)
+        rescue PythonInventoryRunner::Unavailable
+          raise "Inventory plugin '#{name}' is not supported (supported: #{SUPPORTED_PLUGINS.join(", ")})"
+        end
       end
     end
 

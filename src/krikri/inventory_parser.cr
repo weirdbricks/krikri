@@ -775,7 +775,7 @@ module Krikri
       # plugin, which IS the normal YAML inventory shape and just carries
       # the plugin marker alongside it.
       if (name = InventoryPlugins.plugin_name(yaml)) && name != "yaml"
-        return InventoryPlugins.parse_plugin(path, yaml, name)
+        return InventoryPlugins.parse_plugin(path, yaml, name, playbook_dir: playbook_dir)
       end
 
       # YAML inventory structure: every top-level key is a group (Ansible's yaml inventory plugin iterates them all) - not just
@@ -1220,7 +1220,11 @@ module Krikri
     end
 
     # Apply group variables to hosts
-    private def self.apply_group_vars(inventory : Inventory) : Nil
+    #
+    # Public because a CUSTOM inventory plugin source (PythonInventoryRunner)
+    # populates its inventory outside this parser: its groups' vars still
+    # have to reach the member hosts the way every other format's do.
+    def self.apply_group_vars(inventory : Inventory) : Nil
       inventory.groups.each do |group_name, group|
         # `[all:vars]` applies to EVERY host in the inventory, not just
         # to hosts explicitly listed under an `[all]` section - which no
