@@ -675,6 +675,15 @@ module Krikri
 
       # Run handlers at the end of all tasks (Ansible behavior)
       run_handlers
+
+      # Ansible's linear strategy re-checks the max_fail_percentage:
+      # threshold after EVERY result batch, so a failure in the play's
+      # LAST task - or in a handler, which no run_task_batch iteration
+      # follows - still ends the play with its banner, right after the
+      # fatal and before the recap (live-verified vs ansible-core 2.21.6,
+      # issue #1534). Without this the between-tasks check never gets
+      # another chance to run.
+      abort_play?(@hosts) unless free_strategy?
     end
 
     # One host's whole task list, flushing output after EACH task rather
