@@ -161,6 +161,18 @@ module Krikri
             fatal_line = report_lines.pop
             report_lines.each { |line| puts line }
             puts fatal_line.colorize(:red)
+          elsif (play_become_failure = gather_play_become_failure_message) && play_become_failure == error_message
+            # The implicit task has no source position of its own, so real
+            # prints the bare "Task failed." segment, then the keyword and
+            # conversion links Origin'd at the play's become: value
+            # (live-verified vs 2.21.6, issue #1497).
+            origin = @play_become_origin.try { |source| ErrorBlock.origin_context(source[0], source[1], source[2]) }
+            ErrorBlock.emit(ErrorBlock::Node.new("Task failed.")
+              .with_chain(ErrorBlock::DIRECT_CAUSE, true,
+                ErrorBlock::Node.new("Error processing keyword 'become'.", source_context: origin)
+                  .with_chain(ErrorBlock::DIRECT_CAUSE, true,
+                    ErrorBlock::Node.new("The value '#{@play_become_invalid}' could not be converted to 'bool'.", source_context: origin))))
+            puts "fatal: [#{host.name}]: FAILED! => #{ResultDisplay.python_json_dump(JSON.parse({"changed" => false, "msg" => play_become_failure}.to_json))}".colorize(:red)
           elsif (keyword_failure = @facts_connection_keyword_failures[host.name]?) && keyword_failure.message == error_message
             # ansible's PlayContext post-validation failure: the implicit
             # task has no source position of its own, so the collapsed
@@ -274,6 +286,17 @@ module Krikri
         msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
       end
       msg
+    end
+
+    # The fatal message for the implicit Gathering Facts task when the
+    # play's own become: is a literal boolean() refuses, or nil. Real
+    # fails the inherited FieldAttribute conversion there like any task's
+    # (see boolean_keyword_invalid_error); the value's Python repr is what
+    # the message quotes.
+    private def gather_play_become_failure_message : String?
+      invalid = @play_become_invalid
+      return nil unless invalid
+      "Task failed: Error processing keyword 'become': The value '#{invalid}' could not be converted to 'bool'."
     end
 
     # The fatal message for a Gathering Facts task whose become is
@@ -395,6 +418,16 @@ module Krikri
       # before its local tasks ever ran.
       if play_connection = @connection
         vars_context["ansible_connection"] ||= JSON::Any.new(play_connection)
+      end
+
+      # The implicit setup task inherits the play's own become: keyword, and
+      # real post-validates it on the PlayContext before resolving the
+      # connection plugin, the become plugin or any connection keyword
+      # (they all sit later in PlayContext's fattribute order) - an
+      # unconvertible value therefore IS the gather's failure (issue
+      # #1497).
+      if play_become_failure_message = gather_play_become_failure_message
+        return {false, play_become_failure_message, false}
       end
 
       # ansible post-validates the implicit setup task's PlayContext

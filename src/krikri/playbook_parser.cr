@@ -413,6 +413,16 @@ module Krikri
     # executor re-renders and overrides it at execution time, once real
     # host/role vars are available - parse time never has that context.
     property become_expr : String?
+    # Raw text of a become: value ansible's boolean() refuses - whether the
+    # task wrote it or inherited it from the play's own become: (or an
+    # enclosing block/import line). Real post-validates the keyword before
+    # any action plugin runs, so an unconvertible value fails every task it
+    # reaches; the parser used to read it as "false" and run the task
+    # anyway (issue #1497).
+    property become_invalid : String? = nil
+    # Whether the task wrote its own become: - a play/block/import value
+    # only reaches the tasks that did not.
+    property? become_explicit : Bool = false
     property become_user : String?
     # Raw `become_flags:` keyword text (Ansible appends it to the sudo
     # become plugin's fixed argument set); templating happens at execution
@@ -947,6 +957,13 @@ module Krikri
     # "Destination /home/pandemonium//.zshrc does not exist !" on a host
     # where ansible-playbook succeeded.
     property include_apply_become : Bool?
+    # The apply mapping's become: is post-validated on every task the
+    # include loads (real never validates it on the include statement
+    # itself), so an unconvertible value fails the loaded tasks - and its
+    # value token labels their chain (issue #1497).
+    property? include_apply_become_written : Bool = false
+    property include_apply_become_invalid : String? = nil
+    property include_apply_become_origin : {String, Int32, Int32}? = nil
     property include_apply_become_user : String?
     property include_apply_become_flags : String?
     property include_apply_check_mode : Bool?
@@ -1262,6 +1279,12 @@ module Krikri
     property? become : Bool
     property become_user : String?
     property become_flags : String?
+    # Raw text of a become: value ansible's boolean() refuses, for the
+    # CURRENT parse window's ambient default: the play's own become:, or a
+    # block:/import_tasks: line's. A task that did not write its own
+    # become: copies it (Task#become_invalid) and fails when it runs
+    # (issue #1497).
+    property become_invalid : String? = nil
     # Source positions of the become-family keyword values the CURRENT
     # parse window carries as ambient defaults, keyed by keyword name. Only
     # an import_tasks: line sets it (inside the same save/set/restore
@@ -2907,6 +2930,20 @@ module Krikri
       # resolve_become exists to avoid).
       written_become = parse_become_value(yaml["become"]?)
       play.become = written_become.nil? ? default_become : written_become
+      # A play-level become: is an inherited FieldAttribute, so real does
+      # NOT post-validate it when the play starts: each task it reaches
+      # fails the keyword conversion as it runs (issue #1497). Carrying
+      # the unconvertible text as the play's ambient default lets every
+      # task and handler that lacks its own become: pick it up while the
+      # tasks parse, and its value token labels the chain's lower links.
+      play.become_invalid = invalid_bool_keyword_text(yaml["become"]?)
+      if play.become_invalid
+        if origin = play_keyword_origin(source_file, source_map, index, "become")
+          origins = (play.inherited_become_origins || Hash(String, {String, Int32, Int32}).new).dup
+          origins["become"] = origin
+          play.inherited_become_origins = origins
+        end
+      end
       play.become_user = yaml["become_user"]?.try(&.as_s) || default_become_user
       play.become_flags = yaml["become_flags"]?.try(&.as_s)
       gather_facts_yaml = yaml["gather_facts"]?
@@ -3692,7 +3729,11 @@ module Krikri
       saved_become_user = play.become_user
       saved_become_flags = play.become_flags
       saved_become_origins = play.inherited_become_origins
+      saved_become_invalid = play.become_invalid
       play.become = resolve_become(hash, play)
+      if hash["become"]?
+        play.become_invalid = invalid_bool_keyword_text(hash["become"]?)
+      end
       play.become_user = hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       play.become_flags = hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
       # The import line's own become-family keywords become the ambient
@@ -3713,6 +3754,7 @@ module Krikri
         play.become = saved_become
         play.become_user = saved_become_user
         play.become_flags = saved_become_flags
+        play.become_invalid = saved_become_invalid
         play.inherited_become_origins = saved_become_origins
       end
 
@@ -7256,7 +7298,11 @@ module Krikri
       saved_become_user = play.become_user
       saved_become_flags = play.become_flags
       saved_become_origins = play.inherited_become_origins
+      saved_become_invalid = play.become_invalid
       play.become = resolve_become(task_hash, play)
+      if task_hash["become"]?
+        play.become_invalid = invalid_bool_keyword_text(task_hash["become"]?)
+      end
       play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       play.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
       # A block that writes its OWN become-family keyword shadows the
@@ -7264,6 +7310,15 @@ module Krikri
       # children take the block's value, whose token lives in the same
       # file they do, so the shadowed entry must not label their chains.
       play.inherited_become_origins = drop_written_become_origins(saved_become_origins, task_hash)
+      # An unconvertible block-level become: fails each child as it runs,
+      # labeled at the BLOCK's own value token (issue #1497).
+      if play.become_invalid && task_hash["become"]?
+        if block_become_origin = ambient_become_origins(task_hash, source_file, source_map, source_prefix, source_index).try(&.["become"]?)
+          origins = (play.inherited_become_origins || Hash(String, {String, Int32, Int32}).new).dup
+          origins["become"] = block_become_origin
+          play.inherited_become_origins = origins
+        end
+      end
 
       # Same ambient-inheritance pattern as become: above, for the
       # block's own check_mode: (Ansible's precedence task > block
@@ -7349,6 +7404,7 @@ module Krikri
         play.become = saved_become
         play.become_user = saved_become_user
         play.become_flags = saved_become_flags
+        play.become_invalid = saved_become_invalid
         play.inherited_become_origins = saved_become_origins
         play.check_mode = saved_check_mode
         play.check_mode_expr = saved_check_mode_expr
@@ -7700,12 +7756,21 @@ module Krikri
     # happens here is exactly what parse_block_task does for a block's own
     # keyword list: resolve the values once, ready for the executor to
     # merge into the tasks the include loads.
-    private def self.parse_include_apply(task : Task, apply_yaml : YAML::Any?) : Nil
+    private def self.parse_include_apply(task : Task, apply_yaml : YAML::Any?, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, directive_key : String? = nil) : Nil
       return unless apply_yaml
       args = apply_yaml.as_h? || return
 
       if given = parse_become_value(args["become"]?)
         task.include_apply_become = given
+      end
+      if args.has_key?("become")
+        task.include_apply_become_written = true
+        task.include_apply_become_invalid = invalid_bool_keyword_text(args["become"]?)
+        if source_file && source_map && directive_key
+          if pos = source_map.at?("#{task_source_prefix(source_prefix, source_index)}/#{directive_key}/apply/become")
+            task.include_apply_become_origin = {File.expand_path(source_file), pos[0], pos[1]}
+          end
+        end
       end
       task.include_apply_become_user = args["become_user"]?.try { |v| safe_yaml_to_string(v) }
       task.include_apply_become_flags = args["become_flags"]?.try { |v| safe_yaml_to_string(v) }
@@ -7730,7 +7795,7 @@ module Krikri
       task.include_file = file_rel
       task.include_file_native = include_file_native
       task.include_file_dir = file_dir
-      parse_include_apply(task, directive(task_hash, "include_tasks").try(&.as_h?).try(&.["apply"]?))
+      parse_include_apply(task, directive(task_hash, "include_tasks").try(&.as_h?).try(&.["apply"]?), source_file, source_map, source_prefix, source_index, written_directive_key(task_hash, "include_tasks"))
 
       parse_common_task_attributes(task, task_hash, play, handler ? "HandlerTaskInclude" : "TaskInclude", source_file, source_map, source_prefix, source_index)
       apply_become_keywords(task, task_hash, play)
@@ -8133,7 +8198,7 @@ module Krikri
         validate_register_name(register_value, source_file, source_map, task_source_prefix(source_prefix, source_index))
         register_value
       end
-      parse_include_apply(task, role_args["apply"]?)
+      parse_include_apply(task, role_args["apply"]?, source_file, source_map, source_prefix, source_index, action)
 
       parse_common_task_attributes(task, task_hash, play, "IncludeRole", source_file, source_map, source_prefix, source_index)
       apply_become_keywords(task, task_hash, play)
@@ -9739,6 +9804,8 @@ module Krikri
     private def self.apply_become_keywords(task : Task, task_hash : Hash(YAML::Any, YAML::Any), play : Play) : Nil
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
+      task.become_explicit = !task_hash["become"]?.nil?
+      task.become_invalid = task.become_explicit? ? invalid_bool_keyword_text(task_hash["become"]?) : play.become_invalid
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       task.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
       task.inherited_become_origins = drop_written_become_origins(play.inherited_become_origins, task_hash)

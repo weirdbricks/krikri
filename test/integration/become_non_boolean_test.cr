@@ -215,4 +215,207 @@ describe "a templated become: that renders to a non-boolean fails the task" do
   ensure
     FileUtils.rm_rf(root) if root
   end
+
+  # Issue #1497: a LITERAL play-level become: that boolean() refuses is an
+  # inherited FieldAttribute - real does not validate it when the play
+  # starts, it fails each task it reaches as that task runs (a skipped
+  # task still skips first), with the lower chain links Origin'd at the
+  # play's value token. The parser used to read it as "false" and run.
+  it "fails each task that a literal play-level become: reaches" do
+    root = File.tempname("become-bool-literal-play")
+    Dir.mkdir(root)
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        become: kpg-maybe
+        tasks:
+          - name: skipped first
+            debug:
+              msg: skipped
+            when: false
+          - name: configuration data
+            debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("Error processing keyword 'become'.").must_equal(true, output_text)
+    output_text.includes?("skipping: [localhost]").must_equal(true, output_text)
+    output_text.includes?("\"msg\": \"hi\"").must_equal(false, output_text)
+    # The keyword and conversion links sit at the play's become value;
+    # the outer link at the failing task's own line.
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:4:11").must_equal(true, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:10:7").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # A block-level value reaches the block's children the same way, and
+  # its chain points at the BLOCK's value token, not the child's line.
+  it "labels a block-level literal become: failure at the block's value" do
+    root = File.tempname("become-bool-literal-block")
+    Dir.mkdir(root)
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: a block
+            become: kpg-maybe
+            block:
+              - name: inside
+                debug:
+                  msg: hi
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("\"msg\": \"hi\"").must_equal(false, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:6:15").must_equal(true, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:8:11").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  it "fails a task that writes its own literal become: value" do
+    root = File.tempname("become-bool-literal-task")
+    Dir.mkdir(root)
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: configuration data
+            become: kpg-maybe
+            debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("\"msg\": \"hi\"").must_equal(false, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:6:15").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # A role's tasks load at RUN time, even for a static import_role:, so
+  # the value has to ride the include statement down to them (real never
+  # validates the unconvertible keyword on the import statement itself).
+  it "fails the tasks an import_role under an unconvertible play become: loads" do
+    root = File.tempname("become-bool-literal-import-role")
+    Dir.mkdir_p(File.join(root, "roles", "testrole", "tasks"))
+    role_task = File.join(root, "roles", "testrole", "tasks", "main.yml")
+    File.write(role_task, <<-YAML)
+      - name: role task
+        debug:
+          msg: hi
+      YAML
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        become: kpg-maybe
+        tasks:
+          - name: load role
+            import_role:
+              name: testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("\"msg\": \"hi\"").must_equal(false, output_text)
+    output_text.includes?("Origin: #{role_task}:1:3").must_equal(true, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:4:11").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # An include's apply: mapping is the implicit block its loaded tasks run
+  # under, so an unconvertible become: there shadows the ambient one and
+  # its token labels the loaded task's chain (real runs the include, then
+  # fails the first task it loads).
+  it "fails the tasks an include's apply: become: refuses" do
+    root = File.tempname("become-bool-literal-include-apply")
+    Dir.mkdir(root)
+    included = File.join(root, "inc.yml")
+    File.write(included, <<-YAML)
+      - name: loaded
+        debug:
+          msg: loaded
+      YAML
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: inc
+            include_tasks:
+              file: inc.yml
+              apply:
+                become: kpg-maybe
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("\"msg\": \"loaded\"").must_equal(false, output_text)
+    output_text.includes?("Origin: #{included}:1:3").must_equal(true, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:9:19").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # The implicit Gathering Facts task inherits the play's become: too, and
+  # real post-validates it on that task's PlayContext before resolving the
+  # connection or become plugin, so it fails there first with the bare
+  # "Task failed." segment (the implicit task has no source position).
+  it "fails the implicit Gathering Facts task on an unconvertible play become:" do
+    root = File.tempname("become-bool-literal-gather")
+    Dir.mkdir(root)
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        become: kpg-maybe
+        tasks:
+          - name: configuration data
+            debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+
+    status.success?.must_equal(false, output.to_s)
+    output_text = output.to_s
+    output_text.includes?("TASK [Gathering Facts]").must_equal(true, output_text)
+    output_text.includes?("The value 'kpg-maybe' could not be converted to 'bool'.").must_equal(true, output_text)
+    output_text.includes?("\"changed\": false, \"msg\": \"Task failed: Error processing keyword 'become'").must_equal(true, output_text)
+    output_text.includes?("ok: [localhost]").must_equal(false, output_text)
+    output_text.includes?("\"msg\": \"hi\"").must_equal(false, output_text)
+    output_text.includes?("Origin: #{File.join(root, "pb.yml")}:3:11").must_equal(true, output_text)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
 end
