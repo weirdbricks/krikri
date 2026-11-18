@@ -5,6 +5,7 @@ require "./krikri_jinja_filters"
 require "./needle_lookup"
 require "./jinja_host_context"
 require "./template_search_path_loader"
+require "./surrogate_escape"
 require "./base_action_plugin"
 
 module Krikri
@@ -58,6 +59,16 @@ module Krikri
     # Origin is the variable's DEFINITION (like the {% do %} case, issue
     # #322), not the template file.
     @render_error_unknown_var_filter : Bool = false
+
+    # Set alongside @render_error when the render died resolving a lookup
+    # inside a VALUE the template read: real's Jinja layer lets the
+    # lookup's exception unwind out of the template action UNCAUGHT, so
+    # the failure takes the crash shape - "Task failed: The lookup plugin
+    # 'x' was not found." with the [ERROR] block's cause pointed at the
+    # template FILE (live-verified vs 2.21.6, issue #1531) - not the
+    # generic "Failed to render template" wording. Holds the bare cause
+    # wording.
+    @render_error_lookup : String? = nil
 
     # Set when the template's own leading `#jinja2:` directive line
     # failed Ansible's literal_eval/type validation (see
@@ -161,7 +172,7 @@ module Krikri
 
       # Read template content
       begin
-        template_content = File.read(src)
+        template_bytes = File.open(src, "rb", &.getb_to_end)
       rescue ex
         # Ansible's template action reads the source through
         # _loader._get_file_contents, whose IOError wrapper is an uncaught
@@ -172,6 +183,26 @@ module Krikri
           return ActionResult.crash_failure(detail)
         end
         return ActionResult.failure("Failed to read template file: #{ex.message}")
+      end
+
+      # A source that is not valid UTF-8 is not a failure in real: its
+      # DataLoader.get_text_file_contents decodes strictly, and on a
+      # UnicodeDecodeError re-decodes with errors="surrogateescape",
+      # deprecating the file ("could not be decoded as 'utf-8'. Invalid
+      # content has been escaped.") and keeping the undecodable bytes as
+      # escapable characters for the rest of the action (live-verified vs
+      # 2.21.6, issue #1531: a binary.bin template lands at dest
+      # byte-identical). The write side restores those bytes - see
+      # plugins/template.cr's _template_surrogate_escape handling.
+      strict_content = String.new(template_bytes)
+      surrogate_escaped = !strict_content.valid_encoding?
+      template_content = strict_content
+      if surrogate_escaped
+        Krikri::ResultDisplay.emit_core_deprecation(
+          "File '#{src}' could not be decoded as 'utf-8'. Invalid content has been escaped. " \
+          "This feature will be removed from ansible-core version 2.23. This file must be UTF-8 encoded."
+        )
+        template_content = Krikri::SurrogateEscape.decode(template_bytes)
       end
 
       # Render template on CONTROLLER
@@ -231,6 +262,13 @@ module Krikri
           # template file (live-verified vs 2.19.11, issue #335). No
           # undef chain: the failing name is in the TEMPLATE text, not a
           # variable value.
+          return ActionResult.crash_failure(wording, src)
+        end
+        if wording = @render_error_lookup
+          # A lookup that cannot be resolved while the template reads a
+          # value unwinds out of real's action plugin UNCAUGHT: crash
+          # shape, the cause's Origin the template file
+          # (live-verified vs 2.21.6, issue #1531).
           return ActionResult.crash_failure(wording, src)
         end
         detail = @render_error ? ": #{@render_error}" : ""
@@ -304,6 +342,7 @@ module Krikri
       staged_src = Path.home / ".ansible" / "tmp" / "ansible-local-#{Process.pid}#{tempfile_suffix}" / "tmp#{tempfile_suffix}" / File.basename(src)
       modified_params["_rendered_from_template"] = staged_src.to_s # Track for debugging
       modified_params["_content_checksum"] = content_md5           # For idempotency
+      modified_params["_template_surrogate_escape"] = "1" if surrogate_escaped
       modified_params["output_encoding"] = output_encoding if output_encoding
 
       ActionResult.success?(modified_params, changed: false)
@@ -522,6 +561,15 @@ module Krikri
       @render_error = ansible_wording(ex, line_prefix: !@render_error_undefined)
       # A failed render still trips what the top-level frame's prologue
       # resolved before the failure (see #emit_template_deprecation_probes).
+      emit_template_deprecation_probes(parsed_template, template_vars, template_path, failed: true) if @template_render_attempted
+      nil
+    rescue ex : Krikri::PythonLookupRunner::LookupError
+      # A value the template read names a lookup plugin this host does
+      # not have: real's own exception escapes the action plugin (see
+      # @render_error_lookup), so it keeps the crash shape rather than
+      # the generic wording.
+      @render_error = ex.message
+      @render_error_lookup = ex.message
       emit_template_deprecation_probes(parsed_template, template_vars, template_path, failed: true) if @template_render_attempted
       nil
     rescue ex
@@ -1521,6 +1569,17 @@ module Krikri
           rescue Krikri::UndefinedVariableError
             # A role default that references an undefined variable stays raw;
             # only a template that actually uses it fails, like Ansible.
+          rescue ex : Krikri::PythonLookupRunner::LookupError | Krikri::FirstFoundLookupError | Krikri::PipeLookupError
+            # Real templates a variable's value only when the template
+            # reads it, so a lookup this host cannot resolve is invisible
+            # to a render that never touches the variable (kpg issue
+            # #1531: a play-level `kpg_lookup_value: "{{ query('kpg_list') }}"`
+            # beside an ordinary template). The leaf still loads into the
+            # engine scope as a strict Undefined carrying the lookup's own
+            # message (see #engine_scope_value), so a template that DOES
+            # read it fails with real's wording instead of rendering the
+            # raw expression.
+            value = JSON::Any.new(UNDEFINED_LEAF_MARKER_OPEN + (ex.message || "lookup failed") + UNDEFINED_LEAF_MARKER_CLOSE)
           end
         end
         vars[key] = value

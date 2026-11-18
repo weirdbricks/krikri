@@ -50,7 +50,7 @@ module Krikri
 
     INTERNAL_KEYS = [
       "_module_name", "_first_gather", "_environment", "_verbosity",
-      "_rendered_from_template", "_content_checksum",
+      "_rendered_from_template", "_content_checksum", "_template_surrogate_escape",
       "__original_src_basename", "__original_src_path",
       "__cleanup_after_copy", "__cleanup_after_copy_dir",
       "__cleanup_after_unarchive", "__cleanup_after_script",

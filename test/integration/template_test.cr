@@ -883,3 +883,100 @@ describe "Python %-formatting in the Crinja engine (the `str % args` operator)" 
     result["checksum"]?.wont_be_nil
   end
 end
+
+describe "template source that is not valid UTF-8" do
+  # Live-verified against ansible-core 2.21.6 (kpg issue #1531): the
+  # DataLoader read behind the template action decodes strictly, falls
+  # back to surrogateescape with a deprecation, and the rendered result
+  # is written with to_bytes(errors='surrogate_or_replace'), which on
+  # py3 resolves to surrogateescape - so the undecodable bytes reach
+  # dest unchanged and the task reports changed, never failed.
+  it "renders the file and writes the undecodable bytes back verbatim" do
+    src = tmp_path("binary_src.j2")
+    dest = tmp_path("binary_dest.out")
+    source = IO::Memory.new
+    source.write(Bytes[0x41_u8, 0xfe_u8])
+    source << "{{ 'X' }}"
+    source.write(Bytes[0xff_u8, 0x42_u8, 0x0a_u8])
+    File.write(src, source.to_slice)
+
+    playbook = render_playbook(src, dest)
+    output = run_playbook(playbook)
+
+    File.open(dest, "rb", &.getb_to_end).must_equal(Bytes[0x41_u8, 0xfe_u8, 0x58_u8, 0xff_u8, 0x42_u8, 0x0a_u8])
+    output.must_include("changed: [localhost]")
+    output.must_include(
+      "[DEPRECATION WARNING]: File '#{src}' could not be decoded as 'utf-8'. Invalid content has been escaped. " \
+      "This feature will be removed from ansible-core version 2.23. This file must be UTF-8 encoded."
+    )
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end
+
+describe "template vars with an unresolvable lookup" do
+  # Live-verified against ansible-core 2.21.6 (kpg issue #1531):
+  # ansible templates a variable's value only at its use, so a
+  # play-level var naming a lookup this host cannot find must not fail a
+  # render that never reads it.
+  it "ignores the lookup in a variable the template never reads" do
+    src = tmp_path("lazy_unused.j2")
+    dest = tmp_path("lazy_unused.out")
+    File.write(src, "plain\n")
+
+    playbook = File.tempname("template-param-spec", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          kpg_lookup_value: "{{ query('kpg_list') }}"
+        tasks:
+          - name: render
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+      YAML
+    output = run_playbook(playbook)
+
+    File.read(dest).must_equal("plain\n")
+    output.must_include("changed: [localhost]")
+    output.wont_include("kpg_list")
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "fails with real's crash shape when the template does read the variable" do
+    src = tmp_path("lazy_used.j2")
+    dest = tmp_path("lazy_used.out")
+    File.write(src, "value={{ kpg_lookup_value }}\n")
+
+    playbook = File.tempname("template-param-spec", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          kpg_lookup_value: "{{ query('kpg_list') }}"
+        tasks:
+          - name: render
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+      YAML
+    output = run_playbook(playbook)
+
+    File.exists?(dest).must_equal(false)
+    output.must_include("Task failed: The lookup plugin 'kpg_list' was not found.")
+    output.must_include("Origin: #{src}")
+    output.wont_include("Failed to render template")
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end
