@@ -41,7 +41,7 @@ end
 # ansible-playbook DIES on an unconvertible `serial:` token before it ever
 # prints a play, and an engine that merely falls back to "one batch of
 # every host" instead runs the whole play the reference host aborted.
-private def run_serial_streams(serial : String) : {Int32, String, String}
+private def run_serial_streams(serial : String, env : Hash(String, String | Nil)? = nil) : {Int32, String, String}
   dir = File.tempname("serial")
   Dir.mkdir_p(dir)
   File.write(File.join(dir, "inv.ini"),
@@ -58,7 +58,7 @@ private def run_serial_streams(serial : String) : {Int32, String, String}
 
   stdout_io = IO::Memory.new
   stderr_io = IO::Memory.new
-  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stderr_io, chdir: dir)
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"], output: stdout_io, error: stderr_io, chdir: dir, env: env)
   {status.exit_code, stdout_io.to_s, stderr_io.to_s}
 ensure
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
@@ -124,6 +124,42 @@ describe "serial:" do
     stderr.must_include "ansible.errors.AnsibleError: Unexpected Exception, " \
                         "this is probably a bug: invalid literal for int() with base 10: 'kpg-many'"
     stderr.wont_include "PLAY RECAP"
+  end
+
+  # The install path the frames spell, and the PEP 657 caret runs under
+  # them, belong to the ansible-core that would have printed the block on
+  # this host: a root pip install lives under /usr/local/lib/python3.X,
+  # a `pip install --user` one under ~/.local, and Python 3.13 stops
+  # printing the carets for a frame whose failing instruction is a plain
+  # call statement - every frame here - while 3.11/3.12 print one under
+  # each (live-verified vs ansible-core 2.21.6, issue #1540). The fixture
+  # installs are the assertions' paths, so neither depends on which
+  # ansible the test machine happens to carry.
+  it "spells the traceback with the host ansible install's path and carets" do
+    home = File.tempname("serial-home")
+    begin
+      install = File.join(home, ".local", "lib", "python3.12", "site-packages", "ansible")
+      Dir.mkdir_p(File.join(install, "utils"))
+      File.write(File.join(install, "utils", "helpers.py"), "")
+      _code, _stdout, stderr = run_serial_streams("kpg-many", env: {"HOME" => home})
+      stderr.must_include "  File \"#{install}/cli/__init__.py\", line 663, in cli_executor\n" \
+                          "    exit_code = cli.run()\n" \
+                          "                ^^^^^^^^^\n"
+      stderr.must_include "  File \"#{install}/utils/helpers.py\", line 32, in pct_to_int\n" \
+                          "    return int(value)\n" \
+                          "           ^^^^^^^^^^\n"
+
+      FileUtils.mv(File.join(home, ".local", "lib", "python3.12"),
+        File.join(home, ".local", "lib", "python3.13"))
+      install = File.join(home, ".local", "lib", "python3.13", "site-packages", "ansible")
+      _code, _stdout, stderr = run_serial_streams("kpg-many", env: {"HOME" => home})
+      stderr.must_include "  File \"#{install}/utils/helpers.py\", line 32, in pct_to_int\n" \
+                          "    return int(value)\n" \
+                          "ValueError:"
+      stderr.wont_include "^^^^^^^^^"
+    ensure
+      FileUtils.rm_rf(home)
+    end
   end
 
   # The percentage branch int()s the text before the '%', so a fractional
