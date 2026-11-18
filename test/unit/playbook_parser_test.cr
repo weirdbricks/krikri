@@ -4102,14 +4102,30 @@ describe Krikri::PlaybookParser do
       FileUtils.rm_rf(role_root) if role_root
     end
 
+    it "keeps a literal // in the resolved path when the tasks/ root fallback finds it" do
+      # Issue #1515 (diademiemi.syncthing): tasks/setup/always.yml's own
+      # `include_tasks: setup/common//configure.yml` only exists under
+      # the role's tasks/ root, and Ansible prints that candidate raw -
+      # `<role>/tasks/setup/common//configure.yml`, redundant separator
+      # and all. File.expand_path collapsed the `//`, which changed the
+      # `included:` line's bytes against real ansible.
+      role_root = File.tempname("role-root-double-slash")
+      Dir.mkdir_p(File.join(role_root, "tasks", "setup", "common"))
+      File.write(File.join(role_root, "tasks", "setup", "common", "configure.yml"), "- name: noop\n  ansible.builtin.debug: {msg: hi}\n")
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("setup/common//configure.yml", File.join(role_root, "tasks", "setup"))
+      resolved.must_equal(File.join(role_root, "tasks", "setup", "common//configure.yml"))
+      File.exists?(resolved).must_equal(true)
+    ensure
+      FileUtils.rm_rf(role_root) if role_root
+    end
+
     it "keeps a literal ./ in the resolved path when the direct candidate exists" do
       # Ansible's DataLoader.path_dwim_relative returns its first
       # candidate - os.path.join(path, dirname, source) - raw, without
       # normalisation, so `include_tasks: ./sub_role.yml` inside a role's
       # tasks/main.yml prints `included: <role>/tasks/./sub_role.yml`
       # (the `./` survives); this engine's File.expand_path collapsed it.
-      # The fallback candidates below the direct one keep their own
-      # expand_path behaviour - only the direct hit goes out unnormalised.
       scratch = File.join("/tmp/krikri-issue-124", "literal-dot-slash")
       FileUtils.rm_rf(scratch)
       role_root = File.join(scratch, "role-root")
