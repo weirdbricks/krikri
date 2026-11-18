@@ -1167,11 +1167,23 @@ module Krikri
       return unless path
 
       begin
-        text = File.read(path)
+        text = Vault.maybe_decrypt(File.read(path))
         UnsafeValues.mark_yaml_text(text)
         yaml = YAML.parse(text)
       rescue ex : YAML::ParseException
         raise "Invalid YAML in #{path}: #{ex.message}"
+      rescue ex : Vault::Error
+        # A whole vault-armored group_vars/host_vars file is decrypted
+        # before parsing (ansible's DataLoader does the same), so a file
+        # no supplied secret can open contributes no vars rather than
+        # parsing to a bare string - the silent "encrypted group_vars are
+        # just ignored" bug of issue #1462. ansible only reads a host's
+        # vars when a play touches that host, so the refusal is recorded
+        # per affected host and raised by the play loop; a play on
+        # unrelated hosts runs normally.
+        message = Vault.decrypt_failure_message(ex)
+        hosts.each { |host| host.vault_error ||= message }
+        return
       end
       return unless hash = yaml.as_h?
 

@@ -2668,6 +2668,12 @@ module Krikri
           # "No valid plays found in playbook" (rc=4). See VaultFileError's
           # own comment.
           raise ex
+        rescue ex : Krikri::VarsFilesVaultError
+          # Same bypass - a vault-encrypted vars_files entry that no
+          # supplied secret can open is ansible's whole-run refusal
+          # (rc=1), not a per-play soft-skip into "Warning: Failed to
+          # parse play N". See VarsFilesVaultError's own comment.
+          raise ex
         rescue ex : InvalidRegisterError
           # Same bypass - Ansible refuses the whole run for an
           # invalid register: at load time. See that class's own comment.
@@ -3025,6 +3031,12 @@ module Krikri
         end
         warn_reserved_vars(vars_yaml.keys.map(&.to_s), source_file, play_start_line(source_map, index))
       end
+
+      # Only now that the play's vars have been parsed can a templated
+      # vars_files path be resolved (ansible finalizes vars_files with
+      # those vars available). A path still holding `{{ }}` here depends
+      # on facts, so TaskExecutor's runtime loader has to check it.
+      check_play_vars_files_vault(play, playbook_dir)
 
       # The map stays on the play: the roles: entries' invocation vars are
       # labeled from it by RoleLoader.load_roles.
@@ -5800,6 +5812,45 @@ module Krikri
           STDERR.puts "[WARNING]: Found variable using reserved name '#{key}'."
           STDERR.puts reserved_origin_block(path, lines, found[0], found[1])
           STDERR.puts
+        end
+      end
+    end
+
+    # Ansible's vars manager decrypts a whole vault-armored vars_files
+    # entry while finalizing the play, BEFORE any PLAY output: a file no
+    # supplied vault secret can open refuses the whole run (rc=1,
+    # "Invalid vars_files file '<path>': ...") rather than leaving every
+    # name it defines undefined - which is what silently parsing the
+    # ciphertext as a YAML string used to do (issue #1462). A
+    # fact-templated path cannot be resolved here; TaskExecutor's runtime
+    # loader raises the same error for it.
+    def self.check_vars_file_vault(path : String) : Nil
+      text = File.read(path)
+      return unless Vault.encrypted?(text)
+      begin
+        Vault.maybe_decrypt(text)
+      rescue ex : Vault::Error
+        raise VarsFilesVaultError.new(path, Vault.decrypt_failure_message(ex))
+      end
+      nil
+    end
+
+    # Every vars_files candidate resolvable from the play's own vars, in
+    # ansible's first-existing-wins order. See check_vars_file_vault.
+    private def self.check_play_vars_files_vault(play : Play, playbook_dir : String) : Nil
+      substitutor = VarSubstitutor.new(vars: play.vars)
+      play.vars_files.each do |candidates|
+        candidates.each do |candidate|
+          rendered = begin
+            substitutor.substitute(candidate)
+          rescue
+            candidate
+          end
+          next if rendered.includes?("{{")
+          path = File.expand_path(rendered, playbook_dir)
+          next unless File.file?(path)
+          check_vars_file_vault(path)
+          break
         end
       end
     end

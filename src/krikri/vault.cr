@@ -123,6 +123,20 @@ module Krikri
       raise(last_error || Error.new("Unable to decrypt vault-encrypted content with any supplied vault password"))
     end
 
+    # The wording ansible-core's VaultLib uses for a decryption that
+    # failed, chosen by WHY it failed: no secret configured at all, versus
+    # secrets that were all tried and rejected. Whole-file loaders
+    # (vars_files, group_vars/host_vars) surface this inside their own
+    # error wrappers, exactly like ansible's DataLoader does.
+    def self.decrypt_failure_message(error : Exception) : String
+      case error
+      when NoSecretsError
+        "Attempting to decrypt but no vault secrets found."
+      else
+        "Decryption failed (no vault secrets were found that could decrypt)."
+      end
+    end
+
     # Like maybe_decrypt, but for a parsed variable value rather than a raw
     # file - covers Ansible's other vault use case: a single value inline in
     # an otherwise-plaintext vars file, tagged `!vault` (what `ansible-vault
@@ -331,6 +345,33 @@ module Krikri
 
     def render : String
       "[ERROR]: #{message}\nOrigin: #{File.expand_path(@path)}\n\n"
+    end
+  end
+
+  # A vault-encrypted `vars_files:` entry no supplied vault secret can
+  # open. ansible-core's vars manager wraps the loader's vault error as
+  # "Invalid vars_files file '<path>'", printed as a two-level exception
+  # block BEFORE any PLAY output with rc=1 (live-verified vs 2.21.6): the
+  # first line repeats the path and reason, then the same two-level chain
+  # ansible renders for every wrapped error. A path templated against host
+  # facts can only be resolved once those facts exist, and ansible's late
+  # load is NOT wrapped: just the bare reason line after the PLAY banner,
+  # rc=4 (also live-verified) - the `deferred` shape below.
+  class VarsFilesVaultError < Exception
+    getter path : String
+    getter detail : String
+
+    def initialize(@path : String, @detail : String, @deferred : Bool = false)
+      super(deferred ? detail : "Invalid vars_files file '#{path}': #{detail}")
+    end
+
+    def render : String
+      return "[ERROR]: #{detail}\n" if @deferred
+      "[ERROR]: #{message}\n\nInvalid vars_files file '#{path}'.\n\n<<< caused by >>>\n\n#{detail}\nOrigin: #{File.expand_path(path)}\n\n"
+    end
+
+    def exit_code : Int32
+      @deferred ? 4 : 1
     end
   end
 end

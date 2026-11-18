@@ -64,13 +64,18 @@ module Krikri
           next unless File.exists?(path)
 
           begin
-            text = File.read(path)
+            text = Vault.maybe_decrypt(File.read(path))
             UnsafeValues.mark_yaml_text(text)
             parsed = YAML.parse(text)
             if hash = parsed.as_h?
               hash.each do |key, value|
                 key_str = key.to_s
-                merged[key_str] = JSON.parse(value.to_json)
+                # Inline `!vault` values (ansible-vault encrypt_string)
+                # arrive here as plain vault-blob strings, exactly like in
+                # group_vars/host_vars - decrypt them at load time so a
+                # vars_files entry behaves like the same value in any
+                # other vars source.
+                merged[key_str] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
                 # The later file's value wins, so its origin travels with
                 # it (mirroring the value merge).
                 VarOrigin.vars_file_origins(path, [key_str]).each { |k, origin| merged_origins[k] = origin }
@@ -82,6 +87,12 @@ module Krikri
               # call a no-op for them).
               PlaybookParser.warn_reserved_toplevel_vars(path, hash.keys.map(&.to_s))
             end
+          rescue ex : Vault::Error
+            # Only a path resolved late (templated against host facts)
+            # can still hit this: a decryption failure is ansible's
+            # whole-run refusal, not a tolerated missing/invalid file
+            # (issue #1462).
+            raise VarsFilesVaultError.new(path, Vault.decrypt_failure_message(ex), deferred: true)
           rescue
             # A vars file that will not parse is skipped rather than
             # taking the run down - ansible-playbook likewise does
