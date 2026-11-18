@@ -486,6 +486,13 @@ describe "module_utils import deprecations follow the installed payload source" 
     File.write(File.join(base, "modules", "krikri_issue_1352_sample.py"), "# module\n")
     File.write(File.join(base, "action", "krikri_issue_1352_sample.py"),
       "from ansible.module_utils._text import to_bytes\n")
+    # The redirect target below must come from THIS fixture copy:
+    # ansible's collection finder reads plugin files from the first
+    # search path holding `<ns>/<coll>` alone (issue #1492), and the
+    # fixture's ansible.posix would otherwise be an empty copy shadowing
+    # whatever the machine has installed.
+    File.write(File.join(@fixture_root, "ansible_collections", "ansible", "posix", "plugins", "action", "synchronize.py"),
+      "# fixture action plugin\n")
 
     Krikri::CollectionIndex.action_plugin_in_scope?("krikri_issue_1352_sample", [] of String)
       .must_equal(false)

@@ -944,17 +944,23 @@ module Krikri
     # meta/runtime.yml redirects, then (still before "absent") the
     # builtin runtime's FQCN redirect. No import failure anywhere (the
     # collection IS importable).
+    #
+    # Only the FIRST installed copy participates: ansible's collection
+    # finder caches the first search path holding `<ns>/<coll>` and reads
+    # every plugin file and meta/runtime.yml from that copy, incomplete or
+    # not, so a second complete copy in a later root is invisible to real's
+    # loader. Live-verified against ansible-core 2.21.6: a
+    # ~/.ansible/collections copy carrying only plugins/module_utils/ made
+    # ansible-playbook refuse amazon.aws.ec2_key while the dist-packages
+    # copy ships it (issue #1492).
     private def self.installed_collection_resolution(kind : String, leaf : String, dirs : Array(String),
                                                      fqcn : String, seen : Set(String)) : ChainResult
-      dirs.each do |dir|
-        return {resolves: true} if collection_leaf_file?(kind, dir, leaf)
-      end
-      dirs.each do |dir|
-        redirects = collection_redirects(dir, kind)
-        if redirects && (target = redirects[leaf]?)
-          result = chain_resolves?(kind, target, seen)
-          return result unless result[:resolves].nil?
-        end
+      dir = dirs.first? || return {resolves: false}
+      return {resolves: true} if collection_leaf_file?(kind, dir, leaf)
+      redirects = collection_redirects(dir, kind)
+      if redirects && (target = redirects[leaf]?)
+        result = chain_resolves?(kind, target, seen)
+        return result unless result[:resolves].nil?
       end
       # Names that moved collections keep a builtin-runtime entry even
       # after the source collection dropped them.
