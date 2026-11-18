@@ -2861,10 +2861,9 @@ module Krikri
     # short-circuited operand, so the reads real trips are emitted here
     # before evaluation; the per-operation record keeps a later real read
     # of the same clause from printing a second block.
-    def self.emit_condition_fact_deprecations(condition : String, vars : Hash(String, JSON::Any)) : Nil
+    def self.emit_condition_fact_deprecations(condition : String, vars : Hash(String, JSON::Any), resolver : VariableSubstitutor::JinjaVarResolver? = nil) : Nil
       ConditionalEvaluator.referenced_names(condition).each do |name|
-        next unless top_level_fact_name?(name, vars)
-        emit_fact_deprecation(fact_read_origin(name))
+        emit_frame_open_read(name, vars, resolver)
       end
     end
 
@@ -2880,12 +2879,48 @@ module Krikri
     # instead, in appearance order; the per-operation record collapses them
     # to the single block real prints for the same value, and a read whose
     # Origin cannot be placed stays silent without spending it.
-    def self.emit_expression_fact_deprecations(expr : KrikriJinja::Nodes::ExprNode, vars : Hash(String, JSON::Any)) : Nil
+    def self.emit_expression_fact_deprecations(expr : KrikriJinja::Nodes::ExprNode, vars : Hash(String, JSON::Any), resolver : VariableSubstitutor::JinjaVarResolver? = nil) : Nil
       return if VariableSubstitutor::JinjaVarResolver.materializing_vars?
       ConditionalEvaluator.referenced_names_in(expr).each do |name|
-        next unless top_level_fact_name?(name, vars)
-        emit_fact_deprecation(fact_read_origin(name))
+        emit_frame_open_read(name, vars, resolver)
       end
+    end
+
+    # One name jinja2's expression frame resolves before any operator runs.
+    # A top-level fact's read is the deprecation itself; any OTHER name is
+    # a variable whose value real renders as the frame resolves it, and a
+    # fact READ INSIDE that value prints its block at that point - even
+    # when the arm naming the variable is the one `and`/`or` short-circuits
+    # (cchurch.uwsgi's `when: uwsgi_install != 'pkg' and
+    # uwsgi_user_group.group | default('')` on 'pkg' reported
+    # defaults/main.yml's `uwsgi_user_group` line, issue #1524,
+    # live-verified against 2.21.6, where the same clause in an untaken
+    # ternary arm does too).
+    #
+    # Only a STRING value renders here: 2.21 keeps container values lazy,
+    # so a dict/list merely mentioned in a short-circuited arm renders no
+    # leaf and warns nothing (live-verified, same session). A value's own
+    # render FAILURE never fails the task either - real resolves the
+    # unused arm's value and discards the error (`when: false and bad ==
+    # 'x'` over `bad: "{{ 1 / 0 }}"` skips, same session).
+    private def self.emit_frame_open_read(name : String, vars : Hash(String, JSON::Any), resolver : VariableSubstitutor::JinjaVarResolver?) : Nil
+      if top_level_fact_name?(name, vars)
+        emit_fact_deprecation(fact_read_origin(name))
+        return
+      end
+      return unless resolver
+      # The magic name whose resolution materializes the whole scope (and
+      # whose deprecation is the `vars`-dict one, not a fact read), plus
+      # the scope dictionaries a name read never templates.
+      return if name == "vars" || name == "hostvars" || name == "play_hosts" || name == "omit"
+      raw = vars[name]?
+      return unless raw && raw.raw.is_a?(String)
+      resolver.resolve(name)
+    rescue ex
+      # A recursive loop keeps propagating: swallowing it let the shared
+      # re-templating depth guard's paired exits underflow below its cap
+      # (see Rerender.re_raise_recursion), spinning the cycle forever.
+      VariableSubstitutor::Rerender.re_raise_recursion(ex)
     end
 
     # INJECT_FACTS_AS_VARS readings captured while a task's `vars:` values
