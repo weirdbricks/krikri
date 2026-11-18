@@ -864,7 +864,7 @@ module Krikri
         # no_such_list }}"` on an undefined var → fatal {"changed": false,
         # "msg": "Task failed: 'no_such_list' is undefined"}).
         prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
-        emit_loop_error_chain(task, prefixed, host)
+        emit_loop_error_chain(task, prefixed, host, ex.cause_origin)
         finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
         return
       end
@@ -883,7 +883,7 @@ module Krikri
           # Same "Task failed: " prefix + chain treatment as the loop-
           # source rescue above.
           prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
-          emit_loop_error_chain(task, prefixed, host)
+          emit_loop_error_chain(task, prefixed, host, ex.cause_origin)
           finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
           return
         end

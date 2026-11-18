@@ -840,6 +840,28 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('template', '#{path}'))).must_equal("value is computed\n")
   end
 
+  # ansible-core's template lookup renders through its strict-undefined
+  # engine, so a file reading a variable nothing defines fails the task
+  # ('<var>' is undefined, issue #1512) instead of rendering an empty
+  # value that a later module consumes as if it were real.
+  it "fails lookup('template', path) when the file reads an undefined variable" do
+    path = PluginSpecHelper.tmp_path("lookup_template_undefined_test.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, %(value: "{{ no_such_var }}"\n))
+
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    error = assert_raises(Krikri::TemplateRenderUndefinedError) do
+      evaluator.evaluate(%(lookup('template', '#{path}')))
+    end
+    error.message.must_equal("'no_such_var' is undefined")
+    error.template_path.must_equal(path)
+
+    guarded = PluginSpecHelper.tmp_path("lookup_template_default_test.j2")
+    File.write(guarded, %(value: "{{ no_such_var | default('') }}"\n))
+    evaluator.evaluate(%(lookup('template', '#{guarded}'))).must_equal(%(value: ""\n))
+  end
+
   # Real find_file_in_search_path(variables, 'templates', term): a
   # RELATIVE lookup term resolves against the role's templates/ dir
   # first - the previous files/-only resolution rescued the failed

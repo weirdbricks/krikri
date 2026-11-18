@@ -652,6 +652,28 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ lookup('template', '#{path}') }})).must_equal("value is computed\n")
   end
 
+  # ansible-core's template lookup renders through its strict-undefined
+  # engine, so a file reading a variable nothing defines fails the task
+  # ('kubernetes_netbox_cors_origin_whitelist' is undefined, issue #1512)
+  # instead of rendering the empty value a lenient render produced.
+  it "fails lookup('template', path) when the file reads an undefined variable" do
+    path = PluginSpecHelper.tmp_path("crinja_lookup_template_undefined_spec.j2")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, %(cors_origin_whitelist: "{{ no_such_var }}"\n))
+
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    error = assert_raises(Krikri::TemplateRenderUndefinedError) do
+      renderer.render(%({{ lookup('template', '#{path}') }}))
+    end
+    error.message.must_equal("'no_such_var' is undefined")
+    error.template_path.must_equal(path)
+
+    guarded = PluginSpecHelper.tmp_path("crinja_lookup_template_default_spec.j2")
+    File.write(guarded, %(cors_origin_whitelist: "{{ no_such_var | default('') }}"\n))
+    renderer.render(%({{ lookup('template', '#{guarded}') }})).must_equal(%(cors_origin_whitelist: ""\n))
+  end
+
   it "renders lookup('template', path) as None when the render emits no output" do
     none_path = PluginSpecHelper.tmp_path("crinja_lookup_template_none_spec.j2")
     Dir.mkdir_p(File.dirname(none_path))
