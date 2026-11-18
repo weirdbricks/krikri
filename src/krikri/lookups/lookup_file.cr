@@ -89,7 +89,8 @@ module Krikri
         # lookup('pipe', command) - runs *command* via the shell ON
         # THE CONTROLLER (not the target - matches Ansible's own
         # pipe lookup plugin, which always executes locally) and
-        # returns its stdout, stripped of a trailing newline.
+        # returns its stdout stripped of ALL trailing whitespace, like
+        # ansible's pipe.py (`to_text(stdout).rstrip()`).
         command = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless command
         output = IO::Memory.new
@@ -111,7 +112,11 @@ module Krikri
         return "" if !status.success? && first_found_errors_ignore?(kwargs)
         raise PipeLookupError.new(
           "The lookup plugin 'pipe' failed: lookup_plugin.pipe(#{command}) returned #{status.exit_code}") unless status.success?
-        output.to_s.chomp
+        # ansible's pipe.py appends `to_text(stdout).rstrip()`, so a
+        # command printing a blank line or trailing spaces (printf
+        # "x\n\n", printf "x  \t\n") yields just "x": `chomp` removed
+        # only one trailing newline and returned "x\n"/"x  \t\n".
+        output.to_s.rstrip
       rescue e : PipeLookupError
         raise e
       rescue

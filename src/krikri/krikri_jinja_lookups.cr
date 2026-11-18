@@ -313,7 +313,10 @@ module Krikri
           )
         end
         if name == "pipe"
-          AnyValue.new(output.to_s.chomp)
+          # ansible's pipe.py appends `to_text(stdout).rstrip()`, so ALL
+          # trailing whitespace goes, not just one newline (`chomp` left
+          # "x\n" for printf "x\n\n", where ansible yields "x").
+          AnyValue.new(output.to_s.rstrip)
         else
           AnyValue.new(output.to_s.split('\n').reject(&.empty?).map { |line| AnyValue.new(line) })
         end

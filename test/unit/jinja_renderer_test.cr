@@ -607,6 +607,17 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ lookup('pipe', 'echo hello-from-pipe') }})).must_equal("hello-from-pipe")
   end
 
+  it "strips ALL trailing whitespace from lookup('pipe', ...) output, not just one newline" do
+    # ansible's pipe.py returns `to_text(stdout).rstrip()`: a command
+    # printing a blank line (`printf "x\n\n"`) or trailing spaces
+    # (`printf "x  \t\n"`) yields "x" there. `chomp` left "x\n" and
+    # "x  \t\n" behind (issue #1488).
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ lookup('pipe', 'printf "x\\n\\n"') }})).must_equal("x")
+    renderer.render(%({{ lookup('pipe', 'printf "x  \\t\\n"') }})).must_equal("x")
+  end
+
   it "raises on lookup('lines'/'pipe', ...) with a failing command, and renders None under errors=ignore" do
     # Real ansible's pipe.py and lines.py both RAISE on a non-zero exit
     # ("The lookup plugin '<name>' failed: lookup_plugin.<name>(<cmd>)

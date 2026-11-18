@@ -762,6 +762,17 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('pipe', 'echo hello-from-pipe'))).must_equal("hello-from-pipe")
   end
 
+  it "strips ALL trailing whitespace from lookup('pipe', ...) output, not just one newline" do
+    # ansible's pipe.py returns `to_text(stdout).rstrip()`: a command
+    # printing a blank line (`printf "x\n\n"`) or trailing spaces
+    # (`printf "x  \t\n"`) yields "x" there. `chomp` left "x\n" and
+    # "x  \t\n" behind (issue #1488).
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('pipe', 'printf "x\\n\\n"'))).must_equal("x")
+    evaluator.evaluate(%(lookup('pipe', 'printf "x  \\t\\n"'))).must_equal("x")
+  end
+
   it "renders a nested {{ }} span inside a lookup('pipe', ...) string argument (round 90013, ajeleznov.manage-known-hosts)" do
     # The role's own shape: `lookup('pipe', 'ssh-keyscan -t {{ ssh_key_type
     # }} {{ item }}{{ net_domain }}')` - ansible-core 2.19.4 renders
