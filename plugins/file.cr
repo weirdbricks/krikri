@@ -358,17 +358,24 @@ module Krikri
     # /etc/nginx, not fail.
     private def resolve_state(path : String, recurse : Bool) : String
       explicit_state = @params["state"]?
-      return explicit_state unless explicit_state.nil? || explicit_state.empty?
 
       # 2.21's get_state() switched from os.path.lexists to a raw
       # os.lstat and treats EACCES as absent-with-warning (2.19 kept it
-      # a silent absent). krikri's exists?/symlink? probes already
-      # return false behind an unreadable ancestor, so only the warning
-      # is new here.
+      # a silent absent). krikri's exists? probe already reports false
+      # behind an unreadable ancestor, so only the warning is new here.
+      #
+      # Ansible's additional_parameter_handling calls get_state()
+      # BEFORE it looks at state:, so an explicit state: earns the same
+      # warning (live-verified vs 2.21.6: state=absent under a mode-0000
+      # ancestor warns and stays ok/changed=false). Only an implicit
+      # state becomes "absent" from the EACCES - an explicit one keeps
+      # its requested value, exactly like real.
       if lstat_errno(path) == Errno::EACCES
         (@file_warnings ||= [] of String) << "Insufficient permissions to access #{path}. Treating as absent"
-        return "absent"
+        return "absent" if explicit_state.nil? || explicit_state.empty?
       end
+
+      return explicit_state unless explicit_state.nil? || explicit_state.empty?
 
       return "link" if File.symlink?(path)
       return "directory" if Dir.exists?(path)
@@ -384,6 +391,19 @@ module Krikri
       return nil if LibC.lstat(path, pointerof(stat)) == 0
       errno = Errno.value
       errno == Errno::ENOENT ? nil : errno
+    end
+
+    # File.symlink? is NOT the lenient probe File.exists? is: it goes
+    # through File.info?, which RAISES File::AccessDeniedError on EACCES
+    # instead of returning false. Ansible's get_state reports such a
+    # path (one behind an unreadable ancestor) as absent, so callers
+    # that only need the lexists answer must get `false` here rather
+    # than the exception; every other File::Error keeps its previous
+    # failure outcome.
+    private def symlink_present?(path : String) : Bool
+      File.symlink?(path)
+    rescue File::AccessDeniedError
+      false
     end
 
     private def dispatch_state(state : String, path : String) : PluginResult
@@ -1231,8 +1251,13 @@ module Krikri
     private def handle_absent(path : String) : PluginResult
       # lexists semantics: a DANGLING symlink (target gone) reports
       # File.exists? == false (it follows links) but still needs removing
-      # - Ansible's state=absent removes broken symlinks too.
-      unless File.exists?(path) || File.symlink?(path)
+      # - Ansible's state=absent removes broken symlinks too. The link
+      # probe is the rescued one: Crystal's File.symlink? goes through
+      # File.info? and RAISES File::Error on EACCES rather than
+      # returning false, which turned Ansible's ok/absent for a path
+      # behind an unreadable ancestor into "Unable to get file info:
+      # ...: Permission denied".
+      unless File.exists?(path) || symlink_present?(path)
         # Path doesn't exist, nothing to do
         if @check_mode
           return PluginResult.new(
