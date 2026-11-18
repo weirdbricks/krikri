@@ -62,6 +62,18 @@ describe "conflicting action statement detection" do
     ex.message.must_equal("unexpected parameter type in action: <class 'bool'>")
   end
 
+  it "reports the conflict, not a bool type error, when a legacy key precedes an action directive" do
+    # ansibl3.ubuntu_sunjava: `sudo: yes` written ABOVE `action:
+    # apt_repository ...`. ansible resolves the directive before its key
+    # walk, so the legacy key can only conflict - the bool type error
+    # belongs to directive-less tasks only (live-verified vs 2.21.6).
+    content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: add sunjava repository\n      sudo: yes\n      action: apt_repository repo=\"ppa:webupd8team/java\" state=present update_cache=yes\n      tags: sunjava\n"
+    ex = assert_raises(Krikri::ConflictingActionStatementsError) do
+      Krikri::PlaybookParser.parse_string(content)
+    end
+    ex.message.must_equal("conflicting action statements: apt_repository, sudo")
+  end
+
   it "refuses a keyword-only task with no module as a whole-playbook error" do
     content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: check schema\n      environment: {A: b}\n    - debug: msg=hi\n"
     ex = assert_raises(Krikri::ConflictingActionStatementsError) do
