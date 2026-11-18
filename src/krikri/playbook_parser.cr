@@ -6280,6 +6280,12 @@ module Krikri
       end
 
       parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, source_index)
+      # become: lives outside parse_common_task_attributes; every other
+      # dedicated parser applies it explicitly, and this one used not to -
+      # an unconvertible become: left become_invalid nil, so the executor's
+      # keyword probe never fired and the task reported ok where real fails
+      # it at keyword post-validation (issue #1505).
+      apply_become_keywords(task, task_hash, play) if play
       # register: is NOT part of parse_common_task_attributes - every
       # parser sets it in its own tail (the generic task parser does, at
       # its line ~4456). This one used to drop it, so a user-written
@@ -6410,6 +6416,11 @@ module Krikri
       end
 
       parse_common_task_attributes(task, task_hash, play, handler ? "Handler" : "Task", source_file, source_map, source_prefix, source_index)
+      # Same missing become: as the validate_argument_spec parser above: an
+      # unconvertible become: (the play's or the task's own) must reach the
+      # task so execute_include_vars's keyword probe fails it like real
+      # does (issue #1505).
+      apply_become_keywords(task, task_hash, play) if play
 
       # changed_when:/failed_when: live outside parse_common_task_
       # attributes (only the generic #parse_task path sets them), so this

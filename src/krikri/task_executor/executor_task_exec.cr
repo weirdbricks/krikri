@@ -232,10 +232,12 @@ module Krikri
       end
 
       # validate_argument_spec: is an ordinary action in real, so its
-      # run_once:/check_mode:/diff: keywords are post-validated right after
-      # the conditional (live-verified vs 2.21.6, issue #1467).
+      # become:/run_once:/check_mode:/diff: keywords are post-validated
+      # right after the conditional (live-verified vs 2.21.6, issues
+      # #1467 and #1505).
       if error = boolean_keyword_invalid_error(task, vars_context)
-        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context,
+          delegate_target: delegate_display_target(task, host, vars_context))
         return
       end
 
@@ -1646,7 +1648,8 @@ module Krikri
     private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host,
                                    vars_context : Hash(String, JSON::Any)? = nil, exec_host : Host? = nil,
                                    item_label : String? = nil, loop_item : JSON::Any? = nil,
-                                   loop_var_name : String? = nil, defer_stats : Bool = false) : Nil
+                                   loop_var_name : String? = nil, defer_stats : Bool = false,
+                                   delegate_target : String? = nil) : Nil
       result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"), task)
       # Real's TaskExecutor puts every controller-side deprecation the task
@@ -1745,7 +1748,7 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil, source_task: task, item_label: item_label, loop_item: loop_item, loop_var_name: loop_var_name)
+        ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: delegate_target || (exec_host && exec_host != host ? exec_host.name : nil), source_task: task, item_label: item_label, loop_item: loop_item, loop_var_name: loop_var_name)
       end
       # A non-adhoc display already consumed the held deprecation window at
       # its own flush point (inside display_result, after the module's
