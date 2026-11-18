@@ -100,7 +100,10 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "state is present but all of the following are missing: fstype")
       end
-      present_result(dev, current_fs, state, fstype, force, opts, check_mode)
+      present_result(
+        dev, current_fs, state, fstype, force, opts, check_mode,
+        blkid_result[:exit_code], blkid_result[:stderr],
+      )
     end
 
     # Ansible's argument_spec gives state/fstype choices lists, so
@@ -180,13 +183,14 @@ module Krikri
     private def present_result(
       dev : String, current_fs : String, state : String, fstype : String,
       force : Bool, opts : Array(String), check_mode : Bool,
+      blkid_rc : Int32, blkid_err : String,
     ) : PluginResult
       command_info = FSTYPE_COMMANDS[fstype]
       mkfs_argv, force_flags, _blkid_name = command_info
 
       create_filesystem(
         dev, current_fs, fs_class_of(current_fs), fs_class_of(fstype),
-        mkfs_argv, force_flags, opts, force, check_mode,
+        mkfs_argv, force_flags, opts, force, check_mode, blkid_rc, blkid_err,
       )
     end
 
@@ -194,12 +198,21 @@ module Krikri
       dev : String, current_fs : String, current_fs_class : String, fstype_class : String,
       mkfs_argv : Array(String), force_flags : Array(String),
       opts : Array(String), force : Bool, check_mode : Bool,
+      blkid_rc : Int32, blkid_err : String,
     ) : PluginResult
       same_fs = !current_fs.empty? && current_fs_class == fstype_class
       if same_fs && !force
         return fs_success(false)
       elsif !current_fs.empty? && !same_fs && !force
-        return PluginResult.new(changed: false, failed: true, msg: "'#{dev}' is already used as #{current_fs}, use force=true to overwrite")
+        # Real filesystem.py's fail_json passes the blkid run_command
+        # result along as rc/err kwargs (filesystem.py's
+        # `fail_json(msg=..., rc=rc, err=err)`), so the registered
+        # result carries blkid's rc (0 whenever it identified a
+        # filesystem at all) and its stderr (usually empty).
+        return PluginResult.new(changed: false, failed: true,
+          msg: "'#{dev}' is already used as #{current_fs}, use force=true to overwrite",
+          rc: blkid_rc, err: blkid_err,
+          key_order: %w[rc err failed msg changed exception])
       end
 
       return fs_success(true) if check_mode
