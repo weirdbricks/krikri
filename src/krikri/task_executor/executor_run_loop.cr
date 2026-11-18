@@ -3279,7 +3279,7 @@ module Krikri
       # module is the 2.19.11-observed exception (module resolved before
       # arg templating) handled by the guard above. Same bookkeeping
       # when_passes? would have performed.
-      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil? && !k8s_import_gate_module?(task)
+      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil? && import_gate_source_for(task).nil?
         # The exit-4 accounting for an unported module registers HERE,
         # after arg finalization succeeded (and only for a module that will
         # NOT run - a role-private library/ source dispatches below and is
@@ -3771,25 +3771,24 @@ module Krikri
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
-      # An unported `k8s` reference (kubernetes.core.k8s and its renames)
-      # runs the synthesized import gate on the target instead of taking
-      # the unavailable-module skip above: the module family imports the
-      # `kubernetes` client at MODULE level, so on a target without it
-      # real ansible fails the task with basic.py's missing_required_lib
-      # text before touching a cluster - a failed task, never a skip
-      # (thoth-station.external_janusgraph_service, issue #1155). When the
-      # gate reports the library importable, the module would go on to
-      # talk to a cluster this engine cannot reach either, so the designed
-      # unavailable-module skip applies from here - registration included,
-      # exactly where the skip above would have done it.
-      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil? &&
-         K8S_IMPORT_GATE_MODULES.includes?(unavailable)
-        result = execute_python_module(task, PythonModuleRunner.k8s_import_gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host))
+      # An unported module family that imports a client library at MODULE
+      # level (`k8s`/kubernetes.core.k8s, issue #1155; community.vmware.*,
+      # issue #1523) runs its synthesized import gate on the target
+      # instead of taking the unavailable-module skip above: on a target
+      # without that library real ansible fails the task with basic.py's
+      # missing_required_lib text before touching anything - a failed
+      # task, never a skip. When the gate reports the libraries
+      # importable, the module would go on to talk to a cluster/vCenter
+      # this engine cannot reach either, so the designed
+      # unavailable-module skip applies from here - registration
+      # included, exactly where the skip above would have done it.
+      if (unavailable = task.unavailable_module) && (gate_source = import_gate_source_for(task))
+        result = execute_python_module(task, gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host))
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
         result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
-        if result.as_h?.try(&.has_key?("_krikri_k8s_lib_present"))
+        if result.as_h?.try { |gate_result| gate_result.has_key?("_krikri_k8s_lib_present") || gate_result.has_key?("_krikri_vmware_libs_present") }
           reachable_unavailable_modules << unavailable
           # A LOOPED caller (defer_loop_stats) must not print or book-keep
           # here: like the skip above, its "skipping:" line prints from
@@ -4578,15 +4577,28 @@ module Krikri
     # synthesized k8s import gate (PythonModuleRunner.k8s_import_gate_source)
     # instead of the unavailable-module skip, because the family fails at
     # MODULE level on a target without the `kubernetes` client library - a
-    # failed task in real, never a skip (issue #1155). A role-private
-    # `library/k8s.py` still wins: the gate only fires when no source for
-    # the name resolves.
+    # failed task in real, never a skip (issue #1155).
     K8S_IMPORT_GATE_MODULES = Set{"k8s", "kubernetes.core.k8s", "community.kubernetes.k8s"}
 
-    private def k8s_import_gate_module?(task : Task) : Bool
-      return false unless (name = task.unavailable_module)
-      python_module_source_for(task).nil? &&
-        K8S_IMPORT_GATE_MODULES.includes?(name)
+    # community.vmware's modules are one family behind one module_utils
+    # (its clients import vmware.py), so every FQCN in the collection
+    # takes the same requests/PyVmomi import gate
+    # (PythonModuleRunner.vmware_import_gate_source) rather than the
+    # unavailable-module skip - the same MODULE-level-library class as
+    # k8s above, under --check too (issue #1523).
+    VMWARE_IMPORT_GATE_PREFIX = "community.vmware."
+
+    # The import-gate source an unported task dispatches, or nil when no
+    # gate applies (nil also means the unavailable-module skip keeps its
+    # usual behavior). A role-private `library/<name>.py` or
+    # `action_plugins/<name>.py` source still wins for every name here:
+    # the gate only fires when no source for the name resolves.
+    private def import_gate_source_for(task : Task) : String?
+      name = task.unavailable_module || return nil
+      return nil unless python_module_source_for(task).nil?
+      return PythonModuleRunner.k8s_import_gate_source if K8S_IMPORT_GATE_MODULES.includes?(name)
+      return PythonModuleRunner.vmware_import_gate_source if name.starts_with?(VMWARE_IMPORT_GATE_PREFIX)
+      nil
     end
 
     # The runtime counterpart of collection_index.local_action_plugin?:

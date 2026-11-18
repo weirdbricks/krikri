@@ -737,6 +737,18 @@ module Krikri
       "community.mysql.mysql_variables"   => {warning_text: "Use ansible.mysql.mysql_variables instead.", collection: "community.mysql", version: "6.0.0"},
       "community.general.proxmox"         => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
       "community.general.proxmox_kvm"     => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
+      # community.vmware's own content-move deprecations (its
+      # meta/runtime.yml plugin_routing.modules entries; removal_version
+      # and warning_text verbatim from community.vmware 5.7.2). None of
+      # these modules is krikri-supported, but real still prints the
+      # load-time warning for each, Origin'd at the module key
+      # (jedimt.vmware_vcsa_customization, issue #1523, whose five
+      # warnings the parser used to drop entirely).
+      "community.vmware.vmware_cluster"     => {warning_text: "Use vmware.vmware.cluster instead.", collection: "community.vmware", version: "6.0.0"},
+      "community.vmware.vmware_cluster_drs" => {warning_text: "Use vmware.vmware.cluster_drs instead.", collection: "community.vmware", version: "6.0.0"},
+      "community.vmware.vmware_cluster_ha"  => {warning_text: "Use vmware.vmware.cluster_ha instead.", collection: "community.vmware", version: "7.0.0"},
+      "community.vmware.vmware_host"        => {warning_text: "Use vmware.vmware.esxi_host and vmware.vmware.esxi_connection instead.", collection: "community.vmware", version: "7.0.0"},
+      "community.vmware.vcenter_folder"     => {warning_text: "Use vmware.vmware.folder instead.", collection: "community.vmware", version: "7.0.0"},
       # Windows-only module, never executed on a Linux target; the
       # load-time warning still prints (MindPointGroup.windows22_stig round).
       "community.windows.win_audit_policy_system" => {warning_text: "win_audit_policy_system will be removed in a future release of this collection. Use ansible.windows.win_audit_policy_system instead.", collection: "community.windows", version: "4.0.0"},
