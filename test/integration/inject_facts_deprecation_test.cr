@@ -1899,3 +1899,68 @@ describe "INJECT_FACTS_AS_VARS deprecation from an arm and/or never evaluates" d
     err.includes?("#{playbook}:6:").must_equal(false)
   end
 end
+
+# Issue #1526, robertdebock.sudo_pair: its `Build sudo_pair` command task
+# sets `environment: PATH: "{{ ansible_env.PATH }}:/usr/local/bin"`. Real
+# templates the environment: keyword's dict leaves as tagged YAML scalars,
+# so the top-level fact read warns with the Origin at THAT entry's own value
+# token, even in check mode; this engine rendered the leaves with no
+# templated-param site registered, so the read had no placeable Origin and
+# the block vanished from the check run (byte-compared against
+# ansible-core 2.21.6: one block per fact-reading entry, each at its own
+# value token).
+private def run_check_playbook(playbook_text : String) : {String, String}
+  dir = PluginSpecHelper.tmp_path("inject-facts-env-#{Random::Secure.hex(4)}")
+  FileUtils.mkdir_p(dir)
+  playbook = File.join(dir, "play.yml")
+  File.write(playbook, playbook_text)
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  Process.run(BINARY, ["-i", "localhost,", "--check", playbook], output: stdout, error: stderr, chdir: dir)
+  {stderr.to_s, playbook}
+end
+
+describe "INJECT_FACTS_AS_VARS deprecation from an environment: value" do
+  it "origins the read at the entry's own value token in check mode" do
+    stderr, playbook = run_check_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: build sudo_pair
+            ansible.builtin.command:
+              cmd: cargo build --release
+              creates: /tmp/krikri-absent-artifact.so
+            environment:
+              PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{playbook}:10:15\n")
+    stderr.must_include("10         PATH: \"{{ ansible_env.PATH }}:/usr/local/bin\"\n")
+    stderr.must_include("                 ^ column 15")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
+  it "warns once per fact-reading entry, each at its own value token" do
+    stderr, playbook = run_check_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: two env entries
+            ansible.builtin.command:
+              cmd: cargo build --release
+              creates: /tmp/krikri-absent-artifact.so
+            environment:
+              PATH: "{{ ansible_env.PATH }}:/usr/local/bin"
+              HOME2: "{{ ansible_env.HOME }}"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(2)
+    stderr.must_include("Origin: #{playbook}:10:15\n")
+    stderr.must_include("Origin: #{playbook}:11:16\n")
+    (stderr.index!("Origin: #{playbook}:10:15") < stderr.index!("Origin: #{playbook}:11:16")).must_equal(true)
+    stderr.includes?("While processing").must_equal(false)
+  end
+end

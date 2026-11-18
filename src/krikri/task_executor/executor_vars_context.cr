@@ -8181,7 +8181,8 @@ module Krikri
 
         if env = task.environment
           env.each do |key, value|
-            merged[substitutor.substitute(key, strict: true)] = substitutor.substitute(value, strict: true)
+            resolved_key, resolved_value = substitute_environment_entry(key, value, substitutor, task)
+            merged[resolved_key] = resolved_value
           end
         elsif raw = task.environment_raw
           merged.merge!(substitute_environment_raw(raw, substitutor, task) || Hash(String, String).new)
@@ -8193,6 +8194,25 @@ module Krikri
         # failures above use - finalize_args_failure_message passes an
         # already-prefixed message through unchanged.
         raise UndefinedVariableError.new("Task failed: Error processing keyword 'environment': #{e.message}")
+      end
+    end
+
+    # One entry of the task's own environment: dict, rendered with the entry
+    # registered as the fiber's templated param. ansible-core templates the
+    # keyword's leaves as tagged YAML scalars, so a top-level fact read
+    # inside one prints the INJECT_FACTS_AS_VARS block Origin'd at THAT
+    # entry's value token - robertdebock.sudo_pair's
+    # `PATH: "{{ ansible_env.PATH }}:/usr/local/bin"` reports
+    # tasks/main.yml:30:11 in check mode (issue #1526) - and each entry is
+    # its own templating operation, so two fact-reading entries print one
+    # block each (live-verified vs 2.21.6). Without the registration the
+    # read has no placeable Origin here and the block vanished.
+    private def substitute_environment_entry(key : String, value : String, substitutor : VarSubstitutor, task : Task) : {String, String}
+      VarSubstitutor.set_current_task_param(task.source_file, task.source_line, key, value)
+      begin
+        {substitutor.substitute(key, strict: true), substitutor.substitute(value, strict: true)}
+      ensure
+        VarSubstitutor.pop_current_task_param
       end
     end
 
