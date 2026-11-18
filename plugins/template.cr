@@ -5,6 +5,7 @@ require "digest/md5"
 require "digest/sha1"
 require "file_utils"
 require "../src/krikri/base_plugin"
+require "../src/krikri/surrogate_escape"
 
 module Krikri
   # Template plugin - writes pre-rendered template content to files
@@ -201,6 +202,16 @@ module Krikri
       content_bytes, encoding_error = encode_output(content, output_encoding)
       if encoding_error
         return PluginResult.new(changed: false, failed: true, msg: encoding_error)
+      end
+      if @params["_template_surrogate_escape"]?.presence && output_encoding.downcase.delete("-") == "utf8"
+        # The source template was not valid UTF-8, so the content carries
+        # one private-use twin per undecodable byte (see the action
+        # plugin's read). Python writes it with
+        # to_bytes(errors='surrogate_or_replace'), which resolves to
+        # surrogateescape on py3 - the bytes land exactly as they were
+        # read, so idempotency and the reported checksums must see them
+        # too (live-verified vs 2.21.6, issue #1531).
+        content_bytes = Krikri::SurrogateEscape.encode(content)
       end
 
       # Calculate MD5 of the encoded content (see output_encoding above);
