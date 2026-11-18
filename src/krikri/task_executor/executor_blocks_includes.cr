@@ -703,6 +703,23 @@ module Krikri
       register_result(host, register_name, JSON::Any.new(aggregate))
     end
 
+    # A looped include whose per-item KEYWORD post-validation failed: real
+    # prints one `failed: [host] (item=X) => {...}` line per item and then
+    # books the looped task ONCE - failed=1, or ok+=1/ignored+=1 with a
+    # single trailing `...ignoring` when it was caught (live-verified vs
+    # 2.21.6, issue #1499). Booking after the loop (rather than per item)
+    # is what keeps the recap and the `...ignoring` line in real's shape.
+    private def book_include_loop_keyword_failure(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
+      if resolve_failure_ignore_errors(task, nil, vars_context)
+        @results[host.name]["ok"] += 1
+        @results[host.name]["ignored"] += 1
+        puts "...ignoring".colorize(:red)
+      else
+        @results[host.name]["failed"] += 1
+        book_failure_halt(host)
+      end
+    end
+
     private def resolve_include_vars_path(task : Task, candidate : String) : String?
       return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
 
@@ -2683,6 +2700,8 @@ module Krikri
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
+        looped_keyword_failed = false
+        block_vars_context : Hash(String, JSON::Any)? = nil
         # Ansible's loop-aggregate rule for a looped include_tasks: (same rule
         # finish_looped_task applies to a looped module task): the whole
         # looped task recaps ONCE - skipped=1 only when EVERY iteration's
@@ -2774,6 +2793,8 @@ module Krikri
             deferred: deferred,
             item_fact_read: pending_fact_reads[idx]? || item_fact_read)
           looped_when_failed = true if status == :failed
+          looped_keyword_failed = true if status == :failed_keyword
+          block_vars_context = vars_context
           any_iteration_ran = true unless status == :skipped
         end
         # The registered aggregate goes down BEFORE the included tasks run,
@@ -2781,7 +2802,7 @@ module Krikri
         # before any included task executes). A loop with a raising when:
         # keeps swallow_when_error's own failed registration instead - the
         # aggregate of the non-failed entries would drop the failure.
-        unless looped_when_failed
+        unless looped_when_failed || looped_keyword_failed
           register_include_loop_aggregate(task, host, include_loop_entries, false)
         end
         if looped_when_failed
@@ -2796,6 +2817,10 @@ module Krikri
           else
             @results[host.name]["failed"] += 1
           end
+        elsif looped_keyword_failed
+          # Same single booking for a keyword post-validation failure, after
+          # every item's failed line has printed (issue #1499).
+          book_include_loop_keyword_failure(task, host, block_vars_context || base_vars_context)
         elsif !any_iteration_ran
           puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
           @results[host.name]["skipped"] += 1
@@ -2980,7 +3005,17 @@ module Krikri
       # conditional passed and before the file is loaded (live-verified vs
       # 2.21.6, issue #1467).
       if error = boolean_keyword_invalid_error(task, vars_context)
-        finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+        result = keyword_failure_json(error, task)
+        if item_label
+          # Same looped shape as run_include_role_once's own keyword branch:
+          # one `failed: [host] (item=X) => {...}` line per item, with the
+          # single loop-level booking left to the caller (issue #1499).
+          finish_single_task(task, host, result, vars_context: vars_context,
+            item_label: item_label, loop_item: vars_context[task.loop_var || "item"]?,
+            loop_var_name: task.loop_var, defer_stats: true)
+          return :failed_keyword
+        end
+        finish_single_task(task, host, result, vars_context: vars_context)
         return :failed
       end
 
@@ -3754,6 +3789,8 @@ module Krikri
         # Per-iteration entries for the registered aggregate (issue #888).
         role_loop_entries = [] of JSON::Any
         role_loop_failed = false
+        keyword_loop_failed = false
+        block_vars_context : Hash(String, JSON::Any)? = nil
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Same loop_var-replaces-item rule as the task loop paths
@@ -3781,7 +3818,9 @@ module Krikri
             next
           end
           status = run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host), idx, role_loop_entries, deferred)
-          role_loop_failed = true if status == :failed
+          role_loop_failed = true if status.in?(:failed, :failed_keyword)
+          keyword_loop_failed = true if status == :failed_keyword
+          block_vars_context = vars_context
         end
         # Same aggregate rule as the looped include_tasks path above: skip
         # it when an iteration's when: raised (swallow_when_error's failed
@@ -3793,6 +3832,9 @@ module Krikri
         unless role_loop_failed
           register_include_loop_aggregate(task, host, role_loop_entries, false)
         end
+        # A keyword post-validation failure is booked only now that every
+        # item's failed line has printed (issue #1499).
+        book_include_loop_keyword_failure(task, host, block_vars_context || base_vars_context) if keyword_loop_failed
       else
         run_include_role_once(task, host, base_vars_context, nil, deferred: deferred)
       end
@@ -3907,7 +3949,20 @@ module Krikri
       # 2.21.6, issue #1467.
       unless task.is_static_import?
         if error = boolean_keyword_invalid_error(task, vars_context)
-          finish_single_task(task, host, keyword_failure_json(error, task), vars_context: vars_context)
+          result = keyword_failure_json(error, task)
+          if item_label
+            # A LOOPED include is ONE task in real's recap: every item
+            # still prints its own `failed: [host] (item=X) => {...}` line
+            # (keyword post-validation runs per iteration, so a two-item
+            # loop prints two), but the loop books failed=1 (or ok+ignored
+            # for ignore_errors:) once, after the last item, with a single
+            # trailing `...ignoring` - the caller does that part.
+            finish_single_task(task, host, result, vars_context: vars_context,
+              item_label: item_label, loop_item: vars_context[task.loop_var || "item"]?,
+              loop_var_name: task.loop_var, defer_stats: true)
+            return :failed_keyword
+          end
+          finish_single_task(task, host, result, vars_context: vars_context)
           return :failed
         end
       end
