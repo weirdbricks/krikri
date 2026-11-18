@@ -3528,11 +3528,23 @@ module Krikri
         # debian.yml, which doesn't exist; the real target is tasks/
         # configure/debian.yml, one level up from file_dir but still
         # inside tasks/, not all the way up at the role root.
-        via_tasks_root = File.expand_path(file_rel, File.join(role_root, "tasks"))
-        return via_tasks_root if File.exists?(via_tasks_root)
+        # The same raw-join rule as the direct candidate above applies to
+        # whichever of these fallback roots actually holds the file:
+        # Ansible builds every candidate as os.path.join(root, source)
+        # and returns the found one untouched, so a source carrying a
+        # redundant separator keeps it in the `included:` line
+        # (diademiemi.syncthing's `setup/common//configure.yml` under
+        # tasks/setup/ prints `<role>/tasks/setup/common//configure.yml`).
+        # File.expand_path would collapse it, so probe the raw join first.
+        {File.join(role_root, "tasks"), role_root}.each do |root|
+          unless file_rel.starts_with?("/")
+            raw = File.join(root, file_rel)
+            return raw if File.exists?(raw)
+          end
 
-        via_role_root = File.expand_path(file_rel, role_root)
-        return via_role_root if File.exists?(via_role_root)
+          expanded = File.expand_path(file_rel, root)
+          return expanded if File.exists?(expanded)
+        end
       end
 
       # Ansible's last candidate for a relative include is the PLAYBOOK
