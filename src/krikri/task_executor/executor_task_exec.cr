@@ -2378,9 +2378,19 @@ module Krikri
             Krikri::PythonFilterRunner.scan_for_filter_expression(
               stripped[2..-3].strip, vars_context["playbook_dir"]?.try(&.as_s?)
             )
-            evaluated = KrikriJinja.evaluate_expression(
-              stripped[2..-3].strip, vars_context, strict: strict,
-              host_context: JinjaHostContext.new(vars_context)
+            # Through JinjaRenderer (which evaluates against the lazy
+            # JinjaVarResolver scope) rather than KrikriJinja's
+            # evaluate_expression: that API converts the whole vars hash
+            # eagerly, so a variable whose own stored value is unrendered
+            # Jinja reached the chain as literal text - `{{
+            # uwsgi_emperor_tyrant | bool }}` on cchurch.uwsgi's
+            # `uwsgi_emperor_tyrant: "{{ (uwsgi_install == 'pip') | bool }}"`
+            # coerced the template text itself (printing a spurious
+            # "coerced invalid value" deprecation) and answered False for
+            # every install method, where real renders the value first
+            # (issue #1516).
+            evaluated = VariableSubstitutor::JinjaRenderer.evaluate_structured(
+              stripped[2..-3].strip, vars_context, strict: strict
             )
             # A bool result stays a real bool for the same reason: the
             # stringified "True" would later fail a strict `when: item`

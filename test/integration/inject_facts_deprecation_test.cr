@@ -1830,3 +1830,72 @@ describe "INJECT_FACTS_AS_VARS deprecation from a looped include_vars: item" do
     (err.index!("Origin: #{playbook}:8:11") < err.index!("Origin: #{playbook}:13:13")).must_equal(true)
   end
 end
+
+# Issue #1516, cchurch.uwsgi: the role's `set_fact` values read their facts
+# only from an arm `and` short-circuits (`uwsgi_install != 'pkg' and
+# (... ansible_os_family ...)` with uwsgi_install 'pkg'). jinja2 resolves
+# every name a template loads as the frame opens, so real prints one block
+# per value anyway (live-verified against ansible-core 2.21.6: origins at
+# the value token each, first: then second:).
+describe "INJECT_FACTS_AS_VARS deprecation from an arm and/or never evaluates" do
+  it "warns once per set_fact value, Origin'd at that value" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-short-circuit-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          install: pkg
+        tasks:
+          - name: facts inside short-circuited arms
+            set_fact:
+              first: "{{ install != 'pkg' and ansible_os_family == 'Debian' }}"
+              second: "{{ install != 'pkg' and ansible_distribution == 'Ubuntu' }}"
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+    err = stderr.to_s
+
+    err.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(2)
+    err.must_include("Origin: #{playbook}:9:16\n")
+    err.must_include("Origin: #{playbook}:10:17\n")
+    (err.index!("Origin: #{playbook}:9:16") < err.index!("Origin: #{playbook}:10:17")).must_equal(true)
+  end
+
+  # The read order is the OUTER value's: real templates `os_packages`'
+  # expression, whose frame-open resolution reads `ansible_pkg_mgr` before
+  # the nested `inner_pkgs` leaf (which real keeps lazy and only renders
+  # when the resulting list is consumed) is ever reached. Rendering that
+  # leaf eagerly first attributed the block to the leaf's own line
+  # (live-verified against 2.21.6: the outer value's token, not the leaf).
+  it "origins a param's fact read at the consuming value, not a nested leaf" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-read-order-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          inner_pkgs:
+            apt:
+              - "{{ (ansible_distribution_major_version is version('20', '>=')) | ternary('a', 'b') }}"
+          os_packages: "{{ inner_pkgs[ansible_pkg_mgr] }}"
+        tasks:
+          - name: read the outer default
+            debug:
+              msg: "{{ os_packages }}"
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+    err = stderr.to_s
+
+    err.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(1)
+    err.must_include("Origin: #{playbook}:8:18\n")
+    err.includes?("#{playbook}:6:").must_equal(false)
+  end
+end

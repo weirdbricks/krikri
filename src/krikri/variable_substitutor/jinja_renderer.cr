@@ -395,6 +395,10 @@ module Krikri
         node = cache[expr] ||= KrikriJinja.parse_expression(
           expr, KrikriJinja::LexerOptions.new(verbatim_expression_strings: !@decode)
         )
+        # jinja2 reads every name the expression loads as the frame opens,
+        # before this engine's lazy resolution would - see
+        # VarSubstitutor.emit_expression_fact_deprecations.
+        VarSubstitutor.emit_expression_fact_deprecations(node, @vars)
         # Same deferred filter_plugins trigger as #render! (a structured
         # expression's own AST decides, so `{{ 1 + 1 }}` stays silent
         # where `{{ x | first }}` triggers, exactly like real ansible);
@@ -731,6 +735,10 @@ module Krikri
       def self.evaluate_structured(source : String, vars : Hash(String, JSON::Any), strict : Bool = false) : JSON::Any?
         force_whole_structure_leaves!(source, vars)
         node = KrikriJinja.parse_expression(source)
+        # See VarSubstitutor.emit_expression_fact_deprecations: the reads
+        # jinja2's frame-open name resolution makes happen before the
+        # evaluation, whichever arm this engine's lazy resolution reaches.
+        VarSubstitutor.emit_expression_fact_deprecations(node, vars)
         # Same deferred filter_plugins trigger as #render!/#evaluate_value!
         # (see PythonFilterRunner#scan_for_filter_use): callers of this
         # class-level entry (conditional probes, handler/loop structured

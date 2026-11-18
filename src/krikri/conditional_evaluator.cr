@@ -373,6 +373,15 @@ module Krikri
       [] of String
     end
 
+    # #referenced_names for an ALREADY-PARSED expression - the renderer
+    # paths that hold the node they are about to evaluate (see
+    # VarSubstitutor.emit_expression_fact_deprecations).
+    def self.referenced_names_in(expr : KrikriJinja::Nodes::ExprNode) : Array(String)
+      names = [] of String
+      collect_expr_names(expr, names)
+      names
+    end
+
     private def self.collect_expr_names(expr : KrikriJinja::Nodes::ExprNode, names : Array(String)) : Nil
       case expr
       when KrikriJinja::Nodes::NameNode
