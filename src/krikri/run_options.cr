@@ -6,7 +6,8 @@ module Krikri
     class_property skip_tags : Array(String) = [] of String
     class_property play_name : String = ""
     class_property inventory_sources : Array(String) = [] of String
-    # nil = not given on the command line (Ansible's default is 5)
+    # The effective fork count: seeded from ANSIBLE_FORKS (DEFAULT_FORKS)
+    # at startup and overridden by -f/--forks. Ansible's own default is 5.
     class_property forks : Int32? = nil
     # Numeric -v/-vv/... verbosity, readable from output paths that don't
     # carry the executor (HandlerRunner, ResultDisplay).

@@ -46,6 +46,19 @@ require "./src/krikri/ansible_config"
 # the directory it was started in - before any playbook-relative chdir.
 Krikri::AnsibleConfig.base_dir = Dir.current
 
+# ansible-core resolves DEFAULT_FORKS (ANSIBLE_FORKS or the ini's
+# [defaults] forks) while importing its own constants module, so a value
+# its `integer` coercion refuses stops ansible-playbook with "ERROR:
+# Config 'DEFAULT_FORKS' ..." plus the import-time traceback on STDERR and
+# rc=5 - before argument parsing, so `--version` dies on one too
+# (live-verified vs 2.21.6, issue #1501). Check it first and print that
+# crash verbatim instead of running the playbook with the setting
+# silently ignored.
+if invalid_forks = Krikri::AnsibleConfig.invalid_forks_setting
+  STDERR.print Krikri::AnsibleConfig.invalid_forks_crash_render(invalid_forks[0], invalid_forks[1])
+  exit 5
+end
+
 # The host-pattern terms of *pattern* that match no inventory host, named
 # the way ansible-core names them in "[WARNING]: Could not match supplied
 # host pattern, ignoring: <term>". Two details of manager.py's
@@ -318,12 +331,16 @@ batching_enabled = true
 # functionality, only throughput. `become:` was on that fallback list
 # until item 1 gave privileged tasks a daemon of their own.
 persistent_daemon = true
-# Default matches ansible-playbook's (5). A "fork" here is a Crystal fiber
-# gated by a channel (see TaskExecutor's per-task host fan-out), doing pure SSH
-# I/O wait, not a forked Python interpreter - so a much larger value (e.g.
-# `--forks 25`) is safe and faster on big inventories; it is opt-in so the
-# default behaves (interleaving under -v, target-side load) like ansible-playbook.
-forks = 5
+# ansible-playbook's default is 5, but ANSIBLE_FORKS (DEFAULT_FORKS) is
+# the setting's real default and -f/--forks only overrides it. A "fork"
+# here is a Crystal fiber gated by a channel (see TaskExecutor's per-task
+# host fan-out), doing pure SSH I/O wait, not a forked Python interpreter,
+# so a much larger value (e.g. `--forks 25`) is safe and faster on big
+# inventories; it is opt-in so the default behaves (interleaving under -v,
+# target-side load) like ansible-playbook.
+forks = Krikri::AnsibleConfig.forks_setting || 5
+# ansible_forks is the resolved default when -f is absent, not a bare 5.
+Krikri::RunOptions.forks = forks
 # "implicit" (default, matching ansible-playbook): every play re-gathers
 # facts. "smart": each host is gathered at most once per run, so a
 # multi-play playbook stops paying N_plays x N_hosts fact round trips.
