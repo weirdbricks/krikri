@@ -276,7 +276,11 @@ module Krikri
         return "#{parts[0]}.#{parts[1]}"
       end
       collection_dirs.each do |collection_fq, collection_paths|
-        next unless collection_paths.any? { |path| collection_leaf_file?("modules", path, resolved) }
+        # The collection loader reads only its first copy (see
+        # installed_collection_resolution), so a later copy's module file
+        # is not a source real could execute.
+        dir = collection_paths.first? || next
+        next unless collection_leaf_file?("modules", dir, resolved)
         return collection_fq
       end
       nil
@@ -586,17 +590,13 @@ module Krikri
 
     # The first installed copy's meta/runtime.yml redirect for `leaf`, or
     # nil when the collection is not installed or carries no redirect
-    # entry for it - both are chain ends for the reported name.
+    # entry for it - both are chain ends for the reported name. Only the
+    # first copy is read: ansible-core's collection package loader keeps
+    # just the first matching directory on its search path, so a shadowed
+    # copy's routing table is never consulted.
     private def self.collection_redirect_target(collection_fq : String, leaf : String) : String?
-      dirs = collection_dirs[collection_fq]? || return nil
-      dirs.each do |dir|
-        if redirects = collection_redirects(dir, "modules")
-          if found = redirects[leaf]?
-            return found
-          end
-        end
-      end
-      nil
+      dir = collection_dirs[collection_fq]?.try(&.first?) || return nil
+      collection_redirects(dir, "modules").try(&.[leaf]?)
     end
 
     # One collection's meta/runtime.yml redirect table for a routing
@@ -1045,10 +1045,9 @@ module Krikri
       parts = name.split('.')
       return false if parts.size < 4
       return false if parts[0] == "ansible" && (parts[1] == "builtin" || parts[1] == "legacy")
-      dirs = collection_dirs["#{parts[0]}.#{parts[1]}"]?
-      return false unless dirs
+      dir = collection_dirs["#{parts[0]}.#{parts[1]}"]?.try(&.first?) || return false
       leaf = parts[2..].join('.')
-      dirs.any? { |dir| collection_subdir_leaf_file?("modules", dir, leaf) }
+      collection_subdir_leaf_file?("modules", dir, leaf)
     end
 
     # Role-private / playbook-adjacent `library/<name>` module source -
