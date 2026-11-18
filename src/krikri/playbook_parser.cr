@@ -6303,6 +6303,14 @@ module Krikri
       # keyword probe never fired and the task reported ok where real fails
       # it at keyword post-validation (issue #1505).
       apply_become_keywords(task, task_hash, play) if play
+      # delegate_to: is parsed only by the generic #parse_task tail, so this
+      # dedicated parser left an inline validate_argument_spec task with a
+      # nil delegate_to and its result lines printed `ok: [host]` where real
+      # stamps `host -> delegate` (CallbackBase.host_label reads the task
+      # keyword even though the action itself always runs controller-side) -
+      # the kpg generator's delegated validation task, issue #1530. Same gap
+      # include_vars: had (issue #89).
+      task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
       # register: is NOT part of parse_common_task_attributes - every
       # parser sets it in its own tail (the generic task parser does, at
       # its line ~4456). This one used to drop it, so a user-written
