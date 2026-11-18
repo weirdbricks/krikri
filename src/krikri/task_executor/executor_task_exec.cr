@@ -1650,7 +1650,6 @@ module Krikri
                                    item_label : String? = nil, loop_item : JSON::Any? = nil,
                                    loop_var_name : String? = nil, defer_stats : Bool = false,
                                    delegate_target : String? = nil) : Nil
-      result = debug_if_requested(task, host, result)
       merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"), task)
       # Real's TaskExecutor puts every controller-side deprecation the task
       # raised on the result itself (a when: clause reading a top-level
@@ -1694,6 +1693,7 @@ module Krikri
         # unreachable keeps being retried per task, exactly like
         # Ansible, so it must not be pinned into the never-retry set.
         @unreachable_hosts << host.name unless task.ignore_unreachable?
+        debug_if_requested(task, host, result)
         return
       end
 
@@ -1718,6 +1718,7 @@ module Krikri
         ResultDisplay.flush_task_deprecation_capture_for_display
         puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_result_suffix(result)).colorize(:cyan)
         @results[host.name]["skipped"] += 1
+        debug_if_requested(task, host, result)
         return
       end
 
@@ -1747,8 +1748,16 @@ module Krikri
       TaskExecutor.flush_deferred_finalization_error_block(result)
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
+        debug_if_requested(task, host, result)
       else
-        ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: delegate_target || (exec_host && exec_host != host ? exec_host.name : nil), source_task: task, item_label: item_label, loop_item: loop_item, loop_var_name: loop_var_name)
+        # Ansible's debugger runs from the strategy AFTER the result went
+        # through the callback, so the fatal line is already printed when
+        # the prompt appears; a redo echoes its own result the same way.
+        show = ->(res : JSON::Any) {
+          ResultDisplay.display_result(host, res, resolve_task_diff_mode(task, vars_context), ignore_errors: ignore_errors, no_log: no_log, module_name: task.module_name, delegate_target: delegate_target || (exec_host && exec_host != host ? exec_host.name : nil), source_task: task, item_label: item_label, loop_item: loop_item, loop_var_name: loop_var_name)
+        }
+        show.call(result)
+        result = debug_if_requested(task, host, result, show)
       end
       # A non-adhoc display already consumed the held deprecation window at
       # its own flush point (inside display_result, after the module's
@@ -1758,6 +1767,8 @@ module Krikri
       # A looped caller books the whole task ONCE, after its last item
       # (real's loop aggregate) rather than per item.
       return if defer_stats
+      failed = Krikri.result_failed_flag(result)
+      ignore_errors = resolve_failure_ignore_errors(task, result, vars_context)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       halt_if_failed(task, host, failed, result, ignore_errors: ignore_errors)
     end

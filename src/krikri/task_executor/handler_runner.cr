@@ -2,6 +2,7 @@ require "json"
 require "colorize"
 require "../host"
 require "../playbook_parser"
+require "../task_debugger"
 require "./result_display"
 
 module Krikri
@@ -124,6 +125,8 @@ module Krikri
       unusable_handlers : Set(Task)? = nil,
       ignore_errors_resolver : Proc(Task, Host, Bool)? = nil,
       delegate_resolver : Proc(Task, Host, String?)? = nil,
+      debugger : String? = nil,
+      debug_strategy : Bool = false,
     )
       return unless any_notified?
 
@@ -198,7 +201,8 @@ module Krikri
             run_handler_on_host(handler, handler_index, host, pass,
               execute_callback, results, diff_mode, name_resolver, halted_hosts,
               ignore_errors_resolver, delegate_resolver, attachments[host.name],
-              already_ran[host.name], second_pass[host.name], bannered)
+              already_ran[host.name], second_pass[host.name], bannered,
+              debugger, debug_strategy)
           end
         end
 
@@ -231,7 +235,9 @@ module Krikri
                                     attached : Set(Int32),
                                     already_ran : Set(String),
                                     second_pass : Set(String),
-                                    bannered : Set(Int32)) : Bool
+                                    bannered : Set(Int32),
+                                    debugger : String? = nil,
+                                    debug_strategy : Bool = false) : Bool
       return false if halted_hosts.try(&.includes?(host.name))
 
       rendered_name = name_resolver.try(&.call(handler, host)) || handler.name
@@ -302,7 +308,47 @@ module Krikri
         handler_result_ignore_errors(handler, result, host, ignore_errors_resolver),
         delegate_resolver.try(&.call(handler, host)))
 
+      run_handler_debugger(handler, host, rendered_name, result, execute_callback,
+        diff_mode, debugger, debug_strategy)
+
       true
+    end
+
+    # Ansible's task debugger lives in the strategy, not the task path, so
+    # a failing HANDLER prompts exactly like a failing task - with the
+    # "HANDLER: " label Handler's own repr gives it, and only after the
+    # fatal line is displayed (the debugger closure wraps the result
+    # processing). Live-verified against ansible-core 2.21.6: a handler
+    # failing under `strategy: debug` prints its fatal line, then
+    # `[host] HANDLER: <name> (debug)> `, and the debugger's EOF quit
+    # ("User interrupted execution") ends the run at exit 99 with no
+    # PLAY RECAP - which is what a non-interactive run of a play using
+    # this strategy always sees.
+    private def run_handler_debugger(handler : Task, host : Host, rendered_name : String,
+                                     result : JSON::Any,
+                                     execute_callback : Proc(Task, Host, JSON::Any),
+                                     diff_mode : Bool, debugger : String?,
+                                     debug_strategy : Bool) : Nil
+      setting = handler.debugger || debugger
+      # TASK_DEBUGGER_IGNORE_ERRORS defaults true: a handler whose own
+      # ignore_errors: caught the failure never opens the prompt.
+      global = setting.nil? && debug_strategy && !handler.ignore_errors?
+      return unless global ? TaskDebugger.globally_triggered?(result) : TaskDebugger.triggered?(setting, result)
+
+      current = result
+      loop do
+        case TaskDebugger.run(rendered_name, host.name, current,
+          Hash(String, JSON::Any).new, handler, nil, kind: "HANDLER")
+        in TaskDebugger::Outcome::Continue
+          return
+        in TaskDebugger::Outcome::Redo
+          current = execute_callback.call(handler, host)
+          ResultDisplay.display_result(host, current, diff_mode, ignore_errors: handler.ignore_errors?,
+            no_log: handler.no_log?, module_name: handler.module_name, source_task: handler)
+          triggered = global ? TaskDebugger.globally_triggered?(current) : TaskDebugger.triggered?(setting, current)
+          return unless triggered
+        end
+      end
     end
 
     # The -vv/console display block for one handler run: Ansible's default

@@ -27,6 +27,13 @@ module Krikri
       strategy == "free" || strategy == "host_pinned"
     end
 
+    # `strategy: debug` (or ANSIBLE_STRATEGY=debug) runs linearly but with
+    # ansible's task debugger globally enabled - see
+    # TaskDebugger.globally_triggered? and #debug_if_requested.
+    private def debug_strategy? : Bool
+      @strategy == "debug"
+    end
+
     # `strategy: free` - each host runs the WHOLE task list on its own,
     # with no barrier between tasks, so a fast host races ahead while a
     # slow one is still on an earlier task. Verified against ansible-core
@@ -421,7 +428,7 @@ module Krikri
           # effects for run_once:/throttle:/any later cross-host task.
           # run_once: keeps its own single-host election in execute_task.
           execute_include_role_multi(task, active_hosts)
-        elsif @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle_value.value != 1 && (task.debugger || @debugger).nil?
+        elsif @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle_value.value != 1 && (task.debugger || @debugger).nil? && !debug_strategy?
           run_task_for_hosts_in_parallel(task, active_hosts)
         else
           active_hosts.each { |host| execute_task(task, host) }
