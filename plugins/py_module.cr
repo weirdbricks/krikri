@@ -190,6 +190,38 @@ module Krikri
         end
       end
 
+      # A module importing a collection's module_utils
+      # (`from ansible_collections.amazon.aws.plugins.module_utils.retries
+      # import AWSRetry`) gets those files staged in the module's own work
+      # directory, mirroring AnsiballZ's bundling: the target's python
+      # needs no collection install at all (issue #1476 - the PYTHONPATH
+      # roots below are the CONTROLLER's and do not exist on a remote
+      # host). The controller sends the exact files ansible would bundle,
+      # so the common no-collection-import module costs nothing.
+      staged_collections = begin
+        raw = @params["collection_module_utils_files"]?
+        raw.nil? || raw.empty? ? nil : JSON.parse(raw).as_h
+      rescue
+        nil
+      end
+      if staged_collections && !staged_collections.empty?
+        staged_collections.each do |rel, encoded|
+          next unless encoded.as_s?
+          rel_path = rel
+          next if rel_path.empty? || rel_path.starts_with?('/')
+          next if rel_path.split('/').includes?("..")
+          dest = File.join(work_dir, rel_path)
+          next if File.exists?(dest)
+          begin
+            content = String.new(Base64.decode(encoded.as_s))
+          rescue
+            next
+          end
+          FileUtils.mkdir_p(File.dirname(dest))
+          File.write(dest, content)
+        end
+      end
+
       env = ENV.to_h
       env["ANSIBLE_MODULE_NAME"] = module_name
       env["ANSIBLE_CHECK_MODE"] = check_mode ? "1" : "0"

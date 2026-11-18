@@ -143,6 +143,148 @@ module Krikri
       files
     end
 
+    # Absolute `from ansible_collections.ns.coll.plugins.module_utils.x
+    # import y` / `import ansible_collections...` reference.
+    COLLECTION_MODULE_UTILS_FROM =
+      /\A\s*from\s+(ansible_collections\.[\w.]+)\s+import\s+(.+?)\s*\z/
+    COLLECTION_MODULE_UTILS_PLAIN =
+      /\A\s*import\s+(ansible_collections\.[\w.]+)/
+    # A relative import inside a collection module_utils file, which the
+    # payload must carry too (amazon.aws' retries.py does `from .cloud
+    # import CloudRetry`).
+    RELATIVE_MODULE_UTILS_FROM = /\A\s*from\s+(\.+[\w.]*)\s+import\s+(.+?)\s*\z/
+
+    # Collection module_utils a module's `ansible_collections.*` imports
+    # need ON THE TARGET. Real ansible's AnsiballZ wrapper never requires
+    # the collection to be installed where the module runs: its
+    # recursive_finder follows every
+    # `ansible_collections.<ns>.<coll>.plugins.module_utils.*` import -
+    # adding each module_utils file and the relative imports inside them -
+    # into the zipapp it ships, so a custom module built on amazon.aws'
+    # AnsibleAWSModule runs on a host with no collections installed at
+    # all. This runner used to rely on PYTHONPATH pointing at the
+    # CONTROLLER's install (see collection_import_roots), which is fine
+    # for ansible_connection=local but fails over SSH: the target has no
+    # such roots, so the import died with "No module named
+    # 'ansible_collections'" (issue #1476).
+    #
+    # Returns target-relative path (already under the module's work dir)
+    # -> absolute controller source path. Empty when the module imports no
+    # collection module_utils, or when the collection is not installed on
+    # the controller - real ansible fails identically then, since it has
+    # nothing to bundle either.
+    def collect_collection_module_utils_files(source : String, roots : Array(String)? = nil) : Hash(String, String)
+      files = Hash(String, String).new
+      dirs = Hash(String, String?).new
+      seen = Hash(String, Bool).new
+      queue = [] of {String, Array(String)}
+
+      collection_dir = ->(namespace : String, collection : String) do
+        fq = "#{namespace}.#{collection}"
+        dirs[fq] = collection_module_utils_dir(namespace, collection, roots) unless dirs.has_key?(fq)
+        dirs[fq]
+      end
+
+      scan = ->(fq : String, package : Array(String), text : String) do
+        text.each_line do |line|
+          if match = COLLECTION_MODULE_UTILS_FROM.match(line)
+            parts = match[1].split('.')
+            next if parts.size < 5 || parts[3] != "plugins" || parts[4] != "module_utils"
+            own = "#{parts[1]}.#{parts[2]}"
+            collection_dir.call(parts[1], parts[2])
+            rest = parts[5..]
+            queue << {own, rest} unless rest.empty?
+            # `from <pkg> import name` may name a SUBMODULE of the
+            # package (amazon.aws does `from . import _botocore`);
+            # ansible's recursive_finder adds such a name only when it
+            # resolves to a real file, which the resolution check below
+            # reproduces.
+            import_names(match[2]).each do |name|
+              next unless name.matches?(/\A\w+\z/)
+              queue << {own, rest + [name]}
+            end
+          elsif match = COLLECTION_MODULE_UTILS_PLAIN.match(line)
+            parts = match[1].split('.')
+            next if parts.size < 5 || parts[3] != "plugins" || parts[4] != "module_utils"
+            collection_dir.call(parts[1], parts[2])
+            rest = parts[5..]
+            queue << {"#{parts[1]}.#{parts[2]}", rest} unless rest.empty?
+          elsif !fq.empty? && (match = RELATIVE_MODULE_UTILS_FROM.match(line))
+            levels = match[1].count('.')
+            base = package[0, Math.max(package.size - (levels - 1), 0)] + relative_parts(match[1])
+            queue << {fq, base} unless base.empty?
+            import_names(match[2]).each do |name|
+              next unless name.matches?(/\A\w+\z/)
+              queue << {fq, base + [name]}
+            end
+          end
+        end
+      end
+
+      # The module source itself imports by absolute path only; its
+      # package context is empty.
+      scan.call("", [] of String, source)
+
+      until queue.empty?
+        fq, parts = queue.shift
+        next if parts.empty?
+        dir = dirs[fq]?
+        next unless dir
+        key = "#{fq}:#{parts.join('.')}"
+        next if seen[key]?
+        seen[key] = true
+        if found = collection_module_file(dir, parts)
+          path, package = found
+          staged = path[(dir.size + 1)..]
+          files["ansible_collections/#{fq.gsub('.', '/')}/plugins/module_utils/#{staged}"] = path
+          scan.call(fq, package, File.read(path))
+        end
+      end
+      files
+    end
+
+    # Splits the names of an `import a, b as c` clause, dropping the
+    # trailing comment and parentheses.
+    private def import_names(text : String) : Array(String)
+      cleaned = text.split('#').first.strip.strip("() ")
+      cleaned.split(',').map do |entry|
+        entry.strip.split(/\s+as\s+/).first.strip
+      end
+    end
+
+    # The dotted tail of a relative import spec: "." -> [], ".cloud" ->
+    # ["cloud"], "..sub.mod" -> ["sub", "mod"].
+    private def relative_parts(spec : String) : Array(String)
+      tail = spec.lstrip('.')
+      tail.empty? ? [] of String : tail.split('.')
+    end
+
+    # The collection's plugins/module_utils directory under the first
+    # search root that has it, or nil.
+    private def collection_module_utils_dir(namespace : String, collection : String,
+                                            roots : Array(String)? = nil) : String?
+      (roots || CollectionIndex.roots).each do |root|
+        trimmed = root.chomp('/')
+        tree = File.basename(trimmed) == "ansible_collections" ? trimmed : File.join(trimmed, "ansible_collections")
+        dir = File.join(tree, namespace, collection, "plugins", "module_utils")
+        return dir if Dir.exists?(dir)
+      end
+      nil
+    end
+
+    # A module path (e.g. ["retries"], ["_autoscaling", "foo"]) under a
+    # module_utils dir -> {file, its package parts}. A package's
+    # __init__.py is the module itself, so imports inside it resolve
+    # relative to the package, not its parent.
+    private def collection_module_file(dir : String, parts : Array(String)) : {String, Array(String)}?
+      rel = parts.join('/')
+      py = File.join(dir, "#{rel}.py")
+      return {py, parts[0, parts.size - 1]} if File.file?(py)
+      init = File.join(dir, rel, "__init__.py")
+      return {init, parts} if File.file?(init)
+      nil
+    end
+
     # Directories to put on a custom module's PYTHONPATH so an
     # `ansible_collections.*` import resolves the way real ansible's
     # module payload provides it. Real ansible never needs the

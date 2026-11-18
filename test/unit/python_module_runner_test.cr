@@ -1711,4 +1711,67 @@ describe Krikri::PythonModuleRunner do
   ensure
     FileUtils.rm_rf(fixture_root) if fixture_root
   end
+
+  # ---- collection module_utils shipped with the payload (issue #1476) ----
+
+  it "collects the collection module_utils a module imports, following relative imports" do
+    # Real ansible's AnsiballZ wrapper bundles every
+    # ansible_collections.<ns>.<coll>.plugins.module_utils import (and the
+    # files those import, relative or absolute) into the payload, so a
+    # custom module built on a collection runs where the collection is not
+    # installed. The PYTHONPATH route above only works when the module
+    # runs where the collection IS installed (ansible_connection=local);
+    # over SSH the controller's collection tree must travel instead.
+    fixture_root = PluginSpecHelper.tmp_path("pymod-coll-bundle")
+    mu = File.join(fixture_root, "ansible_collections", "testns", "coll", "plugins", "module_utils")
+    Dir.mkdir_p(File.join(mu, "shared"))
+    Dir.mkdir_p(File.join(mu, "unused"))
+    File.write(File.join(mu, "retries.py"), "from .shared import VALUE\n")
+    File.write(File.join(mu, "shared", "__init__.py"), "VALUE = 'shared'\n")
+    File.write(File.join(mu, "unused", "junk.py"), "JUNK = 1\n")
+    source = "#!/usr/bin/python\n" \
+             "from ansible.module_utils.basic import AnsibleModule\n" \
+             "from ansible_collections.testns.coll.plugins.module_utils.retries import VALUE\n"
+    collected = Krikri::PythonModuleRunner.collect_collection_module_utils_files(source, [fixture_root])
+    collected.keys.sort!.must_equal([
+      "ansible_collections/testns/coll/plugins/module_utils/retries.py",
+      "ansible_collections/testns/coll/plugins/module_utils/shared/__init__.py",
+    ])
+    # Only what the imports actually reach: the rest of the collection's
+    # module_utils tree would be a payload cost AnsiballZ does not charge.
+    collected.values.none?(&.ends_with?("junk.py")).must_equal(true)
+    FileUtils.rm_rf(fixture_root)
+  end
+
+  it "runs a module importing a collection module_utils from the staged payload alone" do
+    skip("python3 not available") unless File.exists?("/usr/bin/python3")
+    fixture_root = PluginSpecHelper.tmp_path("pymod-coll-stage")
+    mu = File.join(fixture_root, "ansible_collections", "testns", "coll", "plugins", "module_utils")
+    Dir.mkdir_p(mu)
+    File.write(File.join(mu, "marker.py"), "from .dep import DEP\nMARKER = 'fixture-' + DEP\n")
+    File.write(File.join(mu, "dep.py"), "DEP = 'value'\n")
+    source = "#!/usr/bin/python\n" \
+             "from ansible.module_utils.basic import AnsibleModule\n" \
+             "from ansible_collections.testns.coll.plugins.module_utils.marker import MARKER\n" \
+             "module = AnsibleModule(argument_spec={}, supports_check_mode=True)\n" \
+             "module.exit_json(changed=False, msg=MARKER)\n"
+    collected = Krikri::PythonModuleRunner.collect_collection_module_utils_files(source, [fixture_root])
+    payload = collected.to_a.map { |rel, path| {rel, Base64.strict_encode(File.read(path))} }.to_h
+    # The module's PYTHONPATH gets only roots that exist, and this fixture
+    # namespace is installed nowhere on the box - so the import can only
+    # come from the staged files, exactly the SSH case where the target has
+    # no collections at all.
+    result = PluginSpecHelper.run("py_module", {
+      "module_name"                   => "kk_coll_stage",
+      "module_source"                 => Base64.strict_encode(source),
+      "new_style"                     => "true",
+      "module_args"                   => %q({"_ansible_check_mode": false}),
+      "_ansible_check_mode"           => "false",
+      "collection_module_utils_files" => payload.to_json,
+    }, env: {"ANSIBLE_COLLECTIONS_PATH" => File.join(fixture_root, "no-collections-here")})
+    expect(falsey?(result["failed"]?)).must_equal(true)
+    result["msg"].as_s.must_equal("fixture-value")
+  ensure
+    FileUtils.rm_rf(fixture_root) if fixture_root
+  end
 end
