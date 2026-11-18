@@ -355,4 +355,26 @@ describe "assemble plugin" do
     diff = result["diff"].as_h
     diff["after_header"].as_s.must_equal(staged)
   end
+
+  # assemble's diff is the copy action's _get_diff_data payload, so a
+  # fragment holding a NUL byte is reported with the src_binary skip marker
+  # instead of its raw content - real prints "diff skipped: source file
+  # appears to be binary" and the registered diff is
+  # {"before": "", "src_binary": 1} (live-verified vs 2.21.6). Raw bytes
+  # would not even survive the plugin's JSON wire.
+  it "reports a binary fragment with the src_binary skip marker" do
+    src = as_path("assemble_src_diff_binary")
+    dest = as_path("assemble_dest_diff_binary.conf")
+    FileUtils.rm_rf(src)
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a"), "a\n\x00b\n")
+    File.delete(dest) if File.exists?(dest)
+
+    result = PluginSpecHelper.run("assemble", {"src" => src, "dest" => dest, "remote_src" => "false", "_ansible_diff" => "true"})
+
+    diff = result["diff"]
+    diff.as_h.keys.must_equal(["before", "src_binary"])
+    diff["before"].as_s.must_equal("")
+    diff["src_binary"].as_i.must_equal(1)
+  end
 end
