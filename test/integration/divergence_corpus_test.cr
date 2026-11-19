@@ -43,6 +43,7 @@ private DIVERGENCE_CASES = [
   {issue: 1569, slug: "juju4-lxdconfigure-debug-ansible-facts-env"},
   {issue: 1575, slug: "amtega-gitlab-fork-get-projects-info"},
   {issue: 1583, slug: "jpedrodelacerda-yay-check-for-base-devel-packages"},
+  {issue: 1588, slug: "elk-backup-elasticsearch-plugin"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -174,6 +175,11 @@ describe "divergence corpus" do
 
   it "replays 1583-jpedrodelacerda-yay-check-for-base-devel-packages" do
     expected, actual, report = divergence_transcripts(1583, "jpedrodelacerda-yay-check-for-base-devel-packages")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1588-elk-backup-elasticsearch-plugin" do
+    expected, actual, report = divergence_transcripts(1588, "elk-backup-elasticsearch-plugin")
     assert_equal(expected, actual, report)
   end
 end

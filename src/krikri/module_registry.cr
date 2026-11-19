@@ -77,6 +77,12 @@ module Krikri
       "ansible.posix.synchronize",
       "community.general.pam_limits",
       "community.general.apache2_module",
+      # elasticsearch_plugin (issue #1588): tenantcloud.elk_backup's first
+      # task. Real runs the module under --check too, and its installer
+      # probe (get_plugin_bin()) fails on any host without Elasticsearch,
+      # so dropping the task as unimplemented made krikri skip it and
+      # report a later task's fatal instead.
+      "community.general.elasticsearch_plugin",
       "community.general.capabilities",
       "community.general.make",
       # pacman (issue #1583): jpedrodelacerda.yay calls it on Ubuntu,
