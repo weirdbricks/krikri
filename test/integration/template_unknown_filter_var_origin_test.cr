@@ -66,4 +66,40 @@ describe "a .j2 reading a role var whose value uses an unknown filter (#709)" do
   ensure
     FileUtils.rm_rf(dir) if dir && File.exists?(dir)
   end
+
+  it "renders a template that never reads a var whose value uses an unknown filter" do
+    # Real templates a variable's value only when the template reads it,
+    # so a play-level var using an unknown filter must not fail a render
+    # that never touches it (issue #1619's play 1: an ordinary template
+    # beside `kpg_expr_value: "{{ 'x' | kpg_multi('a', 'b') }}"`;
+    # live-verified vs 2.21.6, which reports changed).
+    dir = File.join(Dir.tempdir, "ufilter-unread-#{Random::Secure.hex(4)}")
+    Dir.mkdir_p(dir)
+    dest = File.join(dir, "out.conf")
+    playbook = File.join(dir, "playbook.yml")
+    File.write(File.join(dir, "plain.j2"), "plain text\n")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          broken: "{{ '1.2.3' | version_compare('9','>=') }}"
+        tasks:
+          - name: render plain template
+            ansible.builtin.template:
+              src: plain.j2
+              dest: #{dest}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: dir)
+    text = output.to_s
+
+    status.exit_code.must_equal(0)
+    text.wont_include("No filter named")
+    File.read(dest).must_equal("plain text\n")
+  ensure
+    FileUtils.rm_rf(dir) if dir && File.exists?(dir)
+  end
 end

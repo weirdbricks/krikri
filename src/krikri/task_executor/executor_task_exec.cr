@@ -2,6 +2,7 @@ require "./executor"
 require "../needle_lookup"
 require "../local_tmp"
 require "../unsafe_values"
+require "../surrogate_escape"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
 require "../plugin_helpers/ansible_splitlines"
@@ -4406,6 +4407,17 @@ module Krikri
       # Same predicate as copy_content_given? without re-walking Hash#[]'s
       # nilable union, so no not_nil! is needed to satisfy the linter.
       if content && content != Krikri::NONE_SENTINEL
+        # A template whose source was not valid UTF-8 carries one
+        # private-use twin per undecodable byte. Real stages the action
+        # plugin's tempfile with the original bytes restored
+        # (template.py's to_bytes(..., errors='surrogate_or_strict'), a
+        # utf-8 output_encoding) and hashes THAT file, so the
+        # twin-escaped string's own bytes report an SHA1 no file has
+        # (live-verified vs 2.21.6: a binary template rejected by the
+        # copy spec, issue #1619).
+        if params["_template_surrogate_escape"]?.presence
+          return Digest::SHA1.hexdigest(Krikri::SurrogateEscape.encode(content))
+        end
         return Digest::SHA1.hexdigest(content)
       end
       # A truthy remote_src (in whatever spelling, marked literal
