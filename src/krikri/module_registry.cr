@@ -79,6 +79,13 @@ module Krikri
       "community.general.apache2_module",
       "community.general.capabilities",
       "community.general.make",
+      # pacman (issue #1583): jpedrodelacerda.yay calls it on Ubuntu,
+      # where real resolves community.general.pacman and fatals on its
+      # own get_bin_path("pacman", required=True) probe. Without an
+      # entry the task was a graceful unavailable-module skip plus the
+      # engine-limit exit 4, so the play ran on past the point real
+      # stopped (see plugins/pacman.cr for the ported surface).
+      "community.general.pacman",
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",
@@ -643,6 +650,13 @@ module Krikri
       # MODULE_SEARCH_COLLECTIONS.
       "ansible.builtin.make" => "community.general.make",
       "ansible.legacy.make"  => "community.general.make",
+      # pacman lived in ansible-core before the collection split, so its
+      # builtin runtime still redirects the ansible.builtin./ansible.legacy.
+      # spellings onto community.general.pacman and real runs the module
+      # (issue #1583). The bare spelling needs no entry -
+      # community.general is already in MODULE_SEARCH_COLLECTIONS.
+      "ansible.builtin.pacman" => "community.general.pacman",
+      "ansible.legacy.pacman"  => "community.general.pacman",
       # community.general shipped the docker_* modules before they moved
       # to community.docker, and its own meta/runtime.yml still redirects
       # every one of those pre-2.0 FQCNs to the new collection (only

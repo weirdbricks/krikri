@@ -42,6 +42,7 @@ private DIVERGENCE_CASES = [
   {issue: 1562, slug: "ubuntu-sunjava-action-conflict"},
   {issue: 1569, slug: "juju4-lxdconfigure-debug-ansible-facts-env"},
   {issue: 1575, slug: "amtega-gitlab-fork-get-projects-info"},
+  {issue: 1583, slug: "jpedrodelacerda-yay-check-for-base-devel-packages"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -168,6 +169,11 @@ describe "divergence corpus" do
 
   it "replays 1575-amtega-gitlab-fork-get-projects-info" do
     expected, actual, report = divergence_transcripts(1575, "amtega-gitlab-fork-get-projects-info")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1583-jpedrodelacerda-yay-check-for-base-devel-packages" do
+    expected, actual, report = divergence_transcripts(1583, "jpedrodelacerda-yay-check-for-base-devel-packages")
     assert_equal(expected, actual, report)
   end
 end

@@ -122,6 +122,14 @@ describe "divergence case invocation" do
     env.has_key?("ANSIBLE_GATHERING").must_equal(true)
   end
 
+  it "pins PATH so a get_bin_path failure names the same directories every run" do
+    env = Krikri::DivergenceCase.env("/tmp/case/home")
+    # get_bin_path's failure text lists the directories it searched, so an
+    # inherited PATH would put this developer shell's own entries (a random
+    # AppImage mount point included) into the recording and into every replay.
+    env["PATH"].must_equal("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+  end
+
   it "treats expected.out and NOTES.md as recorded results, not input" do
     Krikri::DivergenceCase::RECORDED.includes?("expected.out").must_equal(true)
     Krikri::DivergenceCase::RECORDED.includes?("NOTES.md").must_equal(true)
