@@ -4930,6 +4930,37 @@ module Krikri
       end
     end
 
+    # Whether *inner* carries a Jinja inline conditional expression
+    # (`a if c else b`, `a if c`) anywhere, quotes excluded. Jinja's
+    # compiler pushes a SOFT frame for a CondExpr's condition and both
+    # arms (jinja2/compiler.py's visit_CondExpr), which defers every
+    # filter/test name resolution inside it to runtime - so an
+    # unresolvable name there only fails the task when the selected arm
+    # actually renders. Everywhere else in a `{{ }}` span the compiler
+    # resolves names up front and fails the task immediately
+    # (live-verified vs 2.21.6).
+    private def inline_conditional_expression?(inner : String) : Bool
+      regions = quoted_string_regions(inner)
+      i = 0
+      while i < inner.size
+        if (region = regions.find { |(start, stop)| i >= start && i < stop })
+          i = region[1]
+          next
+        end
+        if inner[i] == 'i' && inner[i, 2]? == "if"
+          before = i > 0 ? inner[i - 1] : ' '
+          after = i + 2 < inner.size ? inner[i + 2] : ' '
+          return true unless identifier_char?(before) || identifier_char?(after)
+        end
+        i += 1
+      end
+      false
+    end
+
+    private def identifier_char?(char : Char) : Bool
+      char.letter? || char.number? || char == '_'
+    end
+
     # strict: helper - raises UndefinedVariableError when *inner* (a single
     # `{{ }}` span's full content, already stripped) is a BARE variable
     # reference (see REGEX_BARE_VAR_REF) that resolves to nothing. Any
@@ -4937,6 +4968,20 @@ module Krikri
     # alone regardless of strict: - see UndefinedVariableError's own
     # comment for why that's deliberate, not a gap in this check.
     private def raise_if_strict_undefined(inner : String, output : Bool = false) : Nil
+      # Jinja COMPILES the whole template before evaluating any of it, so
+      # an unresolvable filter/test name is fatal even in a clause the
+      # evaluation's own `and`/`or` short-circuiting never reaches - and it
+      # wins over an undefined name in the same expression, since the
+      # compile happens first (live-verified vs 2.21.6: gcoop-libre.ssh's
+      # `ansible_distribution == 'Debian' and ansible_distribution_version
+      # | version_compare('8', '<')`, a filter removed from ansible-core,
+      # fails the set_fact on every distribution). Jinja's compiler does
+      # NOT resolve names under an inline conditional expression's soft
+      # frame, though, so those stay runtime failures (`'a' | nogone if
+      # cond else 'b'` passes while cond is false, live-verified).
+      unless inline_conditional_expression?(inner)
+        ConditionalEvaluator.validate_compile_time_names(inner, @vars)
+      end
       unless inner.matches?(REGEX_BARE_VAR_REF)
         # Not a bare reference - but a filter chain STARTING from an
         # undefined bare reference is just as strictly fatal in
