@@ -1,0 +1,24 @@
+---
+
+- name: Restart monit
+  ansible.builtin.service:
+    name: monit
+    state: restarted
+
+- name: Restart lxd
+  ansible.builtin.service:
+    name: lxd
+    state: restarted
+  when: (ansible_facts['virtualization_type'] is not defined or not (ansible_facts['virtualization_type'] == "lxc"))
+  ## centos7/vagrant/virtualbox
+  failed_when: false
+
+- name: Restart lxd-bridge
+  ansible.builtin.service:
+    name: lxd-bridge
+    state: restarted
+  when: >
+    ansible_facts['distribution_release'] == 'xenial' and
+    (ansible_facts['virtualization_type'] is not defined or not (ansible_facts['virtualization_type'] == "lxc"))
+  ## centos7/vagrant/virtualbox
+  failed_when: false

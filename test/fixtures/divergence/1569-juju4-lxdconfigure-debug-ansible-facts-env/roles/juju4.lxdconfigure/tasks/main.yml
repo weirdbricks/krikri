@@ -1,0 +1,21 @@
+---
+
+- name: Debug | ansible_facts['env']
+  ansible.builtin.debug:
+    var: ansible_facts['env']
+- name: Debug | ansible_facts['virtualization_type']
+  ansible.builtin.debug:
+    var: ansible_facts['virtualization_type']
+- name: Import travis
+  ansible.builtin.import_tasks: travis.yml
+  when: ansible_facts.env['TRAVIS'] is defined and ansible_facts.env['TRAVIS'] == 'true'
+
+- name: Import target service vars
+  ansible.builtin.include_vars: "{{ lxd_cmd }}.yml"
+
+- name: Import lxd
+  ansible.builtin.import_tasks: lxd.yml
+  when: >
+    (ansible_facts['virtualization_type'] is not defined or
+      not (ansible_facts['virtualization_type'] == "docker")
+    )

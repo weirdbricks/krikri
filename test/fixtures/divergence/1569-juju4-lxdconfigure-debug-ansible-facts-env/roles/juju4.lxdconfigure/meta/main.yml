@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: lxdconfigure
+  author: juju4
+  description: pre-copy lxd containers images and eventually pre-configure some.
+  license: BSD
+  min_ansible_version: '1.9'
+  platforms:
+    - name: Ubuntu
+      versions:
+        - bionic
+        - focal
+        - jammy
+  galaxy_tags:
+    - system
+dependencies: []

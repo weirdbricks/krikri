@@ -2456,14 +2456,17 @@ module Krikri
       ptr.null? ? nil : String.new(ptr)
     end
 
+    # Ansible's EnvFactCollector copies os.environ wholesale, so ansible_env
+    # carries every variable the module process inherited (SSH_CLIENT,
+    # LS_COLORS, PWD, `_`, shell functions exported as BASH_FUNC_*=, ...),
+    # not a fixed shortlist. juju4.lxdconfigure prints the whole dict and
+    # compares it byte for byte against ansible, so a shortlist diverges as
+    # soon as the session exports anything outside it.
     def gather_environment_facts(facts)
-      env_vars = ["PATH", "HOME", "USER", "SHELL", "TERM", "LANG"]
       env = {} of String => String
 
-      env_vars.each do |var|
-        if value = ENV[var]?
-          env[var] = value
-        end
+      ENV.each do |key, value|
+        env[key] = value
       end
 
       facts["ansible_env"] = env unless env.empty?
