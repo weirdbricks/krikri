@@ -60,6 +60,15 @@ private def with_dnf781_shims(installed : Bool, &)
         exit 1
         ;;
     esac
+    case "$*" in
+      *--assumeno*)
+        # A file this host does not have installed is a pending
+        # transaction, so the check-mode probe aborts at its prompt -
+        # exit 0 here would be dnf's empty "Nothing to do" resolution.
+        echo "Operation aborted."
+        exit 1
+        ;;
+    esac
     echo "Nothing to do"
     exit 0
     SH

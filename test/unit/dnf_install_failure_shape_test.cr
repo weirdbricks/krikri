@@ -119,6 +119,71 @@ ensure
   FileUtils.rm_r(shim_dir) if shim_dir
 end
 
+# Issue #1574 (AnwarYagoub.glusterfs, Rocky --check): `glusterfs-libs` is
+# satisfied only through libglusterfs0's Provides: while appstream ALSO
+# carries a package of that exact older name (6.0), so the rpm probe
+# answers "not installed by name" and RpmPackage's classification can only
+# say "install" (its carried arm - the naming that keeps `curl` from
+# reading as installed-through-curl-minimal, issue #280). Real's own
+# resolve settles it: the marked goal comes out EMPTY, dnf never reaches
+# the --assumeno confirmation, exits 0 with "Nothing to do" - and real
+# --check reports the ordinary ok no-op, msg "Nothing to do", results [].
+# This engine reported a would-install "Installed: <nevra>" instead.
+private def with_carried_provides_dnf_shim(&)
+  shim_dir = PluginSpecHelper.tmp_path("fake-dnf-carried-provides")
+  Dir.mkdir_p(shim_dir)
+
+  rpm = <<-SH
+    #!/bin/sh
+    if [ "$3" = "--whatprovides" ]; then
+      [ "$4" = "glusterfs-libs" ] && exit 0
+      exit 1
+    fi
+    exit 1
+    SH
+
+  # Only the repo-row listing and the resolution probe answer; a real
+  # install of the name must never be reached (that is the point).
+  dnf = <<-'SH'
+    #!/bin/sh
+    case "$*" in
+      *"list --available"*)
+        case "$*" in
+          *glusterfs-libs*)
+            printf 'Available Packages\nglusterfs-libs.x86_64    6.0-57.4.el9    appstream\n'
+            exit 0
+            ;;
+        esac
+        exit 1
+        ;;
+      *--assumeno*)
+        echo "Dependencies resolved."
+        echo "Nothing to do."
+        echo "Complete!"
+        exit 0
+        ;;
+    esac
+    exit 1
+    SH
+
+  File.write(File.join(shim_dir, "rpm"), rpm)
+  File.write(File.join(shim_dir, "dnf"), dnf)
+  File.write(File.join(shim_dir, "yum"), dnf)
+  {"rpm", "dnf", "yum"}.each { |bin| File.chmod(File.join(shim_dir, bin), 0o755) }
+
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    old_path = ENV["PATH"]?
+    ENV["PATH"] = "#{shim_dir}:#{old_path}"
+    begin
+      yield
+    ensure
+      old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
+    end
+  end
+ensure
+  FileUtils.rm_r(shim_dir) if shim_dir
+end
+
 private class DnfFailuresParseHarness
   include Krikri::PluginHelpers::DnfInstallFailures
 end
@@ -797,6 +862,21 @@ describe "dnf check-mode resolution probe (issue 1050)" do
       result["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
       result["results"].as_a.map(&.as_s).must_equal(["Installed: curl"])
       result["rc"].as_i.must_equal(0)
+    end
+  end
+
+  it "check mode on a goal whose resolution is empty is real's ok no-op, not a would-install (issue 1574)" do
+    with_carried_provides_dnf_shim do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "glusterfs-libs", "state" => "present", "_ansible_check_mode" => "true"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"]?.try(&.as_bool).must_be_nil
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Nothing to do")
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(0)
+      result.as_h.keys.must_equal(["msg", "changed", "results", "rc"])
     end
   end
 end

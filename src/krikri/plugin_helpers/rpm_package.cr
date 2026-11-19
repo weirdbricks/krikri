@@ -1294,7 +1294,7 @@ module Krikri
         # runs before it stops (issue #1050: a DepsolveError real reports
         # under --check used to read as a clean "would install" here, and
         # issue #1055 the same for a package the repos cannot name; see
-        # check_mode_resolve_probe_failure).
+        # check_mode_resolve_probe).
         if check_mode?
           # `update_only` with `state: present`: an installed name is only
           # changed when an upgrade is actually available - see
@@ -1308,8 +1308,16 @@ module Krikri
             pending = to_install + to_update
             return transaction_result(false) if pending.empty?
           end
-          failure = check_mode_resolve_probe_failure(pending, options, names)
+          probe = check_mode_resolve_probe(pending, options, names)
+          failure = probe[:failure]
           return failure if failure
+          # An empty goal is real's ok no-op (see the probe) - but
+          # `update_only` can leave an upgrade the update probe above
+          # already found pending, and this install-shaped probe cannot
+          # see it: with `nobest: true` its --nobest pin reads an
+          # installed-but-outdated name as an empty resolution too (see
+          # the pending.empty? branch). That upgrade is still a change.
+          return transaction_result(false) if !probe[:pending] && to_update.empty?
           return check_mode_transaction_result(true, candidate_nevras(pending, classified[:states]).map { |nevra| "Installed: #{nevra}" })
         end
 
@@ -1363,7 +1371,7 @@ module Krikri
       # matches none of them. run_install_batch keeps its raw-dump
       # fallback for that case (a real install must never silently
       # succeed); the check-mode resolution probe reads the same nil as
-      # a clean resolution instead (see check_mode_resolve_probe_failure).
+      # a clean resolution instead (see check_mode_resolve_probe).
       private def install_batch_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), to_install : Array(String), options : String, all_names : Array(String)) : PluginResult?
         # Ansible's dnf module reports a partially-unresolvable install
         # batch with its own canned msg ("Failed to install some of the
@@ -1444,11 +1452,27 @@ module Krikri
       # class ansible itself reports surfaces - install_batch_failure
       # returns nil for the abort and for any output none of its parsers
       # claims, and that is a resolvable goal, never an invented failure.
-      private def check_mode_resolve_probe_failure(specs : Array(String), options : String, all_names : Array(String)) : PluginResult?
+      #
+      # The probe's other answer is real's EMPTY transaction: a goal that
+      # resolves to nothing never reaches the confirmation prompt, so dnf
+      # exits 0 with "Nothing to do" - real's changed=false, msg "Nothing
+      # to do" response, resolved before the check-mode stop like every
+      # other goal (issue #1574: AnwarYagoub.glusterfs's `glusterfs-libs`
+      # is satisfied through libglusterfs0's Provides: while the repos
+      # also carry a package of that exact older name, so
+      # installed_states' carried arm can only answer "not installed" and
+      # this engine invented a would-install where real --check said ok;
+      # live-verified on Rocky 9, `dnf install --assumeno glusterfs
+      # glusterfs-libs glusterfs-server` prints "Nothing to do." and
+      # exits 0 there). So exit 0 is "no transaction", never
+      # "resolvable" - only the abort at the prompt, a non-zero exit
+      # none of the parsers claims, stands for a pending change.
+      private def check_mode_resolve_probe(specs : Array(String), options : String, all_names : Array(String)) : NamedTuple(pending: Bool, failure: PluginResult?)
         pkg_list = specs.map { |pth| quote_package(pth) }.join(" ")
         result = remote_exec_tolerating_unknown_repo("#{pkg_manager_binary} install #{options} --assumeno #{pkg_list}")
-        return nil if result[:exit_code] == 0
-        install_batch_failure(result, specs, "#{options} --assumeno", all_names)
+        return {pending: false, failure: nil} if result[:exit_code] == 0
+        failure = install_batch_failure(result, specs, "#{options} --assumeno", all_names)
+        failure ? {pending: false, failure: failure} : {pending: true, failure: nil}
       end
 
       # The update-shaped twin of the probe above (`state: latest`, or
@@ -1661,10 +1685,16 @@ module Krikri
           # and resolves before stopping, so an unresolvable spec fails
           # the task instead of reading as "would install" (dnf.py's
           # `state: latest` path records the identical per-spec
-          # failures).
+          # failures) - and a goal that resolves to nothing is the ok
+          # no-op, not a would-install (issue #1574, see the probe).
           unless to_install.empty?
-            failure = check_mode_resolve_probe_failure(to_install, options, names)
+            probe = check_mode_resolve_probe(to_install, options, names)
+            failure = probe[:failure]
             return failure if failure
+            unless probe[:pending]
+              pending = to_update
+              return with_installed_filename_results(transaction_result(false), names) if pending.empty?
+            end
           end
           return with_installed_filename_results(check_mode_transaction_result(true, candidate_nevras(pending, states).map { |nevra| "Installed: #{nevra}" }), names)
         end
