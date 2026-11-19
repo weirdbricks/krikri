@@ -205,7 +205,10 @@ describe "pip plugin" do
   # installed-but-outdated package is ok (issue #1004). A VCS url DOES
   # get resolved through pip >= 24.1's `--dry-run --report`, so a
   # resolution landing on a version other than the frozen one still
-  # reports changed.
+  # reports changed. With executable: set pip.py asks that executable
+  # for the pip version gating the resolution (`-c` probes, see issue
+  # #1610), so the shim answers those like an interpreter that has pip
+  # 24.1; a real pip binary cannot, and the task fails outright.
   it "resolves a VCS url, not a bare name, to pip's concrete version in check mode" do
     shim_dir = File.tempname(".krikri-spec-pip-resolve")
     Dir.mkdir(shim_dir)
@@ -216,6 +219,7 @@ describe "pip plugin" do
       export PATH=/usr/local/bin:/usr/bin:/bin
       printf '%s\\n' "$*" >> #{marker}
       case "$1" in
+        -c) echo "24.1"; exit 0 ;;
         show) echo "Name: pip"; echo "Version: 24.1"; exit 0 ;;
         list) echo "alpha==1.0"; exit 0 ;;
         freeze) echo "alpha==1.0"; exit 0 ;;
@@ -1440,6 +1444,9 @@ describe "pip plugin" do
     # answers False (changed for state=present) where probing the bare
     # name reported ok; pip >=24.1 resolves the bare name through
     # `install --dry-run --report` and compares the version it lands on.
+    # Each shim answers the `-c` probes pip.py runs against executable:,
+    # which decide the pip version gating the resolution (issue #1610);
+    # a real pip binary cannot, and the task fails outright.
     it "folds version: into the check-mode probe like pip.py (issue #1290)" do
       shim_dir = File.tempname(".krikri-spec-pip-version")
       Dir.mkdir(shim_dir)
@@ -1449,6 +1456,7 @@ describe "pip plugin" do
         #!/bin/sh
         export PATH=/usr/local/bin:/usr/bin:/bin
         case "$1" in
+          -c) echo "23.0.2"; exit 0 ;;
           show) echo "Name: pip"; echo "Version: 23.0.2"; exit 0 ;;
           list|freeze) echo "pip==22.0.2"; echo "alpha==1.0"; exit 0 ;;
         esac
@@ -1461,6 +1469,7 @@ describe "pip plugin" do
         #!/bin/sh
         export PATH=/usr/local/bin:/usr/bin:/bin
         case "$1" in
+          -c) echo "25.1.1"; exit 0 ;;
           show) echo "Name: pip"; echo "Version: 25.1.1"; exit 0 ;;
           list|freeze) echo "pip==22.0.2"; echo "alpha==1.0"; exit 0 ;;
           install)

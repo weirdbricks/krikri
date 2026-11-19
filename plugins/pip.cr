@@ -320,7 +320,8 @@ module Krikri
       # installed-but-outdated package reports ok like Ansible's own - a
       # real install would upgrade it, but check mode does not look at
       # the index at all (issue #1004).
-      probes, resolution_warning = resolve_check_requirements(pip_bin, check_mode_requirements(name))
+      probes, resolution_warning, resolution_failure = resolve_check_requirements(pip_bin, check_mode_requirements(name))
+      return resolution_failure if resolution_failure
 
       # pip.py's loop with its early break: state=present changes when ANY
       # requirement is missing/unsatisfied, state=absent when ANY is present.
@@ -381,31 +382,48 @@ module Krikri
     # pip.py's _resolve_package_names(): a probe that is NOT a parseable
     # requirement is replaced by the concrete name==version pip would
     # install, read back from `pip install --dry-run --ignore-installed
-    # --report=<tmpfile>`. pip older than 24.1 cannot report reliably, so
-    # it keeps those probes and warns (real's own wording). Any failure
-    # of the probe leaves the list untouched - real raises and fails the
-    # task, but a check-mode probe is not worth failing a dry run over.
-    private def resolve_check_requirements(pip_bin : String, probes : Array(CheckRequirement)) : {Array(CheckRequirement), String?}
+    # --report=<tmpfile>`. The pip version that gate compares against
+    # 24.1 is not the pip binary's own: pip.py reads it with
+    # _get_package_info(module, "pip", py_bin), where py_bin is
+    # `module.params['executable'] or sys.executable`. An executable:
+    # pip cannot run `-c` python code, so that helper returns None and
+    # pip.py dereferences it (`pip_dep.split('==')`), failing the task
+    # with "'NoneType' object has no attribute 'split'" - juju4.vivisect's
+    # check run over a github zipball requirement (issue #1610). pip
+    # older than 24.1 cannot report reliably, so it keeps those probes
+    # and warns (real's own wording). Any failure of the dry-run probe
+    # leaves the list untouched - real raises and fails the task, but a
+    # check-mode probe is not worth failing a dry run over.
+    private def resolve_check_requirements(pip_bin : String, probes : Array(CheckRequirement)) : {Array(CheckRequirement), String?, PluginResult?}
       to_resolve = probes.reject(&.parsable)
-      return {probes, nil} if to_resolve.empty?
+      return {probes, nil, nil} if to_resolve.empty?
 
-      version = installed_pip_version(pip_bin)
+      version = resolution_pip_version(pip_bin)
+      return {probes, nil, version} if version.is_a?(PluginResult)
+
       if version.nil? || pip_version_cmp(version, "24.1") < 0
-        return {probes, "Using check mode with packages from vcs urls, file paths, or archives will not behave as expected when using pip versions <24.1."}
+        return {probes, "Using check mode with packages from vcs urls, file paths, or archives will not behave as expected when using pip versions <24.1.", nil}
       end
 
+      resolved = dry_run_packages(pip_bin, to_resolve)
+      return {probes, nil, nil} unless resolved
+      {probes.select(&.parsable) + resolved, nil, nil}
+    end
+
+    # The name==version probes `pip install --dry-run --report` lands on,
+    # or nil when the probe itself failed or produced no install list.
+    private def dry_run_packages(pip_bin : String, to_resolve : Array(CheckRequirement)) : Array(CheckRequirement)?
       report_path = File.tempname("krikri-pip-report", ".json")
       begin
         report_arg = Process.quote("--report=#{report_path}")
         result = remote_exec("#{quoted_command(pip_bin)} install --dry-run --ignore-installed #{report_arg} #{to_resolve.map { |probe| Process.quote(probe.resolve_as) }.join(" ")}")
-        return {probes, nil} unless result[:exit_code] == 0 && File.exists?(report_path)
+        return nil unless result[:exit_code] == 0 && File.exists?(report_path)
 
         report = JSON.parse(File.read(report_path)) rescue nil
         resolved = report.try(&.["install"]?).try(&.as_a?)
-        return {probes, nil} unless resolved
+        return nil unless resolved
 
-        other_packages = probes.select(&.parsable)
-        resolved_packages = resolved.compact_map do |entry|
+        resolved.compact_map do |entry|
           metadata = entry["metadata"]?
           next unless metadata
           name = metadata["name"]?.try(&.as_s?)
@@ -414,10 +432,40 @@ module Krikri
           requirement = "#{name}==#{version_string}"
           CheckRequirement.new(requirement, requirement, true)
         end
-        {other_packages + resolved_packages, nil}
       ensure
         File.delete(report_path) if File.exists?(report_path)
       end
+    end
+
+    # pip.py's _get_package_info(module, "pip", python_bin): the module
+    # asks the interpreter it was launched with for its pip distribution,
+    # choosing between importlib.metadata and pkg_resources from which of
+    # the two imports works. nil is exactly pip.py's None (either probe
+    # exited non-zero), which its caller dereferences unguarded.
+    private def interpreter_pip_version(python_bin : String) : String?
+      interpreter = quoted_command(python_bin)
+      discovery = remote_exec("#{interpreter} -c #{Shell.single_quote("import importlib.metadata")}")
+      checker = if discovery[:exit_code] == 0
+                  "from importlib.metadata import version; print(version(\"pip\"))"
+                else
+                  "import pkg_resources; print(pkg_resources.get_distribution(\"pip\").version)"
+                end
+      result = remote_exec("#{interpreter} -c #{Shell.single_quote(checker)}")
+      return nil unless result[:exit_code] == 0
+      result[:stdout].strip
+    end
+
+    # The pip version _resolve_package_names gates the dry-run resolution
+    # on: the interpreter pip.py asks (executable: when set), or - the
+    # krikri approximation already used elsewhere - the path-resolved pip
+    # binary's own `show`. A failed interpreter probe is pip.py's
+    # unguarded None, so it comes back as the task failure itself.
+    private def resolution_pip_version(pip_bin : String) : String? | PluginResult
+      executable = @params["executable"]?
+      return installed_pip_version(pip_bin) unless executable
+
+      interpreter_pip_version(executable) || PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: 'NoneType' object has no attribute 'split'")
     end
 
     # _is_present for one probe: an unresolved unparseable requirement is

@@ -1,0 +1,20 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [juju4.vivisect : Install vivisect with pip] ******************************
+FAILED - RETRYING: [localhost]: juju4.vivisect : Install vivisect with pip (2 retries left).
+FAILED - RETRYING: [localhost]: juju4.vivisect : Install vivisect with pip (1 retries left).
+FAILED - RETRYING: [localhost]: juju4.vivisect : Install vivisect with pip (0 retries left).
+[ERROR]: Task failed: Module failed: 'NoneType' object has no attribute 'split'
+Origin: <WORK>/roles/juju4.vivisect/tasks/main.yml:9:3
+
+7 # runner's installed packages. Run in `--check` mode as the round did, so
+8 # nothing is installed.
+9 - name: Install vivisect with pip
+    ^ column 3
+
+fatal: [localhost]: FAILED! => {"attempts": 3, "changed": false, "msg": "Task failed: Module failed: 'NoneType' object has no attribute 'split'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

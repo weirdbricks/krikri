@@ -1,0 +1,15 @@
+---
+# Corpus case: the role's own `Install vivisect with pip` task, verbatim,
+# with the role's defaults it relies on. The enclosing block's package
+# tasks, the `import_tasks: python-externally-managed.yml` and the
+# virtualenv block below are dropped - they only mutate/install on the
+# host, and an existing python3-pip would make the recording depend on the
+# runner's installed packages. Run in `--check` mode as the round did, so
+# nothing is installed.
+- name: Install vivisect with pip
+  ansible.builtin.pip:
+    name: "{{ vivisect_pip_module }}"
+    state: present
+    executable: "{{ vivisect_pip }}"
+  register: pkg_result
+  until: pkg_result is success
