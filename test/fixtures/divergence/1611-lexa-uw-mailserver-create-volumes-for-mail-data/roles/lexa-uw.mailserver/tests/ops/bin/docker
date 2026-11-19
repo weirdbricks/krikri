@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+if [[ $@ == "" ]]; then
+    exit 0
+fi
+
+DOCKER_OPTIONS=""
+
+if [ -t 1  ] ; then
+    DOCKER_OPTIONS=${DOCKER_OPTIONS}"--interactive"
+fi
+
+if [ -f ${DIR}/../../.env  ] ; then
+    DOCKER_OPTIONS=${DOCKER_OPTIONS}" --env-file ${DIR}/../../.env"
+fi
+
+mkdir -p $PWD/var/etc $PWD/var/home
+echo "$(id -un):x:$(id -u):$(id -g):$(id -gn):/app/var/home:/sbin/nologin" > $PWD/var/etc/passwd
+echo "$(id -gn):x:$(id -g):" > $PWD/var/etc/group
+
+docker run --rm -t ${DOCKER_OPTIONS} \
+    --user $(id -u) \
+    -w /app \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v $(which docker):/usr/bin/docker \
+    -v $PWD:/app \
+    -v $PWD/var/etc/passwd:/etc/passwd:ro \
+    -v $PWD/var/etc/group:/etc/group:ro \
+    $@

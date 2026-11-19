@@ -78,6 +78,20 @@ describe "docker modules daemon-unreachable wording" do
                                   "('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))")
   end
 
+  # docker_volume was an unimplemented module until issue #1611: krikri
+  # skipped the task (exit 4) where real fails it with this connect error
+  # (exit 2). The task below uses the module's `name` alias spelling, the
+  # one lexa-uw.mailserver's role writes.
+  it "docker_volume reports the SDK's version-fetch failure" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
+    result = dead_socket_unreachable("docker_volume", {"name" => "krikri-dead-socket-volume"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Error connecting: Error while fetching server API version: " \
+                                  "('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))")
+  end
+
   it "docker_image_build fails at real's CLI version probe with the CLI's own output" do
     cli = docker_cli_path
     skip("no docker CLI on PATH - the probe's failure text is the CLI's own") if cli.empty?

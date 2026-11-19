@@ -196,6 +196,13 @@ module Krikri
       "community.docker.docker_network",
       "community.docker.docker_network_info",
       "community.docker.docker_container",
+      # docker_volume (issue #1611, lexa-uw.mailserver): the role's
+      # "Create volumes for mail data" task was dropped as an
+      # unimplemented plugin - krikri skipped all three loop items and
+      # ran on to the next task's fatal (rc=4), where real ran the
+      # module and failed it on the unreachable daemon (rc=2). See
+      # plugins/docker_volume.cr.
+      "community.docker.docker_volume",
       # KNOWN_MISSING's former "unimplemented collection modules" entry
       # (mrlesmithjr.blocky): docker_compose_v2 drives the `docker
       # compose` v2 CLI - see plugins/docker_compose_v2.cr.
