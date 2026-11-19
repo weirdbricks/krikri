@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+
+{% for item in _ntpd.servers %}
+server {{ item }}
+{% endfor %}
+
+# By default, the server allows:
+# - all queries from the local host
+# - only time queries from remote hosts, protected by rate limiting and kod
+restrict default kod limited nomodify nopeer noquery notrap
+restrict 127.0.0.1
+restrict ::1
+
+# Location of drift file
+driftfile {{ _ntpd.driftfile }}

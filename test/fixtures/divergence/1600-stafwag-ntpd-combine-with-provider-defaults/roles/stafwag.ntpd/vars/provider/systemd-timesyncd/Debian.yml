@@ -1,0 +1,12 @@
+ntpd_provider_defaults:
+  packages:
+    - systemd-timesyncd
+  packages_to_remove:
+    - chrony
+    - ntp
+  service:
+    systemd-timesyncd
+  template:
+    timesyncd.conf.j2
+  conf_file:
+    /etc/systemd/timesyncd.conf

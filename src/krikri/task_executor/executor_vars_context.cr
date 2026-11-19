@@ -7000,15 +7000,24 @@ module Krikri
         # `when: gitlab_version | default(false)` with the default's own
         # value position, not the when: token (issue #877, JonasPammer.
         # gitlab - we printed tasks/main.yml:38:9 where real printed
-        # defaults/main.yml:10:17). Only a fresh fallback value
-        # (`lst | d([], true)`,
-        # an undefined variable) has no lineage to follow, and when even a
-        # pass-through value's origin can't be found, the compound
-        # when:-token labeling below stays in charge rather than guessing.
-        if (h = host) && (m = raw.match(/\A\s*([A-Za-z_][A-Za-z0-9_]*)\s*\|\s*d(?:efault)?\s*\(.*\)\s*\z/))
+        # defaults/main.yml:10:17). The ONE-argument spelling passes a
+        # defined value through whatever its type, so a tested container
+        # keeps its lineage too: `when: ntpd_provider_defaults |
+        # default(false)` over an include_vars:-loaded dict is labeled with
+        # the dict's own value position in the included file, not the
+        # when: token (issue #1600, stafwag.ntpd - live-verified vs
+        # 2.21.6). The filter's boolean form (`d(fallback, true)`) only
+        # substitutes for a FALSY value, so a tested container's lineage
+        # still isn't followed (only a string was, as before). An
+        # undefined variable, or a fresh fallback value, has no lineage to
+        # follow, and when even a pass-through value's origin can't be
+        # found, the compound when:-token labeling below stays in charge
+        # rather than guessing.
+        if (h = host) && (m = raw.match(/\A\s*([A-Za-z_][A-Za-z0-9_]*)\s*\|\s*d(?:efault)?\s*\((.*)\)\s*\z/))
           ident = m[1]
-          value = build_vars_context(task, h)[ident]?.try(&.raw)
-          if value.is_a?(String) && var_origin_for(task, h, ident, runtime_marker: true)
+          value = build_vars_context(task, h)[ident]?
+          if value && (default_arg_count(m[2]) == 1 || value.raw.is_a?(String)) &&
+             var_origin_for(task, h, ident, runtime_marker: true)
             return decorate_conditional_value_origin(task, msg, h, ident, clause_key, clause_raw)
           end
         end
@@ -7176,6 +7185,31 @@ module Krikri
       return msg unless (type_match = msg.match(/was derived from value of type '([a-zA-Z]+)'/))
       clause = "was derived from value of type '#{type_match[1]}'"
       msg.sub(clause, "#{clause} at #{location}")
+    end
+
+    # The number of top-level (quote/bracket aware) arguments in a
+    # `default(...)` filter's text - 0 for an empty text, 1 for the plain
+    # `default(fallback)` spelling this decoration follows as a pass-through.
+    private def default_arg_count(args : String) : Int32
+      text = args.strip
+      return 0 if text.empty?
+      depth = 0
+      quote : Char? = nil
+      count = 1
+      text.each_char do |char|
+        if open = quote
+          quote = nil if char == open
+        elsif char == '\'' || char == '"'
+          quote = char
+        elsif char == '(' || char == '[' || char == '{'
+          depth += 1
+        elsif char == ')' || char == ']' || char == '}'
+          depth -= 1
+        elsif char == ',' && depth == 0
+          count += 1
+        end
+      end
+      count
     end
 
     # The path parts of a subscripted/dotted `default`-pass-through operand

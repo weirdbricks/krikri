@@ -1,0 +1,4 @@
+---
+ntpd_provider_defaults:
+  packages_to_remove:
+    - chrony

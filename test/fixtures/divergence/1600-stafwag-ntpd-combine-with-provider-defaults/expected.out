@@ -1,0 +1,47 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Set OS/ntp_provider related variables] ***********************************
+ok: [localhost]
+
+TASK [Combine with provider_defaults] ******************************************
+[ERROR]: Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'dict' at '<WORK>/roles/stafwag.ntpd/vars/provider/chrony/defaults.yml:3:3'. Conditionals must have a boolean result.
+
+Task failed.
+Origin: <WORK>/playbook.yml:13:7
+
+11     - name: Set OS/ntp_provider related variables
+12       ansible.builtin.include_vars: "roles/stafwag.ntpd/vars/provider/chrony/defaults.yml"
+13     - name: Combine with provider_defaults
+         ^ column 7
+
+<<< caused by >>>
+
+A 'when' expression failed.
+Origin: <WORK>/playbook.yml:17:11
+
+15         _ntpd: "{{ ntpd_provider_defaults | ansible.builtin.combine(_ntpd) }}"
+16       when:
+17         - ntpd_provider_defaults | default(false)
+             ^ column 11
+
+<<< caused by >>>
+
+Conditional result (True) was derived from value of type 'dict' at '<WORK>/roles/stafwag.ntpd/vars/provider/chrony/defaults.yml:3:3'. Conditionals must have a boolean result.
+Origin: <WORK>/playbook.yml:17:11
+
+15         _ntpd: "{{ ntpd_provider_defaults | ansible.builtin.combine(_ntpd) }}"
+16       when:
+17         - ntpd_provider_defaults | default(false)
+             ^ column 11
+
+Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Conditional result (True) was derived from value of type 'dict' at '<WORK>/roles/stafwag.ntpd/vars/provider/chrony/defaults.yml:3:3'. Conditionals must have a boolean result."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
