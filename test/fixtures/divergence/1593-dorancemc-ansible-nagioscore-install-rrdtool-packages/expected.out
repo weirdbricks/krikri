@@ -1,0 +1,15 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [dorancemc.ansible_nagioscore : Set OS dependent variables] ***************
+ok: [localhost]
+
+TASK [dorancemc.ansible_nagioscore : Install rrdtool packages] *****************
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

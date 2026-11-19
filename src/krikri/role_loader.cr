@@ -1552,7 +1552,7 @@ module Krikri
       return Hash(String, JSON::Any).new unless Dir.exists?(main_dir)
 
       result = Hash(String, JSON::Any).new
-      (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort.each do |path|
+      main_dir_files(main_dir).each do |path|
         load_vars_file(path).each { |key, value| result[key] = value }
       end
       result
@@ -1595,7 +1595,7 @@ module Krikri
     # The vars-style entry files ansible's `_load_role_yaml(subdir, allow_dir:
     # true)` reads for a role: vars_from: names exactly one vars/ file, the
     # single main.* form exactly one, and the main/ directory form every
-    # *.yml/*.yaml/*.json inside it in sorted order.
+    # vars file inside it (recursively) in ansible's own walk order.
     private def self.role_vars_entry_files(role_dir : String, subdir : String, vars_from : String?) : Array(String)
       if vars_from
         entry_path = resolve_role_vars_path(role_dir, vars_from)
@@ -1607,13 +1607,36 @@ module Krikri
       end
     end
 
-    # A main/ directory of vars-style files in merge (sorted) order - empty
-    # when the directory does not exist.
+    # A main/ directory of vars-style files in ansible's own merge order -
+    # empty when the directory does not exist. Ansible's
+    # `DataLoader._get_dir_vars_files` walks the directory tree depth-first
+    # with each level's entries sorted by name, so a role may split its
+    # defaults across nested subdirectories (`defaults/main/nagios/
+    # vars.yaml` in dorancemc.ansible_nagioscore, issue #1593: every var
+    # defined there was undefined here, failing a `when: install_pnp4nagios`
+    # ansible resolves) and a file with NO extension counts as vars too.
     private def self.main_dir_files(main_dir : String) : Array(String)
-      return [] of String unless Dir.exists?(main_dir)
-
-      (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort
+      found = [] of String
+      collect_main_dir_files(main_dir, found)
+      found
     end
+
+    private def self.collect_main_dir_files(dir : String, found : Array(String)) : Nil
+      return unless Dir.exists?(dir)
+
+      Dir.children(dir).sort!.each do |name|
+        next if name.starts_with?('.') || name.ends_with?('~')
+        path = File.join(dir, name)
+        if Dir.exists?(path)
+          collect_main_dir_files(path, found)
+        else
+          ext = File.extname(name)
+          found << path if ext.empty? || VARS_FILE_EXTENSIONS.includes?(ext)
+        end
+      end
+    end
+
+    VARS_FILE_EXTENSIONS = %w[.yml .yaml .json]
 
     # The LAST file's parsed top level that Python would call truthy - nil
     # when none is. A truthy non-mapping REPLACES the accumulated merge
@@ -1641,7 +1664,7 @@ module Krikri
       return Hash(String, VarOrigin).new unless Dir.exists?(main_dir)
 
       result = Hash(String, VarOrigin).new
-      (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort.each do |path|
+      main_dir_files(main_dir).each do |path|
         vars_file_origins(path).each { |key, origin| result[key] = origin }
       end
       result
@@ -1669,12 +1692,7 @@ module Krikri
         files = if found = find_main_file(dir)
                   [found]
                 else
-                  main_dir = File.join(dir, "main")
-                  if Dir.exists?(main_dir)
-                    (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort
-                  else
-                    [] of String
-                  end
+                  main_dir_files(File.join(dir, "main"))
                 end
         files.each do |path|
           keys = cached_yaml(path).as_h?.try(&.keys.map(&.to_s)) || next

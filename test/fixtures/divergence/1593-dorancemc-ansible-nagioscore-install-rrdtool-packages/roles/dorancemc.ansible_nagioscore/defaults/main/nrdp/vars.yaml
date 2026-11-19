@@ -1,0 +1,28 @@
+# https://github.com/NagiosEnterprises/nrdp/blob/master/README.md
+---
+nrdp_version: "2.0.5"
+
+nrdp_config_php:
+  authorized_tokens: #[]
+    - "{{ nrdp_mysecrettoken }}"
+    # - "{{ nrdp_myothertoken }}"
+  external_commands_deny_tokens: []
+  # - ACKNOWLEDGE_HOST_PROBLEM: '"{{ nrdp_mysecrettoken }}", "{{ nrdp_myothertoken }}"'
+  # - ACKNOWLEDGE_SVC_PROBLEM: '"{{ nrdp_mysecrettoken }}"'
+  # - all: '"{{ nrdp_mysecrettoken }}", "{{ nrdp_myothertoken }}"'
+  # - ACKNOWLEDGE_*": '"{{ nrdp_mysecrettoken }}"'
+  # - '*_HOST_*': '"{{ nrdp_mysecrettoken }}", "{{ nrdp_myothertoken }}"'
+  require_https: true
+  require_basic_auth: true
+  valid_basic_auth_users:
+    - nagiosadmin
+  nagios_command_group: "{{ nagios.command_group }}"
+  command_file: "{{ __nagios_config_parameters.command_file }}"
+  check_results_dir: "{{ __nagios_config_parameters.check_result_path }}"
+  disable_external_commands: true
+  allow_old_results: false
+  hide_display_page: false
+  debug: false
+  debug_log: /usr/local/nrdp/server/debug.log
+
+nrdp_force_reinstall: false

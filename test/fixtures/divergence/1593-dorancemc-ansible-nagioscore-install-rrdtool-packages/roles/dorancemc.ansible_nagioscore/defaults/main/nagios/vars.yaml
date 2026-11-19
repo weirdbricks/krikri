@@ -1,0 +1,5 @@
+---
+pnp4nagios_force_reinstall: false
+
+install_pnp4nagios: true
+install_nrdp: true

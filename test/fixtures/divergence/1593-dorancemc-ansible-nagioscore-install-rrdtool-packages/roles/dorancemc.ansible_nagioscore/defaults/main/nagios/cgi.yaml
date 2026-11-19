@@ -1,0 +1,35 @@
+# https://assets.nagios.com/downloads/nagioscore/docs/nagioscore/4/en/configcgi.html
+---
+nagios_cgi_parameters: {}
+nagios_cgi_parameters_default:
+  authorized_contactgroup_for_system_information: admins
+  authorized_contactgroup_for_system_commands: admins
+  authorized_contactgroup_for_configuration_information: admins
+  authorized_contactgroup_for_all_hosts: admins
+  authorized_contactgroup_for_all_host_commands: admins
+  authorized_contactgroup_for_all_services: admins
+  authorized_contactgroup_for_all_service_commands: admins
+  action_url_target: _blank
+  authorized_for_all_host_commands: nagiosadmin
+  authorized_for_all_hosts: nagiosadmin
+  authorized_for_all_service_commands: nagiosadmin
+  authorized_for_all_services: nagiosadmin
+  authorized_for_configuration_information: nagiosadmin
+  authorized_for_system_commands: nagiosadmin
+  authorized_for_system_information: nagiosadmin
+  default_statuswrl_layout: 4
+  escape_html_tags: 1
+  lock_author_names: 1
+  main_config_file: "{{ nagios.etc_path }}/nagios.cfg"
+  navbar_search_for_addresses: 1
+  navbar_search_for_aliases: 1
+  notes_url_target: _blank
+  physical_html_path: "{{ nagios.html_shared_path }}"
+  ping_syntax: /bin/ping -n -U -c 5 $HOSTADDRESS$
+  refresh_rate: 90
+  result_limit: 100
+  show_context_help: 0
+  url_html_path: "/{{ nagios.url_path }}"
+  use_authentication: 1
+  use_pending_states: 1
+  use_ssl_authentication: 0

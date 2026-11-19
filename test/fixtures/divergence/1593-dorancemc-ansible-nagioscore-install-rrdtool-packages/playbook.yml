@@ -1,0 +1,12 @@
+---
+# The play krikri-role-tester ran for the role; only the inventory differs
+# (localhost instead of the round's testhost). The role is trimmed to the two
+# tasks that lead to the divergent one - the role's own "Set OS dependent
+# variables" (it loads rrdtool_packages from vars/Debian.yaml) and the
+# rrdtool task from tasks/Debian.yaml, both verbatim. The rest of the role
+# installs nagios, apache, postfix and the services, which needs a real host.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - dorancemc.ansible_nagioscore
