@@ -36,12 +36,13 @@ community.docker module makes ansible-core import its own deprecated
 
     bin/krikri-capture-case test/fixtures/divergence/1611-lexa-uw-mailserver-create-volumes-for-mail-data
 
-This box's `/var/run/docker.sock` points into `/run/podman`, which the test user
-cannot traverse, so the recorded connection error is
-`PermissionError(13, 'Permission denied')` where the round's host said
-`FileNotFoundError(2, ...)`. That is the SDK's own wording either way; the
-divergence (three `failed:` loop items and exit 2, not krikri's silent
-`skipping:` of every item) is unchanged.
+The play's `environment:` pins `DOCKER_HOST` to a unix socket that does not
+exist, so both engines deterministically reach the daemon-unreachable path and
+the recorded error is `FileNotFoundError(2, ...)`, the wording the round's own
+host captured. (A bare `/var/run/docker.sock` is ambient: on the capture box it
+points into `/run/podman`, which the test user cannot traverse, and gave
+`PermissionError(13, ...)` instead - same SDK failure, different exception
+wording.)
 
 `inventory.ini` pins the interpreter on the `[local]` host, which is the only
 spelling both engines read alike.

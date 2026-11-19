@@ -6,5 +6,13 @@
 - hosts: localhost
   connection: local
   gather_facts: true
+  # Pin the daemon the docker modules connect to. Without this the target is
+  # ambient (DOCKER_HOST, else /var/run/docker.sock): the capture shell had a
+  # reachable rootless-podman DOCKER_HOST while the suite unsets DOCKER_HOST,
+  # so capture and replay would see different connections. A socket that does
+  # not exist makes both engines deterministic - and FileNotFoundError(2) is
+  # the wording the round's own host recorded.
+  environment:
+    DOCKER_HOST: unix:///tmp/krikri-no-such-sock
   roles:
     - lexa-uw.mailserver
