@@ -18,7 +18,7 @@ require "./task_executor/result_display"
 # The spec table (data/argspecs.json) is GENERATED from the installed
 # ansible-core + collections by scripts/gen_argspecs.py: it captures
 # the module's own AnsibleModule(argument_spec=...) call (options, aliases,
-# types, required, choices, defaults, mutually_exclusive/required_together/
+# types, required, choices, defaults, no_log, mutually_exclusive/required_together/
 # required_one_of/required_if/required_by) plus live-probed facts the spec
 # itself cannot tell you (which module name Ansible prints in
 # "Unsupported parameters for (...) module" when an action plugin delegates
@@ -811,20 +811,86 @@ module Krikri
 
       options = entry["options"]?.try(&.as_h?) || Hash(String, JSON::Any).new
       provided, unsupported = collect_provided(params, options, consumed_keys(entry))
+      action_level = entry["action_level"]?.try(&.as_bool?) || false
 
       defaults = default_values(options)
       failure_msg = run_spec_checks(spec_owner, entry, options, provided, defaults, unsupported, non_string_natives, non_string_lists)
       if failure_msg
-        return Failure.new(failure_msg, entry["action_level"]?.try(&.as_bool?) || false,
-          omit_changed: result_keys_msg_only?(entry))
+        return Failure.new(mask_no_log_values(failure_msg, options, provided, non_string_natives, action_level),
+          action_level, omit_changed: result_keys_msg_only?(entry))
       end
 
       if unsupported.empty?
         nil
       else
-        Failure.new(unsupported_params_message(print_name, unsupported, options),
-          entry["action_level"]?.try(&.as_bool?) || false,
+        Failure.new(mask_no_log_values(unsupported_params_message(print_name, unsupported, options),
+          options, provided, non_string_natives, action_level), action_level,
           omit_changed: result_keys_msg_only?(entry))
+      end
+    end
+
+    # AnsibleModule.fail_json runs remove_values over its whole result with
+    # every PROVIDED no_log=True option's value, so a spec rejection never
+    # echoes a secret. The replacement is a plain substring swap, so it also
+    # censors an option's own NAME when it contains another no_log value:
+    # community.mysql's mysql_user fails `password_expire_interval: bybgql`
+    # with "argument 'password_expire_********' ... "'********'" cannot be
+    # converted to an int" once password_expire: interval is provided (issue
+    # #1622). Action-plugin-level failures never pass through an
+    # AnsibleModule, so real leaves those unmasked.
+    private def mask_no_log_values(msg : String, options : Hash(String, JSON::Any),
+                                   provided : Hash(String, String),
+                                   non_string_natives : Hash(String, JSON::Any),
+                                   action_level : Bool) : String
+      return msg if action_level
+      secrets = [] of String
+      options.each do |name, spec|
+        next unless spec["no_log"]?.try(&.as_bool?)
+        raw = provided[name]?
+        next unless raw
+        next if raw == Krikri::NONE_SENTINEL
+        if native = non_string_natives[name]?
+          collect_no_log_json(native, secrets)
+        else
+          collect_no_log_strings(raw, secrets)
+        end
+      end
+      return msg if secrets.empty?
+
+      # remove_values sorts longest-first so a secret that is a subset of
+      # another is never partially replaced first.
+      secrets.uniq.sort_by! { |secret| -secret.bytesize }
+      secrets.each do |secret|
+        return "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER" if msg == secret
+        msg = msg.gsub(secret) { "********" }
+      end
+      msg
+    end
+
+    # Ansible's _return_datastructure_name: every string leaf of a provided
+    # no_log option is censored, bools and nulls are skipped, and numbers are
+    # stringified (they can only equal/contain a secret as text). A wire value
+    # with no native marker is a Python str, even when it spells "true" or a
+    # number - only a list/dict's JSON text is a real container.
+    private def collect_no_log_strings(raw : String, into : Array(String))
+      parsed = JSON.parse(raw) rescue nil
+      if parsed && (parsed.as_a? || parsed.as_h?)
+        collect_no_log_json(parsed, into)
+      else
+        into << raw unless raw.empty?
+      end
+    end
+
+    private def collect_no_log_json(value : JSON::Any, into : Array(String))
+      case inner = value.raw
+      when String
+        into << inner unless inner.empty?
+      when Array
+        value.as_a.each { |item| collect_no_log_json(item, into) }
+      when Hash
+        value.as_h.each_value { |item| collect_no_log_json(item, into) }
+      when Int64, Float64
+        into << inner.to_s
       end
     end
 

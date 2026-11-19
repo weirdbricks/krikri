@@ -27,6 +27,12 @@ require "../become_messages"
 # require it directly, but a compile whose file slice pulls only this file
 # (a suite shard, the fat plugin) would otherwise die on "undefined constant".
 require "../deprecation_hint"
+# The debug `var:` chain match below reads DEBUG_VAR_EXPRESSION_PREFIX. It
+# lives in a leaf file for the same reason: base_action_plugin.cr (which
+# used to define it) reaches this file through
+# inventory_parser -> python_vars_runner -> python_filter_runner, so
+# requiring it from here would close a cycle.
+require "../debug_messages"
 
 module Krikri
   # A module result's "failed" flag read the way Ansible's Python
