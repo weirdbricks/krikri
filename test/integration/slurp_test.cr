@@ -53,6 +53,33 @@ describe "slurp plugin" do
     Base64.decode_string(result["content"].as_s).must_equal("aliased")
   end
 
+  it "expands a leading ~ in src before reading, like Ansible's path-type argspec" do
+    # jesperberth.el_k3s slurps the `~/stable.txt` its get_url task wrote;
+    # Ansible's check_type_path expanduser's every `type: path` option, so
+    # the read succeeds and both source and msg show the absolute path
+    # (issue #1568). The marker lives in the real $HOME and the plugin
+    # child inherits the test process's ENV, so the pair holds ENV_MUTEX
+    # against concurrent tests that repoint HOME.
+    PluginSpecHelper::ENV_MUTEX.synchronize do
+      home = ENV["HOME"]? || "/root"
+      marker = File.join(home, "krikri-playbook-spec-slurp-tilde-marker")
+      File.write(marker, "tilde content")
+
+      begin
+        result = PluginSpecHelper.run("slurp", {"src" => "~/krikri-playbook-spec-slurp-tilde-marker"})
+
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        Base64.decode_string(result["content"].as_s).must_equal("tilde content")
+        result["source"].as_s.must_equal(marker)
+
+        missing = PluginSpecHelper.run("slurp", {"path" => "~/krikri-playbook-spec-absent-tilde-marker"})
+        missing["msg"].as_s.must_equal("File not found: #{File.join(home, "krikri-playbook-spec-absent-tilde-marker")}")
+      ensure
+        File.delete(marker) if File.exists?(marker)
+      end
+    end
+  end
+
   it "fails with Ansible's missing-argument message when src is absent" do
     result = PluginSpecHelper.run("slurp", {} of String => String)
 
