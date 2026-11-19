@@ -775,6 +775,20 @@ module Krikri
       pending.each { |entry| replay_deprecation(entry) }
     end
 
+    # Pops the innermost window and hands its blocks back WITHOUT replaying
+    # them. A loop iteration opens one per item (real runs each item in the
+    # worker's own DeferredWarningContext) so the item's result can carry
+    # them to its own display point; this is what takes the window between
+    # the item executing and that display.
+    def self.take_task_deprecation_capture : Array(PendingDeprecation)
+      fiber = Fiber.current
+      return [] of PendingDeprecation unless frames = @@task_deprecation_captures[fiber]?
+      return [] of PendingDeprecation if frames.empty?
+      pending = frames.pop
+      @@task_deprecation_captures.delete(fiber) if frames.empty?
+      pending
+    end
+
     # Seeds a fresh window with deprecation blocks captured elsewhere (a
     # batch member's build-time StderrCapture entries): the member's result
     # display flushes them after its module warnings, exactly where real's

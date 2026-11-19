@@ -428,6 +428,67 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
   end
 
+  describe ".connect_error_detail" do
+    NO_SOCKET = ->(_path : String) { false }
+    REFUSED   = ->(_host : String, _port : String) { Errno::ECONNREFUSED.value.as(Int32?) }
+    NO_PROBE  = ->(_host : String, _port : String) { nil.as(Int32?) }
+
+    it "words a missing default socket the way libmariadb does (issue #1563)" do
+      # Real's live capture with python3-mysqldb installed and mariadb not
+      # running yet: libmariadb resolves the localhost login_host to its
+      # compiled-in socket even though no such file exists, and names the
+      # bare errno.
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        os_family: "Debian", mysqldb: true, exists: NO_SOCKET
+      ).must_equal(%((2002, "Can't connect to local MySQL server through socket '/var/run/mysqld/mysqld.sock' (2)")))
+    end
+
+    it "names the explicit socket a MySQLdb connection dialed, with ECONNREFUSED once the file exists" do
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_unix_socket: "/run/mysqld/mysqld.sock", mysqldb: true, exists: ->(_p : String) { true }
+      ).must_equal(%((2002, "Can't connect to local MySQL server through socket '/run/mysqld/mysqld.sock' (111)")))
+    end
+
+    it "uses the packaging family's compiled-in default when no candidate exists" do
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        os_family: "RedHat", mysqldb: true, exists: NO_SOCKET
+      ).must_equal(%((2002, "Can't connect to local MySQL server through socket '/var/lib/mysql/mysql.sock' (2)")))
+    end
+
+    it "words a refused TCP connect the way PyMySQL does (live-verified)" do
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "127.0.0.1", mysqldb: false, tcp_errno: REFUSED
+      ).must_equal(%((2003, "Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)")))
+    end
+
+    it "keeps PyMySQL's host-only wording for an explicit missing socket (live-verified)" do
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_unix_socket: "/run/krikri-no-such-mysql.sock", mysqldb: false, exists: NO_SOCKET
+      ).must_equal(%((2003, "Can't connect to MySQL server on 'localhost' ([Errno 2] No such file or directory)")))
+    end
+
+    it "renders Python's gaierror text for a host that does not resolve" do
+      unresolvable = ->(_host : String, _port : String) { -2.as(Int32?) }
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "nosuchhost.invalid", mysqldb: false, tcp_errno: unresolvable
+      ).must_equal(%((2003, "Can't connect to MySQL server on 'nosuchhost.invalid' ([Errno -2] Name or service not known)")))
+    end
+
+    it "words libmysql's TCP failure with the bare errno, and stays silent when it is unknown" do
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "db.example.com", mysqldb: true, tcp_errno: REFUSED
+      ).must_equal(%((2003, "Can't connect to MySQL server on 'db.example.com' (111)")))
+      # CR_UNKNOWN_HOST's text is not verified here, and a probe that
+      # learned nothing gives none either - both keep the old empty tail.
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "db.example.com", mysqldb: true, tcp_errno: NO_PROBE
+      ).must_be_nil
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "db.example.com", mysqldb: false, tcp_errno: NO_PROBE
+      ).must_be_nil
+    end
+  end
+
   describe "option-file (config_file) fallback" do
     # Writes a throwaway my.cnf-format file and returns its path.
     private def setup(contents : String)

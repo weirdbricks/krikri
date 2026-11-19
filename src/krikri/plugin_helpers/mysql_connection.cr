@@ -3,6 +3,7 @@ require "uri"
 require "../base_plugin"
 require "system/user"
 require "./python_lib_gate"
+require "./socket_connect"
 
 module Krikri
   module PluginHelpers
@@ -257,6 +258,125 @@ module Krikri
       # candidate ordering without a real MySQL server's socket files.
       def self.default_socket_file(exists : String -> Bool = ->(path : String) { File.exists?(path) }) : String?
         DEFAULT_SOCKET_CANDIDATES.find { |path| exists.call(path) }
+      end
+
+      # Each packaging family's client library compiles in a socket path as
+      # the target of a `localhost` connection, and it names that path in
+      # its error text even when nothing exists there (libmariadb's
+      # Debian/Ubuntu packages: /var/run/mysqld/mysqld.sock, which is what
+      # issue #1563's real-host capture reported while mariadb was not yet
+      # running).
+      def self.family_default_socket(os_family : String?) : String
+        case os_family
+        when "RedHat" then "/var/lib/mysql/mysql.sock"
+        when "Suse"   then "/run/mysql/mysql.sock"
+        else               "/var/run/mysqld/mysqld.sock"
+        end
+      end
+
+      # The `(errno, "...")` repr real appends after "Exception message: "
+      # in mysql_user.py's connection-failure wrapper (`to_native(e)` over
+      # whatever escaped mysql_connect), rebuilt from the transport the
+      # target's driver would have used. The driver decides the wording:
+      #
+      # - MySQLdb (mysqlclient, the python3-mysqldb package these role
+      #   stacks install) hands the dial to libmariadb, which resolves a
+      #   `localhost` login_host to its compiled-in socket even when that
+      #   file is missing, and words both transports with the bare errno:
+      #   `(2002, "Can't connect to local MySQL server through socket
+      #   '/var/run/mysqld/mysqld.sock' (2)")` (issue #1563's live
+      #   capture) and `(2003, "Can't connect to MySQL server on '<host>'
+      #   (<errno>)")` for TCP.
+      # - PyMySQL dials only what it is configured with (an explicit
+      #   unix_socket, TCP otherwise - never a localhost mapping) and its
+      #   OperationalError(2003) carries Python's own OSError repr,
+      #   live-verified vs ansible-core 2.21.6: `(2003, "Can't connect to
+      #   MySQL server on 'localhost' ([Errno 111] Connection refused)")`,
+      #   `[Errno 2] No such file or directory` for an explicit missing
+      #   socket, `[Errno -2] Name or service not known` for a host that
+      #   does not resolve.
+      #
+      # The errno is re-derived rather than read off `ex` because
+      # crystal-mysql raises DB::ConnectionRefused with no message at all
+      # (mysql/connection.cr drops the underlying IO::Error); `exists` and
+      # `tcp_errno` are injectable for tests. nil means the errno could not
+      # be established (an unresolvable host through the MySQLdb wording,
+      # whose CR_UNKNOWN_HOST text is not verified here, or a connect that
+      # never answered), and the caller keeps its previous empty tail.
+      def self.connect_error_detail(
+        login_host : String? = nil,
+        login_port : String? = nil,
+        login_unix_socket : String? = nil,
+        config_file : String? = nil,
+        os_family : String? = nil,
+        mysqldb : Bool = mysqldb_connector_on_host?,
+        exists : String -> Bool = ->(path : String) { File.exists?(path) },
+        tcp_errno : String, String -> Int32? = ->(host : String, port : String) { tcp_connect_errno(host, port) },
+      ) : String?
+        host = login_host || "localhost"
+        socket = error_dial_socket(login_host, login_unix_socket, config_file, os_family, mysqldb, exists)
+        return socket_failure_detail(socket, host, mysqldb, exists) if socket
+        tcp_failure_detail(host, login_port || "3306", mysqldb, tcp_errno)
+      end
+
+      # The transport real's driver dials for these params: the socket path
+      # (the explicit login_unix_socket, the option file's [client] socket,
+      # or the MySQLdb connector's localhost mapping), or nil for TCP.
+      def self.error_dial_socket(
+        login_host : String?,
+        login_unix_socket : String?,
+        config_file : String?,
+        os_family : String?,
+        mysqldb : Bool,
+        exists : String -> Bool,
+      ) : String?
+        return login_unix_socket if login_unix_socket
+        return nil unless login_host.nil? || login_host == "localhost"
+
+        socket = option_file_defaults(config_file)[:socket]
+        return socket if socket
+        return nil unless mysqldb
+        default_socket_file(exists) || family_default_socket(os_family)
+      end
+
+      # The 2002/2003 wording for a failed unix-socket dial (see
+      # #connect_error_detail for which connector gets which).
+      def self.socket_failure_detail(socket : String, host : String, mysqldb : Bool, exists : String -> Bool) : String
+        errno = socket_connect_errno(socket, exists)
+        return %((2002, "Can't connect to local MySQL server through socket '#{socket}' (#{errno})")) if mysqldb
+        %((2003, "Can't connect to MySQL server on '#{host}' (#{python_errno_text(errno)})"))
+      end
+
+      # The 2003 wording for a failed TCP dial, or nil when the errno could
+      # not be established (see #connect_error_detail).
+      def self.tcp_failure_detail(host : String, port : String, mysqldb : Bool, tcp_errno : String, String -> Int32?) : String?
+        errno = tcp_errno.call(host, port) || return nil
+        return nil if mysqldb && errno < 0
+        return %((2003, "Can't connect to MySQL server on '#{host}' (#{errno})")) if mysqldb
+        %((2003, "Can't connect to MySQL server on '#{host}' (#{python_errno_text(errno)})"))
+      end
+
+      # connect(2) against the socket FILE: ENOENT while it is absent, and
+      # ECONNREFUSED once a stale file exists with nothing listening.
+      private def self.socket_connect_errno(socket : String, exists : String -> Bool) : Int32
+        exists.call(socket) ? Errno::ECONNREFUSED.value : Errno::ENOENT.value
+      end
+
+      # The kernel errno of a fresh connect, or -2 (Python's EAI_NONAME
+      # gaierror value) when the host does not resolve, or nil when the
+      # probe learned nothing (the target blackholed the SYN).
+      private def self.tcp_connect_errno(host : String, port : String) : Int32?
+        begin
+          Socket::Addrinfo.tcp(host, port.to_i)
+        rescue
+          return -2
+        end
+        SocketConnect.probe_errno(host, port, 3.seconds).try(&.value)
+      end
+
+      private def self.python_errno_text(errno : Int32) : String
+        return "[Errno #{errno}] Name or service not known" if errno == -2
+        SocketConnect.python_error_text(Errno.new(errno))
       end
 
       private def self.build_base_uri(socket : String?, host : String?, port : String?) : URI
