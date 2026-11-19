@@ -1,0 +1,20 @@
+---
+# The role's tasks/main.yml scan + both set_fact tasks, verbatim.
+- name: Scan for VCSA OVA file name
+  ansible.builtin.find:
+    paths: '{{ vcenter_tmp_mount_dir }}/vcsa'
+    file_type: file
+    patterns: "*.ova"
+  register: vcsa_ova_directory_contents
+
+- name: Set VCSA OVA filename
+  ansible.builtin.set_fact:
+    vcsa_ova_filename: "{{ vcsa_ova_directory_contents.files[0].path.split('/')[-1] }}"
+    # Return: "VMware-vCenter-Server-Appliance-8.0.0.10200-21216066_OVF10.ova"
+  tags: set_fact
+
+- name: Set VCSA OVA build number
+  ansible.builtin.set_fact:
+    vcsa_ova_build: "{{ vcsa_ova_filename.split('-')[4] }}"
+    # Return: "8.0.0.10200"
+  tags: set_fact

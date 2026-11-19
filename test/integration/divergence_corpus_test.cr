@@ -29,6 +29,7 @@ private DIVERGENCE_BINARY = File.expand_path("../../bin/krikri-playbook", __DIR_
 # here fails "lists every case directory" below, so a case can never be
 # silently skipped.
 private DIVERGENCE_CASES = [
+  {issue: 1581, slug: "jedimt-vcenter-ovf-ova-index"},
   {issue: 1570, slug: "philnewm-foreman-include-requirements"},
   {issue: 1573, slug: "freebsd-ports-default-fact"},
   {issue: 1572, slug: "mailman3-no-log-loop"},
@@ -103,6 +104,11 @@ describe "divergence corpus" do
     listed = DIVERGENCE_CASES.map { |kase| divergence_case_dir(kase[:issue], kase[:slug]) }
     listed.sort!
     on_disk.must_equal(listed)
+  end
+
+  it "replays 1581-jedimt-vcenter-ovf-ova-index" do
+    expected, actual, report = divergence_transcripts(1581, "jedimt-vcenter-ovf-ova-index")
+    assert_equal(expected, actual, report)
   end
 
   it "replays 1570-philnewm-foreman-include-requirements" do

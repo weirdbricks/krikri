@@ -1,0 +1,9 @@
+---
+# The play krikri-role-tester runs for the role; only the inventory differs
+# (localhost instead of the round's testhost) and the interpreter is pinned
+# (see test/fixtures/divergence/README.md).
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - jedimt.vcenter_ovf

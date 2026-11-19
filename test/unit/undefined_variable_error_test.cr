@@ -231,6 +231,33 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("{{ lst[-1] }}", strict: true).must_equal("b")
     end
+
+    # Issue #1581 (live-verified vs 2.21.6): the chain continues with a
+    # method call, so the empty-list index-0 probe declined and the whole
+    # expression fell back to the "undefined" sentinel. Ansible evaluates
+    # the chain left to right and fails on the index before the call ever
+    # runs, so the lazy-list wording must survive the tail.
+    it "words a mid-chain empty-list index 0 that a method call follows (issue #1581)" do
+      vars = {"d" => JSON.parse(%({"files": []}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /_AnsibleLazyTemplateList object has no element 0/) do
+        sub.substitute("{{ d.files[0].path.split('/') }}", strict: true)
+      end
+    end
+
+    it "words the role's trailing-index form the same way (issue #1581)" do
+      vars = {"d" => JSON.parse(%({"files": []}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /_AnsibleLazyTemplateList object has no element 0/) do
+        sub.substitute("{{ d.files[0].path.split('/')[-1] }}", strict: true)
+      end
+    end
+
+    it "still resolves an in-range index followed by a method call (issue #1581)" do
+      vars = {"d" => JSON.parse(%({"files": [{"path": "/iso/vcsa/a-b-c.ova"}]}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute("{{ d.files[0].path.split('/')[-1] }}", strict: true).must_equal("a-b-c.ova")
+    end
   end
 
   # Issue #101 (live-verified against ansible-core 2.19): indexing past

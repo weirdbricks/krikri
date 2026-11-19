@@ -844,6 +844,15 @@ module Krikri
   # probe hands to its operand pieces (see strict_undefined_message).
   PLAIN_CHAIN_SHAPE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])*\z/
 
+  # PLAIN_CHAIN_SHAPE plus method calls anywhere in the chain
+  # (`r.files[0].path.split('/')[-1]`): ansible evaluates the chain left to
+  # right, so an out-of-range index 0 raised before a following call still
+  # owns the failure wording even though the tail is no longer a plain
+  # attribute walk (live-verified vs 2.21.6: jedimt.vcenter_ovf's own
+  # filename expression fails with the lazy list's "no element 0", not a
+  # silently-undefined value).
+  PLAIN_CHAIN_WITH_CALLS_SHAPE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\]|\([^()]*\))*\z/
+
   def self.dict_attribute_miss_name(expr : String, vars : Hash(String, JSON::Any)) : String?
     @@miss_type = "dict"
     @@miss_key_json = nil
@@ -1188,7 +1197,7 @@ module Krikri
     # out-of-range indexes keep the generic wording), and a missing dict
     # key on the same shape stays lenient here - the dict-attribute
     # walker owns that wording.
-    if stripped.matches?(PLAIN_CHAIN_SHAPE) &&
+    if stripped.matches?(PLAIN_CHAIN_WITH_CALLS_SHAPE) &&
        (msg = plain_chain_empty_list_index0_message(stripped, vars))
       return msg
     end

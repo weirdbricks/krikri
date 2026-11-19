@@ -1,0 +1,5 @@
+---
+# Copied from the role's defaults/main.yml; only the mount point is adapted so
+# the scan target is a path this box never has (the case must not depend on
+# /tmp/iso existing or not).
+vcenter_tmp_mount_dir: '/tmp/krikri-1581-ovf-iso'
