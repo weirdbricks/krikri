@@ -1,0 +1,61 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Generate Postfix configuration] ******************************************
+[ERROR]: Task failed: Could not find or access 'etc/postfix/main.cf/ansible.j2'
+Searched in:
+	<WORK>/templates/etc/postfix/main.cf/ansible.j2
+	<WORK>/etc/postfix/main.cf/ansible.j2
+	<WORK>/templates/etc/postfix/main.cf/ansible.j2
+	<WORK>/etc/postfix/main.cf/ansible.j2 on the Ansible Controller.
+
+Task failed.
+Origin: <WORK>/playbook.yml:8:7
+
+6   gather_facts: true
+7   tasks:
+8     - name: Generate Postfix configuration
+        ^ column 7
+
+<<< caused by >>>
+
+Could not find or access 'etc/postfix/main.cf/ansible.j2'
+Searched in:
+	<WORK>/templates/etc/postfix/main.cf/ansible.j2
+	<WORK>/etc/postfix/main.cf/ansible.j2
+	<WORK>/templates/etc/postfix/main.cf/ansible.j2
+	<WORK>/etc/postfix/main.cf/ansible.j2 on the Ansible Controller.
+
+failed: [localhost] (item=main.cf) => {"ansible_loop_var": "item", "changed": false, "item": "main.cf", "msg": "Could not find or access 'etc/postfix/main.cf/ansible.j2'\nSearched in:\n\t<WORK>/templates/etc/postfix/main.cf/ansible.j2\n\t<WORK>/etc/postfix/main.cf/ansible.j2\n\t<WORK>/templates/etc/postfix/main.cf/ansible.j2\n\t<WORK>/etc/postfix/main.cf/ansible.j2 on the Ansible Controller."}
+[ERROR]: Task failed: Could not find or access 'etc/postfix/master.cf/ansible.j2'
+Searched in:
+	<WORK>/templates/etc/postfix/master.cf/ansible.j2
+	<WORK>/etc/postfix/master.cf/ansible.j2
+	<WORK>/templates/etc/postfix/master.cf/ansible.j2
+	<WORK>/etc/postfix/master.cf/ansible.j2 on the Ansible Controller.
+
+Task failed.
+Origin: <WORK>/playbook.yml:8:7
+
+6   gather_facts: true
+7   tasks:
+8     - name: Generate Postfix configuration
+        ^ column 7
+
+<<< caused by >>>
+
+Could not find or access 'etc/postfix/master.cf/ansible.j2'
+Searched in:
+	<WORK>/templates/etc/postfix/master.cf/ansible.j2
+	<WORK>/etc/postfix/master.cf/ansible.j2
+	<WORK>/templates/etc/postfix/master.cf/ansible.j2
+	<WORK>/etc/postfix/master.cf/ansible.j2 on the Ansible Controller.
+
+failed: [localhost] (item=master.cf) => {"ansible_loop_var": "item", "changed": false, "item": "master.cf", "msg": "Could not find or access 'etc/postfix/master.cf/ansible.j2'\nSearched in:\n\t<WORK>/templates/etc/postfix/master.cf/ansible.j2\n\t<WORK>/etc/postfix/master.cf/ansible.j2\n\t<WORK>/templates/etc/postfix/master.cf/ansible.j2\n\t<WORK>/etc/postfix/master.cf/ansible.j2 on the Ansible Controller."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

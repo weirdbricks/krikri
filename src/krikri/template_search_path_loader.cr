@@ -8,6 +8,13 @@ module Krikri
   class TemplateSearchPathLoader < KrikriJinja::Loader
     getter paths : Array(String)
 
+    # Every include/import/extends this loader RESOLVED, in load order,
+    # as absolute paths. The template action plugin walks these to find a
+    # fact read that only an included file makes: real runs the includes
+    # inside the outer template's templating operation, so their reads
+    # warn with the outer file's Origin (issue #1603).
+    getter resolved_templates = [] of String
+
     def initialize(paths : Array(String))
       @paths = paths.map { |path| File.expand_path(path) }
     end
@@ -16,7 +23,9 @@ module Krikri
       @paths.each do |root|
         path = File.expand_path(name, root)
         next unless path == root || path.starts_with?(root + File::SEPARATOR)
-        return File.read(path) if File.file?(path)
+        next unless File.file?(path)
+        @resolved_templates << path unless @resolved_templates.includes?(path)
+        return File.read(path)
       end
       nil
     end

@@ -1,0 +1,16 @@
+---
+# The task krikri-role-tester extracted from Anthony25.postfix; only the play is adapted
+# to run it against localhost (the round ran it against its testhost inventory).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Generate Postfix configuration
+      template:
+        src: 'etc/postfix/{{ item }}/ansible.j2'
+        dest: '/etc/postfix/{{ item }}'
+        owner: 'root'
+        group: 'root'
+        mode: '0644'
+      with_items: [ 'main.cf', 'master.cf' ]
+      notify: [ 'Check postfix and restart' ]
