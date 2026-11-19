@@ -72,3 +72,55 @@ describe "template: --diff before side of a multi-KB dest" do
     end
   end
 end
+
+# `template:` delegates to copy's action plugin, so its diff payload comes
+# from _get_diff_data, which replaces a binary side with a skip marker
+# (src_binary/dst_binary) instead of the raw bytes; the callback then
+# prints "diff skipped: source/destination file appears to be binary".
+# krikri built the entry inline and embedded the NUL bytes, printing a
+# full diff where ansible printed the skip line (issue #1618).
+describe "template: --diff binary sides" do
+  it "marks a binary source side with src_binary instead of its raw bytes" do
+    dir = PluginSpecHelper.tmp_path("template-diff-src-binary")
+    FileUtils.mkdir_p(dir)
+    dest = File.join(dir, "dest.txt")
+    original = "kpg locked dest\nsecond line\n"
+    File.write(dest, original)
+
+    result = PluginSpecHelper.run("template", {
+      "_ansible_diff"           => "true",
+      "dest"                    => dest,
+      "content"                 => "\u{0}\u{1}kpg\u{0}binary\u{F7FF}",
+      "_rendered_from_template" => "binary.bin",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    diff = result["diff"].as_a.first.as_h
+    diff["src_binary"].as_i64.must_equal(1)
+    diff.has_key?("after").must_equal(false)
+    diff.has_key?("after_header").must_equal(false)
+    diff["before"].as_s.must_equal(original)
+    diff["before_header"].as_s.must_equal(dest)
+  end
+
+  it "marks a binary destination side with dst_binary and keeps the source content" do
+    dir = PluginSpecHelper.tmp_path("template-diff-dst-binary")
+    FileUtils.mkdir_p(dir)
+    dest = File.join(dir, "dest.txt")
+    File.write(dest, "old\u{0}dest")
+
+    result = PluginSpecHelper.run("template", {
+      "_ansible_diff"           => "true",
+      "dest"                    => dest,
+      "content"                 => "kpg no trailing newline\n",
+      "_rendered_from_template" => "no-newline.txt",
+    })
+
+    diff = result["diff"].as_a.first.as_h
+    diff["dst_binary"].as_i64.must_equal(1)
+    diff.has_key?("before").must_equal(false)
+    diff.has_key?("before_header").must_equal(false)
+    diff["after"].as_s.must_equal("kpg no trailing newline\n")
+    diff["after_header"].as_s.must_equal("no-newline.txt")
+  end
+end

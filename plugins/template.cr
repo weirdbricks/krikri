@@ -313,22 +313,14 @@ module Krikri
         # before_header at all - only the empty `before`. Real's
         # after_header is the controller's staged temp copy of the source
         # (a per-run /tmp path), so the resolved source name is used here.
+        # Template delegates to copy's action plugin, so its diff comes
+        # from _get_diff_data too: a binary or oversized side must collapse
+        # to that side's skip marker (the callback prints "diff skipped:
+        # source/destination file appears to be binary") instead of
+        # embedding the bytes - hence the shared helper rather than an
+        # inline entry (issue #1618).
         src_name = @params["_rendered_from_template"]? || "template"
-        entry = if File.exists?(dest)
-                  {
-                    "before_header" => JSON::Any.new(dest),
-                    "before"        => JSON::Any.new(existing_content),
-                    "after_header"  => JSON::Any.new(src_name),
-                    "after"         => JSON::Any.new(content),
-                  }
-                else
-                  {
-                    "before"       => JSON::Any.new(""),
-                    "after_header" => JSON::Any.new(src_name),
-                    "after"        => JSON::Any.new(content),
-                  }
-                end
-        diff_data = JSON::Any.new([JSON::Any.new(entry)])
+        diff_data = JSON::Any.new([action_plugin_diff_entry(existing_content, content, dest, src_name)])
       end
 
       # CHECK MODE: Report what would change
