@@ -66,9 +66,11 @@ describe "include_tasks: whose included file fails to load" do
 
     status.exit_code.must_equal(2)
     # A missing role is the include task's own fatal failure in Ansible
-    # (issue #94), not a "Failed to load included tasks" degradation.
-    output.must_include("<<< caused by >>>")
-    output.must_include(%("include": "instance.yml"))
+    # (issue #94), not a "Failed to load included tasks" degradation. Its
+    # result dump is changed+msg, not the include/reason removed-module
+    # shape (live-verified vs 2.21.6, issue #1570).
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "The role 'buluma.service_not_installed_anywhere' was not found in: ))
+    output.wont_include(%("include": "instance.yml"))
     output.wont_include("never reached")
     output.must_include("ok=0    changed=0    unreachable=0    failed=1")
   end
@@ -92,9 +94,9 @@ describe "include_tasks: whose included file fails to load" do
     })
 
     status.exit_code.must_equal(2)
-    output.must_include("<<< caused by >>>")
-    # Live-verified vs 2.19: a LOOPED include prints only the stderr block,
-    # no stdout fatal: line (issue #443).
+    output.wont_include("<<< caused by >>>")
+    # Live-verified vs 2.21.6: a LOOPED include prints only the single
+    # error block, no stdout fatal: line (issue #443).
     output.wont_include(%("include": "instance.yml"))
     output.must_include("ok=0    changed=0    unreachable=0    failed=1")
   end

@@ -1,0 +1,12 @@
+# The task krikri-role-tester extracted from philnewm.foreman; only the play is
+# adapted to run it against localhost (the round ran it against its testhost
+# inventory). The round's failing task is the role's own `include_tasks:`, so the
+# play has to include the role file dynamically: a static import_role: written
+# directly in the play fails while the playbook is loaded, before `TASK` is ever
+# printed, which is a different transcript than the runtime failure it records.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Include requirements
+      ansible.builtin.include_tasks: roles/philnewm.foreman/tasks/repo_setup.yml

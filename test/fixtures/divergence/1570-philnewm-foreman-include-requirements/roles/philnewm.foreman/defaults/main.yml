@@ -1,0 +1,526 @@
+---
+
+state: "present"
+
+foreman_version: "3.19.1"
+foreman_puppet_version: 8
+foreman_vars_file: ""
+
+# https://releases.ubuntu.com/24.04/netboot/amd64/
+# https://community.theforeman.org/t/how-to-provision-ubuntu-22-04-or-24-04/42690
+default_ubuntu_mirror: "http://de.archive.ubuntu.com/ubuntu"
+
+foreman_fw_allowed_services:
+  - http
+  - https
+
+foreman_fw_allowed_ports:
+  - 1443/tcp
+  - 8080/tcp
+  - 8000/tcp  # httpboot
+  - 8443/tcp  # remote execution access using dynflow/ansible
+
+foreman_freeipa_realm_enabled: false
+foreman_freeipa_admin_principal: "admin"
+foreman_freeipa_realm_proxy_user: "realm-proxy"
+foreman_freeipa_keytab_path: "/etc/foreman-proxy/freeipa.keytab"
+
+foreman_certificate: false
+foreman_host_name: "{{ inventory_hostname }}"
+foreman_default_user: "admin"
+foreman_default_password: "admin"
+foreman_admin_timezone: "Europe/Berlin"
+foreman_server_port: 8080
+foreman_server_ssl_port: 8443
+foreman_proxy_ssl_port: 1443
+foreman_proxy_tftp: "false"
+foreman_proxy_tftp_managed: "false"
+foreman_proxy_puppet: "true"  # Note `false` causes puppet runtime collisions
+foreman_proxy_disable_puppet_after_install: true
+foreman_proxy_puppetca: "false"
+foreman_remote_execution_script_mode: "ssh"
+foreman_remote_execution_cockpit_integration: "true"
+foreman_puma_workers: 2
+foreman_puma_threads_per_worker: 2
+foreman_dynflow_workers: 1
+foreman_dynflow_worker_concurrency: 2
+foreman_proxy_register_in_foreman: "true"
+foreman_proxy_http: "true"
+foreman_proxy_httpboot: "true"
+foreman_proxy_http_port: 8000
+foreman_proxy_templates: "true"
+foreman_server_url: "https://{{ foreman_host_name }}:{{ foreman_server_ssl_port }}"
+
+foreman_install_flags:
+  - "--foreman-initial-admin-username={{ foreman_default_user }}"
+  - "--foreman-initial-admin-password={{ foreman_default_password }}"
+  - "--foreman-initial-admin-timezone={{ foreman_admin_timezone }}"
+  - "--foreman-server-port={{ foreman_server_port }}"
+  - "--foreman-server-ssl-port={{ foreman_server_ssl_port }}"
+  - "--foreman-foreman-url=\"https://{{ foreman_host_name }}:{{ foreman_server_ssl_port }}\""
+  - "--foreman-unattended-url=\"http://{{ foreman_host_name }}:{{ foreman_server_port }}\""
+  - "--no-enable-foreman-cli-puppet"
+  - "--enable-foreman-plugin-remote-execution"
+  - "--enable-foreman-cli-remote-execution"
+  - "--enable-foreman-plugin-ansible"
+  - "--enable-foreman-cli-ansible"
+  - "--enable-foreman-plugin-bootdisk"
+  - "--enable-foreman-plugin-templates"
+  - "--foreman-foreman-service-puma-workers={{ foreman_puma_workers }}"
+  - "--foreman-foreman-service-puma-threads-max={{ foreman_puma_threads_per_worker }}"
+  - "--foreman-dynflow-worker-instances={{ foreman_dynflow_workers }}"
+  - "--foreman-dynflow-worker-concurrency={{ foreman_dynflow_worker_concurrency }}"
+  - "--enable-foreman-proxy"
+  - "--foreman-proxy-puppet={{ foreman_proxy_puppet }}"
+  - "--foreman-proxy-puppetca={{ foreman_proxy_puppetca }}"
+  - "--foreman-proxy-register-in-foreman={{ foreman_proxy_register_in_foreman }}"
+  - "--foreman-proxy-tftp={{ foreman_proxy_tftp }}"
+  - "--foreman-proxy-tftp-managed={{ foreman_proxy_tftp_managed }}"
+  - "--foreman-proxy-http={{ foreman_proxy_http }}"
+  - "--foreman-proxy-http-port={{ foreman_proxy_http_port }}"
+  - "--foreman-proxy-httpboot={{ foreman_proxy_httpboot }}"
+  - "--foreman-proxy-ssl-port={{ foreman_proxy_ssl_port }}"
+  - "--foreman-proxy-foreman-base-url=\"https://{{ foreman_host_name }}:{{ foreman_server_ssl_port }}\""
+  - "--foreman-proxy-templates={{ foreman_proxy_templates }}"
+  - "--enable-foreman-proxy-plugin-ansible"
+  - "--enable-foreman-proxy-plugin-remote-execution-script"
+  - "--foreman-proxy-plugin-remote-execution-script-mode={{ foreman_remote_execution_script_mode }}"
+  - "--foreman-proxy-plugin-remote-execution-script-cockpit-integration={{ foreman_remote_execution_cockpit_integration }}"
+foreman_disable_puppet_services: true
+
+foreman_proxy_dns: "false"
+foreman_cert_validation: "false"
+
+foreman_setup_ansible: true
+foreman_ansible_executables:
+  - ansible
+  - ansible-community
+  - ansible-config
+  - ansible-console
+  - ansible-doc
+  - ansible-galaxy
+  - ansible-inventory
+  - ansible-lint
+  - ansible-playbook
+  - ansible-pull
+  - ansible-test
+  - ansible-vault
+foreman_ansible_default_collections_path: "{{ site_packages_path }}/ansible_collections"
+foreman_ansible_root_dir: /etc/ansible
+foreman_ansible_env_file: "/etc/foreman-proxy/ansible.env"
+foreman_ansible_env_config:
+  - "export ANSIBLE_CALLBACK_WHITELIST=\"theforeman.foreman.foreman,timer,ansible.posix.profile_tasks,ansible.posix.profile_roles\""
+  - "export ANSIBLE_CALLBACKS_ENABLED=\"theforeman.foreman.foreman,timer,ansible.posix.profile_tasks,ansible.posix.profile_roles\""
+foreman_ansible_requirements_file_src: "dummy_requirements.yml"
+foreman_ansible_requirements_file_dest: "{{ foreman_ansible_root_dir }}/requirements.yml"
+foreman_ansible_roles_dir: "{{ foreman_ansible_root_dir }}/roles/"
+foreman_ansible_collections_dir: "{{ foreman_ansible_root_dir }}/collections/ansible_collections"
+foreman_ansible_python_version:
+  redhat: "3.12"
+  debian: "3.11"
+# Note referenced in `/etc/foreman-proxy/settings.d/ansible.yml`
+foreman_ansible_python_venv_path: "/etc/ansible/ansible_venv"
+foreman_ansible_vars_files:
+  - name: "dummy_local_users_vars.yml"
+    dest: "{{ foreman_ansible_root_dir }}/local_users_vars.yml"
+    auto_include: true
+foreman_ansible_config_options:
+  - key: "roles_path"
+    value: "{{ foreman_ansible_roles_dir }}"
+    section: "defaults"
+  - key: "collections_path"
+    value: "{{ foreman_ansible_collections_dir }}"
+    section: "defaults"
+  - key: "stdout_callback"
+    value: "debug"
+    section: "defaults"
+  - key: "callbacks_enabled"
+    value: "ansible.posix.profile_tasks"
+    section: "defaults"
+
+foreman_global_params:
+  - name: "local_users_file_path"
+    parameter_type: "string"
+    value: "{{ foreman_ansible_root_dir }}/default_users.yml"
+
+foreman_settings:
+  - name: "ansible_post_provision_timeout"
+    value: "120"
+  - name: "local_boot_PXEGrub2"
+    value: "PXEGrub2 custom local boot"
+
+foreman_templates_path: "/var/lib/foreman_templates"
+foreman_custom_partition_tables_path: "{{ foreman_templates_path }}/patition_tables"
+foreman_custom_partition_tables:
+  - name: "Preseed default autoinstall full disk"
+    locked: false
+    os_family: "Debian"
+    control_node_source: "dummy_preseed_default_autoinstall_full_disk.erb"
+    file_name: "{{ foreman_custom_partition_tables_path }}/preseed_default_autoinstall_full_disk"
+    state: "present_with_defaults"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+
+foreman_custom_provisioning_templates_path: "{{ foreman_templates_path }}/provisioning_templates"
+foreman_custom_provisioning_templates:
+  - name: "PXEGrub2 custom local boot"
+    kind: "PXEGrub2"
+    locked: false
+    control_node_source: "dummy_pxegrub2_custom_local_boot.erb"
+    file_name: "{{ foreman_custom_provisioning_templates_path }}/pxegrub2_custom_local_boot"
+    state: "present_with_defaults"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+  - name: "Preseed Autoinstall cloud-init user data custom"
+    kind: "user_data"
+    locked: false
+    control_node_source: "dummy_preseed_autoinstall_cloud-init_user_data_custom.erb"
+    file_name: "{{ foreman_custom_provisioning_templates_path }}/preseed_autoinstall_cloud-init_user_data_custom"
+    state: "present_with_defaults"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+  - name: "preseed_netplan_setup_custom"
+    kind: "snippet"
+    locked: false
+    control_node_source: "dummy_preseed_netplan_setup_custom.erb"
+    file_name: "{{ foreman_custom_provisioning_templates_path }}/preseed_netplan_setup_custom"
+    state: "present_with_defaults"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+  - name: "preseed_netplan_generic_interface_custom"
+    kind: "snippet"
+    locked: false
+    control_node_source: "dummy_preseed_netplan_generic_interface_custom.erb"
+    file_name: "{{ foreman_custom_provisioning_templates_path }}/preseed_netplan_generic_interface_custom"
+    state: "present_with_defaults"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+
+# foreman_custom_job_templates_path: "{{ foreman_templates_path }}/job_templates"
+# foreman_custom_job_templates:
+#   - name: "Ansible Roles - Custom vars"
+#     description: "Run Ansible custom vars playbook"
+#     audit_comment: "Add custom vars playbook"
+#     provider_type: "Ansible"
+#     job_category: "Ansible Playbook"
+#     snippet: false
+#     control_node_source: "custom_vars_playbook.yml.j2"
+#     file_name: "{{ foreman_custom_job_templates_path }}/custom_vars_playbook.yml"
+#     remote_exec_feature_id: "3"  # 'Run Ansible roles'
+
+foreman_install_media:
+  - name: "AlmaLinux"
+    path: "https://repo.almalinux.org/almalinux/$major/BaseOS/$arch/os/"
+    os_family: "Redhat"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+
+foreman_provisioning_templates:
+  - template_name: "Linux host_init_config default"
+    template_kind: "host_init_config"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "AlmaLinux 9.8"
+      - "Fedora 43"
+      - "{{ foreman_ubuntu_24_lts }}"
+  - template_name: "Kickstart default"
+    template_kind: "provision"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "AlmaLinux 9.8"
+      - "Fedora 43"
+  - template_name: "Kickstart default iPXE"
+    template_kind: "iPXE"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "AlmaLinux 9.8"
+      - "Fedora 43"
+  - template_name: "Kickstart default finish"
+    template_kind: "finish"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "AlmaLinux 9.8"
+      - "Fedora 43"
+  - template_name: "Kickstart default PXEGrub2"
+    template_kind: "PXEGrub2"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "AlmaLinux 9.8"
+      - "Fedora 43"
+  - template_name: "Kickstart default PXELinux"
+    template_kind: "PXELinux"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "AlmaLinux 9.8"
+      - "Fedora 43"
+  - template_name: "Preseed default iPXE Autoinstall"
+    template_kind: "iPXE"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "{{ foreman_ubuntu_24_lts }}"
+  - template_name: "Preseed default finish"
+    template_kind: "finish"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "{{ foreman_ubuntu_24_lts }}"
+  - template_name: "Preseed default PXEGrub2 Autoinstall"
+    template_kind: "PXEGrub2"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "{{ foreman_ubuntu_24_lts }}"
+  - template_name: "Preseed default PXELinux Autoinstall"
+    template_kind: "PXELinux"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "{{ foreman_ubuntu_24_lts }}"
+  # - template_name: "Preseed Autoinstall cloud-init user data"
+  #   template_kind: "user_data"
+  #   locations:
+  #     - "Default Location"
+  #   organizations:
+  #     - "Default Organization"
+  #   os_list:
+  #     - "{{ foreman_ubuntu_24_lts }}"
+  - template_name: "Preseed Autoinstall cloud-init user data custom"
+    template_kind: "user_data"
+    locations:
+      - "Default Location"
+    organizations:
+      - "Default Organization"
+    os_list:
+      - "{{ foreman_ubuntu_24_lts }}"
+
+foreman_ubuntu_24_lts: "Ubuntu 24.04.4 LTS"
+foreman_oss:
+  - name: "AlmaLinux"
+    major: 9
+    minor: 7
+    description: "AlmaLinux 9.8"
+    family: "Redhat"
+    password_hash: "MD5"
+    architectures:
+      - "x86_64"
+    ptables:
+      - "Kickstart custom"
+    media:
+      - "AlmaLinux"
+  - name: "Fedora"
+    major: 43
+    description: "Fedora 43"
+    family: "Redhat"
+    password_hash: "MD5"
+    architectures:
+      - "x86_64"
+    ptables:
+      - "Kickstart custom"
+    media:
+      - "Fedora mirror"
+  # https://theforeman.org/2024/02/provisioning-ubuntu-autoinstall.html
+  - name: "Ubuntu"
+    major: "24"
+    description: "{{ foreman_ubuntu_24_lts }}"
+    release_name: "noble"
+    family: "Debian"
+    password_hash: "SHA512"
+    architectures:
+      - "x86_64"
+    ptables:
+      - "Preseed default autoinstall full disk"
+    media:
+      - "Ubuntu mirror"
+
+foreman_domains:
+  - domain_description: "subnet01"
+    domain_name: "subnet01"
+    domain_locations:
+      - "Default Location"
+    domain_organizations:
+      - "Default Organization"
+  - domain_description: "subnet02"
+    domain_name: "subnet02"
+    domain_locations:
+      - "Default Location"
+    domain_organizations:
+      - "Default Organization"
+
+foreman_subnets:
+  - name: "SubNet01"
+    descr: "SubNet01"
+    network_type: "IPv4"
+    network: "192.168.56.0"
+    cidr: 24
+    gateway: "192.168.56.1"
+    dns_primary: "192.168.56.1"
+    dns_secondary: ""
+    ipam: "Internal DB"
+    dhcp_start: "192.168.56.10"
+    dhcp_end: "192.168.56.99"
+    vlanid: 0
+    mtu: 1500
+    boot_mode: "Static"
+    remote_execution_proxies:
+      - "{{ foreman_host_name }}"
+    domains:
+      - "subnet01"
+    domain_locations:
+      - "Default Location"
+    domain_organizations:
+      - "Default Organization"
+  - name: "SubNet02"
+    descr: "SubNet02"
+    network_type: "IPv4"
+    network: "192.168.2.0"
+    cidr: 24
+    gateway: "192.168.2.1"
+    dns_primary: "192.168.2.1"
+    dns_secondary: ""
+    ipam: "Internal DB"
+    dhcp_start: "192.168.2.10"
+    dhcp_end: "192.168.2.199"
+    vlanid: 1
+    mtu: 1500
+    boot_mode: "Static"
+    remote_execution_proxies:
+      - "{{ foreman_host_name }}"
+    domains:
+      - "subnet02"
+    domain_locations:
+      - "Default Location"
+    domain_organizations:
+      - "Default Organization"
+
+foreman_host_groups:
+  - name: Internal-Host
+    description: Internal systems
+    pxe_loader: "Grub2 UEFI"
+    architecture: "x86_64"
+    subnet: "SubNet01"
+    domain: "subnet01"
+    parameters:
+      - name: "remote_execution_ssh_user"
+        parameter_type: string
+        value: "config-manager"
+      - name: "remote_execution_create_user"
+        parameter_type: boolean
+        value: true
+  - name: "Workstation"
+    description: "Desktop systems"
+    parent: "Internal-Host"
+    ansible_roles:
+      - philnewm.gnome
+    operatingsystem: "AlmaLinux 9.8"
+    medium: "AlmaLinux"
+    ptable: "Kickstart custom"
+    parameters:
+      - name: "state"
+        parameter_type: "string"
+        value: "present"
+      - name: "part_device"
+        parameter_type: "string"
+        value: "nvme0n1"
+      - name: "part_swap_size"
+        parameter_type: "integer"
+        value: 32768
+      - name: "part_root_percent"
+        parameter_type: "integer"
+        value: 40
+      - name: "part_home_percent"
+        parameter_type: "integer"
+        value: 60
+      - name: "part_fstype"
+        parameter_type: "string"
+        value: "xfs"
+      - name: "part_vgname"
+        parameter_type: "string"
+        value: "almalinux"
+      - name: "part_swap_name"
+        parameter_type: "string"
+        value: "swap"
+      - name: "part_root_name"
+        parameter_type: "string"
+        value: "root"
+      - name: "part_home_name"
+        parameter_type: "string"
+        value: "home"
+  - name: "Server"
+    description: "Service provider"
+    parent: "Internal-Host"
+    operatingsystem: "AlmaLinux 9.8"
+    medium: "AlmaLinux"
+    ptable: "Kickstart custom"
+
+foreman_hosts:
+  - name: "test-station.subnet02"
+    hostgroup: "Internal-Host/Workstation"
+    build: false
+    root_password: "changeme"  # Only gets set for new hosts
+    organization: "Default Organization"
+    location: "Default Location"
+    interfaces_attributes:
+      - type: "interface"
+        mac: "12:ab:34:cd:56:ef"
+        identifier: "eth1"
+        name: "test-station.subnet01"
+        domain: "subnet01"
+        subnet: "SubNet01"
+        ip: "192.168.56.105"
+        managed: true
+        primary: false
+        provision: true
+      - type: "interface"
+        mac: "12:ab:34:cd:56:ef"
+        identifier: "eth1.1"
+        name: "test-station.subnet02"
+        domain: "subnet02"
+        subnet: "SubNet02"
+        ip: "192.168.2.83"
+        managed: true
+        primary: true
+        virtual: true
+        execution: true
+        tag: 1
+        attached_to: "eth1"
+
+...

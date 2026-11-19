@@ -1,0 +1,44 @@
+---
+
+- name: Ensure Foreman HTTP service principal exists
+  freeipa.ansible_freeipa.ipaservice:
+    name: "HTTP/{{ inventory_hostname }}"
+    ipaadmin_password: "{{ freeipa_config_password }}"
+    state: present
+
+- name: Ensure certmonger is installed
+  become: true
+  ansible.builtin.package:
+    name: certmonger
+    state: present
+
+- name: Ensure certmonger is running
+  become: true
+  ansible.builtin.systemd_service:
+    name: certmonger
+    state: started
+    enabled: true
+
+- name: Check whether Foreman certificate is already tracked
+  become: true
+  ansible.builtin.command:
+    cmd: ipa-getcert list -i {{ inventory_hostname_short }}-http
+  register: foreman_cert
+  changed_when: false
+  failed_when: false
+
+- name: Request and track Foreman certificate
+  become: true
+  when: foreman_cert.rc != 0
+  ansible.builtin.command:
+    cmd: >-
+      ipa-getcert request
+      -I {{ inventory_hostname_short }}-http
+      -K HTTP/{{ inventory_hostname }}
+      -D {{ inventory_hostname }}
+      -k /etc/pki/tls/private/{{ inventory_hostname_short }}.key
+      -f /etc/pki/tls/certs/{{ inventory_hostname_short }}.crt
+  register: cert_track_result
+  changed_when: cert_track_result.rc == 0
+
+...

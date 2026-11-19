@@ -1,0 +1,17 @@
+---
+
+- name: Include puppet repositories
+  become: true
+  ansible.builtin.import_role:
+    name: theforeman.operations.puppet_repositories
+  vars:
+    foreman_puppet_repositories_version: "{{ foreman_puppet_version }}"
+
+- name: Include foreman repositories
+  become: true
+  ansible.builtin.import_role:
+    name: theforeman.operations.foreman_repositories
+  vars:
+    foreman_repositories_version: "{{ foreman_version.split('.')[:2] | join('.') }}"
+
+...

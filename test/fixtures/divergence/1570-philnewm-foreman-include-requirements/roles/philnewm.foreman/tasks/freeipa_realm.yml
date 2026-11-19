@@ -1,0 +1,51 @@
+---
+
+- name: Ensure foreman proxy is already installed
+  become: true
+  ansible.builtin.package:
+    name:
+      - foreman-proxy
+      - python3-pexpect
+    state: present
+
+- name: Check whether foreman realm keytab exists
+  become: true
+  ansible.builtin.stat:
+    path: "{{ foreman_freeipa_keytab_path }}"
+  register: foreman_freeipa_keytab
+
+- name: Prepare freeipa realm for foreman
+  become: true
+  when: not foreman_freeipa_keytab.stat.exists
+  ansible.builtin.expect:
+    command: >
+      foreman-prepare-realm
+      {{ foreman_freeipa_admin_principal }}
+      {{ foreman_freeipa_realm_proxy_user }}
+    chdir: /root
+    responses:
+      '(?i)Password for .*:': "{{ foreman_freeipa_admin_password }}"
+    timeout: 120
+    echo: false
+  register: keytab_result
+  changed_when: keytab_result.rc == 0
+  no_log: true
+
+- name: Install Foreman realm keytab
+  become: true
+  ansible.builtin.copy:
+    remote_src: true
+    src: /root/freeipa.keytab
+    dest: "{{ foreman_freeipa_keytab_path }}"
+    owner: foreman-proxy
+    group: foreman-proxy
+    mode: "0600"
+  when: not foreman_freeipa_keytab.stat.exists
+
+- name: Cleanup temporary freeipa realm keytab
+  become: true
+  ansible.builtin.file:
+    path: /root/freeipa.keytab
+    state: absent
+
+...

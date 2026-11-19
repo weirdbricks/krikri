@@ -1,0 +1,212 @@
+---
+
+- name: "Install python{{ foreman_ansible_python_version[ansible_facts.os_family | lower] }}"
+  become: true
+  ansible.builtin.package:
+    name: "python{{ foreman_ansible_python_version[ansible_facts.os_family | lower] }}"
+    state: present
+
+- name: Ensure ansible virtualenv exists with latest pip
+  become: true
+  ansible.builtin.pip:
+    name: "{{ foreman_ansible_python_packages }}"
+    virtualenv: "{{ foreman_ansible_python_venv_path }}"
+    virtualenv_command: "python{{ foreman_ansible_python_version[ansible_facts.os_family | lower] }} -m venv"
+
+- name: Get ansible executables file stats
+  loop: "{{ foreman_ansible_executables }}"
+  loop_control:
+    loop_var: "ansible_exec"
+  ansible.builtin.stat:
+    path: "/usr/bin/{{ ansible_exec }}"
+  register: present_ansible_executables
+
+- name: Remove existing ansible executables
+  become: true
+  loop: "{{ present_ansible_executables.results }}"
+  loop_control:
+    loop_var: "exec_file"
+    label: "{{ exec_file.ansible_exec }}"
+  when: exec_file.stat.exists and not exec_file.stat.islnk
+  ansible.builtin.file:
+    path: "{{ exec_file.stat.path }}"
+    state: absent
+
+# Note `alternative` module possible but seems overkill here
+- name: Set ansible symlink to venv
+  become: true
+  loop: "{{ present_ansible_executables.results }}"
+  loop_control:
+    loop_var: "exec_file"
+    label: "{{ exec_file.ansible_exec }}"
+  ansible.builtin.file:
+    src: "{{ foreman_ansible_python_venv_path }}/bin/{{ exec_file.ansible_exec }}"
+    dest: "/usr/bin/{{ exec_file.ansible_exec }}"
+    owner: root
+    group: root
+    state: link
+
+- name: Update ansible environment config
+  become: true
+  loop: "{{ foreman_ansible_env_config }}"
+  loop_control:
+    loop_var: env_line
+  ansible.builtin.lineinfile:
+    path: "{{ foreman_ansible_env_file }}"
+    regexp: "^{{ env_line | split('=') | first }}="
+    line: "{{ env_line }}"
+    backrefs: true
+
+- name: Write custom paths to ansible.cfg
+  become: true
+  loop: "{{ foreman_ansible_config_options }}"
+  loop_control:
+    loop_var: ansible_config_option
+    label: "{{ ansible_config_option.key }}"
+  community.general.ini_file:
+    path: "{{ foreman_ansible_root_dir }}/ansible.cfg"
+    section: "{{ ansible_config_option.section }}"
+    option: "{{ ansible_config_option.key }}"
+    value: "{{ ansible_config_option.value }}"
+    mode: '0644'
+
+- name: Set up ansible roles
+  when: foreman_ansible_requirements_file_src is defined
+  block:
+    - name: Get site-packages paths
+      ansible.builtin.command:
+        cmd: python3 -c "import site; print('\n'.join(site.getsitepackages()))"
+      changed_when: false
+      register: site_packages_paths
+
+    - name: Remove default ansible collections path
+      become: true
+      loop: "{{ site_packages_paths.stdout_lines }}"
+      loop_control:
+        loop_var: site_packages_path
+      ansible.builtin.file:
+        path: "{{ foreman_ansible_default_collections_path }}"
+        state: absent
+
+    - name: Copy requirements file
+      become: true
+      ansible.builtin.copy:
+        src: "{{ foreman_ansible_requirements_file_src }}"
+        dest: "{{ foreman_ansible_requirements_file_dest }}"
+        owner: "root"
+        group: "root"
+        mode: '0644'
+
+    - name: Install ansible galaxy requirements
+      become: true
+      community.general.ansible_galaxy_install:
+        type: both
+        requirements_file: "{{ foreman_ansible_requirements_file_dest }}"
+        state: present
+
+    - name: Find all requirements.txt files in roles
+      ansible.builtin.find:
+        paths: "{{ foreman_ansible_roles_dir }}"
+        patterns: "requirements.txt"
+        recurse: true
+      register: found_requirements
+
+    - name: Read requirements files
+      loop: "{{ found_requirements.files }}"
+      loop_control:
+        loop_var: requirement_file
+        label: "{{ requirement_file.path }}"
+      ansible.builtin.slurp:
+        path: "{{ requirement_file.path }}"
+      register: requirements_contents
+
+    - name: Initialise combined requirements
+      ansible.builtin.set_fact:
+        combined_requirements: []
+
+    - name: Build combined requirements list
+      loop: "{{ requirements_contents.results }}"
+      loop_control:
+        label: "{{ item.source }}"
+      ansible.builtin.set_fact:
+        combined_requirements: >-
+          {{ combined_requirements + (item.content | b64decode).splitlines() }}
+
+    - name: Install python requirements into ansible venv
+      become: true
+      ansible.builtin.pip:
+        name: "{{ combined_requirements }}"
+        virtualenv: "{{ foreman_ansible_python_venv_path }}"
+
+# TODO Fix on Debian12 - some manual changes might help
+# sudo mkdir -p /etc/ansible/roles
+# sudo chown -R foreman-proxy: /etc/ansible/roles
+# Add to :roles_path: /etc/ansible/roles `/etc/foreman-proxy/settings.d/ansible.yml`
+- name: Fetch ansible roles from smart-proxy
+  ansible.builtin.command:
+    cmd: >
+      hammer
+      --output json
+      -u {{ foreman_default_user }}
+      -p '{{ foreman_default_password }}'
+      ansible roles fetch
+      --proxy-id 1
+  register: fetched_roles
+  changed_when: false
+
+- name: Parse fetched role names
+  ansible.builtin.set_fact:
+    fetched_role_names: >-
+      {{
+        (fetched_roles.stdout | from_json)[0]['Ansible roles available to be imported'].values()
+        | map(attribute='Role Name') | list
+      }}
+
+- name: Get already imported roles
+  ansible.builtin.command:
+    cmd: >
+      hammer
+      --output json
+      -u {{ foreman_default_user }}
+      -p '{{ foreman_default_password }}'
+      ansible roles list
+  register: imported_roles
+  changed_when: false
+
+- name: Parse imported role names
+  ansible.builtin.set_fact:
+    imported_role_names: >-
+      {{
+        imported_roles.stdout | from_json | map(attribute='Name') | list
+      }}
+
+- name: Determine roles to import
+  ansible.builtin.set_fact:
+    roles_to_import: "{{ fetched_role_names | difference(imported_role_names) }}"
+
+- name: Import ansible roles from smart-proxy
+  ansible.builtin.command:
+    cmd: >
+      hammer
+      -u {{ foreman_default_user }}
+      -p '{{ foreman_default_password }}'
+      ansible roles import
+      --proxy-id 1
+  when: roles_to_import | length > 0
+  register: result
+  changed_when: result.rc == 0
+
+- name: Copy vars files
+  become: true
+  loop: "{{ foreman_ansible_vars_files }}"
+  loop_control:
+    loop_var: vars_file
+    label: "{{ vars_file.name }}"
+  ansible.builtin.copy:
+    src: "{{ vars_file.name }}"
+    dest: "{{ vars_file.dest }}"
+    owner: "{{ ansible_facts.user_id }}"
+    group: "{{ ansible_facts.user_gid }}"
+    mode: '0644'
+
+...

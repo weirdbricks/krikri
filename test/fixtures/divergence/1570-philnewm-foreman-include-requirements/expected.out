@@ -1,0 +1,17 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Include requirements] ****************************************************
+[ERROR]: The role 'theforeman.operations.puppet_repositories' was not found in: <WORK>/roles:<WORK>/home/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles:<WORK>
+Origin: <WORK>/roles/philnewm.foreman/tasks/repo_setup.yml:6:11
+
+4   become: true
+5   ansible.builtin.import_role:
+6     name: theforeman.operations.puppet_repositories
+            ^ column 11
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "The role 'theforeman.operations.puppet_repositories' was not found in: <WORK>/roles:<WORK>/home/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles:<WORK>"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

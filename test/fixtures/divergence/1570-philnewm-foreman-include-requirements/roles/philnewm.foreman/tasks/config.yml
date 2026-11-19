@@ -1,0 +1,429 @@
+---
+
+- name: Install python requests
+  become: true
+  ansible.builtin.package:
+    name: "{{ foreman_system_python_packages[ansible_facts.os_family | lower] }}"
+    state: present
+
+- name: Assign global parameters
+  loop: "{{ foreman_global_params }}"
+  loop_control:
+    loop_var: global_param
+    label: "{{ global_param.name }}"
+  theforeman.foreman.global_parameter:
+    name: "{{ global_param.name }}"
+    parameter_type: "{{ global_param.parameter_type }}"
+    value: "{{ global_param.value }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: Create realms
+  loop: "{{ foreman_realms | default([]) }}"
+  loop_control:
+    loop_var: realm
+    label: "{{ realm.name }}"
+  when: foreman_realms is defined
+  theforeman.foreman.realm:
+    name: "{{ realm.name }}"
+    realm_proxy: "{{ realm.proxy }}"
+    realm_type: "{{ realm.type }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: Import partition tables
+  when: foreman_custom_partition_tables is defined
+  block:
+    - name: Ensure template target dir exists
+      become: true
+      ansible.builtin.file:
+        path: "{{ foreman_custom_partition_tables_path }}"
+        state: directory
+        owner: foreman-proxy
+        group: foreman-proxy
+        mode: "0755"
+
+    - name: Copy files to remote host
+      become: true
+      loop: "{{ foreman_custom_partition_tables }}"
+      loop_control:
+        loop_var: part_table
+        label: "{{ part_table.name }}"
+      ansible.builtin.copy:
+        src: "{{ part_table.control_node_source }}"
+        dest: "{{ part_table.file_name }}"
+        owner: foreman-proxy
+        group: foreman-proxy
+        mode: '0644'
+
+    - name: Import partition tables
+      loop: "{{ foreman_custom_partition_tables }}"
+      loop_control:
+        loop_var: part_table
+        label: "{{ part_table.name }}"
+      theforeman.foreman.partition_table:
+        name: "{{ part_table.name }}"
+        locked: "{{ part_table.locked }}"
+        os_family: "{{ part_table.os_family }}"
+        file_name: "{{ part_table.file_name }}"
+        state: "{{ part_table.state }}"
+        locations: "{{ part_table.locations }}"
+        organizations: "{{ part_table.organizations }}"
+        validate_certs: "{{ foreman_cert_validation }}"
+        server_url: "{{ foreman_server_url }}"
+        username: "{{ foreman_default_user }}"
+        password: "{{ foreman_default_password }}"
+
+- name: Import provisioning templates
+  when: foreman_custom_provisioning_templates is defined
+  block:
+    - name: Ensure template target dir exists
+      become: true
+      ansible.builtin.file:
+        path: "{{ foreman_custom_provisioning_templates_path }}"
+        state: directory
+        owner: foreman-proxy
+        group: foreman-proxy
+        mode: "0755"
+
+    - name: Copy files to remote host
+      become: true
+      loop: "{{ foreman_custom_provisioning_templates }}"
+      loop_control:
+        loop_var: prov_template
+        label: "{{ prov_template.name }}"
+      ansible.builtin.copy:
+        src: "{{ prov_template.control_node_source }}"
+        dest: "{{ prov_template.file_name }}"
+        owner: foreman-proxy
+        group: foreman-proxy
+        mode: '0644'
+      register: template_copy
+
+    - name: Import provisioning templates
+      loop: "{{ foreman_custom_provisioning_templates | zip(template_copy.results) | list }}"
+      loop_control:
+        loop_var: prov_template_pair
+        label: "{{ prov_template_pair.0.name }}"
+      theforeman.foreman.provisioning_template:
+        name: "{{ prov_template_pair.0.name }}"
+        kind: "{{ prov_template_pair.0.kind }}"
+        locked: "{{ prov_template_pair.0.locked }}"
+        file_name: "{{ prov_template_pair.0.file_name }}"
+        state: "{{ 'present' if prov_template_pair.1.changed else prov_template_pair.0.state }}"
+        locations: "{{ prov_template_pair.0.locations }}"
+        organizations: "{{ prov_template_pair.0.organizations }}"
+        validate_certs: "{{ foreman_cert_validation }}"
+        server_url: "{{ foreman_server_url }}"
+        username: "{{ foreman_default_user }}"
+        password: "{{ foreman_default_password }}"
+
+- name: Import job templates
+  when: foreman_custom_job_templates is defined
+  block:
+    - name: Ensure template target dir exists
+      become: true
+      ansible.builtin.file:
+        path: "{{ foreman_custom_job_templates_path }}"
+        state: directory
+        owner: foreman-proxy
+        group: foreman-proxy
+        mode: "0755"
+
+    - name: Copy files to remote host
+      become: true
+      loop: "{{ foreman_custom_job_templates }}"
+      loop_control:
+        label: "{{ item.name }}"
+      ansible.builtin.copy:
+        src: "{{ item.control_node_source }}"
+        dest: "{{ item.file_name }}"
+        owner: foreman-proxy
+        group: foreman-proxy
+        mode: "0644"
+
+    - name: Add custom job templates
+      loop: "{{ foreman_custom_job_templates }}"
+      loop_control:
+        label: "{{ item.name }}"
+      theforeman.foreman.job_template:
+        name: "{{ item.name }}"
+        description_format: "{{ item.description }}"
+        audit_comment: "{{ item.audit_comment }}"
+        file_name: "{{ item.file_name }}"
+        job_category: "{{ item.job_category }}"
+        provider_type: "{{ item.provider_type }}"
+        snippet: "{{ item.snippet }}"
+        state: present
+        locations:
+          - "Default Location"
+        organizations:
+          - "Default Organization"
+        validate_certs: "{{ foreman_cert_validation }}"
+        server_url: "{{ foreman_server_url }}"
+        username: "{{ foreman_default_user }}"
+        password: "{{ foreman_default_password }}"
+
+    - name: Get remote execution features
+      ansible.builtin.command:
+        cmd: >
+          hammer
+          --output json
+          -u {{ foreman_default_user }}
+          -p '{{ foreman_default_password }}'
+          remote-execution-feature
+          list
+      changed_when: false
+      register: remote_exec_feat
+
+    - name: Parse query output
+      ansible.builtin.set_fact:
+        remote_exec_list: "{{ remote_exec_feat.stdout | from_json }}"
+
+    - name: Remap features
+      ansible.builtin.set_fact:
+        remote_exec_state: >-
+          {{
+            dict(
+              remote_exec_list | map(attribute='ID')
+              | zip(remote_exec_list | map(attribute='Job template name'))
+            )
+          }}
+
+    - name: Update remote execution features if required
+      loop: "{{ foreman_custom_job_templates }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - item.remote_exec_feature_id is defined
+        - remote_exec_state[item.remote_exec_feature_id | int] != item.name
+      ansible.builtin.command:
+        cmd: >
+          hammer
+          -u {{ foreman_default_user }}
+          -p '{{ foreman_default_password }}'
+          remote-execution-feature
+          update
+          --id {{ item.remote_exec_feature_id }}
+          --job-template "{{ item.name }}"
+      register: result
+      changed_when: '"Remote execution feature updated" in result.stdout'
+
+- name: "Create Installation Media"
+  loop: "{{ foreman_install_media | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  theforeman.foreman.installation_medium:
+    name: "{{ item.name }}"
+    path: "{{ item.path }}"
+    os_family: "{{ item.os_family }}"
+    locations: "{{ item.locations }}"
+    organizations: "{{ item.organizations }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: "Create Operating Systems"
+  loop: "{{ foreman_oss | default([]) }}"
+  loop_control:
+    label: "{{ item.description }}"
+  theforeman.foreman.operatingsystem:
+    name: "{{ item.name }}"
+    major: "{{ item.major }}"
+    minor: "{{ item.minor | default(omit) }}"
+    description: "{{ item.description }}"
+    release_name: "{{ item.release_name | default(omit) }}"
+    family: "{{ item.family }}"
+    password_hash: "{{ item.password_hash }}"
+    architectures: "{{ item.architectures }}"
+    ptables: "{{ item.ptables }}"
+    media: "{{ item.media }}"
+    provisioning_templates: "{{
+        foreman_provisioning_templates
+        | selectattr('os_list', 'contains', item.description)
+        | map(attribute='template_name')
+        | list }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: Set default templates
+  loop: "{{ foreman_oss | product(foreman_provisioning_templates) | list }}"
+  loop_control:
+    label: "{{ item.0.description }} → {{ item.1.template_name }}"
+  when: item.0.description in item.1.os_list
+  theforeman.foreman.os_default_template:
+    operatingsystem: "{{ item.0.description }}"
+    provisioning_template: "{{ item.1.template_name }}"
+    template_kind: "{{ item.1.template_kind }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: Set provisioning templates
+  loop: "{{ foreman_provisioning_templates | default([]) }}"
+  loop_control:
+    loop_var: prov_template
+    label: "{{ prov_template.template_name }}"
+  theforeman.foreman.provisioning_template:
+    operatingsystems: "{{ prov_template.os_list }}"
+    name: "{{ prov_template.template_name }}"
+    kind: "{{ prov_template.template_kind }}"
+    locations: "{{ prov_template.locations }}"
+    organizations: "{{ prov_template.organizations }}"
+    state: "present"
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: "Create Domains"
+  loop: "{{ foreman_domains }}"
+  loop_control:
+    label: "{{ item.domain_name }}"
+  theforeman.foreman.domain:
+    description: "{{ item.domain_description }}"
+    name: "{{ item.domain_name }}"
+    locations: "{{ item.domain_locations }}"
+    organizations: "{{ item.domain_organizations }}"
+    state: "present"
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: "Create Subnets"
+  loop: "{{ foreman_subnets | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  theforeman.foreman.subnet:
+    name: "{{ item.name }}"
+    description: "{{ item.descr }}"
+    network_type: "{{ item.network_type }}"
+    network: "{{ item.network }}"
+    cidr: "{{ item.cidr }}"
+    gateway: "{{ item.gateway | default(omit) }}"
+    dns_primary: "{{ item.dns_primary | default(omit) }}"
+    dns_secondary: "{{ item.dns_secondary | default(omit) }}"
+    ipam: "{{ item.ipam }}"
+    from_ip: "{{ item.dhcp_start | default(omit) }}"
+    to_ip: "{{ item.dhcp_end | default(omit) }}"
+    vlanid: "{{ item.vlanid | default(omit) }}"
+    mtu: "{{ item.mtu }}"
+    boot_mode: "{{ item.boot_mode }}"
+    remote_execution_proxies: "{{ item.remote_execution_proxies }}"
+    domains: "{{ item.domains }}"
+    tftp_proxy: "{{ item.tftp_proxy | default(omit) }}"
+    httpboot_proxy: "{{ item.httpboot_proxy | default(omit) }}"
+    locations: "{{ item.domain_locations }}"
+    organizations: "{{ item.domain_organizations }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: Create host groups
+  loop: "{{ foreman_host_groups | default([]) }}"
+  loop_control:
+    loop_var: host_group
+    label: "{{ host_group.name }}"
+  theforeman.foreman.hostgroup:
+    name: "{{ host_group.name }}"
+    description: "{{ host_group.description | default(omit) }}"
+    parent: "{{ host_group.parent | default(omit) }}"
+    realm: "{{ host_group.realm | default(omit) }}"
+    environment: "{{ host_group.environment | default(omit) }}"
+    puppet_proxy: "{{ host_group.puppet_proxy | default(omit) }}"
+    puppet_ca_proxy: "{{ host_group.puppet_ca_proxy | default(omit) }}"
+    ansible_roles: "{{ host_group.ansible_roles | default(omit) }}"
+    subnet: "{{ host_group.subnet | default(omit) }}"
+    architecture: "{{ host_group.architecture | default(omit) }}"
+    operatingsystem: "{{ host_group.operatingsystem | default(omit) }}"
+    medium: "{{ host_group.medium | default(omit) }}"
+    ptable: "{{ host_group.ptable | default(omit) }}"
+    pxe_loader: "{{ host_group.pxe_loader | default(omit) }}"
+    locations: "{{ host_group.locations | default(omit) }}"
+    organizations: "{{ host_group.organizations | default(omit) }}"
+    parameters: "{{ host_group.parameters | default(omit) }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: Get current hosts
+  theforeman.foreman.host_info:
+    location: "Default Location"
+    organization: "Default Organization"
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+  register: present_hosts
+
+# Note `root_pass` is a write only parameter and will otherwise cause changes on every run
+- name: Extract list of existing hostnames
+  ansible.builtin.set_fact:
+    existing_hostnames: "{{ present_hosts.hosts | map(attribute='name') | list }}"
+
+- name: Create hosts
+  loop: "{{ foreman_hosts | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  theforeman.foreman.host:
+    name: "{{ item.name }}"
+    domain: "{{ item.domain | default(omit) }}"
+    realm: "{{ item.realm | default(omit) }}"
+    organization: "{{ item.organization }}"
+    location: "{{ item.location }}"
+    hostgroup: "{{ item.hostgroup | default(omit) }}"
+    environment: "{{ item.environment | default(omit) }}"
+    puppet_proxy: "{{ item.puppet_proxy | default(omit) }}"
+    puppet_ca_proxy: "{{ item.puppet_ca_proxy | default(omit) }}"
+    architecture: "{{ item.architecture | default(omit) }}"
+    operatingsystem: "{{ item.operatingsystem | default(omit) }}"
+    build: "{{ item.build }}"
+    media: "{{ item.media | default(omit) }}"
+    ptable: "{{ item.ptable | default(omit) }}"
+    pxe_loader: "{{ item.pxe_loader | default(omit) }}"
+    # Note Check required for idempotence
+    root_pass: >-
+      {{
+        (item.name not in existing_hostnames)
+        | ternary(item.root_password, omit)
+      }}
+    interfaces_attributes: "{{ item.interfaces_attributes }}"
+    parameters: "{{ item.parameters | default(omit) }}"
+    state: present
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+- name: Configure settings
+  loop: "{{ foreman_settings | default([]) }}"
+  loop_control:
+    loop_var: setting
+    label: "{{ setting.name }}"
+  theforeman.foreman.setting:
+    name: "{{ setting.name }}"
+    value: "{{ setting.value }}"
+    validate_certs: "{{ foreman_cert_validation }}"
+    server_url: "{{ foreman_server_url }}"
+    username: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+
+...

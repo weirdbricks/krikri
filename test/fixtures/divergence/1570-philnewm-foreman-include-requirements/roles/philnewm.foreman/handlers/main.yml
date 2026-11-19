@@ -1,0 +1,21 @@
+---
+
+- name: Restart foreman-proxy
+  become: true
+  ansible.builtin.service:
+    name: foreman-proxy
+    state: restarted
+  notify: Refesh foreman-proxy
+
+- name: Refesh foreman-proxy
+  ansible.builtin.command:
+    cmd: >
+      hammer
+      -u '{{ foreman_default_user }}'
+      -p '{{ foreman_default_password }}'
+      proxy refresh-features
+      --name {{ foreman_host_name }}
+  register: proxy_refresh_features
+  changed_when: proxy_refresh_features.rc == 0
+
+...
