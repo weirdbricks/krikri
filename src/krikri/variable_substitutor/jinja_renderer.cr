@@ -121,8 +121,17 @@ module Krikri
         # reflects the live ENV (GROG.debug-variable's `{{ environment |
         # to_nice_json }}` debug idiom).
         environment = ENV.to_h.transform_values { |value| KrikriJinja::AnyValue.new(value) }
+        template = cached_template(text)
+        # The hostvars-mediated top-level fact reads of a template file
+        # (or a param's block-tag text) warn with no name resolution to
+        # hook: the deprecated value comes back out of a plain Hash
+        # subscript. Emitted before the render, so a render that later
+        # fails still printed the block first, like real.
+        if text.includes?("hostvars")
+          VarSubstitutor.emit_template_hostvars_fact_deprecations(template, @vars)
+        end
         rendered = KrikriJinja.default_engine.render_parsed(
-          cached_template(text), {"environment" => KrikriJinja::AnyValue.new(environment)},
+          template, {"environment" => KrikriJinja::AnyValue.new(environment)},
           resolver: jinja_resolver, undefined: KrikriJinja::Undefined.new(nil, chainable: true),
           host_context: jinja_host_context
         )

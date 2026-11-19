@@ -1,0 +1,13 @@
+frontend kubernetes
+bind {{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}:6443
+option tcplog
+mode tcp
+default_backend kubernetes-master-nodes
+
+backend kubernetes-master-nodes
+mode tcp
+balance roundrobin
+option tcp-check
+server {{hostvars[groups['k8s_master'][0]]['inventory_hostname'] }} {{hostvars[groups['k8s_master'][0]]['guest_custom_ip'] }}:6443 check fall 3 rise 2
+server {{hostvars[groups['k8s_control'][0]]['inventory_hostname'] }} {{hostvars[groups['k8s_control'][0]]['guest_custom_ip'] }}:6443 check fall 3 rise 2
+server {{hostvars[groups['k8s_control'][1]]['inventory_hostname'] }} {{hostvars[groups['k8s_control'][1]]['guest_custom_ip'] }}:6443 check fall 3 rise 2

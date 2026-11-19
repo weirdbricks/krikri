@@ -51,6 +51,7 @@ private DIVERGENCE_CASES = [
   {issue: 1595, slug: "jedimt-customize-vms-hostvars-when"},
   {issue: 1594, slug: "ivansible-cert-cloudflare-reserved-vars"},
   {issue: 1597, slug: "mickengland-ldap-auth-client-debconf-dict"},
+  {issue: 1596, slug: "jedimt-haproxy-hostvars-fact"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -222,6 +223,11 @@ describe "divergence corpus" do
 
   it "replays 1597-mickengland-ldap-auth-client-debconf-dict" do
     expected, actual, report = divergence_transcripts(1597, "mickengland-ldap-auth-client-debconf-dict")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1596-jedimt-haproxy-hostvars-fact" do
+    expected, actual, report = divergence_transcripts(1596, "jedimt-haproxy-hostvars-fact")
     assert_equal(expected, actual, report)
   end
 end

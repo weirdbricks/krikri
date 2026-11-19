@@ -1,0 +1,10 @@
+---
+# The role's diverging task, verbatim except for `path:`: the render fails on
+# the undefined `k8s_master` group before the module writes anything, but a
+# scratch-relative path keeps the case safe from mutation.
+- name: Customize haproxy.cfg
+  ansible.builtin.blockinfile:
+    path: haproxy.cfg
+    block: "{{ lookup('ansible.builtin.template', 'haproxy.j2') }}"
+    insertafter: "errorfile 504 /etc/haproxy/errors/504.http"
+  tags: haproxy.cfg

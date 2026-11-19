@@ -208,6 +208,10 @@ module Krikri
           # render's variable reads to pick up (play_hosts_read_origin).
           VarSubstitutor.push_current_template_file(resolved_path)
           begin
+            # Before the strict probe: real printed the hostvars-mediated
+            # fact deprecation even when the render then failed, and the
+            # probe raises without rendering.
+            VarSubstitutor.emit_template_source_hostvars_fact_deprecations(template_content, render_vars)
             fail_template_render_undefined(template_content, render_vars, resolved_path)
             rendered = renderer.render(template_content)
           ensure

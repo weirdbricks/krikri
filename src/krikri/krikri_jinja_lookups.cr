@@ -125,9 +125,16 @@ module Krikri
       variables = {} of String => AnyValue
       ctx.scopes.each { |scope| scope.each { |key, value| variables[key] = value } }
       extra.each { |key, value| variables[key] = value }
+      parsed = KrikriJinja::Parser.parse(source, KrikriJinja::LexerOptions.new(trim_blocks: true))
+      # A hostvars entry hands back the tagged fact value, so a nested
+      # template reading one (`lookup('template', ...)`) warns with the
+      # FILE as Origin (live-verified vs 2.21.6); emitted before the
+      # render so a later failure still prints it first.
+      if source.includes?("hostvars")
+        VarSubstitutor.emit_template_hostvars_fact_deprecations(parsed, term_probe_vars(ctx))
+      end
       KrikriJinja.default_engine.render_parsed(
-        KrikriJinja::Parser.parse(source, KrikriJinja::LexerOptions.new(trim_blocks: true)),
-        variables, resolver: ctx.resolver, undefined: ctx.undefined, host_context: ctx.host_context
+        parsed, variables, resolver: ctx.resolver, undefined: ctx.undefined, host_context: ctx.host_context
       )
     end
 
@@ -633,15 +640,19 @@ module Krikri
       # (#prepare_lookup_terms) uses; skipped when the template itself
       # carries a lookup/query call, whose strict re-render would
       # execute it twice.
-      unless content.includes?("lookup(") || content.includes?("query(")
-        probe_vars = term_probe_vars(ctx)
-        extra.each { |key, value| probe_vars[key] = KrikriJinja.to_json_any(value) }
-        if message = VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(content, probe_vars)
-          raise TemplateRenderUndefinedError.new(message, resolved)
-        end
-      end
       VarSubstitutor.push_current_template_file(resolved)
       begin
+        # Before the strict probe below: real printed the hostvars-mediated
+        # fact deprecation even when the render then failed, and the probe
+        # raises without rendering.
+        VarSubstitutor.emit_template_source_hostvars_fact_deprecations(content, term_probe_vars(ctx))
+        if !content.includes?("lookup(") && !content.includes?("query(")
+          probe_vars = term_probe_vars(ctx)
+          extra.each { |key, value| probe_vars[key] = KrikriJinja.to_json_any(value) }
+          if message = VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(content, probe_vars)
+            raise TemplateRenderUndefinedError.new(message, resolved)
+          end
+        end
         rendered = render_nested(ctx, content, extra)
       ensure
         VarSubstitutor.pop_current_template_file
