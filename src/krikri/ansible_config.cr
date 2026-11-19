@@ -1,4 +1,5 @@
 require "big"
+require "./ansible_install"
 require "./throttle_value"
 
 module Krikri
@@ -340,39 +341,71 @@ module Krikri
     # "ERROR: <message>" plus traceback.format_exception(ex) - both
     # chained tracebacks, PEP 657 anchors included - on STDERR, and exits
     # 5 with no stdout at all (live-verified vs 2.21.6). The install path
-    # and the tilde/caret runs are the kpg podman image's
-    # (debian:trixie-slim, pip-installed ansible-core 2.21.6, Python
-    # 3.13), captured per line.
+    # and the anchor lines belong to the Python that would run ansible on
+    # THIS host (see AnsibleInstall), not to the kpg podman image they
+    # were first captured from: the generator's Ubuntu 24.04 microVM
+    # reference hosts run Python 3.12, which names python3.12 and still
+    # underlines every call frame where 3.13 prints either no anchor or a
+    # split one (issue #1620).
     def self.invalid_forks_crash_render(raw : String, origin : String) : String
-      pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+      pkg = AnsibleInstall.package_path
       event = "Config 'DEFAULT_FORKS' from #{ThrottleValue.python_repr(origin)} has an invalid value: " \
               "Invalid value provided for 'integer': #{ThrottleValue.python_repr(raw)}"
+      ensure_type_source = "value = ensure_type(value, defs[config].get('type'), origin=origin, origin_ftype=origin_ftype)"
+      ensure_type_call = "ensure_type(value, defs[config].get('type'), origin=origin, origin_ftype=origin_ftype)"
+      get_config_value_source = "value, _drop = self.get_config_value_and_origin(config, cfile=cfile, plugin_type=plugin_type, plugin_name=plugin_name,"
       String.build do |io|
         io << "ERROR: " << event << "\n\n"
         io << "Traceback (most recent call last):\n"
-        io << "  File \"#{pkg}/config/manager.py\", line 697, in get_config_value_and_origin\n"
-        io << "    value = ensure_type(value, defs[config].get('type'), origin=origin, origin_ftype=origin_ftype)\n"
-        io << "  File \"#{pkg}/config/manager.py\", line 111, in ensure_type\n"
-        io << "    value = _ensure_type(value, value_type, origin)\n"
-        io << "  File \"#{pkg}/config/manager.py\", line 225, in _ensure_type\n"
-        io << "    raise ValueError(f'Invalid value provided for {value_type!r}: {original_value!r}')\n"
+        io << forks_trace_frame(pkg, "config/manager.py", 697, "get_config_value_and_origin",
+          ensure_type_source, ensure_type_call)
+        io << forks_trace_frame(pkg, "config/manager.py", 111, "ensure_type",
+          "value = _ensure_type(value, value_type, origin)", "_ensure_type(value, value_type, origin)")
+        io << forks_trace_frame(pkg, "config/manager.py", 225, "_ensure_type",
+          "raise ValueError(f'Invalid value provided for {value_type!r}: {original_value!r}')")
         io << "ValueError: Invalid value provided for 'integer': " << ThrottleValue.python_repr(raw) << "\n\n"
         io << "The above exception was the direct cause of the following exception:\n\n"
         io << "Traceback (most recent call last):\n"
-        io << "  File \"#{pkg}/cli/__init__.py\", line 93, in <module>\n"
-        io << "    from ansible import constants as C\n"
-        io << "  File \"#{pkg}/constants.py\", line 186, in <module>\n"
-        io << "    set_constant(setting, config.get_config_value(setting, variables=vars()))\n"
-        io << " " * 26 << "~" * 23 << "^" * 27 << "\n"
-        io << "  File \"#{pkg}/config/manager.py\", line 559, in get_config_value\n"
-        io << "    value, _drop = self.get_config_value_and_origin(config, cfile=cfile, plugin_type=plugin_type, plugin_name=plugin_name,\n"
-        io << " " * 19 << "~" * 32 << "^" * 71 << "\n"
-        io << " " * 52 << "keys=keys, variables=variables, direct=direct, templar=templar)\n"
-        io << " " * 52 << "^" * 63 << "\n"
-        io << "  File \"#{pkg}/config/manager.py\", line 704, in get_config_value_and_origin\n"
-        io << "    raise AnsibleOptionsError(f'Config {_get_config_label(plugin_type, plugin_name, config)} from {origin!r} has an invalid value.') from ex\n"
+        io << forks_trace_frame(pkg, "cli/__init__.py", 93, "<module>", "from ansible import constants as C")
+        io << forks_trace_frame(pkg, "constants.py", 186, "<module>",
+          "set_constant(setting, config.get_config_value(setting, variables=vars()))",
+          "config.get_config_value(setting, variables=vars())", "config.get_config_value")
+        io << forks_trace_frame(pkg, "config/manager.py", 559, "get_config_value", get_config_value_source,
+          "self.get_config_value_and_origin(config, cfile=cfile, plugin_type=plugin_type, plugin_name=plugin_name,",
+          "self.get_config_value_and_origin")
+        unless AnsibleInstall.caret_lines?
+          # 3.13 prints a multi-line statement whole, with its own anchor
+          # line under the continuation.
+          io << " " * 52 << "keys=keys, variables=variables, direct=direct, templar=templar)\n"
+          io << " " * 52 << "^" * 63 << "\n"
+        end
+        io << forks_trace_frame(pkg, "config/manager.py", 704, "get_config_value_and_origin",
+          "raise AnsibleOptionsError(f'Config {_get_config_label(plugin_type, plugin_name, config)} from {origin!r} has an invalid value.') from ex")
         io << "ansible.errors.AnsibleOptionsError: " << event << "\n\n"
       end
+    end
+
+    # One frame of a counterfeited traceback: the `File "..."` line, its
+    # source line, and the anchor line the host's Python prints under it.
+    # *expression* is the part of *source* the failing instruction covers
+    # and *callee* is its leading call target, which 3.13 marks with `~`
+    # while 3.11/3.12 underline the whole expression; a frame whose
+    # position is its whole statement (a raise, an import) passes neither,
+    # because no version marks those.
+    private def self.forks_trace_frame(pkg : String, rel : String, line : Int32, fn : String,
+                                       source : String, expression : String? = nil,
+                                       callee : String? = nil) : String
+      frame = "  File \"#{pkg}/#{rel}\", line #{line}, in #{fn}\n    #{source}\n"
+      return frame unless expression
+      offset = source.index(expression) || return frame
+      marks = if AnsibleInstall.caret_lines?
+                "^" * expression.size
+              elsif callee
+                "~" * callee.size + "^" * (expression.size - callee.size)
+              else
+                return frame
+              end
+      frame + " " * (4 + offset) + marks + "\n"
     end
   end
 end

@@ -220,6 +220,32 @@ describe "DEFAULT_FORKS validation" do
     end
   end
 
+  # The counterfeited traceback used to be the kpg podman image's Python
+  # 3.13 verbatim, but the generator's reference hosts also include Ubuntu
+  # 24.04 microVMs, whose Python 3.12 names its own install path and still
+  # underlines every call frame (issue #1620). The two transcripts are
+  # real ansible-core 2.21.6 stderr, captured from ubuntu:24.04 (Python
+  # 3.12.3) and debian:trixie-slim (Python 3.13.5).
+  it "renders the refused ANSIBLE_FORKS crash for the controller's own Python" do
+    with_forks_playbook do |dir|
+      fixtures = File.expand_path("../fixtures/ansible_config", __DIR__)
+      {"3.12" => "forks_crash_py312.stderr", "3.13" => "forks_crash_py313.stderr"}.each do |minor, fixture|
+        bindir = File.join(dir, "python-#{minor}")
+        Dir.mkdir_p(bindir)
+        shim = File.join(bindir, "python3")
+        File.write(shim, "#!/bin/sh\necho /usr/local/lib/python#{minor}/dist-packages\n")
+        File.chmod(shim, 0o755)
+
+        err_io = IO::Memory.new
+        status = Process.run(FORKS_BINARY, ["-i", "inv.ini", "pb.yml"],
+          output: IO::Memory.new, error: err_io, chdir: dir,
+          env: {"ANSIBLE_FORKS" => "kpg-many", "PATH" => "#{bindir}:#{ENV["PATH"]?}"})
+        status.exit_code.must_equal(5, minor)
+        err_io.to_s.must_equal(File.read(File.join(fixtures, fixture)), minor)
+      end
+    end
+  end
+
   # The accepted spelling still has to reach the run: DEFAULT_FORKS is
   # what ansible_forks reports when no -f/--forks is given.
   it "takes the fork count from a valid ANSIBLE_FORKS" do

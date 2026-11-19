@@ -1,0 +1,28 @@
+ERROR: Config 'DEFAULT_FORKS' from 'env: ANSIBLE_FORKS' has an invalid value: Invalid value provided for 'integer': 'kpg-many'
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/ansible/config/manager.py", line 697, in get_config_value_and_origin
+    value = ensure_type(value, defs[config].get('type'), origin=origin, origin_ftype=origin_ftype)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/ansible/config/manager.py", line 111, in ensure_type
+    value = _ensure_type(value, value_type, origin)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/ansible/config/manager.py", line 225, in _ensure_type
+    raise ValueError(f'Invalid value provided for {value_type!r}: {original_value!r}')
+ValueError: Invalid value provided for 'integer': 'kpg-many'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/ansible/cli/__init__.py", line 93, in <module>
+    from ansible import constants as C
+  File "/usr/local/lib/python3.12/dist-packages/ansible/constants.py", line 186, in <module>
+    set_constant(setting, config.get_config_value(setting, variables=vars()))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/ansible/config/manager.py", line 559, in get_config_value
+    value, _drop = self.get_config_value_and_origin(config, cfile=cfile, plugin_type=plugin_type, plugin_name=plugin_name,
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/ansible/config/manager.py", line 704, in get_config_value_and_origin
+    raise AnsibleOptionsError(f'Config {_get_config_label(plugin_type, plugin_name, config)} from {origin!r} has an invalid value.') from ex
+ansible.errors.AnsibleOptionsError: Config 'DEFAULT_FORKS' from 'env: ANSIBLE_FORKS' has an invalid value: Invalid value provided for 'integer': 'kpg-many'
+
