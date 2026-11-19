@@ -747,8 +747,11 @@ module Krikri
       "community.vmware.vmware_cluster"     => {warning_text: "Use vmware.vmware.cluster instead.", collection: "community.vmware", version: "6.0.0"},
       "community.vmware.vmware_cluster_drs" => {warning_text: "Use vmware.vmware.cluster_drs instead.", collection: "community.vmware", version: "6.0.0"},
       "community.vmware.vmware_cluster_ha"  => {warning_text: "Use vmware.vmware.cluster_ha instead.", collection: "community.vmware", version: "7.0.0"},
-      "community.vmware.vmware_host"        => {warning_text: "Use vmware.vmware.esxi_host and vmware.vmware.esxi_connection instead.", collection: "community.vmware", version: "7.0.0"},
-      "community.vmware.vcenter_folder"     => {warning_text: "Use vmware.vmware.folder instead.", collection: "community.vmware", version: "7.0.0"},
+      # jedimt.deploy_vms (issue #1567) loads this one too; real still
+      # warns at task-load time even though the run itself fails.
+      "community.vmware.vmware_guest_powerstate" => {warning_text: "Use vmware.vmware.vm_powerstate instead.", collection: "community.vmware", version: "7.0.0"},
+      "community.vmware.vmware_host"             => {warning_text: "Use vmware.vmware.esxi_host and vmware.vmware.esxi_connection instead.", collection: "community.vmware", version: "7.0.0"},
+      "community.vmware.vcenter_folder"          => {warning_text: "Use vmware.vmware.folder instead.", collection: "community.vmware", version: "7.0.0"},
       # Windows-only module, never executed on a Linux target; the
       # load-time warning still prints (MindPointGroup.windows22_stig round).
       "community.windows.win_audit_policy_system" => {warning_text: "win_audit_policy_system will be removed in a future release of this collection. Use ansible.windows.win_audit_policy_system instead.", collection: "community.windows", version: "4.0.0"},

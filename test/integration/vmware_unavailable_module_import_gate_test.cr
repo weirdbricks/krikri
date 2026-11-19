@@ -72,6 +72,13 @@ private VMWARE_CLUSTER_WARNING = "[DEPRECATION WARNING]: community.vmware.vmware
                                  "Use vmware.vmware.cluster instead. " \
                                  "This feature will be removed from collection 'community.vmware' version 6.0.0."
 
+private DEPRECATED_POWERSTATE = [
+  "    - name: power on vms",
+  "      community.vmware.vmware_guest_powerstate:",
+  "        name: testvm",
+  "        state: powered-on",
+]
+
 describe "unported community.vmware module import gate" do
   it "fails the first task with the missing-library error instead of skipping under --check" do
     skip "python on this host can import requests and PyVmomi" if vmware_gate_skips?
@@ -180,5 +187,17 @@ describe "unported community.vmware module import gate" do
     output.must_include("[DEPRECATION WARNING]: community.vmware.vmware_cluster_ha has been deprecated. " \
                         "Use vmware.vmware.cluster_ha instead. " \
                         "This feature will be removed from collection 'community.vmware' version 7.0.0.")
+  end
+
+  it "prints the vmware_guest_powerstate deprecation for the role's own power-on task" do
+    skip "python on this host can import requests and PyVmomi" if vmware_gate_skips?
+
+    _status, output, path = run_vmware_playbook((PLAY_HEADER + DEPRECATED_POWERSTATE).join("\n") + "\n", check: true)
+
+    output.must_include("[DEPRECATION WARNING]: community.vmware.vmware_guest_powerstate has been deprecated. " \
+                        "Use vmware.vmware.vm_powerstate instead. " \
+                        "This feature will be removed from collection 'community.vmware' version 7.0.0.")
+    output.must_include("Origin: #{path}:6:7")
+    output.must_include("6       community.vmware.vmware_guest_powerstate:")
   end
 end
