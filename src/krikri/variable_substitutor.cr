@@ -994,6 +994,66 @@ module Krikri
     rendered.is_a?(VariableSubstitutor::Undefined) ? nil : rendered
   end
 
+  # A filter chain wrapped in its own parentheses - `(r.content |
+  # from_json)` - whose head subscripts a resolvable dict it has no key
+  # for. Ansible evaluates the head before the first filter runs, so the
+  # miss fails arg finalization with the dict-attribute wording
+  # (`object of type 'dict' has no attribute 'content'`); without this
+  # probe the undefined only reached the filter, which failed on the
+  # empty text it had been rendered to (`from_json`: "Expecting value:
+  # line 1 column 1 (char 0)"). A tolerant first filter (`| default(...)`,
+  # the same set undefined_tolerant_first_filter? honors for the
+  # unparenthesized chain probe) consumes the undefined before anything
+  # chokes on it and stays lenient. dict_attribute_miss_name keeps every
+  # shape it cannot name out, so no evaluator gap turns into a failure.
+  def self.parenthesized_filter_chain_miss(expr : String, vars : Hash(String, JSON::Any)) : String?
+    parenthesized_groups(expr).each do |group|
+      parts = VariableSubstitutor::FilterEngine.split_chain(group)
+      next if parts.size < 2
+      next if undefined_tolerant_first_filter?(group)
+      source = parts[0].strip
+      next unless source.matches?(PLAIN_CHAIN_SHAPE)
+      if missing_key = dict_attribute_miss_name(source, vars)
+        return missing_key
+      end
+    end
+    nil
+  end
+
+  # Contents of every parenthesized group in *expr*, innermost first,
+  # quote-aware so a parenthesis inside a string literal is never a group
+  # delimiter. Malformed (unbalanced) text contributes nothing.
+  private def self.parenthesized_groups(expr : String) : Array(String)
+    groups = [] of String
+    opens = [] of Int32
+    quote : Char? = nil
+    i = 0
+    while i < expr.size
+      char = expr[i]
+      if q = quote
+        if char == '\\' && i + 1 < expr.size
+          i += 2
+          next
+        end
+        quote = nil if char == q
+      else
+        case char
+        when '\'', '"'
+          quote = char
+        when '('
+          opens << i
+        when ')'
+          if (open = opens.pop?)
+            groups << expr[(open + 1)...i]
+          end
+        else
+        end
+      end
+      i += 1
+    end
+    groups
+  end
+
   # The KEY as ansible would subscript with it: a quoted literal or
   # `.attr` is a string, and a dynamic bracket key resolves to its
   # STRUCTURED value (a bare/chain reference through the VariableLookup -
@@ -5238,6 +5298,17 @@ module Krikri
         # arm the guard reads, so the root must not be blamed up front.
         if (output || !inner.matches?(/\s(if|else)\s/)) && (undefined_name = Krikri.undefined_access_chain_source(inner, @vars))
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars)) unless Krikri.undefined_tolerant_first_filter?(inner)
+        end
+        # A filter chain's head inside its own parens - `(r.content |
+        # from_json).tag_name` - starts with `(` and so escapes every probe
+        # above (the access-chain probe wants a leading identifier, and
+        # split_chain sees no top-level pipe), leaving the miss to surface
+        # as the first filter's own input error instead of Ansible's
+        # dict-attribute wording. Not for a conditional: only the selected
+        # arm is evaluated, so a miss in the other arm must stay silent.
+        if (output || !inner.matches?(/\s(if|else)\s/)) &&
+           (miss = Krikri.parenthesized_filter_chain_miss(inner, @vars))
+          raise UndefinedVariableError.new(Krikri.dict_attribute_miss_message(miss, Krikri.miss_type))
         end
         # Issue #101 (round-confirmed vs ansible-core 2.19): indexing PAST
         # THE END of a list a method call produced (`s.split(':')[1]` with

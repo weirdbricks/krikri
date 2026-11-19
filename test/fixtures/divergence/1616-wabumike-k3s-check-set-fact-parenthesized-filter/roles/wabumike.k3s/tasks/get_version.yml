@@ -1,0 +1,13 @@
+---
+
+- name: Find latest version of k3s
+  uri:
+    url: "https://api.github.com/repos/rancher/k3s/releases/latest"
+    return_content: yes
+  register: k3s_latest_release
+  when: k3s_version is not defined or not k3s_version
+
+- name: Set k3s_release to latest releases
+  set_fact:
+    k3s_version: "{{ (k3s_latest_release.content | from_json).tag_name }}"
+  when: k3s_version is not defined or not k3s_version

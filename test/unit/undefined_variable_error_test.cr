@@ -355,4 +355,40 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       end
     end
   end
+
+  # Issue #1616 (wabumike.k3s): the role registers a check-mode-skipped
+  # result (no `content` key) and pipes it through from_json. Ansible's
+  # Jinja evaluates `k3s_latest_release.content` before the filter runs, so
+  # it reports the dict-attribute miss and the filter never executes; this
+  # engine rendered the miss as empty text and failed with from_json's own
+  # "Expecting value: line 1 column 1 (char 0)" instead.
+  describe "strict undefined in a parenthesized filter-chain head (issue #1616)" do
+    private def sub_with(r : String)
+      Krikri::VarSubstitutor.new(vars: {"r" => JSON.parse(r)}, host_name: "h1")
+    end
+
+    it "raises the dict-attribute miss instead of the filter's own input error" do
+      assert_raises_message(Krikri::UndefinedVariableError, /object of type 'dict' has no attribute 'content'/) do
+        sub_with(%({"changed": false, "failed": false, "skipped": true}))
+          .substitute(%({{ (r.content | from_json).tag_name }}), strict: true)
+      end
+    end
+
+    it "words the bracket-subscript form the same way" do
+      assert_raises_message(Krikri::UndefinedVariableError, /object of type 'dict' has no attribute 'content'/) do
+        sub_with(%({"skipped": true}))
+          .substitute(%({{ (r['content'] | from_json).tag_name }}), strict: true)
+      end
+    end
+
+    it "keeps a tolerant first filter lenient" do
+      sub_with(%({"skipped": true}))
+        .substitute(%({{ (r.content | default('fallback')) }}), strict: true).must_equal("fallback")
+    end
+
+    it "still renders the chain when the key exists" do
+      sub_with(%({"content": "{\\"tag_name\\":\\"v2\\"}"}))
+        .substitute(%({{ (r.content | from_json).tag_name }}), strict: true).must_equal("v2")
+    end
+  end
 end
