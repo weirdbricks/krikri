@@ -1,0 +1,27 @@
+---
+deploy:
+  app: "App"
+  env: "{{ env|upper() }}"
+  version: "{{ version }}"
+  region: "us-west-2"
+  ami:
+    terminate_when_finish: True
+  lc:
+    security_group: []
+    instance_type: "t1.micro"
+    user_data: ""
+    iam_role: ""
+    monitoring: no
+  asg:
+    wait_timeout: 3600
+    desired_capacity: 1
+    tags:
+      - Name: "App"
+      - Version: "{{ version }}"
+    subnet: []
+  slack:
+    username: "Ansible"
+    channel: deploys
+    icon_emoji: ":bot:"
+    message: "Deploy App environment"
+    description: "Environment deployed by Ansible"

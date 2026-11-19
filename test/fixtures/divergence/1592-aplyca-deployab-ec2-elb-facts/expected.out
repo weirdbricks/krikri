@@ -1,0 +1,8 @@
+[ERROR]: couldn't resolve module/action 'ec2_elb_facts'. This often indicates a misspelling, missing collection, or incorrect module path.
+Origin: <WORK>/roles/Aplyca.deployab/tasks/main.yml:13:3
+
+11   when: version == ""
+12
+13 - name: Get ELB facts
+     ^ column 3
+

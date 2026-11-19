@@ -1,0 +1,11 @@
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  # The role's own defaults provide the rest; env/version are the two the
+  # play is expected to supply. Both are irrelevant to this case - real
+  # refuses the playbook at LOAD time, before any variable is templated.
+  vars:
+    env: "a"
+    version: "1"
+  roles:
+    - Aplyca.deployab
