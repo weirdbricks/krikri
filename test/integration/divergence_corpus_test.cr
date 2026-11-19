@@ -48,6 +48,7 @@ private DIVERGENCE_CASES = [
   {issue: 1587, slug: "rooland-provisioning-atom-editor-install-atom-editor"},
   {issue: 1592, slug: "aplyca-deployab-ec2-elb-facts"},
   {issue: 1591, slug: "anthony25-postfix-ipwrap"},
+  {issue: 1595, slug: "jedimt-customize-vms-hostvars-when"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -204,6 +205,11 @@ describe "divergence corpus" do
 
   it "replays 1591-anthony25-postfix-ipwrap" do
     expected, actual, report = divergence_transcripts(1591, "anthony25-postfix-ipwrap")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1595-jedimt-customize-vms-hostvars-when" do
+    expected, actual, report = divergence_transcripts(1595, "jedimt-customize-vms-hostvars-when")
     assert_equal(expected, actual, report)
   end
 end

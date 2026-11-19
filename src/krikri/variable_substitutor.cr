@@ -853,6 +853,11 @@ module Krikri
   # silently-undefined value).
   PLAIN_CHAIN_WITH_CALLS_SHAPE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\]|\([^()]*\))*\z/
 
+  # A plain-chain OPERAND inside a larger expression, with quoted bracket
+  # keys kept verbatim (`hostvars['localhost'].x`) rather than blanked out -
+  # see plain_chain_operands.
+  QUOTED_KEY_CHAIN_SHAPE = /[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:'[^']*'|"[^"]*"|[^\[\]])*\])+/
+
   def self.dict_attribute_miss_name(expr : String, vars : Hash(String, JSON::Any)) : String?
     @@miss_type = "dict"
     @@miss_key_json = nil
@@ -1338,6 +1343,43 @@ module Krikri
     open
   end
 
+  # The plain-chain operands of a `when:`-style expression, for the probe's
+  # operand walk. A quoted literal INSIDE a bracket key is part of the chain
+  # (`hostvars['localhost']['skip_vm_check']`), so blanking every quoted
+  # span leaves `hostvars[ ][ ]` - a shape the walker cannot type - and a
+  # miss on the hostvars entry then falls back to 'dict' where real Ansible
+  # names its HostVarsVars wrapper (issue #1595, live-verified vs 2.21.6).
+  # Quoted spans are still skipped so a chain that only appears inside a
+  # string literal is never mistaken for an operand.
+  private def self.plain_chain_operands(expr : String) : Array(String)
+    spans = quoted_literal_spans(expr)
+    operands = [] of String
+    expr.scan(QUOTED_KEY_CHAIN_SHAPE).each do |match|
+      start = match.begin(0)
+      next if spans.any? { |(from, to)| start >= from && start < to }
+      operands << match[0]
+    end
+    operands
+  end
+
+  private def self.quoted_literal_spans(expr : String) : Array({Int32, Int32})
+    spans = [] of {Int32, Int32}
+    quote : Char? = nil
+    from = 0
+    expr.each_char.with_index do |char, i|
+      if q = quote
+        if char == q
+          spans << {from, i + 1}
+          quote = nil
+        end
+      elsif char == '\'' || char == '"'
+        from = i
+        quote = char
+      end
+    end
+    spans
+  end
+
   # The strict-undefined PROBE for missing-attribute access on NATIVE
   # dict/list/scalar values (ansible-core 2.19 StrictUndefined semantics,
   # live-verified against 2.19.11): re-evaluates *expr* ONCE on the
@@ -1416,8 +1458,8 @@ module Krikri
     # let the one carrying the blamed attribute name the miss; a blamed
     # attribute no candidate explains keeps the engine's own wording.
     if msg.includes?("has no attribute") && (blamed = msg.match(/has no attribute '([^']+)'\z/))
-      expr.gsub(/'[^']*'|"[^"]*"/, " ").scan(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\])+/).each do |cand|
-        if (missing_key = Krikri.dict_attribute_miss_name(cand[0], vars)) && missing_key == blamed[1]
+      plain_chain_operands(expr).each do |cand|
+        if (missing_key = Krikri.dict_attribute_miss_name(cand, vars)) && missing_key == blamed[1]
           return Krikri.dict_attribute_miss_message(missing_key, Krikri.miss_type)
         end
       end

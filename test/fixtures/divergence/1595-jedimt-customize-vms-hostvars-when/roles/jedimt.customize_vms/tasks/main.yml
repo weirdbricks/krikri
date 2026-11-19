@@ -1,0 +1,47 @@
+---
+# tasks file for jedimt.customize_vms
+
+# Wait for SSH to come online so we know the VMs are up
+- name: Wait for SSH
+  when: not hostvars['localhost']['skip_vm_check']
+  ansible.builtin.wait_for:
+    port: 22
+    delay: 2
+    timeout: 300
+    host: "{{ inventory_hostname }}"
+  connection: local
+  tags: service
+  changed_when: false
+
+# Install some packages required
+- name: Remove CDROM apt source if it exists
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list
+    search_string: 'deb [check-date=no] file:///cdrom focal main restricted'
+    line: "# Removed CDROM source"
+
+- name: Update apt and install packages
+  ansible.builtin.apt:
+    name:
+      - python3-testresources
+      - lsscsi
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Get the grow_ubuntu_root_vm.sh script
+- name: Copy grow_ubuntu_root_vm.sh script to VM
+  ansible.builtin.copy:
+    src: grow_ubuntu_root_vm.sh
+    dest: ~/
+    mode: '0755'
+  tags: get_script
+
+# Execute the script to grow the root volume
+- name: Execute grow_ubuntu_root_vm.sh script
+  ansible.builtin.command:
+    ~/grow_ubuntu_root_vm.sh
+  register: script_output
+  tags: get_script
+  changed_when: "'CHANGED:' in script_output.stdout"
+

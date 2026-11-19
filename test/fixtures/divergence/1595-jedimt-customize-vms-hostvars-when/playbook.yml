@@ -1,0 +1,8 @@
+---
+# The failing task is the role's first one, so no later task can run and
+# nothing on the machine is touched.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - jedimt.customize_vms
