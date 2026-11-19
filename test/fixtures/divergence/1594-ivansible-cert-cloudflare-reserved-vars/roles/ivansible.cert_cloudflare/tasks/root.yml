@@ -1,0 +1,57 @@
+---
+# root.yml from the role, trimmed to the two include statements whose task
+# vars the case pins. The role's first task (import_role:
+# ivansible.cert_base, tasks_from: install.yml) is the one that aborted the
+# play on the round's rocky host, before either include was reached; it is
+# replaced by a localhost-safe fail: with the same effect. The two include
+# statements below are copied verbatim.
+- name: install certbot
+  fail:
+    msg: add certbot ppa repository failed
+
+- name: setup letsencrypt account registration
+  include_tasks: account.yml
+  args:
+    apply:
+      become: true
+      tags: cert_cf_accounts
+  vars:
+    name: "{{ item.name }}"
+    active: "{{ item.active |default(true) |bool }}"
+    server: "{{ item.server }}"
+    hash: "{{ item.hash }}"
+    account_dir: "{{ certbot_dir }}/accounts/{{ server }}/directory/{{ hash }}"
+  when:
+    - active |bool
+    - server == certbot_acme_server
+    - certbot_renewal_enable |bool
+  loop: "{{ certbot_acme_accounts }}"
+  loop_control:
+    label: "{{ name }}"
+  tags: cert_cf_accounts
+
+
+- name: produce letsencrypt certificates
+  include_tasks: certificate.yml
+  args:
+    apply:
+      become: true
+      tags:
+        - cert_cf_certificate
+        - cert_cf_certs
+        - cert_cf_all
+  vars:
+    name: "{{ item.name }}"
+    active: "{{ item.active |default(true) |bool }}"
+    domains: "{{ item.domains |flatten }}"
+    rsa: "{{ item.rsa |default(false) |bool }}"
+    existing: "{{ item.existing |default('autoremove') }}"
+    cert_subdir: "{{ certbot_live_dir }}/{{ name }}"
+    cert_arch_subdir: "{{ certbot_arch_dir }}/{{ name }}"
+  when:
+    - active |bool
+    - certbot_renewal_enable |bool
+  loop: "{{ certbot_certificates }}"
+  loop_control:
+    label: "{{ name }}"
+  tags: cert_cf_certs

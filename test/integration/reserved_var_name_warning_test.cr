@@ -147,6 +147,113 @@ describe "reserved variable name warning" do
     FileUtils.rm_rf(dir) if dir
   end
 
+  # issue #1594 (ivansible.cert_cloudflare): ansible's load_list_of_tasks
+  # get_vars's every include_tasks:/import_tasks: statement while loading
+  # it, so these warn BEFORE the PLAY banner and even when an earlier
+  # failure means the statement is never reached. Only a plain task's
+  # vars wait for execution (the #473 tests below).
+  it "warns at load for an include_tasks reserved var the play never reaches" do
+    dir = File.tempname("reserved-var-unreached-include")
+    Dir.mkdir_p(dir)
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - fail: msg=boom
+          - name: setup account
+            include_tasks: inc.yml
+            vars:
+              name: x
+      YAML
+    File.write(File.join(dir, "inc.yml"), "- debug: msg=hi\n")
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: dir)
+    text = output.to_s
+
+    text.must_include("[WARNING]: Found variable using reserved name 'name'.")
+    text.must_include("Origin: #{playbook}:8:9")
+    text.must_include("fatal: [localhost]")
+    warn_at = text.index!("[WARNING]: Found variable using reserved name")
+    play_at = text.index!("PLAY [")
+    (warn_at < play_at).must_equal(true)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "warns at load for an import_tasks reserved var the play never reaches" do
+    dir = File.tempname("reserved-var-unreached-import")
+    Dir.mkdir_p(dir)
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - fail: msg=boom
+          - name: setup account
+            import_tasks: inc.yml
+            vars:
+              lookup: x
+      YAML
+    File.write(File.join(dir, "inc.yml"), "- debug: msg=hi\n")
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: dir)
+    text = output.to_s
+
+    text.must_include("[WARNING]: Found variable using reserved name 'lookup'.")
+    text.must_include("Origin: #{playbook}:8:9")
+    warn_at = text.index!("[WARNING]: Found variable using reserved name")
+    play_at = text.index!("PLAY [")
+    (warn_at < play_at).must_equal(true)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  # import_role: is statically spliced and get_vars'd at load exactly like
+  # import_tasks:, while include_role: (the dynamic form, covered above)
+  # only sees get_vars when the statement runs - unreached stays silent.
+  it "warns at load for an unreached import_role reserved var but not for an unreached include_role" do
+    dir = File.tempname("reserved-var-role-import")
+    Dir.mkdir_p(File.join(dir, "roles", "myrole", "tasks"))
+    File.write(File.join(dir, "roles", "myrole", "tasks", "main.yml"), "- debug: msg=hi\n")
+    import_playbook = File.join(dir, "pb_import.yml")
+    File.write(import_playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - fail: msg=boom
+          - name: call role
+            import_role:
+              name: myrole
+            vars:
+              name: x
+      YAML
+    include_playbook = File.join(dir, "pb_include.yml")
+    File.write(include_playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - fail: msg=boom
+          - name: call role
+            include_role:
+              name: myrole
+            vars:
+              name: x
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, import_playbook], output: output, error: output, chdir: dir)
+    text = output.to_s
+    text.must_include("[WARNING]: Found variable using reserved name 'name'.")
+    text.must_include("Origin: #{import_playbook}:9:9")
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, include_playbook], output: output, error: output, chdir: dir)
+    refute(output.to_s.includes?("Found variable using reserved name"))
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   # issue #473 (danielmschmidt.ansible_docker_systemd_traefik_service):
   # ansible warns a task's reserved-name vars from get_vars, i.e. only
   # when the strategy reaches the task - an earlier failure that ends the

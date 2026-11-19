@@ -1,0 +1,33 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [ivansible.cert_cloudflare : install certbot] *****************************
+[ERROR]: Task failed: Action failed: add certbot ppa repository failed
+Origin: <WORK>/roles/ivansible.cert_cloudflare/tasks/root.yml:8:3
+
+6 # replaced by a localhost-safe fail: with the same effect. The two include
+7 # statements below are copied verbatim.
+8 - name: install certbot
+    ^ column 3
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "add certbot ppa repository failed"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Found variable using reserved name 'name'.
+Origin: <WORK>/roles/ivansible.cert_cloudflare/tasks/root.yml:19:5
+
+17       tags: cert_cf_accounts
+18   vars:
+19     name: "{{ item.name }}"
+       ^ column 5
+
+[WARNING]: Found variable using reserved name 'name'.
+Origin: <WORK>/roles/ivansible.cert_cloudflare/tasks/root.yml:44:5
+
+42         - cert_cf_all
+43   vars:
+44     name: "{{ item.name }}"
+       ^ column 5
+

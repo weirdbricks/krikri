@@ -1,0 +1,10 @@
+---
+# The round's site.yml (work/engines/ansible/site.yml) adapted to localhost.
+# gather_facts stays false so the case cannot depend on the machine's facts;
+# the play stops at the role's own first task, exactly like the rocky host
+# did, before either include statement is reached.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - ivansible.cert_cloudflare

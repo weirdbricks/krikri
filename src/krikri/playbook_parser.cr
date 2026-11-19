@@ -2514,7 +2514,13 @@ module Krikri
       if pos = source_map.at?(task_source_prefix(source_prefix, index))
         task.source_line, task.source_col = pos
       end
-      warn_reserved_vars(task.vars.keys, task.source_file, task.source_line, task)
+      # ansible's load_list_of_tasks get_vars's an include_tasks:/
+      # import_role: statement while loading it, so its vars warn before
+      # the play starts even if the statement is never reached (issue
+      # #1594). Only include_role: waits for execution.
+      load_time_warning = task.include_tasks? || (task.include_role? && task.is_static_import?)
+      warn_reserved_vars(task.vars.keys, task.source_file, task.source_line,
+        load_time_warning ? nil : task, immediate: load_time_warning)
       warn_reserved_register(task.register, task.source_file, task.source_line, task)
 
       # The task's own `vars:` entries' defining positions - real points a
@@ -3626,6 +3632,18 @@ module Krikri
       # own wording inside a handler, live-verified vs 2.19.11).
       if (import_vars_raw = hash["vars"]?) && !import_vars_raw.raw.nil? && import_vars_raw.as_h?.nil?
         raise_non_dict_vars(handler ? "HandlerTaskInclude" : "TaskInclude", source_file, source_map, task_source_prefix(source_prefix, source_index))
+      end
+
+      # load_list_of_tasks get_vars's the import_tasks: statement itself
+      # (see warn_reserved_vars' immediate comment), so its own vars warn
+      # here, before the check_options/file resolution below that real
+      # reaches afterwards.
+      if import_vars = hash["vars"]?.try(&.as_h?)
+        import_line = 1
+        if source_map && (pos = source_map.at?(task_source_prefix(source_prefix, source_index)))
+          import_line = pos[0]
+        end
+        warn_reserved_vars(import_vars.keys.map(&.to_s), source_file, import_line, immediate: true)
       end
 
       # Ansible's TaskInclude.check_options runs at PLAYBOOK-LOAD
@@ -5760,7 +5778,20 @@ module Krikri
       result
     end
 
-    private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32, task : Task? = nil) : Nil
+    # ansible's load_list_of_tasks calls VariableManager.get_vars for every
+    # include_tasks:/import_tasks:/import_role: statement while it is being
+    # loaded (helpers.py), so that statement's reserved-name vars warn
+    # before the play starts - and still warn when an earlier failure means
+    # it is never reached (live-verified vs 2.21.6, issue #1594). These are
+    # not buffered: a load a later task refuses still prints the warnings
+    # load_list_of_tasks already emitted. Deduped on the whole rendered
+    # block, like Display's own warning dedupe, for a role the loader parses
+    # more than once. include_role: is absent on purpose - real only calls
+    # get_vars for it when the statement runs, not at load.
+    @@reserved_immediate_warnings = Set(String).new
+    RESERVED_IMMEDIATE_WARN_MUTEX = Mutex.new
+
+    private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32, task : Task? = nil, immediate : Bool = false) : Nil
       return unless sf = source_file
       # Runs once per parsed task: the key check comes before any
       # filesystem work, so tasks without a reserved-name var (the
@@ -5772,14 +5803,14 @@ module Krikri
         next unless RESERVED_VAR_NAMES.includes?(key)
         found = locate_reserved_key(lines, key, from_line)
         next unless found
-        emit_reserved_warning(key, sf, lines, found, task)
+        emit_reserved_warning(key, sf, lines, found, task, immediate)
       end
     end
 
     # Shared emit for every task-parse-path reserved-name warning: the
     # Origin block already ends in a newline, so one more gives the blank
     # line ansible prints after it.
-    private def self.emit_reserved_warning(key : String, source_file : String, lines : Array(String), found : Tuple(Int32, Int32), task : Task? = nil) : Nil
+    private def self.emit_reserved_warning(key : String, source_file : String, lines : Array(String), found : Tuple(Int32, Int32), task : Task? = nil, immediate : Bool = false) : Nil
       text = "[WARNING]: Found variable using reserved name '#{key}'.\n" \
              "#{reserved_origin_block(source_file, lines, found[0], found[1])}\n"
       # A task-level scan defers onto the Task object instead: ansible
@@ -5787,6 +5818,14 @@ module Krikri
       # runs, so a play aborted before it must stay silent (issue #473).
       if task
         task.pending_reserved_warning = "#{task.pending_reserved_warning}#{text}"
+        return
+      end
+      if immediate
+        RESERVED_IMMEDIATE_WARN_MUTEX.synchronize do
+          return if @@reserved_immediate_warnings.includes?(text)
+          @@reserved_immediate_warnings << text
+        end
+        STDERR.print text
         return
       end
       if @@reserved_warning_buffers.empty?
