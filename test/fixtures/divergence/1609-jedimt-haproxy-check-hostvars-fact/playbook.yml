@@ -1,0 +1,9 @@
+---
+# krikri-role-tester ran the role against its testhost inventory; only the
+# play is adapted to localhost. The role's `Install HAProxy` apt task is
+# dropped (it mutates the machine), leaving the divergent task verbatim.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - jedimt.haproxy
