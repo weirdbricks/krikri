@@ -734,6 +734,46 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "hard-stops the parse for the community.aws-qualified spelling of ec2_elb_facts too" do
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        /couldn't resolve module\/action 'community\.aws\.ec2_elb_facts'/) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed module
+                community.aws.ec2_elb_facts:
+          YAML
+        )
+      end
+    end
+
+    it "hard-stops at the FIRST unresolvable module in task order, not a later tombstoned one (Aplyca.deployab)" do
+      # issue #1592: real refuses the role at its "Get ELB facts"
+      # ec2_elb_facts task (line 13). While only the later
+      # ec2_remote_facts task was tombstoned, this engine ran past the
+      # first refusal and reported the LATER task's name and Origin -
+      # real's load-time check stops at the first name it cannot resolve
+      # and never reaches the second.
+      error = assert_raises(Krikri::UnresolvedModuleError) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: Fail the play if version was not provided
+                fail: msg="No version provided"
+                when: version == ""
+              - name: Get ELB facts
+                ec2_elb_facts:
+                  names: demo-a
+              - name: Get Instance AMI facts
+                ec2_remote_facts:
+                  filters: {}
+          YAML
+        )
+      end
+      assert_includes(error.message.to_s, "'ec2_elb_facts'")
+      refute_includes(error.message.to_s, "'ec2_remote_facts'")
+    end
+
     it "hard-stops the parse for a module removed from community.general in v10 (consul_acl)" do
       # community.general removed `consul_acl` in v10.0.0 (its own
       # runtime.yml tombstones the FQCN), so ansible-playbook refuses

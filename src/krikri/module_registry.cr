@@ -949,6 +949,23 @@ module Krikri
       "ansible.builtin.ec2_remote_facts" => nil,
       "ansible.legacy.ec2_remote_facts"  => nil,
       "amazon.aws.ec2_remote_facts"      => nil,
+      # community.aws deprecated ec2_elb_facts in 2.0.0 with
+      # removal_version 3.0.0 and ships no module or routing entry for
+      # it since, while ansible_builtin_runtime.yml still redirects the
+      # bare name onto community.aws.ec2_elb_facts - a target no current
+      # collection defines, so real refuses the whole playbook at load
+      # with the generic couldn't-resolve wording, rc=4 (probed real
+      # 2.21.6: bare, ansible.builtin.-, ansible.legacy.- and
+      # community.aws.-qualified spellings all name the AS-WRITTEN
+      # spelling). Aplyca.deployab (round 29918091, issue #1592) lists
+      # it at "Get ELB facts" ahead of the role's own ec2_remote_facts
+      # task; while only the latter was tombstoned this engine ran on
+      # and refused at the LATER task, reporting a different name and
+      # Origin than real's first unresolvable task.
+      "ec2_elb_facts"                 => nil,
+      "ansible.builtin.ec2_elb_facts" => nil,
+      "ansible.legacy.ec2_elb_facts"  => nil,
+      "community.aws.ec2_elb_facts"   => nil,
       # Removed from community.general in v10.0.0 (its own runtime.yml
       # tombstones the FQCN), so every controller on a current
       # collection hard-fails on it (idealista.consul-role, round 033).
