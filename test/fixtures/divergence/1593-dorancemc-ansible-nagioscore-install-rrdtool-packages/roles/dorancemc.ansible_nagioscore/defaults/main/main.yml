@@ -1,0 +1,7 @@
+---
+time_zone: America/Bogota
+
+digitalcertificate:
+  source_path: httpd
+  file: nagios.local.cer
+  key: nagios.local.key

@@ -1,0 +1,74 @@
+---
+
+base_html_path: /var/www/html/
+
+nagios:
+  user: nagios
+  group: nagios
+  command_group: nagios
+  service_name: nagios
+  command: /usr/sbin/nagios
+  cgibin_path: /usr/lib64/nagios/cgi-bin
+  url_path: nagios/
+  html_shared_path: /usr/share/nagios/html
+  passwd_file: /etc/nagios/passwd
+  var_spool_path: /var/spool/nagios
+  command_file: /var/spool/nagios/cmd/nagios.cmd
+  lock_file: /var/run/nagios/nagios.pid
+  var_log_path: /var/log/nagios
+  etc_path: /etc/nagios
+  plugins_path: /usr/lib64/nagios/plugins
+
+apache:
+  user: apache
+  group: apache
+  service_name: httpd
+  sites_folder: /etc/httpd/conf.d
+  config_file: nagios.conf
+  config_ssl_folder: /etc/httpd/conf.d
+  default_file: httpd.conf
+  config_ssl_file: ssl.conf
+  crt_path: /etc/pki/tls/certs
+  key_path: /etc/pki/tls/private
+
+essential_packages:
+  - policycoreutils-python-utils
+  - python3-passlib
+  - rsync
+  - sysstat
+  - whois
+
+nrpe_packages:
+  - nagios-plugins
+  - nagios-plugins-dig
+  - nagios-plugins-disk
+  - nagios-plugins-dns
+  - nagios-plugins-fping
+  - nagios-plugins-http
+  - nagios-plugins-icmp
+  - nagios-plugins-load
+  - nagios-plugins-log
+  - nagios-plugins-nagios
+  - nagios-plugins-nrpe
+  - nagios-plugins-ntp
+  - nagios-plugins-ping
+  - nagios-plugins-procs
+  - nagios-plugins-smtp
+  - nagios-plugins-snmp
+  - nagios-plugins-ssh
+  - nagios-plugins-tcp
+  - nagios-plugins-uptime
+  - nagios-plugins-users
+
+rrdtool_packages:
+  - gcc
+  - make
+  - perl-GD
+  - perl-Getopt-Long
+  - perl-Time-HiRes
+  - php-gd
+  - php-mbstring
+  - php-pecl-zip
+  - php-xml
+  - rrdtool
+  - rrdtool-perl

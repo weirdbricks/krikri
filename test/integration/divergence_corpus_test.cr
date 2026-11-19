@@ -55,6 +55,7 @@ private DIVERGENCE_CASES = [
   {issue: 1610, slug: "juju4-vivisect-pip-check-executable"},
   {issue: 1602, slug: "wasilak-centos-docker-loop-item-fact"},
   {issue: 1599, slug: "opendevshop-users-bare-fact-defined"},
+  {issue: 1593, slug: "dorancemc-ansible-nagioscore-install-rrdtool-packages"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -246,6 +247,11 @@ describe "divergence corpus" do
 
   it "replays 1599-opendevshop-users-bare-fact-defined" do
     expected, actual, report = divergence_transcripts(1599, "opendevshop-users-bare-fact-defined")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1593-dorancemc-ansible-nagioscore-install-rrdtool-packages" do
+    expected, actual, report = divergence_transcripts(1593, "dorancemc-ansible-nagioscore-install-rrdtool-packages")
     assert_equal(expected, actual, report)
   end
 end

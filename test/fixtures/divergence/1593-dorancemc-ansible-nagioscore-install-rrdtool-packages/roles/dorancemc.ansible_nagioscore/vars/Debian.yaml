@@ -1,0 +1,56 @@
+---
+
+base_html_path: /var/www/html/
+
+nagios:
+  user: nagios
+  group: nagios
+  command_group: nagios
+  service_name: nagios4
+  command: /usr/sbin/nagios4
+  cgibin_path: /usr/lib/cgi-bin/nagios4
+  url_path: nagios4/
+  html_shared_path: /usr/share/nagios4/htdocs
+  passwd_file: /etc/nagios4/htpasswd.users
+  var_spool_path: /var/lib/nagios4
+  command_file: /var/lib/nagios4/rw/nagios.cmd
+  lock_file: /var/run/nagios4/nagios4.pid
+  var_log_path: /var/log/nagios4
+  etc_path: /etc/nagios4
+  plugins_path: /usr/lib/nagios/plugins
+
+apache:
+  user: www-data
+  group: www-data
+  service_name: apache2
+  sites_folder: /etc/apache2/conf-enabled/
+  config_file: nagios4-cgi.conf
+  config_ssl_folder: /etc/apache2/sites-enabled/
+  default_file: 000-default.conf
+  config_ssl_file: ssl.conf
+  crt_path: /etc/ssl
+  key_path: /etc/ssl
+
+essential_packages:
+  - python3-passlib
+  - rsync
+  - sysstat
+  - vim
+  - whois
+
+nrpe_packages:
+  - nagios-plugins-contrib
+
+rrdtool_packages:
+  - gcc
+  - libgd-perl
+  - libgetopt-simple-perl
+  - librrds-perl
+  - libtime-hr-perl
+  - make
+  - php-gd
+  - php-mbstring
+  - php-rrd
+  - php-xml
+  - php-zip
+  - rrdtool

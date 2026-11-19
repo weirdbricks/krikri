@@ -1,0 +1,4 @@
+---
+__nagios_cgi_parameters: "{{ nagios_cgi_parameters_default | combine(nagios_cgi_parameters, recursive=true) }}"
+__nagios_config_parameters: "{{ nagios_config_parameters_default | combine(nagios_config_parameters, recursive=true) }}"
+__nagios_resources: "{{ nagios_resources_default | combine(nagios_resources, recursive=true) }}"

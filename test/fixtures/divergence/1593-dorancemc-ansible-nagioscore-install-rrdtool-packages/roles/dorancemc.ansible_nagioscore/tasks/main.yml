@@ -1,0 +1,21 @@
+---
+# Trimmed from the role's tasks/main.yml: "Set OS dependent variables" (the
+# role's own vars.yml, which defines rrdtool_packages) and the divergent task
+# from tasks/Debian.yaml, both verbatim.
+- name: Set OS dependent variables
+  ansible.builtin.import_tasks: vars.yml
+  tags:
+    - nagioscore
+    - nagioscore-apache-config
+    - nagioscore-install
+    - nagioscore-nrdp
+    - nagioscore-nrdp-config
+    - nagioscore-pnp4nagios
+
+- name: Install rrdtool packages
+  ansible.builtin.apt:
+    name: "{{ rrdtool_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: install_pnp4nagios | bool

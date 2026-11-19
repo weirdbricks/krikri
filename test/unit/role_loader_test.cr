@@ -1085,6 +1085,27 @@ describe Krikri::RoleLoader do
     defaults["my_other"]?.try(&.as_s).must_equal("hello")
   end
 
+  it "loads defaults from nested subdirectories of defaults/main/ (ansible walks the tree)" do
+    # Issue #1593: dorancemc.ansible_nagioscore keeps `install_pnp4nagios`
+    # in defaults/main/nagios/vars.yaml, one level below defaults/main/.
+    # Ansible's DataLoader#_get_dir_vars_files walks the main/ tree
+    # recursively, so the var is a plain role default there; only the
+    # top level used to be read here, and the role's own
+    # `when: install_pnp4nagios | bool` then failed with "'install_pnp4nagios'
+    # is undefined" (exit 2 against ansible's 0).
+    role_dir = File.join(roles_root, "roles", "nested_defaults_role")
+    write(File.join(role_dir, "defaults", "main", "main.yml"), "time_zone: America/Bogota\n")
+    write(File.join(role_dir, "defaults", "main", "nagios", "vars.yaml"), "install_pnp4nagios: true\n")
+    write(File.join(role_dir, "defaults", "main", "nagios", "deeper", "more.yml"), "deep_var: deep\n")
+    write(File.join(role_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- nested_defaults_role"), fresh_play, roles_root)
+    defaults = (tasks[0].role_defaults || raise "unexpected nil")
+    defaults["time_zone"]?.try(&.as_s).must_equal("America/Bogota")
+    defaults["install_pnp4nagios"]?.try(&.as_bool).must_equal(true)
+    defaults["deep_var"]?.try(&.as_s).must_equal("deep")
+  end
+
   it "resolves a slash-containing role name joined under the roles search path (Galaxy sub-role chain)" do
     # CiscoUcs.ucs (round 5410000): a Galaxy role whose tasks/main.yml
     # does `include_role: name: CiscoUcs.ucs/admin` - admin/ is a full

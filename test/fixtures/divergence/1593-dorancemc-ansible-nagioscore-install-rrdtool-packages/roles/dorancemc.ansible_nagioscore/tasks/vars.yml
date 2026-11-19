@@ -1,0 +1,13 @@
+---
+- name: Set OS dependent variables
+  ansible.builtin.include_vars:
+    file: "{{ lookup('ansible.builtin.first_found', ansible_nagioscore_os_var_files) }}"
+  vars:
+    ansible_nagioscore_os_var_files:
+      files:
+        - "{{ ansible_facts['distribution'] }}_{{ ansible_facts['distribution_major_version'] }}.yaml"
+        - "{{ ansible_facts['distribution'] }}.yaml"
+        - "{{ ansible_facts['os_family'] }}_{{ ansible_facts['distribution_major_version'] }}.yaml"
+        - "{{ ansible_facts['os_family'] }}.yaml"
+      paths:
+        - "{{ role_path }}/vars"
