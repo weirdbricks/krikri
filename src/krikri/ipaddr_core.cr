@@ -4,16 +4,19 @@ require "./param_sentinels"
 # Crystal reimplementation of the `ansible.utils` ipaddr filter family (ipaddr,
 # ipv4, ipv6, ipsubnet, ipmath, next_nth_usable,
 # previous_nth_usable, network_in_network, network_in_usable, ip4_hex,
-# nthhost),
+# nthhost, ipwrap),
 # mirrored against ansible-core 2.19.4 + ansible.utils + netaddr
 # 1.3.0 live (every query probed against ansible-playbook on this
 # host - see the specs in test/unit/ipaddr_test.cr). Operates on
 # JSON::Any so both the hand-rolled FilterEngine and the Crinja
 # registration in jinja_filters.cr can share one implementation.
 #
-# ipwrap is deliberately NOT part of this family: it is an
-# ansible.utils collection filter, not core, and krikri must fail it
-# the way ansible-core does ("No filter named 'ipwrap'") - issue #134.
+# Only FQCN spellings resolve, ipwrap included: bare `ipwrap`/`ipaddr` are
+# not core filters, and real ansible-core fails them ("No filter named
+# 'ipwrap'") even with ansible.utils installed - issues #134/#335. The FQCN
+# `ansible.utils.ipwrap` DOES resolve in real ansible when the collection is
+# installed (Anthony25.postfix renders postfix_mynetworks through
+# `map('ansible.utils.ipwrap')`, issue #1591).
 #
 # The query dispatch mirrors the installed collection's own
 # `ipaddr_utils.ipaddr()` query_func_map exactly - including the
@@ -34,10 +37,9 @@ module Krikri
     end
 
     FAMILY_FILTERS = Set{
-      # no "ipwrap" - ansible.utils-only, rejected as unknown (#134)
       "ipaddr", "ipv4", "ipv6", "ipsubnet", "ipmath",
       "next_nth_usable", "previous_nth_usable", "network_in_network",
-      "network_in_usable", "ip4_hex", "nthhost",
+      "network_in_usable", "ip4_hex", "nthhost", "ipwrap",
     }
 
     private struct Net
@@ -329,8 +331,16 @@ module Krikri
     end
 
     def format_v6(ip : UInt128) : String
-      if ip >> 96 == 0xFFFF
+      # netaddr formats through libc's inet_ntop, which prints IPv4-mapped
+      # (::ffff:a.b.c.d) and IPv4-compatible (::a.b.c.d) addresses with the
+      # dotted quad - except the tiny ::/112 values (::, ::1, ::ffff), which
+      # stay hex. Anthony25.postfix's postfix_mynetworks carries
+      # '::ffff:127.0.0.0/104', so the dotted spelling is what the rendered
+      # main.cf must match (issue #1591).
+      if ip >> 32 == 0xFFFF_u128
         return "::ffff:#{format_v4(ip & 0xFFFFFFFF_u128)}"
+      elsif ip >> 32 == 0 && ip > 0xFFFF_u128
+        return "::#{format_v4(ip & 0xFFFFFFFF_u128)}"
       end
 
       groups = Array(UInt32).new(8)
@@ -371,6 +381,10 @@ module Krikri
           i += 1
         end
       end
+      # A leading run needs its own empty piece: with the run's "" only at
+      # index 0 the join yields a single ':' (":1" for ::1). The trailing
+      # side of a middle run already gets both colons from its neighbours.
+      pieces.unshift("") if best_start == 0
       pieces.join(":")
     end
 
@@ -401,6 +415,61 @@ module Krikri
     end
 
     private FALSE = JSON::Any.new(false)
+
+    # ---- ipwrap ----
+
+    # ansible.utils.ipwrap wraps IPv6 addresses and networks in square
+    # brackets and passes everything else through untouched. Its plugin only
+    # accepts str/list/bool operands ("Unrecognized type <class 'int'> for
+    # ipwrap filter <value>") and, for list elements, keeps the element
+    # exactly as given whenever its own ipaddr query comes back falsy, so
+    # hostnames and malformed addresses survive unchanged -
+    # Anthony25.postfix's postfix_mynetworks join through
+    # `map('ansible.utils.ipwrap')` (issue #1591).
+    def ipwrap(value : JSON::Any, query : String = "") : JSON::Any
+      case raw = value.raw
+      when Array
+        JSON::Any.new(raw.map do |element|
+          item = JSON::Any.new(element.raw)
+          truthy?(ipaddr(item, query)) ? ipaddr(item, "wrap") : item
+        end)
+      when String
+        result = ipaddr(value, query)
+        truthy?(result) ? ipaddr(result, "wrap") : value
+      when Bool
+        value
+      else
+        raise IpError.new("Unrecognized type <<class '#{python_type_name(raw)}'>> for ipwrap filter <value>")
+      end
+    end
+
+    # Python `if value:` on the plugin's own ipaddr result: a falsy 0 from
+    # the 'int' query (or any empty value) must come back unwrapped.
+    private def truthy?(value : JSON::Any) : Bool
+      case raw = value.raw
+      when Nil     then false
+      when Bool    then raw
+      when Int64   then raw != 0
+      when Float64 then raw != 0.0
+      when String  then !raw.empty?
+      when Array   then !raw.empty?
+      when Hash    then !raw.empty?
+      else              true
+      end
+    end
+
+    private def python_type_name(raw : JSON::Any::Type) : String
+      case raw
+      when Nil     then "NoneType"
+      when Bool    then "bool"
+      when Int64   then "int"
+      when Float64 then "float"
+      when String  then "str"
+      when Array   then "list"
+      when Hash    then "dict"
+      else              "object"
+      end
+    end
 
     # ---- main entry ----
 

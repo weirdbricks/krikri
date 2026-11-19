@@ -1,0 +1,24 @@
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_fqdn: testhost.example.com
+    ansible_hostname: testhost
+    ansible_domain: example.com
+    ansible_local: {}
+  vars_files:
+    - roles/Anthony25.postfix/defaults/main.yml
+  tasks:
+    # Corpus-only: the role writes into /etc/postfix, which the case tree
+    # must not touch.
+    - name: Create the scratch output directory
+      file:
+        path: 'out'
+        state: directory
+
+    - name: Generate Postfix configuration
+      template:
+        src: 'roles/Anthony25.postfix/templates/etc/postfix/{{ item }}/ansible.j2'
+        dest: 'out/{{ item }}'
+        mode: '0644'
+      with_items: [ 'main.cf', 'master.cf' ]
