@@ -1,0 +1,15 @@
+---
+# defaults file for mailserver
+mailserver_hostname: localhost
+mailserver_container_name: "mailserver"
+mailserver_users: []
+mailserver_container_options:
+  env: {}
+  image: "tvial/docker-mailserver:release-v5.8.0"
+  log_driver: "json-file"
+  ports: []
+  restart: "no"
+  restart_policy: "on-failure"
+  volumes: []
+  log_options:
+    tag: "{{mailserver_container_name}}"

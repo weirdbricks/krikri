@@ -1,0 +1,10 @@
+---
+# The lexa-uw.mailserver role the round ran; the play is adapted to localhost
+# (the round ran it against its testhost inventory). Its first task is the
+# divergent "Create volumes for mail data" loop, so the Origin points into the
+# role's own tasks file exactly as it did in the round.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - lexa-uw.mailserver

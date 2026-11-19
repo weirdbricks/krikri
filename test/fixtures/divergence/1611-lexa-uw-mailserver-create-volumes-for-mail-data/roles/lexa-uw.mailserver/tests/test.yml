@@ -1,0 +1,16 @@
+---
+
+- name: Check running docker container
+  hosts: localhost
+  vars:
+    mailserver_docker_env:
+      OVERRIDE_HOSTNAME: "override.hostname"
+    mailserver_users:
+    - {user: "test@qwest", password: "qwest"}
+  tasks:
+    - name: Run on the scratch
+      include_role:
+        name: app
+    - name: Run on the configured
+      include_role:
+        name: app

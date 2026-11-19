@@ -1,0 +1,22 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [lexa-uw.mailserver : Create volumes for mail data] ***********************
+[ERROR]: Task failed: Module failed: Error connecting: Error while fetching server API version: ('Connection aborted.', PermissionError(13, 'Permission denied'))
+Origin: <WORK>/roles/lexa-uw.mailserver/tasks/main.yml:3:3
+
+1 ---
+2 # tasks file for mailserver
+3 - name: Create volumes for mail data
+    ^ column 3
+
+failed: [localhost] (item=mailserver_maildata) => {"ansible_loop_var": "item", "changed": false, "item": "mailserver_maildata", "msg": "Error connecting: Error while fetching server API version: ('Connection aborted.', PermissionError(13, 'Permission denied'))"}
+failed: [localhost] (item=mailserver_mailstate) => {"ansible_loop_var": "item", "changed": false, "item": "mailserver_mailstate", "msg": "Error connecting: Error while fetching server API version: ('Connection aborted.', PermissionError(13, 'Permission denied'))"}
+failed: [localhost] (item=mailserver_config) => {"ansible_loop_var": "item", "changed": false, "item": "mailserver_config", "msg": "Error connecting: Error while fetching server API version: ('Connection aborted.', PermissionError(13, 'Permission denied'))"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
