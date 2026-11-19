@@ -81,6 +81,11 @@ module Krikri
   #   `dump_extra_args:` (a raw string appended as-is, same "no
   #   validation, passed straight through" treatment as `mysqldump`
   #   itself gives it).
+  # - chdir: change the working directory once the driver gate and the
+  #   empty-name exit have passed, so dump/import resolve relative paths
+  #   against it; a directory that cannot be entered fails the task with
+  #   Python's os.chdir OSError text (mysql_db.py does this before the
+  #   state/target checks and before mysql_connect)
   # - check_mode
   #
   # Not implemented: encoding:/collation: validation against the
@@ -108,10 +113,6 @@ module Krikri
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      if dump_or_import?(state)
-        return run_dump_or_import(state, raw_name.to_s)
-      end
-
       # Ansible's `name:` is `type='list', elements='str'` - a YAML
       # scalar and a list both work, and a multi-name run reports BOTH
       # shapes (`db` is the names joined by a space, `db_list` the list
@@ -122,6 +123,18 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, db: JSON::Any.new([] of JSON::Any),
           db_list: JSON::Any.new([] of JSON::Any), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
       end
+
+      # mysql_db.py's os.chdir(chdir) sits after the empty-name exit but
+      # before the state/target checks and the connect, so a bad chdir:
+      # fails dump/import and check-mode runs too.
+      if err = chdir_failure
+        return err
+      end
+
+      if dump_or_import?(state)
+        return run_dump_or_import(state, raw_name.to_s)
+      end
+
       db_name = db_list.join(" ")
       json_db = JSON::Any.new(db_name)
       json_db_list = json_strings(db_list)
@@ -531,6 +544,33 @@ module Krikri
       end
       raise "zstd decompression failed (exit #{status.exit_code}) - is the zstd binary installed?" unless status.success?
       tmp_path
+    end
+
+    # `chdir:` is type='path', so check_type_path stringifies the raw
+    # value (chdir: 21 -> "21", chdir: true -> "True") and expands
+    # vars/tilde before os.chdir. The falsy test in mysql_db.py runs on
+    # that ALREADY-CONVERTED string, so `chdir: 0`/`chdir: false` still
+    # chdir (to "0"/"False"); only an empty value (or None) skips it.
+    # The failed chdir's fail_json message embeds the OSError text as
+    # Python prints it.
+    private def chdir_failure : PluginResult?
+      raw = if native = non_string_param("chdir")
+              Krikri.python_str_scalar(native)
+            else
+              @params["chdir"]? || ""
+            end
+      path = expand_tilde(expand_dollar_vars(raw))
+      return nil if path.empty?
+
+      begin
+        Dir.cd(path)
+        nil
+      rescue ex : File::Error
+        errno = ex.os_error
+        detail = errno ? "[Errno #{errno.value}] #{errno.message}: '#{path}'" : ex.message
+        PluginResult.new(changed: false, failed: true,
+          msg: "Cannot change the current directory to #{path}: #{detail}")
+      end
     end
 
     private def quote_ident(s : String) : String
