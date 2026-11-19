@@ -1,0 +1,16 @@
+---
+
+- name: Converge
+  hosts: molecule_hosts
+  gather_facts: no
+  roles:
+    - role: amtega.gitlab_fork
+      vars:
+        gitlab_fork_state: present
+
+    - role: amtega.gitlab_fork
+      vars:
+        gitlab_fork_state: absent
+  vars:
+    gitlab_fork_no_log: no
+    gitlab_projects_fact_no_log: no

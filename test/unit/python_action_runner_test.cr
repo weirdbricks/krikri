@@ -146,6 +146,72 @@ describe Krikri::PythonActionRunner do
     end
   end
 
+  it "reports an uncaught plugin exception as an ansible crash, flagged when Python chained it" do
+    # amtega.gitlab_projects_fact's gitlab_projects_api_rest (issue #1575)
+    # catches its own failure and re-uses a local it never assigned, so
+    # the exception Ansible reports is Python's UnboundLocalError raised
+    # WHILE handling the templating error. That is not a plugin verdict:
+    # Ansible words it "Task failed: <str(exc)>" (no exception class name)
+    # - and the chained exception keeps the error block's two-segment
+    # "caused by" shape, hence the flag.
+    dir = File.join(Dir.tempdir, "krikri-pyaction-spec-#{Random.rand(1_000_000)}")
+    chained = write_action_plugin(dir, "myaction.py", <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def _call(self):
+              try:
+                  raise ValueError("inner spec boom")
+                  result = dict(changed=False)
+              except Exception:
+                  return result["url"]
+
+          def run(self, tmp=None, task_vars=None):
+              super(ActionModule, self).run(tmp, task_vars)
+              return self._call()
+      PYTHON
+    plain = write_action_plugin(dir, "plainaction.py", <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def run(self, tmp=None, task_vars=None):
+              raise ValueError("plain spec boom")
+      PYTHON
+
+    begin
+      if ansible_importable
+        begin
+          run_plugin(chained)
+          raise Minitest::Assertion.new("expected ActionError")
+        rescue ex : Krikri::PythonActionRunner::ActionError
+          # CPython 3.11 reworded UnboundLocalError; both spellings are its
+          # own text, with no exception class name in front.
+          ex.message.to_s.matches?(/\ATask failed: (cannot access local variable 'result' where it is not associated with a value|local variable 'result' referenced before assignment)\z/).must_equal(true, ex.message.to_s)
+          ex.detail.must_equal(ex.message.to_s["Task failed: ".size..])
+          ex.crash_context?.must_equal(true)
+        end
+        begin
+          run_plugin(plain, name: "plainaction")
+          raise Minitest::Assertion.new("expected ActionError")
+        rescue ex : Krikri::PythonActionRunner::ActionError
+          ex.message.to_s.must_equal("Task failed: plain spec boom")
+          ex.detail.must_equal("plain spec boom")
+          # A crash with no earlier exception collapses into the brief, the
+          # same block a plugin-raised AnsibleError gets.
+          ex.crash_context?.must_equal(false)
+        end
+      else
+        assert_unavailable(-> { run_plugin(chained) })
+      end
+    ensure
+      FileUtils.rm_r(dir)
+    end
+  end
+
   it "raises ActionError with the plugin's own exception text" do
     dir = File.join(Dir.tempdir, "krikri-pyaction-spec-#{Random.rand(1_000_000)}")
     path = write_action_plugin(dir, "myaction.py", <<-PYTHON)

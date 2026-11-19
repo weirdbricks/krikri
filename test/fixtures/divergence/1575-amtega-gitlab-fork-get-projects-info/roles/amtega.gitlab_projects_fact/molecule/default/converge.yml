@@ -1,0 +1,11 @@
+---
+
+- name: Converge
+  hosts: molecule_hosts
+  gather_facts: no
+  roles:
+    - role: amtega.gitlab_projects_fact
+  tasks:
+    - name: Assert project facts where gathered
+      assert:
+        that: gitlab_projects_fact | length > 0

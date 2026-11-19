@@ -136,6 +136,98 @@ describe "role-private Python action plugin with an empty library placeholder (r
     FileUtils.rm_rf(root) if root
   end
 
+  it "templates a plugin's task var through a real Templar and renders the chained crash under no_log (issue #1575)" do
+    # amtega.gitlab_fork points its meta dependency's
+    # gitlab_projects_fact_server at gitlab_merge_request_server, which
+    # the benchmark play never defines. Under --check the dependency's
+    # action plugin templates that var, its own `except:` re-uses a local
+    # it never assigned, and Ansible reports the resulting
+    # UnboundLocalError - block and Origin included, even though no_log
+    # censors the fatal dump. krikri used to hand the plugin the raw
+    # `{{ ... }}` text (no real templating), so nothing failed there and
+    # the task died later with the plugin's own KeyError instead.
+    root = File.tempname("role-local-action-templar")
+    Dir.mkdir_p(File.join(root, "roles", "gl_probe", "action_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "gl_probe", "tasks"))
+    Dir.mkdir_p(File.join(root, "roles", "gl_dep", "meta"))
+
+    File.write(File.join(root, "roles", "gl_probe", "action_plugins", "gl_probe.py"), <<-PYTHON)
+      from ansible.plugins.action import ActionBase
+
+      class ActionModule(ActionBase):
+          TRANSFERS_FILES = False
+
+          def _get_task_var(self, name, default=None):
+              if name in self._task_vars:
+                  return self._templar.template(self._task_vars.get(name))
+              return default
+
+          def _get_error(self, result):
+              return dict(failed=True, msg="Operation in {0} failed".format(result["url"]))
+
+          def _call(self):
+              try:
+                  server = self._get_task_var("gl_probe_server")
+                  result = dict(changed=False, server=server)
+              except Exception:
+                  return self._get_error(result)
+              return result
+
+          def run(self, tmp=None, task_vars=None):
+              super(ActionModule, self).run(tmp, task_vars)
+              self._task_vars = task_vars
+              return self._call()
+      PYTHON
+
+    File.write(File.join(root, "roles", "gl_probe", "tasks", "main.yml"), <<-YAML)
+      - name: Get projects info
+        gl_probe:
+        register: gl_probe_result
+        no_log: true
+      YAML
+
+    File.write(File.join(root, "roles", "gl_dep", "meta", "main.yml"), <<-YAML)
+      ---
+      dependencies:
+        - role: gl_probe
+          vars:
+            gl_probe_server: "{{ gl_missing_server }}"
+      YAML
+
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - gl_dep
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "--check", "pb.yml"], output: output, error: output, chdir: root)
+
+    if ansible_importable
+      text = output.to_s
+      status.exit_code.must_equal(2, text)
+      # The crash brief is CPython's own UnboundLocalError text - never the
+      # plugin's masked KeyError - and, because Python raised it while
+      # handling the undefined-variable error, the block keeps the
+      # separate "Task failed." + "<<< caused by >>>" segments instead of
+      # collapsing (live-verified vs ansible-playbook 2.21.6).
+      error_line = text.lines.find! { |line| line.starts_with?("[ERROR]: Task failed: ") }
+      detail = error_line["[ERROR]: Task failed: ".size..]
+      detail.matches?(/cannot access local variable 'result' where it is not associated with a value|local variable 'result' referenced before assignment/).must_equal(true, text)
+      text.must_include("\nTask failed.\nOrigin: ", text)
+      text.must_include("roles/gl_probe/tasks/main.yml:1:3", text)
+      text.must_include("<<< caused by >>>\n\n#{detail}\n", text)
+      # no_log censors the result dump, not the controller-side error block.
+      text.must_include("fatal: [localhost]: FAILED! => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": false}", text)
+      text.wont_include("Operation in", text)
+    else
+      output.to_s.must_include("is not supported by krikri", output.to_s)
+    end
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "instantiates a legacy 6-arg plugin and renders its returned failed dict as an action-level failure (issue #658)" do
     # wcm_io_devops.conga_facts ships a legacy action plugin whose own
     # __init__ declares shared_loader_obj as a REQUIRED positional

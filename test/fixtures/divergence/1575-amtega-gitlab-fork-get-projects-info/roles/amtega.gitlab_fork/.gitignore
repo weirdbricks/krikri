@@ -1,0 +1,7 @@
+*.retry
+*.log
+*.tmp
+*.pyc
+
+.cache
+

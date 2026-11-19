@@ -39,6 +39,7 @@ private DIVERGENCE_CASES = [
   {issue: 1526, slug: "sudo-pair-env-deprecation"},
   {issue: 1528, slug: "reverse-proxy-mandatory"},
   {issue: 1562, slug: "ubuntu-sunjava-action-conflict"},
+  {issue: 1575, slug: "amtega-gitlab-fork-get-projects-info"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -150,6 +151,11 @@ describe "divergence corpus" do
 
   it "replays 1562-ubuntu-sunjava-action-conflict" do
     expected, actual, report = divergence_transcripts(1562, "ubuntu-sunjava-action-conflict")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1575-amtega-gitlab-fork-get-projects-info" do
+    expected, actual, report = divergence_transcripts(1575, "amtega-gitlab-fork-get-projects-info")
     assert_equal(expected, actual, report)
   end
 end

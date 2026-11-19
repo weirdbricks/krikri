@@ -1,0 +1,14 @@
+---
+
+- name: Setup gitlab fork
+  block:
+    - ansible.builtin.include_tasks: present.yml
+      when: gitlab_fork_state == "present"
+
+    - ansible.builtin.include_tasks: absent.yml
+      when:
+        - gitlab_fork_state == "absent"
+        - gitlab_fork_name is defined
+        - gitlab_fork_match_list | length > 0
+  tags:
+    - role::gitlab_fork

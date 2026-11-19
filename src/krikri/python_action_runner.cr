@@ -25,8 +25,12 @@ require "./controller_python"
 # the play-context-reading plugins this scope covers touch
 # (`_connection._shell.tmpdir` stays a non-None placeholder so
 # `ActionBase.run` skips `_make_tmp_path`, which no
-# TRANSFERS_FILES=False plugin reaches anyway). Loader/templar are
-# None. A plugin that calls `self._execute_module` (agaffney.synology_dsm's
+# TRANSFERS_FILES=False plugin reaches anyway). The templar is a real
+# Ansible `Templar` over the task's vars, built on first use - role and
+# dependency vars are frequently `{{ other_var }}` expressions, so a
+# plugin reading one must get Ansible's own verdict on it (usually an
+# AnsibleUndefinedVariable), not the raw unrendered text (issue #1575).
+# A plugin that calls `self._execute_module` (agaffney.synology_dsm's
 # synology_dsm_api_request delegates to `uri`, issue #399) is answered
 # through the engine's OWN module dispatch - the caller's ModuleDispatcher
 # - over a line-JSON request/reply channel on the wrapper's stdio; without
@@ -59,8 +63,13 @@ module Krikri
     # crash keeps detail nil and surfaces this exception's message.
     class ActionError < Exception
       getter detail : String?
+      # True for a CRASH_KIND failure whose exception Python raised while
+      # handling another one (its implicit `__context__`): Ansible's error
+      # block then keeps the two-segment "caused by" shape instead of
+      # collapsing to the brief (see ResultDisplay).
+      getter? crash_context : Bool
 
-      def initialize(message : String, @detail : String? = nil)
+      def initialize(message : String, @detail : String? = nil, @crash_context : Bool = false)
         super(message)
       end
     end
@@ -86,6 +95,14 @@ module Krikri
     # own "this task failed" signal, not a runner crash (see ActionError
     # #detail).
     TASK_FAILED_KIND = "task_failed"
+    # An UNCAUGHT non-AnsibleError exception escaped the plugin's run().
+    # Ansible never sees a plugin verdict there: the exception unwinds
+    # through the action layer into its own task-failure handling, which
+    # words it exactly like a plugin-raised AnsibleError ("Task failed:
+    # <str(exc)>", the class name dropped) - so the same #detail plumbing
+    # applies, plus #crash_context for the chained-exception block shape
+    # (live-verified vs ansible-playbook 2.21.6, issue #1575).
+    CRASH_KIND = "crash"
 
     # The CONTROLLER's own python3 - the interpreter Ansible needs on
     # the controller anyway (same detection pattern as
@@ -132,7 +149,7 @@ module Krikri
       raise ActionUnavailableError.new(UNAVAILABLE_KIND,
         "action plugin wrapper produced no result (is python3 available?)") unless result
       if failure = interpretable_failure?(result)
-        raise wrapper_failure(name, failure[0], failure[1])
+        raise wrapper_failure(name, failure[0], failure[1], failure[2])
       end
       result["result"]? || JSON::Any.new(nil)
     end
@@ -156,17 +173,21 @@ module Krikri
       } of String => JSON::Any
     end
 
-    # {kind, detail} of a wrapper response that reports a failure, or nil
-    # when the plugin succeeded (its result dict is then the task result).
-    private def interpretable_failure?(result : JSON::Any) : {String, String}?
+    # {kind, detail, crash_context} of a wrapper response that reports a
+    # failure, or nil when the plugin succeeded (its result dict is then
+    # the task result).
+    private def interpretable_failure?(result : JSON::Any) : {String, String, Bool}?
       return nil if result["ok"]?.try(&.as_bool?)
       kind = result["kind"]?.try(&.as_s?) || "error"
       detail = result["error"]?.try(&.as_s?) || "unknown error"
-      {kind, detail}
+      crash_context = result["crash_context"]?.try(&.as_bool?) == true
+      {kind, detail, crash_context}
     end
 
-    private def wrapper_failure(name : String, kind : String, detail : String) : ActionError
-      return ActionError.new("Task failed: #{detail}", detail) if kind == TASK_FAILED_KIND
+    private def wrapper_failure(name : String, kind : String, detail : String, crash_context : Bool = false) : ActionError
+      if kind == TASK_FAILED_KIND || kind == CRASH_KIND
+        return ActionError.new("Task failed: #{detail}", detail, crash_context)
+      end
       # Ansible words an import failure while loading the plugin file
       # as "failed to load", without the exception class name.
       message = case kind
@@ -344,17 +365,50 @@ module Krikri
           return str(value)
 
 
-      class _PassthroughTemplar(object):
-          # Krikri hands the plugin task_vars as plain values (the
-          # executor's own var context); Ansible would template them
-          # again here, which is a no-op for the literal data the
-          # supported plugins read (amtega.check_platform's
-          # check_platform_distributions dict and friends, issue #411).
-          # A plugin needing REAL templating gets its value untouched
-          # and fails like a plugin crashing in Ansible would.
+      class _TaskVarTemplar(object):
+          # Ansible hands every action plugin a real Templar over the
+          # task's variables, and plugins rely on that: role and
+          # dependency vars are frequently `{{ other_var }}` expressions
+          # (amtega.gitlab_fork points its dependency's server at
+          # gitlab_merge_request_server, which nothing in the round
+          # defines), so templating one has to give Ansible's own
+          # verdict - an AnsibleUndefinedVariable - instead of handing
+          # the raw, unrendered text back (issue #1575). Built on first
+          # use so a plugin that never templates pays nothing.
 
-          def template(self, variable, **kwargs):
+          def __init__(self, variables):
+              self._variables = variables
+              self._templar = None
+
+          def _real(self):
+              if self._templar is None:
+                  from ansible.template import Templar
+                  from ansible.parsing.dataloader import DataLoader
+                  self._templar = Templar(loader=DataLoader(),
+                                          variables=self._variables)
+              return self._templar
+
+          def template(self, variable, *args, **kwargs):
+              return self._real().template(_trusted(variable), *args, **kwargs)
+
+
+      def _trusted(variable):
+          # From ansible-core 2.19 on, only values tagged as TRUSTED
+          # templates are rendered - every string a plugin reads out of a
+          # playbook, role or vars file carries that tag in ansible's own
+          # VariableManager. Krikri's task_vars arrive as plain JSON, so
+          # an untagged string is handed back verbatim by
+          # Templar.template() instead of rendering (2.21's lenient
+          # untrusted-text path). Re-tagging the value a plugin asks to
+          # template restores ansible's own provenance for playbook data -
+          # without it an undefined dependency var silently stays raw
+          # text (issue #1575). Pre-2.19 ansible has no tag and
+          # templates plain strings as-is.
+          try:
+              from ansible.template import trust_as_template
+          except ImportError:
               return variable
+          return trust_as_template(variable) if isinstance(variable, str) else variable
 
 
       def _emit(obj):
@@ -462,7 +516,8 @@ module Krikri
           # as a REQUIRED positional parameter (wcm_io_devops.conga_facts,
           # issue #658) therefore dies with "missing 1 required positional
           # argument" unless the engine passes it too, like Ansible does.
-          instance = plugin_class(task, connection, play_context, None, _PassthroughTemplar(), None)
+          instance = plugin_class(task, connection, play_context, None,
+                                  _TaskVarTemplar(payload.get("task_vars") or {}), None)
           if payload.get("ipc"):
               instance._execute_module = types.MethodType(_ipc_execute_module, instance)
               instance._remove_tmp_path = types.MethodType(_ipc_remove_tmp_path, instance)
@@ -475,6 +530,22 @@ module Krikri
               # 2.19.11) - report the bare text under its own kind, not
               # the class-name-prefixed runner-crash shape.
               _emit({"ok": False, "kind": "task_failed", "error": "%s" % exc})
+              return
+          except Exception as exc:
+              # An uncaught NON-AnsibleError exception is not a plugin
+              # verdict: Ansible lets it escape the action layer into its
+              # own task-failure handling, whose wording is the bare
+              # exception text (no class name) under the same "Task
+              # failed:" heading - and when Python chained the crash onto
+              # an earlier exception (the plugin's own
+              # `except: return self._get_error(result)` masking an
+              # undefined-variable error), the error block keeps the
+              # separate "Task failed." + "<<< caused by >>>" shape
+              # instead of collapsing (issue #1575). SystemExit is left
+              # to the outer handler below: it is the wrapper's own
+              # protocol problem, not an Ansible-visible failure.
+              _emit({"ok": False, "kind": "crash", "error": "%s" % exc,
+                     "crash_context": getattr(exc, "__context__", None) is not None})
               return
           _emit({"ok": True, "result": result})
 

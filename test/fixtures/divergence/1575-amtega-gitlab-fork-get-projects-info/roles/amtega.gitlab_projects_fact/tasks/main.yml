@@ -1,0 +1,42 @@
+---
+# Role tasks
+
+- block:
+    - name: Get projects info
+      gitlab_projects_api_rest:
+        parameters:
+          "membership": "{{ gitlab_projects_fact_membership | bool | lower }}"
+          "owned": "{{ gitlab_projects_fact_owned | bool | lower }}"
+          "simple": "{{ gitlab_projects_fact_simple | bool | lower }}"
+          "search": "{{ gitlab_projects_fact_search }}"
+          "search_namespaces": >-
+            {{ gitlab_projects_fact_search_namespaces | bool | lower }}
+      register: gitlab_projects_fact_get_projects_result
+      no_log: "{{ gitlab_projects_fact_no_log | bool }}"
+
+    - name: Setup fact with projects info
+      set_fact:
+        gitlab_projects_fact: >-
+          {{ gitlab_projects_fact_get_projects_result.json }}
+
+  vars:
+    gitlab_projects_fact_last_link: >-
+      {{ gitlab_projects_fact_get_projects_pages_result.link.split("<")
+         | list
+         | select("search", "rel=.last.")
+         | list
+         | last }}
+
+    gitlab_projects_fact_total_pages: >-
+      {{ gitlab_projects_fact_last_link
+         | regex_replace(".*&page=([0-9]+).*", "\1" ) }}
+
+    gitlab_projects_fact_per_page: >-
+      {{ gitlab_projects_fact_last_link
+         | regex_replace(".*&per_page=([0-9]+).*", "\1" ) }}
+
+    gitlab_projects_owned_flag: >-
+      {{ (gitlab_projects_fact_owned) | ternary("&owned=true", "") }}
+
+  tags:
+    - role::gitlab_projects_fact

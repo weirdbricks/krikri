@@ -1,0 +1,29 @@
+---
+
+- name: Manage gitlab fork absent state
+  block:
+    - name: Remove project fork
+      ansible.builtin.uri:
+        url: >-
+          {{ gitlab_fork_api_url
+             + "/projects/"
+             + gitlab_fork_to_delete.id | string }}
+        method: DELETE
+        headers:
+          "Private-Token": "{{ gitlab_fork_token }}"
+        return_content: yes
+        validate_certs: "{{ gitlab_fork_validate_certs }}"
+        status_code: 202
+      register: gitlab_fork_delete_result
+      changed_when: gitlab_fork_delete_result.status == 202
+      no_log: "{{ gitlab_fork_no_log | bool }}"
+
+    - name: Setup fact with gitlab project fork info
+      ansible.builtin.set_fact:
+        gitlab_fork_fact: "{{ gitlab_fork_to_delete }}"
+
+  vars:
+    gitlab_fork_to_delete: "{{ gitlab_fork_match_list | first }}"
+
+  tags:
+    - role::gitlab_fork

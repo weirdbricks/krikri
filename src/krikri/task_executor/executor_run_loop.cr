@@ -4452,13 +4452,21 @@ module Krikri
             # block shows the bare text in the plain action-level chain
             # with no "Module failed." middle segment (live-verified
             # vs 2.19.11 on amtega.check_platform, issue #411).
-            return JSON.parse({
-              "changed"               => false,
-              "failed"                => true,
-              "msg"                   => "Task failed: #{detail}",
-              "_ansible_error_detail" => detail,
-              "_ansible_action_level" => true,
-            }.to_json)
+            # An UNCAUGHT exception escaping run() lands in that same
+            # task-failure shape, so it rides the same keys; when Python
+            # chained the crash onto an earlier exception the block does
+            # not collapse - it keeps the task's own "Task failed."
+            # segment plus the crash text under "<<< caused by >>>"
+            # (issue #1575).
+            shaped = {
+              "changed"               => JSON::Any.new(false),
+              "failed"                => JSON::Any.new(true),
+              "msg"                   => JSON::Any.new("Task failed: #{detail}"),
+              "_ansible_error_detail" => JSON::Any.new(detail),
+              "_ansible_action_level" => JSON::Any.new(true),
+            } of String => JSON::Any
+            shaped["_ansible_action_crash_context"] = JSON::Any.new(true) if ex.crash_context?
+            return JSON.parse(shaped.to_json)
           end
           return JSON.parse({
             "changed" => false,
