@@ -1,0 +1,79 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Prepare System User (trimmed before the user-mutating tasks)] ************
+included: <WORK>/roles/opendevshop.users/tasks/prepare-user.yml for localhost
+
+TASK [Detect current Aegir user UID] *******************************************
+ok: [localhost]
+
+TASK [Detect current Aegir user GID] *******************************************
+ok: [localhost]
+
+TASK [Save variables for current user UID and GID] *****************************
+ok: [localhost]
+
+TASK [Current Aegir User UID & GID] ********************************************
+ok: [localhost] => {
+    "msg": "UID: 0  GID: 0"
+}
+
+TASK [Desired Aegir User UID & GID] ********************************************
+ok: [localhost] => {
+    "msg": "UID: 12345  GID: 12345"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=6    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/opendevshop.users/tasks/prepare-user.yml:19:7
+
+17     aegir_user_gid_current: "{{ getent_group[aegir_user_name][1] }}"
+18   when:
+19     - getent_passwd is defined
+         ^ column 7
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/opendevshop.users/tasks/prepare-user.yml:17:29
+
+15   set_fact:
+16     aegir_user_uid_current: "{{ getent_passwd[aegir_user_name][1] }}"
+17     aegir_user_gid_current: "{{ getent_group[aegir_user_name][1] }}"
+                               ^ column 29
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/opendevshop.users/tasks/prepare-user.yml:16:29
+
+14 - name: Save variables for current user UID and GID
+15   set_fact:
+16     aegir_user_uid_current: "{{ getent_passwd[aegir_user_name][1] }}"
+                               ^ column 29
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/opendevshop.users/tasks/prepare-user.yml:25:7
+
+23     msg: "UID: {{ aegir_user_uid_current }}  GID: {{ aegir_user_gid_current }}"
+24   when:
+25     - getent_passwd is defined
+         ^ column 7
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/opendevshop.users/tasks/prepare-user.yml:31:7
+
+29     msg: "UID: {{ aegir_user_uid }}  GID: {{ aegir_user_gid }}"
+30   when:
+31     - getent_passwd is defined
+         ^ column 7
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

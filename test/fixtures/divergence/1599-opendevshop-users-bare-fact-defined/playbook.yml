@@ -1,0 +1,11 @@
+---
+# The divergent tasks are the role's first five, stopped before the
+# user-mutating ones, run against localhost where getent answers for root.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - roles/opendevshop.users/defaults/main.yml
+  tasks:
+    - name: Prepare System User (trimmed before the user-mutating tasks)
+      include_tasks: roles/opendevshop.users/tasks/prepare-user.yml

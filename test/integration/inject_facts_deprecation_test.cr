@@ -398,6 +398,39 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
   end
 
+  it "prints it for a whole `is defined` test on a bare, unprefixed fact spelling" do
+    # Issue #1599, opendevshop.users' tasks/prepare-user.yml:
+    # `when: getent_passwd is defined` reads the injected `getent_passwd`
+    # fact. The lenient is-defined handler answers the test without sending
+    # the name through the substitutor, and the scan that covers that gap
+    # only recognized `ansible_`-prefixed spellings, so no block printed.
+    # Real 2.21.6 warns for a bare fact key exactly like the prefixed one,
+    # Origin'd at the when: item token (byte-compared).
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: produce the bare fact
+            ansible.builtin.getent:
+              database: passwd
+              key: root
+          - name: gated by a bare is defined test
+            ansible.builtin.debug:
+              msg: hi
+            when:
+              - getent_passwd is defined
+      PLAYBOOK
+
+    fact_text = "INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24."
+    stderr.must_include("[DEPRECATION WARNING]: #{fact_text}\n")
+    stderr.must_include(":13:11\n")
+    stderr.must_include("13         - getent_passwd is defined\n")
+    stderr.must_include("             ^ column 11")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(fact_text)}/).size.must_equal(1)
+  end
+
   it "attributes a loop source's fact read to the candidate element that named it" do
     # mullholland.ntp's "Include distribution specific variables" (issue
     # #956): a with_first_found: candidate list of template strings. Real
