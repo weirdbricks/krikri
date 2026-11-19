@@ -1,0 +1,43 @@
+---
+- name: "add docker repo"
+  yum_repository:
+    name: "{{ item.name }}"
+    description: "{{ item.description}}"
+    gpgkey: "{{ item.gpgkey }}"
+    baseurl: "{{ item.baseurl }}"
+  with_items:
+  - {
+      name: "docker-ce-stable",
+      description: "Docker CE Stable - $basearch",
+      baseurl: 'https://download.docker.com/linux/centos/{{hostvars[inventory_hostname]["ansible_distribution_major_version"]}}/$basearch/stable',
+      enabled: 1,
+      gpgkey: "https://download.docker.com/linux/centos/gpg"
+    }
+  - {
+      name: "docker-ce-stable-debuginfo",
+      description: "Docker CE Stable - Debuginfo $basearch",
+      baseurl: 'https://download.docker.com/linux/centos/{{hostvars[inventory_hostname]["ansible_distribution_major_version"]}}/debug-$basearch/stable',
+      enabled: 0,
+      gpgkey: "https://download.docker.com/linux/centos/gpg"
+    }
+  - {
+      name: "docker-ce-stable-source",
+      description: "Docker CE Stable - Sources",
+      baseurl: 'https://download.docker.com/linux/centos/{{hostvars[inventory_hostname]["ansible_distribution_major_version"]}}/source/stable',
+      enabled: 0,
+      gpgkey: "https://download.docker.com/linux/centos/gpg"
+    }
+  tags: [ "docker" ]
+  when: hostvars[inventory_hostname]["ansible_distribution"] == "CentOS"
+
+- name: "install docker"
+  package:
+    name: "{{ item.name }}"
+    state: present
+  with_items:
+    - { name: "docker-ce", distribution: ["CentOS"] }
+    - { name: "docker", distribution: ["Amazon"] }
+    - { name: "python2-pip", distribution: ["CentOS", "Amazon"] }
+  tags: [ "docker" ]
+  notify: "restart docker service"
+  when: hostvars[inventory_hostname]["ansible_distribution"] in item.distribution

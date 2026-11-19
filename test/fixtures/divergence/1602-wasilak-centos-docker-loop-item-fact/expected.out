@@ -1,0 +1,52 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [wasilak.centos-docker : add docker repo] *********************************
+skipping: [localhost] => (item={'name': 'docker-ce-stable', 'description': 'Docker CE Stable - $basearch', 'baseurl': 'https://download.docker.com/linux/centos/7/$basearch/stable', 'enabled': 1, 'gpgkey': 'https://download.docker.com/linux/centos/gpg'}) 
+skipping: [localhost] => (item={'name': 'docker-ce-stable-debuginfo', 'description': 'Docker CE Stable - Debuginfo $basearch', 'baseurl': 'https://download.docker.com/linux/centos/7/debug-$basearch/stable', 'enabled': 0, 'gpgkey': 'https://download.docker.com/linux/centos/gpg'}) 
+skipping: [localhost] => (item={'name': 'docker-ce-stable-source', 'description': 'Docker CE Stable - Sources', 'baseurl': 'https://download.docker.com/linux/centos/7/source/stable', 'enabled': 0, 'gpgkey': 'https://download.docker.com/linux/centos/gpg'}) 
+skipping: [localhost]
+
+TASK [wasilak.centos-docker : install docker] **********************************
+skipping: [localhost] => (item={'name': 'docker-ce', 'distribution': ['CentOS']}) 
+skipping: [localhost] => (item={'name': 'docker', 'distribution': ['Amazon']}) 
+skipping: [localhost] => (item={'name': 'python2-pip', 'distribution': ['CentOS', 'Amazon']}) 
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/wasilak.centos-docker/tasks/main.yml:12:16
+
+10       name: "docker-ce-stable",
+11       description: "Docker CE Stable - $basearch",
+12       baseurl: 'https://download.docker.com/linux/centos/{{hostvars[inventory_hostname]["ansible_distribution_majo...
+                  ^ column 16
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/wasilak.centos-docker/tasks/main.yml:31:9
+
+29     }
+30   tags: [ "docker" ]
+31   when: hostvars[inventory_hostname]["ansible_distribution"] == "CentOS"
+           ^ column 9
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/wasilak.centos-docker/tasks/main.yml:43:9
+
+41   tags: [ "docker" ]
+42   notify: "restart docker service"
+43   when: hostvars[inventory_hostname]["ansible_distribution"] in item.distribution
+           ^ column 9
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

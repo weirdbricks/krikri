@@ -1,0 +1,11 @@
+---
+# krikri-role-tester ran the role against its testhost inventory; only the
+# play is adapted to localhost. The role's `pip: docker-compose` and
+# `service: docker` tasks are dropped (they mutate the machine, and their
+# output is not part of the divergence), leaving the two `when:`-gated tasks
+# verbatim.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - wasilak.centos-docker

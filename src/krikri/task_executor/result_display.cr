@@ -2441,12 +2441,31 @@ module Krikri
         val_stripped = val_line.strip
         next if val_stripped.empty? || val_stripped.starts_with?("#")
         val_indent = val_line.size - val_line.lstrip.size
-        return nil if val_indent < key_indent
+        break if val_indent < key_indent
         next unless val_stripped.starts_with?("- ")
         next if name && !val_line.includes?(name)
         # The element's own scalar start - a quoted scalar's opening quote,
         # which is where ansible anchors it.
         return ErrorBlock.origin_context(path, val_idx + 1, val_indent + 3)
+      end
+      return nil unless name
+      loop_source_member_origin(path, lines, idx, key, name)
+    end
+
+    # The Origin of a fact read inside a loop-source ITEM that is itself a
+    # collection (`with_items: - { baseurl: '...{{ ansible_os_family }}' }`):
+    # the `- ` scan above only sees the item's own start (`{`), while real
+    # tags every stored YAML scalar, so the block points at the LEAF that
+    # named the fact - the baseurl value's opening quote - one level into
+    # the item (issue #1602, wasilak.centos-docker's repo entries; live-
+    # verified against 2.21.6, which also reports a bare-fact read there).
+    private def self.loop_source_member_origin(path : String, lines : Array(String), key_line_idx : Int32, key : String, name : String) : String?
+      map = YamlSourceMap.scan(File.read(path))
+      base = map.key_value_after(key, key_line_idx + 1).try(&.[0]) || return nil
+      map.leaves_under(base).each do |pos|
+        row = lines[pos[0] - 1]?
+        next unless row && row.includes?(name)
+        return ErrorBlock.origin_context(path, pos[0], pos[1])
       end
       nil
     end

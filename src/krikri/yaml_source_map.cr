@@ -83,6 +83,26 @@ module Krikri
       @positions.select { |path, _| path.ends_with?(suffix) }.values
     end
 
+    # The first (document-order) node recorded under *key* (a mapping value,
+    # its path ending with "/<key>") whose position is at or after *line* -
+    # for locating a task keyword's value node without knowing the file's
+    # own path prefix. The position is the VALUE node's start mark, which
+    # for a block collection sits on its first entry's line.
+    def key_value_after(key : String, line : Int32) : {String, Pos}?
+      @positions.each do |path, pos|
+        next unless path == key || path.ends_with?("/#{key}")
+        return {path, pos} if pos[0] >= line
+      end
+      nil
+    end
+
+    # Every source position under *prefix* (the path itself included), in
+    # document order - a container's stored leaves, for callers that must
+    # find which nested value of a YAML subtree names something.
+    def leaves_under(prefix : String) : Array(Pos)
+      @positions.select { |path, _| path == prefix || path.starts_with?("#{prefix}/") }.values
+    end
+
     # The top-level sequence entries as (index, start line) pairs sorted
     # by position - for a playbook these are its plays, letting callers
     # locate which play a given source line belongs to.
