@@ -1106,6 +1106,42 @@ describe Krikri::RoleLoader do
     defaults["deep_var"]?.try(&.as_s).must_equal("deep")
   end
 
+  it "loads defaults/main/ subdirectories recursively, in sorted walk order" do
+    # Issue #1606: dorancemc.ansible_nagioscore ships its defaults as
+    # defaults/main/nagios/vars.yaml + defaults/main/nrdp/vars.yaml next to
+    # a defaults/main/main.yml. Real ansible's DataLoader walks a role's
+    # main/ directory recursively, so `install_pnp4nagios` (and nagios.* /
+    # apache.*) resolved there; the flat glob krikri used left them
+    # undefined, failing the role's own `when: install_pnp4nagios | bool`
+    # where real ansible proceeded. The sort matters too: ansible descends
+    # into a subdirectory at its sorted position, so a file inside the
+    # earlier-named aaa/ is overridden by the later main.yml.
+    role_dir = File.join(roles_root, "roles", "nested_main_order_role")
+    write(File.join(role_dir, "defaults", "main", "main.yml"), "top_level: from_main\n")
+    write(File.join(role_dir, "defaults", "main", "nagios", "vars.yaml"), "here: here_value\n")
+    write(File.join(role_dir, "defaults", "main", "nagios", "deep", "deeper.yml"), "deep_value: deep\n")
+    # ansible also reads extensionless files and skips hidden/backup ones;
+    # `aaa/` comes before main.yml in the sorted walk, so its top_level loses.
+    write(File.join(role_dir, "defaults", "main", "aaa", "noext"), "noext_value: hello\ntop_level: from_aaa\n")
+    write(File.join(role_dir, "defaults", "main", ".hidden.yml"), "hidden_value: nope\n")
+    write(File.join(role_dir, "defaults", "main", "zzz.yml~"), "backup_value: nope\n")
+    # A directory whose name carries an extension (`nagios.d/`) is a real
+    # ansible skip - `_get_dir_vars_files` only descends when splitext()
+    # found no extension - so its vars must stay undefined.
+    write(File.join(role_dir, "defaults", "main", "nagios.d", "vars.yml"), "dotted_value: nope\n")
+    write(File.join(role_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- nested_main_order_role"), fresh_play, roles_root)
+    defaults = (tasks[0].role_defaults || raise "unexpected nil")
+    defaults["top_level"]?.try(&.as_s).must_equal("from_main")
+    defaults["here"]?.try(&.as_s).must_equal("here_value")
+    defaults["deep_value"]?.try(&.as_s).must_equal("deep")
+    defaults["noext_value"]?.try(&.as_s).must_equal("hello")
+    defaults["hidden_value"]?.must_be_nil
+    defaults["backup_value"]?.must_be_nil
+    defaults["dotted_value"]?.must_be_nil
+  end
+
   it "resolves a slash-containing role name joined under the roles search path (Galaxy sub-role chain)" do
     # CiscoUcs.ucs (round 5410000): a Galaxy role whose tasks/main.yml
     # does `include_role: name: CiscoUcs.ucs/admin` - admin/ is a full

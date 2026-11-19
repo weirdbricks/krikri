@@ -1544,15 +1544,8 @@ module Krikri
     end
 
     def self.load_vars_file_main(dir : String) : Hash(String, JSON::Any)
-      if found = find_main_file(dir)
-        return load_vars_file(found)
-      end
-
-      main_dir = File.join(dir, "main")
-      return Hash(String, JSON::Any).new unless Dir.exists?(main_dir)
-
       result = Hash(String, JSON::Any).new
-      main_dir_files(main_dir).each do |path|
+      role_vars_main_files(dir).each do |path|
         load_vars_file(path).each { |key, value| result[key] = value }
       end
       result
@@ -1595,48 +1588,63 @@ module Krikri
     # The vars-style entry files ansible's `_load_role_yaml(subdir, allow_dir:
     # true)` reads for a role: vars_from: names exactly one vars/ file, the
     # single main.* form exactly one, and the main/ directory form every
-    # vars file inside it (recursively) in ansible's own walk order.
+    # vars-style file inside it (recursively - see main_dir_files).
     private def self.role_vars_entry_files(role_dir : String, subdir : String, vars_from : String?) : Array(String)
       if vars_from
         entry_path = resolve_role_vars_path(role_dir, vars_from)
         File.exists?(entry_path) ? [entry_path] : [] of String
-      elsif found = find_main_file(File.join(role_dir, subdir))
-        [found]
       else
-        main_dir_files(File.join(role_dir, subdir, "main"))
+        role_vars_main_files(File.join(role_dir, subdir))
       end
     end
 
-    # A main/ directory of vars-style files in ansible's own merge order -
-    # empty when the directory does not exist. Ansible's
-    # `DataLoader._get_dir_vars_files` walks the directory tree depth-first
-    # with each level's entries sorted by name, so a role may split its
-    # defaults across nested subdirectories (`defaults/main/nagios/
-    # vars.yaml` in dorancemc.ansible_nagioscore, issue #1593: every var
-    # defined there was undefined here, failing a `when: install_pnp4nagios`
-    # ansible resolves) and a file with NO extension counts as vars too.
-    private def self.main_dir_files(main_dir : String) : Array(String)
-      found = [] of String
-      collect_main_dir_files(main_dir, found)
-      found
+    # ansible's `find_vars_files` for a role's vars/ or defaults/: the single
+    # main.<ext> file wins when present (a `main/` directory beside it is
+    # ignored), otherwise `main` itself may be an extensionless file, and
+    # otherwise every vars-style file under the main/ directory.
+    private def self.role_vars_main_files(dir : String) : Array(String)
+      if found = find_main_file(dir)
+        return [found]
+      end
+
+      main_path = File.join(dir, "main")
+      if File.file?(main_path)
+        [main_path]
+      else
+        main_dir_files(main_path)
+      end
     end
 
-    private def self.collect_main_dir_files(dir : String, found : Array(String)) : Nil
-      return unless Dir.exists?(dir)
+    # ansible's `DataLoader._get_dir_vars_files`: every file under a role's
+    # defaults/main/ (or vars/main/) whose extension is empty, .yml, .yaml
+    # or .json, walked RECURSIVELY in sorted name order - a subdirectory is
+    # descended into in its sorted position rather than after the files, so
+    # merge order matches real ansible when two nested files set one key.
+    # Hidden (leading '.') and editor-backup ('~'-suffixed) entries are
+    # skipped. Issue #1606: dorancemc.ansible_nagioscore keeps its defaults
+    # in defaults/main/nagios/vars.yaml and defaults/main/nrdp/vars.yaml, so
+    # a non-recursive glob left `install_pnp4nagios` undefined and the
+    # role's own `when: install_pnp4nagios | bool` failed where real
+    # ansible resolved the default and carried on.
+    private def self.main_dir_files(main_dir : String) : Array(String)
+      return [] of String unless Dir.exists?(main_dir)
 
-      Dir.children(dir).sort!.each do |name|
+      result = [] of String
+      Dir.children(main_dir).sort.each do |name|
         next if name.starts_with?('.') || name.ends_with?('~')
-        path = File.join(dir, name)
-        if Dir.exists?(path)
-          collect_main_dir_files(path, found)
-        else
-          ext = File.extname(name)
-          found << path if ext.empty? || VARS_FILE_EXTENSIONS.includes?(ext)
+
+        full_path = File.join(main_dir, name)
+        ext = File.extname(name)
+        if File.directory?(full_path)
+          # ansible only descends when splitext() found no extension at all,
+          # so a directory named `nagios.d/` is skipped, not walked.
+          result.concat(main_dir_files(full_path)) if ext.empty?
+        elsif File.file?(full_path) && (ext.empty? || {".yml", ".yaml", ".json"}.includes?(ext))
+          result << full_path
         end
       end
+      result
     end
-
-    VARS_FILE_EXTENSIONS = %w[.yml .yaml .json]
 
     # The LAST file's parsed top level that Python would call truthy - nil
     # when none is. A truthy non-mapping REPLACES the accumulated merge
@@ -1656,15 +1664,8 @@ module Krikri
     # Origins for #load_vars_file_main's result - same file discovery,
     # same merge order, so a lookup answers for the value that wins.
     private def self.load_vars_file_origins_main(dir : String) : Hash(String, VarOrigin)
-      if found = find_main_file(dir)
-        return vars_file_origins(found)
-      end
-
-      main_dir = File.join(dir, "main")
-      return Hash(String, VarOrigin).new unless Dir.exists?(main_dir)
-
       result = Hash(String, VarOrigin).new
-      main_dir_files(main_dir).each do |path|
+      role_vars_main_files(dir).each do |path|
         vars_file_origins(path).each { |key, origin| result[key] = origin }
       end
       result
@@ -1689,11 +1690,7 @@ module Krikri
         File.join(role_dir, "defaults"),
         File.join(role_dir, "vars"),
       }.each do |dir|
-        files = if found = find_main_file(dir)
-                  [found]
-                else
-                  main_dir_files(File.join(dir, "main"))
-                end
+        files = role_vars_main_files(dir)
         files.each do |path|
           keys = cached_yaml(path).as_h?.try(&.keys.map(&.to_s)) || next
           PlaybookParser.warn_reserved_toplevel_vars(path, keys, warned_keys)
