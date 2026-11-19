@@ -1,0 +1,4 @@
+---
+vivisect_pip_module: https://github.com/vivisect/vivisect/zipball/master
+
+vivisect_pip: pip3
