@@ -1,0 +1,20 @@
+---
+
+- name: Use a faster Ubuntu mirror
+  become: true
+  when: ansible_distribution == "Ubuntu"
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: "http://archive.ubuntu.com/ubuntu"
+    replace: "{{ default_ubuntu_mirror }}"
+
+- name: Ensure dependencies are installed
+  become: true
+  ansible.builtin.apt:
+    name:
+      - wget
+      - ca-certificates
+    state: present
+    update_cache: true
+
+...

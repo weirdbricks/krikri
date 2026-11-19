@@ -1,0 +1,15 @@
+<%#
+kind: ptable
+name: Preseed default autoinstall
+model: Ptable
+description: |
+  Preseed Autoinstall default storage snippet configures drives automatically
+  with LVM. The snippet is automatically indented by 2 spaces. For reference:
+  https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
+oses:
+- Ubuntu
+%>
+storage:
+  layout:
+    name: lvm
+    sizing-policy: all

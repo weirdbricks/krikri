@@ -1,0 +1,24 @@
+---
+
+foreman_yum_url: "https://yum.theforeman.org/releases/{{ foreman_version }}/el9/x86_64/foreman-release.rpm"
+
+foreman_ansible_python_packages:
+  - pip
+  - ansible
+  - ansible-lint
+  - requests
+  - psycopg2-binary
+
+foreman_system_python_packages:
+  redhat:
+    - python3-pyyaml
+    - python3-requests
+  debian:
+    - python3-yaml
+    - python3-requests
+
+foreman_packages_command:
+  RedHat: "rpm -qa | grep -i foreman"
+  Debian: "dpkg -l | grep -i foreman"
+
+...

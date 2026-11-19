@@ -1,0 +1,82 @@
+<%#
+kind: user_data
+name: Preseed Autoinstall cloud-init user data
+model: ProvisioningTemplate
+oses:
+- ubuntu
+test_on:
+- ubuntu_autoinst4dhcp
+- ubuntu_autoinstmulti4dhcp
+description: |
+  The provisioning template for Autoinstall based distributions. To customize the installation,
+  modify the host parameters
+
+  This template accepts the following parameters:
+  - lang: string (default="en_US.UTF-8")
+  - keyboard: string (default="us")
+  - package_upgrade: boolean (default=false)
+  - remote_execution_ssh_keys: string (default="")
+  - username_to_create: string (default="root")
+  - realname_to_create: string (default=username_to_create)
+  - password_to_create: string (default=@host.root_pass)
+-%>
+<%-
+username_to_create = host_param('username_to_create', 'root')
+realname_to_create = host_param('realname_to_create') || username_to_create
+password_to_create = host_param('password_to_create') || @host.root_pass
+enable_auto_update = (host_param_true?('package_upgrade') && !host_param('kt_activation_keys'))
+os_major = @host.operatingsystem.major.to_i
+-%>
+#cloud-config
+autoinstall:
+  version: 1
+  apt:
+    geoip: false
+    preserve_sources_list: false
+    packages:
+<%- @host.params['provisioning_default_packages'].each do |pkg| -%>
+      - <%= pkg %>
+<%- end -%>
+    primary:
+      - arches: [amd64, i386]
+        uri: http://archive.ubuntu.com/ubuntu
+      - arches: [default]
+        uri: http://ports.ubuntu.com/ubuntu-ports
+<% unless enable_auto_update -%>
+    disable_components: [multiverse]
+    disable_suites: [backports,security,updates]
+    fallback: offline-install
+<% end -%>
+<%= indent(4) { snippet_if_exists(template_name + " custom apt") } -%>
+  user-data:
+    disable_root: false
+    fqdn: <%= @host.name %>
+    users:
+    - name: <%= username_to_create %>
+      gecos: <%= realname_to_create %>
+      lock_passwd: false
+      hashed_passwd: <%= password_to_create %>
+<% if !host_param('remote_execution_ssh_keys').blank? -%>
+<%   if host_param('remote_execution_ssh_keys').is_a?(String) -%>
+      ssh_authorized_keys: [<%= host_param('remote_execution_ssh_keys') %>]
+<%   else -%>
+      ssh_authorized_keys: <%= host_param('remote_execution_ssh_keys') %>
+<%   end -%>
+<% end -%>
+  keyboard:
+    layout: <%= host_param('keyboard', 'us') %>
+    toggle: null
+    variant: ''
+  locale: <%= host_param('lang', 'en_US') %>.UTF-8
+<%= snippet 'preseed_netplan_setup_custom' -%>
+  ssh:
+    allow-pw: true
+    install-server: true
+  updates: security
+<%= indent(2) { @host.diskLayout } %>
+<%= indent(2) { snippet_if_exists(template_name + " custom root") } -%>
+  late-commands:
+<%= indent(2) { snippet 'preseed_autoinstall_clevis_tang_wrapper' if host_param('disk_enc_tang_servers') && os_major >= 22 } %>
+  - wget --no-proxy <%= @static ? "'#{foreman_url('finish', static: 'true')}'" : foreman_url('finish') %> -O /target/tmp/finish.sh
+  - curtin in-target -- chmod +x /tmp/finish.sh
+  - curtin in-target -- /tmp/finish.sh

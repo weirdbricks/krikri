@@ -1,0 +1,91 @@
+---
+
+- name: Display installer options
+  ansible.builtin.debug:
+    msg: >-
+      foreman-installer
+      --scenario=foreman
+      {{ foreman_install_flags | join(" ") }}
+
+# Note debian fails to create database from `formen-installer`
+# ActiveRecord::NoDatabaseError: We could not find your database: foreman. Which can be found in the database configuration file located at config/database.yml.
+- name: Create user and database on debian beforehand
+  when: ansible_facts.distribution | lower == "debian"
+  block:
+    - name: Install PostgreSQL server
+      become: true
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - acl  # Note required for `become_user`
+        state: present
+        update_cache: true
+
+    - name: Ensure PostgreSQL is running
+      become: true
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+
+    - name: Ensure psycopg2 is installed
+      become: true
+      ansible.builtin.package:
+        name: python3-psycopg2
+        state: present
+
+    - name: Ensure 'foreman' DB user exists
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: foreman
+        role_attr_flags: SUPERUSER
+        state: present
+        login_user: postgres
+
+    - name: Ensure 'foreman' database exists
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: foreman
+        owner: foreman
+        state: present
+        login_user: postgres
+
+- name: Create user and database on debian beforehand
+  become: true
+  when: ansible_facts.distribution | lower == "debian"
+  ansible.builtin.apt:
+    name: cron
+    state: present
+    update_cache: true
+
+- name: Include foreman installer
+  become: true
+  ansible.builtin.import_role:
+    name: theforeman.operations.installer
+  vars:
+    foreman_installer_scenario: "foreman"
+    foreman_installer_package: "foreman-installer"
+    foreman_installer_verbose: false
+    foreman_installer_timeout: 360
+    foreman_installer_options: "{{ foreman_install_flags }}"
+
+- name: Disable puppet
+  when: foreman_disable_puppet_services
+  block:
+    - name: Disable and stop puppetserver
+      become: true
+      ansible.builtin.systemd_service:
+        name: "puppetserver"
+        state: stopped
+        enabled: false
+
+    - name: Disable and stop puppet
+      become: true
+      ansible.builtin.systemd_service:
+        name: "puppet"
+        state: stopped
+        enabled: false
+
+...

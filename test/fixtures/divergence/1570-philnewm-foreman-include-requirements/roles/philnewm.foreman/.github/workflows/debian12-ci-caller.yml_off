@@ -1,0 +1,31 @@
+---
+
+name: Debian12
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - 'README.md'
+      - '**/*.md'
+      - .gitignore
+      - ./meta/main.yml
+      - LICENSE
+
+  pull_request:
+    branches: [ "main" ]
+    paths-ignore:
+      - 'README.md'
+      - '**/*.md'
+      - .gitignore
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: philnewm/ansible-role-repo-control/.github/workflows/molecule-ci-podman.yml@main
+    with:
+      scenario_name: debian12
+
+...

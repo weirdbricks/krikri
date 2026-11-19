@@ -1,0 +1,7 @@
+---
+
+- name: No tests
+  ansible.builtin.debug:
+    msg: "Tests are obsolete - converge and idempotence handle it already"
+
+...

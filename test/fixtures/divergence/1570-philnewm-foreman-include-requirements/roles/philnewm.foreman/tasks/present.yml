@@ -1,0 +1,105 @@
+---
+
+- name: Include vars file if provided
+  when: foreman_vars_file | length > 0
+  ansible.builtin.include_vars:
+    file: "{{ foreman_vars_file }}"
+
+- name: Check if Foreman is running by calling API
+  ansible.builtin.uri:
+    url: "{{ foreman_server_url }}/api/statuses"
+    method: GET
+    user: "{{ foreman_default_user }}"
+    password: "{{ foreman_default_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    return_content: true
+  register: foreman_api
+  failed_when: false
+  changed_when: false
+
+- name: Extract Foreman version
+  ansible.builtin.set_fact:
+    installed_foreman_version: "{{ foreman_api.json.results.foreman.version | default('') }}"
+
+- name: Display foreman version
+  ansible.builtin.debug:
+    var: installed_foreman_version
+
+- name: Include requirements
+  ansible.builtin.include_tasks:
+    file: "repo_setup.yml"
+
+- name: Prepare freeipa realm
+  when: foreman_freeipa_realm_enabled
+  ansible.builtin.include_tasks:
+    file: freeipa_realm.yml
+
+- name: Include install
+  when: installed_foreman_version != foreman_version
+  ansible.builtin.include_tasks:
+    file: install.yml
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Configure firewalld if available
+  when: "'firewalld.service' in ansible_facts.services"
+  block:
+    - name: Ensure firewalld is running and enabled
+      become: true
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Allow services in firewalld permanently
+      become: true
+      loop: "{{ foreman_fw_allowed_services }}"
+      loop_control:
+        loop_var: firewall_service
+      ansible.posix.firewalld:
+        service: "{{ firewall_service }}"
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Allow ports in firewalld permanently
+      become: true
+      loop: "{{ foreman_fw_allowed_ports }}"
+      loop_control:
+        loop_var: firewall_port
+      ansible.posix.firewalld:
+        port: "{{ firewall_port }}"
+        permanent: true
+        state: enabled
+        immediate: true
+
+- name: Ensure Puppet is disabled in smart proxy
+  become: true
+  when: foreman_proxy_disable_puppet_after_install
+  ansible.builtin.lineinfile:
+    path: /etc/foreman-proxy/settings.d/puppet.yml
+    regexp: '^:enabled:'
+    line: ':enabled: false'
+    create: true
+    owner: "foreman-proxy"
+    group: "root"
+    mode: "0640"
+  notify: Restart foreman-proxy
+
+- name: Setup certifiacte
+  when: foreman_certificate
+  ansible.builtin.include_tasks:
+    file: certificate_setup.yml
+
+- name: Set up ansible
+  when: foreman_setup_ansible
+  ansible.builtin.include_tasks:
+    file: ansible.yml
+
+- name: Include config
+  ansible.builtin.include_tasks:
+    file: config.yml
+
+...

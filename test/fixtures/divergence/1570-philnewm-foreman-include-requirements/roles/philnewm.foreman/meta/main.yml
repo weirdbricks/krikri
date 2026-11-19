@@ -1,0 +1,21 @@
+---
+
+galaxy_info:
+  role_name: foreman
+  author: philnewm
+  description: Set up and configure a foreman instance
+
+  license: MIT
+
+  min_ansible_version: "2.1"
+
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+
+  galaxy_tags: []
+
+dependencies: []
+
+...

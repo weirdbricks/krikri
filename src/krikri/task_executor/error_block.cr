@@ -126,6 +126,18 @@ module Krikri
       true
     end
 
+    # Same dedup and routing as emit, for a block already rendered at its
+    # raise site whose Origin context came from the source map - a
+    # role-not-found import_role: inside an include_tasks:-loaded file
+    # (issue #1570). It stays on STDOUT because it is a task result's own
+    # exception block, and display_failed_stderr defaults to false
+    # (live-verified vs 2.21.6).
+    def self.emit_rendered(text : String) : Bool
+      return false unless record_displayed(text)
+      OutputRouting.current_io.print OutputRouting.normalize_for_display(text)
+      true
+    end
+
     # Same dedup and STDERR routing as emit_stderr, for a block already
     # rendered at its raise site (a RemovedModuleError's render carries
     # the Origin context the raise site built from the source map).

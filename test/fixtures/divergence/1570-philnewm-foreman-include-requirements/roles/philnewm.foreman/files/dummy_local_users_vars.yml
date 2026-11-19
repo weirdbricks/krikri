@@ -1,0 +1,27 @@
+---
+
+local_users_sudo_group:
+  RedHat: "wheel"
+  Debian: "sudo"
+
+local_users_users:
+  - name: "philnewm"
+    display_name: "Phil Newm"
+    password: "{{ 'changeme1' | password_hash('sha512') }}"
+    passwordless_sudo: false
+    home: true
+    desktop: true
+    shell: "/bin/bash"
+    group: "{{ local_users_sudo_group[ansible_os_family] }}"
+    remote_execution: false
+  - name: guest
+    display_name: "Guest"
+    password: "{{ 'test_1234' | password_hash('sha512') }}"
+    passwordless_sudo: false
+    home: true
+    desktop: true
+    shell: "/bin/bash"
+    group: "{{ local_users_sudo_group[ansible_os_family] }}"
+    remote_execution: false
+
+...

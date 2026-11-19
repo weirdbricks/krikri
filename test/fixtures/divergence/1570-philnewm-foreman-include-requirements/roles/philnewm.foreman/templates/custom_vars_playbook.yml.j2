@@ -1,0 +1,28 @@
+---
+
+- hosts: all
+  vars_files:
+{% for vars_file in foreman_ansible_vars_files %}
+{% if vars_file.auto_include | default(false) %}
+    - "{{ vars_file.dest }}"
+{% endif %}
+{% endfor %}
+{% raw %}
+  pre_tasks:
+    - name: Display all parameters known for the Foreman host
+      debug:
+        var: foreman
+      tags:
+        - always
+  tasks:
+    - name: Apply roles
+      ansible.builtin.include_role:
+        name: "{{ role }}"
+      tags:
+        - always
+      loop: "{{ foreman_ansible_roles }}"
+      loop_control:
+        loop_var: role
+
+...
+{% endraw %}
