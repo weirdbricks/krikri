@@ -2002,6 +2002,23 @@ module Krikri
       # ride one frame whose flag is set per item (see
       # VarSubstitutor#emit_loop_item_fact_deprecation).
       VarSubstitutor.push_loop_item_fact_state(task.loop_var || "item")
+      # Deprecation blocks raised while the iterations template their own
+      # when:/args. Real's worker runs each item in its own
+      # DeferredWarningContext, so those blocks ride the item's result and
+      # display at the item's own display point, after the module warnings
+      # the result carries (callback/__init__.py's _handle_warnings prints
+      # warnings before deprecations; live-verified vs 2.21.6: a looped
+      # find: whose templated path read a top-level fact printed the
+      # module's own [WARNING] line first, then both blocks, then the ok
+      # line - and issue #1563's mysql_user connector warning led the same
+      # task's args block the same way). Emitting at read time instead put
+      # every item's reads ahead of the module's warnings and ahead of the
+      # earlier items' own output. One window covers the whole pass because
+      # a looped task's args template the same source text for every item,
+      # so the blocks dedupe to the same single replay per distinct text:
+      # finish_looped_task seeds them at the first item's display.
+      item_deprecations = [] of ResultDisplay::PendingDeprecation
+      ResultDisplay.begin_task_deprecation_capture
       item_results = begin
         if loop_batch_eligible?(task, host, exec_host, base_vars_context)
           execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_items, pending_fact_reads)
@@ -2228,11 +2245,19 @@ module Krikri
             result
           end
         end
+      rescue ex : Exception
+        # An exception escaping the whole pass (a when:/args failure the
+        # caller degrades to one failed result) never reaches a display
+        # point, so replay the blocks where they used to print instead of
+        # dropping them.
+        ResultDisplay.flush_task_deprecation_capture_for_display
+        raise ex
       ensure
         VarSubstitutor.pop_loop_item_fact_state
+        item_deprecations.concat(ResultDisplay.take_task_deprecation_capture)
       end
 
-      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_items, pending_fact_reads)
+      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_items, pending_fact_reads, item_deprecations)
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -2609,7 +2634,7 @@ module Krikri
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil, skipped_items : Hash(Int32, SkippedLoopItem) = Hash(Int32, SkippedLoopItem).new, pending_fact_reads : Array(Bool)? = nil) : Nil
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil, skipped_items : Hash(Int32, SkippedLoopItem) = Hash(Int32, SkippedLoopItem).new, pending_fact_reads : Array(Bool)? = nil, item_deprecations : Array(ResultDisplay::PendingDeprecation) = [] of ResultDisplay::PendingDeprecation) : Nil
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
@@ -2663,6 +2688,13 @@ module Krikri
       # display-only, and consistent with this file's established "first
       # host" precedent for banner rendering.
       label_base_context = task.loop_label ? (base_vars_context || build_vars_context(task, host)) : nil
+      # The blocks the iterations raised (see execute_looped_task's capture
+      # window) display with the loop's FIRST item result, after that
+      # result's own module warnings - real's callback prints a result's
+      # warnings before its deprecations, so the seed has to be in place
+      # before the first display below and each printing site flushes it.
+      ResultDisplay.defer_captured_deprecations_for_display(item_deprecations)
+      item_deprecations = [] of ResultDisplay::PendingDeprecation
       loop_items.each_with_index do |item, idx|
         # ansible labels the item AFTER it ran, by templating the loop
         # variable's own NAME (or loop_control.label) as a fresh template -
@@ -2675,6 +2707,9 @@ module Krikri
         # once): print it here, in iteration order, so the "skipping:" line
         # interleaves with the executed items exactly as Ansible does.
         if (skipped = skipped_items[idx]?)
+          # Real shows the held blocks ahead of the skip line (see
+          # perform_skip's own replay for the solo path).
+          ResultDisplay.flush_task_deprecation_capture_for_display
           connection_host = host.name
           shown = skipped_loop_item_censored_label(task, base_vars_context) || skipped.label
           # Same module-keyed -v dump rule the skipped-block printer uses
@@ -2698,7 +2733,12 @@ module Krikri
         end
 
         result = item_results[idx]
-        next unless result
+        unless result
+          # Nothing to display for this item (its skip line already
+          # printed): do not leak the held blocks into a later item.
+          ResultDisplay.flush_task_deprecation_capture_for_display
+          next
+        end
 
         # A looped until: item's retry lines belong to THIS item's output:
         # ansible's retry callback fires while the item runs and the item's
@@ -2788,6 +2828,7 @@ module Krikri
               result_h["msg"] = JSON::Any.new(unreachable_msg)
               result_h["exception"] = JSON::Any.new("(traceback unavailable)")
             end
+            ResultDisplay.flush_task_deprecation_capture_for_display
             ErrorBlock.emit(ResultDisplay.loop_unreachable_error_node(
               unreachable_msg,
               ResultDisplay.error_origin_context(task),
@@ -2825,6 +2866,7 @@ module Krikri
           # decorated with the failing item's own origin, so the chain
           # re-uses it verbatim.
           if failed && (fail_msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(fail_msg)
+            ResultDisplay.flush_task_deprecation_capture_for_display
             emit_when_error_chain(task, fail_msg, host, loop_item: item, loop_index: idx,
               cause_text: result["_ansible_conditional_cause"]?.try(&.as_s?))
           end
@@ -2844,6 +2886,12 @@ module Krikri
         append_loop_item_bindings(task, result_hash, item, idx)
         results << JSON::Any.new(result_hash)
       end
+
+      # A loop whose items were all skipped before any display point took
+      # the seeded window (see above) replayed it already; this is the
+      # guard for anything left, and it never touches an OUTER window (a
+      # nested loop's) the way a flush would.
+      item_deprecations.each { |pending| ResultDisplay.replay_deprecation(pending) }
 
       # Ansible's own aggregate rule (task_executor.py): the loop result
       # starts out skipped and any item that did NOT report itself skipped

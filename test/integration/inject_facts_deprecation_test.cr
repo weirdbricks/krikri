@@ -1304,6 +1304,39 @@ describe "INJECT_FACTS_AS_VARS deprecation vs a module's own warnings" do
     deprecation_at = stderr.index!("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS")
     (warning_at < deprecation_at).must_equal(true)
   end
+
+  # Issue #1563 (charliemaiors.shinobi_db, round 29917406): each loop
+  # iteration runs in its own DeferredWarningContext in real, so a looped
+  # item's arg-templating blocks belong to THAT item's result and print
+  # after its module warnings (live-verified vs 2.21.6 on exactly this
+  # shape: the find module's [WARNING] first, then the paths argument's
+  # block, then the "While processing 'item'" one, then the item's line).
+  # Krikri emitted them at read time, so every item's blocks led both the
+  # module's warnings and the earlier items' own output.
+  it "keeps a looped item's arg-templating blocks behind its module warnings" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: Find configs
+            ansible.builtin.find:
+              paths: "/nonexistent-krikri-1563/{{ item }}"
+              patterns: "*.conf"
+            with_items:
+              - "{{ ansible_nodename }}"
+      PLAYBOOK
+
+    stderr.must_include("[WARNING]: Skipped '/nonexistent-krikri-1563/")
+    warning_at = stderr.index!("[WARNING]: Skipped")
+    # The loop SOURCE's own block is controller-side and prints with the
+    # task banner (real does the same); the item's ARGS block is the one
+    # that belongs to the item's result.
+    args_block_at = stderr.index!("paths: \"/nonexistent-krikri-1563/{{ item }}\"")
+    (warning_at < args_block_at).must_equal(true)
+    # The blocks are still shown, with the argument they came from.
+    stderr.must_include("[DEPRECATION WARNING]: While processing 'item'")
+  end
 end
 
 # Issue #1169 (idiv_biodiversity.nsswitch, round 29908264): the role's

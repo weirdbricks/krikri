@@ -38,8 +38,9 @@ describe "mysql_user plugin parameter validation" do
     # podman-diff mysql_user_edge_cases W9: real community.mysql wraps
     # connect failures in its own "unable to connect to database, ..."
     # wording, not the generic "Could not connect to the MySQL server:"
-    # shape (its PyMySQL (errno, "...") detail tail is library-specific
-    # and not replicated).
+    # shape. The "(errno, "...")" tail is the driver's own exception repr
+    # (see MysqlConnection.connect_error_detail): which driver resolved on
+    # the target decides its wording, so only the shape is asserted here.
     result = PluginSpecHelper.run("mysql_user", {
       "name"              => "alice",
       "login_unix_socket" => "/run/krikri-no-such-mysql.sock",
@@ -49,7 +50,7 @@ describe "mysql_user plugin parameter validation" do
     # Real expands the config_file default with os.path.expanduser before
     # building the msg, so ~ renders as the connecting user's home, not a
     # literal /root/.my.cnf.
-    result["msg"].as_s.must_include("unable to connect to database, check login_user and login_password are correct or #{ENV["HOME"]}/.my.cnf has the credentials. Exception message: ")
+    result["msg"].as_s.must_match(/unable to connect to database, check login_user and login_password are correct or #{Regex.escape(ENV["HOME"])}\/.my\.cnf has the credentials\. Exception message: \(\d{4}, "Can't connect to (local )?MySQL server/)
   end
 
   it "fails when both password and plugin are given (mutually exclusive)" do
