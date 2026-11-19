@@ -1735,6 +1735,26 @@ module Krikri
               VarSubstitutor.pop_preparing_var
             end
           end
+        rescue VariableSubstitutor::FilterEngine::FilterFailureError
+          # A KNOWN filter whose own body raised (`last`/`first` over an
+          # empty sequence, a role-local filter handed None) failed inside
+          # a value the consuming render may never ask for: ansible-core
+          # templates a `vars:` value only at the render that consumes it,
+          # so an UNUSED one never raises at all. The amtega gitlab roles'
+          # block `vars:` builds `gitlab_projects_fact_last_link` from a
+          # result the role never registers, and real ansible-playbook runs
+          # straight past it while this eager pre-render failed the task
+          # (issue #1561). Keeping the raw text leaves the failure with the
+          # value: a var that IS consumed raises it again in that render,
+          # worded for the consuming arg, exactly as real reports.
+          if loop_lenient
+            # Lenient (looped-task pre-loop) mode: see build_vars_context's
+            # loop_lenient_vars comment - the per-iteration re-render (with
+            # `item` bound) or the zero-iteration skip owns the real verdict.
+            vars_context.delete(key)
+          else
+            vars_context[key] = raw
+          end
         rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
           unless loop_lenient
             # An unknown filter name is NOT a legitimate raise-to-absent
