@@ -1,0 +1,19 @@
+---
+# The task krikri-role-tester extracted from rooland-provisioning.atom-editor; only the play is adapted
+# to run it against localhost (the round ran it against its testhost inventory).
+# Fact gathering is off: the divergent task needs no facts, and ansible-core
+# 2.21.6 gathers them without printing a task, so leaving it on would pin
+# krikri's Gathering Facts block rather than this issue.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  # The divergence is get_bin_path's searched-directory list, so the case pins
+  # PATH: otherwise the transcript records the capturing developer's PATH.
+  environment:
+    PATH: /usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  tasks:
+    - name: Install Atom editor
+      homebrew_cask:
+        name:   atom
+        state:  present
+      ignore_errors: yes

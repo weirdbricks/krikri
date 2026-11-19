@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Mailo Svetel
+  description: This role installs and configures [Atom text editor](https://atom.io).
+  company: Rooland
+  license: GPLv2
+  min_ansible_version: 2.0
+  platforms:
+    - name: Darwin
+      versions:
+        - all
+
+  galaxy_tags:
+    - atom
+    - texteditor
+dependencies: []

@@ -45,6 +45,7 @@ private DIVERGENCE_CASES = [
   {issue: 1583, slug: "jpedrodelacerda-yay-check-for-base-devel-packages"},
   {issue: 1584, slug: "juju4-lxdconfigure-debug-env-pwd"},
   {issue: 1588, slug: "elk-backup-elasticsearch-plugin"},
+  {issue: 1587, slug: "rooland-provisioning-atom-editor-install-atom-editor"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -186,6 +187,11 @@ describe "divergence corpus" do
 
   it "replays 1588-elk-backup-elasticsearch-plugin" do
     expected, actual, report = divergence_transcripts(1588, "elk-backup-elasticsearch-plugin")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1587-rooland-provisioning-atom-editor-install-atom-editor" do
+    expected, actual, report = divergence_transcripts(1587, "rooland-provisioning-atom-editor-install-atom-editor")
     assert_equal(expected, actual, report)
   end
 end
