@@ -257,6 +257,12 @@ module Krikri
       # than Int64 made plain JSON.parse raise "Invalid Int64".
       parsed = (Krikri::BigJson.parse(captured[:stdout]) rescue nil)
       return nil unless parsed && parsed.as_h?
+      # The import's controller-context deprecations (see
+      # ControllerPython#stderr_deprecations) are on stderr only, so print
+      # them here - real shows them at the load, before the result.
+      ControllerPython.stderr_deprecations(captured).each do |text|
+        ResultDisplay.emit_core_deprecation(text)
+      end
       parsed
     end
 

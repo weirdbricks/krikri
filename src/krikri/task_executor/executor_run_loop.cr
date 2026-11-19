@@ -2105,40 +2105,18 @@ module Krikri
       group.each do |task|
         break if halted
 
-        vars_context = if task == trigger_task && (reused = trigger_vars_context)
-                         reused
-                       else
-                         begin
-                           build_vars_context(task, host)
-                         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
-                           # Same degrade-to-one-clean-failed-task shape as
-                           # execute_task's own build_vars_context rescue: the
-                           # member's own vars: block used an unknown filter,
-                           # Ansible fails just that task with "No filter
-                           # named 'X'." - cache the failed result so the
-                           # consumer reports it instead of the process
-                           # crashing out of execute_batch_group entirely.
-                           cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars"), task, host), Hash(String, JSON::Any).new}
-                           # This member is a hard failure, so Ansible's play stops
-                           # here: later members must not join the round trip (see
-                           # the when-rescue below for the issue #649 shape). No
-                           # vars_context exists to resolve a templated
-                           # ignore_errors: against - the parse-time value stands.
-                           halted = true unless task.ignore_errors?
-                           next
-                         end
-                       end
-
-        # Same sharing as the solo path: when: and the step preparation
-        # both read this member's identical vars_context.
+        # Initialised so the capture block below can fill them in and an
+        # aborted member (an unknown filter in its vars:) never reads the
+        # placeholders.
+        vars_context = Hash(String, JSON::Any).new
         member_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-
-        # Batch-build looks at every member up front - its when: is
-        # evaluated and its action prepared (a template: renders on the
+        # Batch-build looks at every member up front - its vars: block, its
+        # when:, its action preparation (a template: renders on the
         # controller) - so anything that emits stderr does it here, ahead of
         # the members that really run: issue #489's authorized_key
-        # jinja-constant warning, and an INJECT_FACTS_AS_VARS or play_hosts
-        # read in a later member's when: or template (issue #979).
+        # jinja-constant warning, an INJECT_FACTS_AS_VARS or play_hosts read
+        # in a later member's when: or template (issue #979), and a filter,
+        # test or lookup plugin file's import deprecation (issue #1565).
         # Real only emits when the task is actually reached, so capture the
         # whole window and let try_batched_result emit it when it consumes
         # the task; a member a halt keeps from ever being reached never
@@ -2147,6 +2125,34 @@ module Krikri
         member_state = :run
         outcome = nil
         captured = ResultDisplay.capture_stderr do
+          vars_context = if task == trigger_task && (reused = trigger_vars_context)
+                           reused
+                         else
+                           begin
+                             build_vars_context(task, host)
+                           rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+                             # Same degrade-to-one-clean-failed-task shape as
+                             # execute_task's own build_vars_context rescue: the
+                             # member's own vars: block used an unknown filter,
+                             # Ansible fails just that task with "No filter
+                             # named 'X'." - cache the failed result so the
+                             # consumer reports it instead of the process
+                             # crashing out of execute_batch_group entirely.
+                             cache[task] = {when_error_result(WhenEvaluationError.new(ex.message || "Failed to render task vars"), task, host), Hash(String, JSON::Any).new}
+                             # This member is a hard failure, so Ansible's play stops
+                             # here: later members must not join the round trip (see
+                             # the when-rescue below for the issue #649 shape). No
+                             # vars_context exists to resolve a templated
+                             # ignore_errors: against - the parse-time value stands.
+                             halted = true unless task.ignore_errors?
+                             next
+                           end
+                         end
+
+          # Same sharing as the solo path: when: and the step preparation
+          # both read this member's identical vars_context.
+          member_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+
           # ansible post-validates the play context - which carries this
           # member's own or its parent block's become_user: - BEFORE it
           # evaluates that member's when: (execute_task_once's identical

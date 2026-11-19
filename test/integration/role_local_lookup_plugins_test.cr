@@ -350,3 +350,48 @@ describe "playbook-adjacent lookup_plugins/*.py custom lookups (issue #778)" do
     FileUtils.rm_rf(root) if root
   end
 end
+
+# The lookup-side twin of the filter case issue #1565 reported: a plugin
+# that imports `ansible.errors` before the deprecated `_text` name puts its
+# import in ansible's controller context, where real displays the
+# deprecation through Display straight to stderr instead of the
+# `_global_deprecations` buffer a wrapper response replays.
+describe "role-local lookup_plugins import deprecation in controller context (issue #1565)" do
+  it "prints a deprecation fired after the plugin imported ansible.errors" do
+    root = File.tempname("lookup-plugins-controller-context-deprecation")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "lookup_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "lookup_plugins", "looked.py"), <<-PYTHON)
+      from ansible import errors
+      from ansible.module_utils._text import to_text
+      from ansible.plugins.lookup import LookupBase
+
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              try:
+                  return [to_text(term) + '-looked' for term in terms]
+              except TypeError:
+                  raise errors.AnsibleError('not convertible')
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: use the role's lookup
+        ansible.builtin.debug:
+          msg: "{{ lookup('looked', 'x') }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.must_equal(true, output)
+    output.must_include("x-looked", output)
+    output.scan("[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+end

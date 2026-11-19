@@ -365,11 +365,16 @@ module Krikri
     # "can be disabled" hint before the first one. Also called directly
     # from the argspec validator (a removed param deprecates when the
     # module's run returns - see validate's deprecation gate).
+    #
+    # Through the capture funnel like every other deprecation block: the
+    # batch build prepares its later members up front, so a core
+    # deprecation such a preparation raises - a custom filter_plugins
+    # file's import deprecation, issue #1565 - has to wait for its own
+    # task's display point, where real's DeferredWarningContext shows it,
+    # instead of printing ahead of every member that runs.
     def self.emit_core_deprecation(text : String) : Nil
       line = "[DEPRECATION WARNING]: #{text}"
-      return unless @@deprecation_texts.add?(line)
-      emit_deprecation_hint
-      STDERR.puts line.colorize(:light_magenta)
+      emit_or_defer_deprecation(@@deprecation_texts, line, [line.colorize(:light_magenta).to_s])
     end
 
     # A core deprecation carrying ansible-core 2.21's Origin block: the

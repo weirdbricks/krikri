@@ -523,3 +523,54 @@ describe "role-local test_plugins import deprecation display (issue #1180)" do
     end
   end
 end
+
+# The test-side twin of the filter case issue #1565 reported: a plugin that
+# imports `ansible.errors` before the deprecated `_text` name runs its
+# import in ansible's controller context, where real displays the
+# deprecation through Display straight to stderr instead of the
+# `_global_deprecations` buffer a wrapper response replays.
+describe "role-local test_plugins import deprecation in controller context (issue #1565)" do
+  it "prints a deprecation fired after the plugin imported ansible.errors" do
+    root = File.tempname("test-plugins-controller-context-deprecation")
+    begin
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "test_plugins"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "test_plugins", "thing.py"), <<-PYTHON)
+        from ansible import errors
+        from ansible.module_utils._text import to_text
+
+
+        def is_thing(value):
+            try:
+                return to_text(value) == 'thing'
+            except TypeError:
+                raise errors.AnsibleFilterError('not comparable')
+
+
+        class TestModule(object):
+            def tests(self):
+                return {'thing': is_thing}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: evaluate a when that needs the role's test plugin
+          ansible.builtin.debug:
+            msg: "thing matched"
+          when: "'thing' is thing"
+        YAML
+
+      status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+
+      status.success?.must_equal(true, output)
+      output.must_include("thing matched", output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+end
