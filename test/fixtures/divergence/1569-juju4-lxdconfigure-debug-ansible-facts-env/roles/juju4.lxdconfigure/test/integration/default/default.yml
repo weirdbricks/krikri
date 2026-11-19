@@ -1,0 +1,17 @@
+---
+
+- name: Test integration playbook
+  hosts: all
+  vars:
+    # lxd_preloadimages:
+    lxd_preloadimages:
+      - { i: 'ubuntu:18.04', alias: 'ubuntu-18.04-nopython' }
+    lxd_preconfigure: []
+    ## must be different than lxc host if relevant
+    lxd_bridgeconf_ipv4_addr: "10.252.10.1"
+    lxd_bridgeconf_ipv4_network: "10.252.10.1/24"
+    lxd_bridgeconf_ipv4_dhcp_range: "10.252.10.2-10.252.10.200"
+    lxd_fanconf_underlay_subnet: "10.123.123.0/24"
+  roles:
+    - juju4.lxd
+    - juju4.lxdconfigure

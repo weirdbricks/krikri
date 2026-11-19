@@ -604,4 +604,25 @@ describe Krikri::FactsGatherer do
       Krikri::FactsGatherer.resolve_enabled_families(["!virtualization_type"]).wont_include("virtual")
     end
   end
+
+  # Real ansible's EnvFactCollector copies the module process's whole
+  # os.environ, and juju4.lxdconfigure's `debug: var=ansible_facts['env']`
+  # spreads that dict straight into the play output - so a shortlist shows
+  # up there as lines ansible printed and this engine did not.
+  describe "ansible_env holds the whole environment (issue #1569)" do
+    serial!
+
+    it "reports every variable the process has, not a fixed shortlist" do
+      ENV["KRIKRI_FACTS_ENV_PROBE"] = "probe-value"
+      begin
+        env = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h["ansible_env"].as_h
+        env["KRIKRI_FACTS_ENV_PROBE"].as_s.must_equal("probe-value")
+        ENV.to_h.each do |key, value|
+          env[key]?.try(&.as_s).must_equal(value)
+        end
+      ensure
+        ENV.delete("KRIKRI_FACTS_ENV_PROBE")
+      end
+    end
+  end
 end

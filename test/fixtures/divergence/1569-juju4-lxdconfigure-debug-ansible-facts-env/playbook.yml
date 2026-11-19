@@ -1,0 +1,12 @@
+---
+# juju4.lxdconfigure's first task (tasks/main.yml:3) prints the whole
+# ansible_facts['env'] dict. Every value in it is the runner's own environment,
+# so the dict cannot be pinned byte for byte in a corpus transcript; the case
+# keeps the fact and asserts one variable the old fixed shortlist dropped.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Debug | ansible_facts['env']
+      ansible.builtin.debug:
+        msg: "{{ ansible_facts['env']['ANSIBLE_NOCOLOR'] | default('absent') }}"

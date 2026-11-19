@@ -39,6 +39,7 @@ private DIVERGENCE_CASES = [
   {issue: 1526, slug: "sudo-pair-env-deprecation"},
   {issue: 1528, slug: "reverse-proxy-mandatory"},
   {issue: 1562, slug: "ubuntu-sunjava-action-conflict"},
+  {issue: 1569, slug: "juju4-lxdconfigure-debug-ansible-facts-env"},
   {issue: 1575, slug: "amtega-gitlab-fork-get-projects-info"},
 ]
 
@@ -151,6 +152,11 @@ describe "divergence corpus" do
 
   it "replays 1562-ubuntu-sunjava-action-conflict" do
     expected, actual, report = divergence_transcripts(1562, "ubuntu-sunjava-action-conflict")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1569-juju4-lxdconfigure-debug-ansible-facts-env" do
+    expected, actual, report = divergence_transcripts(1569, "juju4-lxdconfigure-debug-ansible-facts-env")
     assert_equal(expected, actual, report)
   end
 

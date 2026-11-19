@@ -1,0 +1,4 @@
+---
+
+# lxdconfigure_service: lxd
+lxdconfigure_service: snap.lxd.daemon
