@@ -1,0 +1,19 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [tenantcloud.elk_backup : Install elasticsearch repository-s3 plugin] *****
+[ERROR]: Task failed: Module failed: None does not exist and no other valid plugin installers were found. Make sure Elasticsearch is installed.
+Origin: <WORK>/roles/tenantcloud.elk_backup/tasks/main.yml:2:3
+
+1 ---
+2 - name: Install elasticsearch repository-s3 plugin
+    ^ column 3
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "None does not exist and no other valid plugin installers were found. Make sure Elasticsearch is installed."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
