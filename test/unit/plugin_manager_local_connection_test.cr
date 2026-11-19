@@ -232,3 +232,24 @@ describe "a local become staging dir wiped mid-run (issue #1109)" do
     recap.must_include("failed=0")
   end
 end
+
+# Issue #1584: ansible starts its local module through `sh -c`, and a shell
+# resets PWD to the working directory it inherits. krikri execs the plugin
+# binary directly, so it has to hand the child the same PWD itself.
+describe "Krikri::PluginManager.local_plugin_env" do
+  serial! # mutates process-global ENV
+
+  it "replaces a stale inherited PWD with the process's own working directory" do
+    original = ENV["PWD"]?
+    begin
+      ENV["PWD"] = "/nonexistent-stale-directory"
+      Krikri::PluginManager.local_plugin_env["PWD"].must_equal(Dir.current)
+    ensure
+      if original
+        ENV["PWD"] = original
+      else
+        ENV.delete("PWD")
+      end
+    end
+  end
+end

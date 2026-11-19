@@ -1,0 +1,14 @@
+---
+# juju4.lxdconfigure's first task (tasks/main.yml:3) prints the whole
+# ansible_facts['env'] dict, which cannot be pinned byte for byte in a corpus
+# transcript (see 1569's NOTES.md). This case keeps the role and asserts a
+# key that is stable across machines: PWD names the module process's working
+# directory, which real ansible gets from its shell and krikri's directly
+# exec'd local plugin used to miss.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Debug | ansible_facts['env']
+      ansible.builtin.debug:
+        msg: "{{ ansible_facts['env']['PWD'] | default('absent') }}"
