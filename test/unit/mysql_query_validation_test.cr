@@ -75,6 +75,39 @@ describe "mysql_query plugin argument validation" do
       "(ssl_ca, ssl_cert, ssl_key).")
   end
 
+  it "fails a query that resolved to a non-string instead of sending it as SQL" do
+    result = PluginSpecHelper.run("mysql_query", {
+      "query"             => Krikri::NON_STRING_PARAM_PREFIX + "4",
+      "login_user"        => "root",
+      "login_unix_socket" => "/run/mysqld/mysqld.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("the query option value must be a string or list, passed <class 'int'>")
+  end
+
+  it "fails a non-string member of a query list before running any statement" do
+    result = PluginSpecHelper.run("mysql_query", {
+      "query"             => [Krikri::NON_STRING_MEMBER_PREFIX + "4"].to_json,
+      "login_user"        => "root",
+      "login_unix_socket" => "/run/mysqld/mysqld.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("the elements in query list must be strings, passed '4' <class 'int'>")
+  end
+
+  it "checks the query type ahead of the driver gate" do
+    result = PluginSpecHelper.run("mysql_query", {
+      "query"             => Krikri::NON_STRING_PARAM_PREFIX + "true",
+      "login_user"        => "root",
+      "login_unix_socket" => "/run/mysqld/mysqld.sock",
+    }, vars: {"ansible_python_interpreter" => "/bin/false"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("the query option value must be a string or list, passed <class 'bool'>")
+  end
+
   it "skips in check mode like a module without supports_check_mode" do
     result = PluginSpecHelper.run("mysql_query", {
       "query"               => "SELECT 1",

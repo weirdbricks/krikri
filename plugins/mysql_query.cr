@@ -121,13 +121,15 @@ module Krikri
     INT_PARAMS  = {"login_port", "connect_timeout"}
     BOOL_PARAMS = {"single_transaction"}
 
-    def execute : PluginResult
+    # Everything real runs before it has a statement to parse or bind: the
+    # argument-spec checks, the check-mode skip, and mysql_query.py's own
+    # query presence/type gates. Returns the query text on success.
+    private def preflight_query : String | PluginResult
       if err = validate_arguments
         return err
       end
 
-      check_mode = true?(@params["_ansible_check_mode"]?)
-      if check_mode
+      if true?(@params["_ansible_check_mode"]?)
         invoked = @params["_module_name"]? || "community.mysql.mysql_query"
         return PluginResult.new(changed: false, failed: false,
           msg: "remote module (#{invoked}) does not support check mode", skipped: true)
@@ -137,6 +139,17 @@ module Krikri
       unless raw_query
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: query")
       end
+
+      if err = query_type_error(raw_query)
+        return err
+      end
+
+      raw_query
+    end
+
+    def execute : PluginResult
+      raw_query = preflight_query
+      return raw_query if raw_query.is_a?(PluginResult)
 
       statements = parse_statements(raw_query)
       bound = bind_arguments(statements)
@@ -285,6 +298,68 @@ module Krikri
     def self.quote_string(text : String) : String
       escaped = text.gsub(/[\\'\0\n\r\x1a]/) { |found| SQL_ESCAPES[found]? || "\\#{found}" }
       "'#{escaped}'"
+    end
+
+    # mysql_query.py's own type gate (its main() checks both shapes before
+    # the driver import gate and long before the connection attempt): the
+    # whole `query:` must be a string or list, and every list member a
+    # string. A native non-string literal (`query: 4`) or a whole-span
+    # template that resolved to one must be reported here - stringifying
+    # it onto the param wire and sending it to the server instead produced
+    # a MySQL syntax error where real ansible fails argument validation
+    # (live-verified ansible-core 2.21.6 + ansible.mysql 5.2.0).
+    private def query_type_error(raw : String) : PluginResult?
+      candidates : Array(JSON::Any)
+      if native = non_string_param("query")
+        return query_value_type_error(native) unless native.raw.is_a?(Array)
+        candidates = native.as_a
+      elsif parsed = (Array(String).from_json(raw.strip) rescue nil)
+        # PlaybookParser JSON-encodes a literal `query:` list, keeping a
+        # non-string member's type on the wire under the member marker.
+        candidates = parsed.map do |member|
+          Krikri.non_string_member_scalar(member) || JSON::Any.new(member)
+        end
+      elsif members = non_string_member_list("query")
+        candidates = members
+      else
+        return nil
+      end
+
+      candidates.each do |member|
+        next if member.raw.is_a?(String)
+        return PluginResult.new(changed: false, failed: true,
+          msg: "the elements in query list must be strings, passed '#{python_str(member)}' " \
+               "<class '#{python_type_name(member)}'>")
+      end
+      nil
+    end
+
+    private def query_value_type_error(native : JSON::Any) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "the query option value must be a string or list, passed <class '#{python_type_name(native)}'>")
+    end
+
+    # The Python type() repr real's message embeds.
+    private def python_type_name(value : JSON::Any) : String
+      case value.raw
+      when Nil     then "NoneType"
+      when Bool    then "bool"
+      when Int64   then "int"
+      when Float64 then "float"
+      when String  then "str"
+      when Array   then "list"
+      else              "dict"
+      end
+    end
+
+    # Python's str(), for the "%s" real's element message prints with.
+    private def python_str(value : JSON::Any) : String
+      case raw = value.raw
+      when Nil    then "None"
+      when Bool   then raw ? "True" : "False"
+      when String then raw
+      else             raw.to_s
+      end
     end
 
     private def parse_statements(raw : String) : Array(String)

@@ -3448,6 +3448,39 @@ describe Krikri::PlaybookParser do
       named["h"].as_s.must_equal("localhost")
     end
 
+    # A literal `query:` list keeps a non-string member's YAML type on the
+    # JSON wire (under the parser's member marker), so MysqlQueryPlugin
+    # can reject it with real ansible's "the elements in query list must
+    # be strings" before connecting instead of stringifying it into SQL.
+    it "keeps a non-string mysql_query query list member typed on the wire" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.mysql.mysql_query:
+            query:
+              - SELECT 1
+              - 4
+        YAML
+
+      members = JSON.parse(task.params["query"]).as_a
+      members[0].as_s.must_equal("SELECT 1")
+      Krikri.non_string_member_scalar(members[1].as_s).must_equal(JSON::Any.new(4_i64))
+    end
+
+    # A mapping `query:` is not a string or list, so real ansible fails it
+    # before connecting; the marker keeps the container reachable for
+    # MysqlQueryPlugin#query_type_error instead of collapsing to JSON text
+    # that looks like an ordinary SQL string.
+    it "marks a mapping mysql_query query as the native container it was" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.mysql.mysql_query:
+            query:
+              a: 1
+        YAML
+
+      Krikri.non_string_scalar(task.params["query"]).must_equal(JSON.parse("{\"a\":1}"))
+    end
+
     # community.docker's env/labels are dict-typed options that
     # Ansible also accepts written as a list of KEY=VALUE strings, and
     # such an element may legitimately contain a comma (a JSON blob, a

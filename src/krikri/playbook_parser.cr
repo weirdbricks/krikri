@@ -8652,9 +8652,23 @@ module Krikri
             # legitimately containing a comma (very common in SQL) would
             # be indistinguishable from a statement boundary. JSON-
             # encoded here; MysqlQueryPlugin#parse_statements decodes it
-            # back into an Array(String) on the plugin side.
-            statements = value.as_a.map { |item| stringify_value(item) }
+            # back into an Array(String) on the plugin side. A non-string
+            # member keeps its YAML type under the same member marker the
+            # generic comma-joined list uses, so the plugin can fail with
+            # real ansible's "the elements in query list must be strings"
+            # (mysql_query.py's own pre-connection check) instead of
+            # stringifying the member and running it as SQL.
+            statements = value.as_a.map { |item| marked_list_member(item) }
             params[key.to_s] = statements.to_json
+          elsif (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") && key.to_s == "query" && value.as_h?
+            # A mapping `query:` is rejected by mysql_query.py's own type
+            # check ("the query option value must be a string or list,
+            # passed <class 'dict'>") before it connects; the generic dict
+            # wire below would hand the plugin bare JSON text that looks
+            # exactly like a user-written SQL string, so the container
+            # rides the whole-value marker instead (live-verified
+            # ansible-core 2.21.6 + ansible.mysql 5.2.0).
+            params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
           elsif (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") &&
                 (key.to_s == "positional_args" || key.to_s == "named_args") &&
                 (value.as_a? || value.as_h?)
