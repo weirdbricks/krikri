@@ -88,4 +88,74 @@ describe "task-arg finalization error block (unknown filter)" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "fails an unknown filter in an and arm the short-circuit never reaches" do
+    playbook = File.tempname("finalization-unknown-filter-dead-arm", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          distro: Debian
+          distro_version: "10"
+        tasks:
+          - ansible.builtin.set_fact:
+              legacy: "{{ (distro == 'Ubuntu' and distro_version | bogus_kpg_filter('8', '<')) }}"
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.success?.must_equal(false)
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'legacy': Syntax error in template: No filter named 'bogus_kpg_filter'.")
+    text.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'legacy': Syntax error in template: No filter named 'bogus_kpg_filter'.\"}")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "fails an unknown test in an and arm the short-circuit never reaches" do
+    playbook = File.tempname("finalization-unknown-test-dead-arm", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          distro: Debian
+        tasks:
+          - ansible.builtin.set_fact:
+              legacy: "{{ distro == 'Ubuntu' and distro is bogus_kpg_test }}"
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.success?.must_equal(false)
+    text.must_include("[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'legacy': Syntax error in template: No test named 'bogus_kpg_test'.")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  # Jinja's compiler resolves filter/test names under a soft frame, and an
+  # inline conditional expression pushes one for its condition and both
+  # arms - so a name there stays a RUNTIME failure and only fails the task
+  # when the selected arm actually renders (live-verified vs 2.21.6).
+  it "passes an unknown filter in an inline conditional expression arm that never renders" do
+    playbook = File.tempname("finalization-unknown-filter-dead-ternary", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - ansible.builtin.set_fact:
+              legacy: "{{ 'a' | bogus_kpg_filter if false else 'b' }}"
+          - ansible.builtin.debug:
+              var: legacy
+      YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    status.success?.must_equal(true)
+    text.wont_include("No filter named")
+    text.must_include("\"legacy\": \"b\"")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end

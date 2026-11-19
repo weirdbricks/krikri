@@ -2526,11 +2526,25 @@ module Krikri
     # undefined-value message over it) so #evaluate_measured's own
     # validate_filter_names/validate_test_names wording surfaces unchanged.
     def self.compile_time_name_error?(condition : String, vars : Hash(String, JSON::Any)) : Bool
-      validate_filter_names(condition, vars)
-      validate_test_names(condition, vars)
+      validate_compile_time_names(condition, vars)
       false
     rescue VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
       true
+    end
+
+    # Raises the compile-time failure for an unresolvable filter or test
+    # NAME in *expression* - the shared body of the strict-undefined
+    # probe's #compile_time_name_error? above and the `{{ }}`-span gate in
+    # VarSubstitutor#raise_if_strict_undefined. Both need the same rule:
+    # Jinja resolves every name while COMPILING the template, so a name
+    # nothing implements fails the task even when the clause holding it is
+    # never evaluated (`x == 'Debian' and y | nogone`, live-verified vs
+    # 2.21.6). The wording is a reached name's own ("No filter named
+    # 'x'." / "No test named 'x'."), leaving the caller to wrap it
+    # exactly like any other compile-time name failure.
+    def self.validate_compile_time_names(expression : String, vars : Hash(String, JSON::Any)) : Nil
+      validate_filter_names(expression, vars)
+      validate_test_names(expression, vars)
     end
 
     # Quote-aware compile-time scan for `| filtername` references - see
