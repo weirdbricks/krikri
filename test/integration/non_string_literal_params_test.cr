@@ -423,6 +423,31 @@ describe "copy argspec-failure checksum (template carries it, copy only on the _
     # exactly one of the three fatal dumps carries NO checksum key
     text.scan(%(FAILED! => {"changed": false, "msg": "Unsupported parameters)).size.must_equal(1)
   end
+
+  it "hashes a non-UTF-8 template source's original bytes for the failure checksum" do
+    source = PluginSpecHelper.tmp_path("binary.bin")
+    # The kpg fixture's own shape: NUL bytes plus an undecodable byte.
+    bytes = StaticArray[
+      0x00_u8, 0x01_u8, 0x6b_u8, 0x70_u8, 0x67_u8, 0x00_u8, 0x62_u8,
+      0x69_u8, 0x6e_u8, 0x61_u8, 0x72_u8, 0x79_u8, 0xff_u8, 0x0a_u8,
+    ].to_slice
+    File.write(source, bytes)
+
+    output, _scratch = run_playbook(<<-YAML)
+          - template:
+              dest: #{PluginSpecHelper.tmp_path("binary.out")}
+              src: #{source}
+              dest_bogus: x
+            ignore_errors: true
+    YAML
+
+    # Real restores the escaped bytes when it stages the rendered file
+    # (template.py writes with errors='surrogate_or_strict'), so the SHA1
+    # the copy action merges into the failed result is the binary
+    # source's own, never the private-use twin string's (live-verified
+    # vs 2.21.6, issue #1619).
+    output.must_include(%("checksum": "#{Digest::SHA1.hexdigest(bytes)}"))
+  end
 end
 
 describe "non-string YAML literal module args (group_by/add_host)" do

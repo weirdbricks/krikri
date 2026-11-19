@@ -1657,6 +1657,22 @@ module Krikri
             # read it fails with real's wording instead of rendering the
             # raw expression.
             value = JSON::Any.new(UNDEFINED_LEAF_MARKER_OPEN + (ex.message || "lookup failed") + UNDEFINED_LEAF_MARKER_CLOSE)
+          rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
+            # Same laziness for an unknown filter in a variable's value
+            # (issue #1619: a play-level
+            # `kpg_expr_value: "{{ 'x' | kpg_multi('a', 'b') }}"`
+            # beside an ordinary template): real compiles the value only
+            # when the template reads it, so an untouched var can never
+            # fail the render. A read var still fails exactly as issue
+            # #709 pins - the marker's "Syntax error in template: ..."
+            # body becomes the strict Undefined's message in
+            # #engine_scope_value, which drives the same crash shape and
+            # var-definition Origin the eager path used to.
+            if (msg = ex.message) && msg.starts_with?("No filter named '")
+              value = JSON::Any.new(UNDEFINED_LEAF_MARKER_OPEN + "Syntax error in template: #{msg}" + UNDEFINED_LEAF_MARKER_CLOSE)
+            else
+              raise ex
+            end
           end
         end
         vars[key] = value
