@@ -1,0 +1,31 @@
+---
+# Role dependencies
+
+galaxy_info:
+  role_name: gitlab_fork
+  namespace: amtega
+  author: Juan Antonio Valiño García
+  description: Manage a GitLab fork
+  company: AMTEGA - Xunta de Galicia
+  license: GPLv3 or EUPL
+  min_ansible_version: "2.10"
+  platforms:
+    - name: GenericLinux
+      versions:
+        - all
+  galaxy_tags:
+    - gitlab
+    - project
+    - repository
+    - scm
+    - fork
+
+dependencies:
+  - role: amtega.gitlab_projects_fact
+    vars:
+      gitlab_projects_fact_server: "{{ gitlab_merge_request_server }}"
+      gitlab_projects_fact_api_version: "{{ gitlab_merge_request_api_version }}"
+      gitlab_projects_fact_token: "{{ gitlab_merge_request_token }}"
+      gitlab_projects_fact_owned: no
+      gitlab_projects_fact_validate_certs: >-
+        {{ gitlab_merge_request_validate_certs }}

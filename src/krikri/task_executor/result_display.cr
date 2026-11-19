@@ -1428,6 +1428,16 @@ module Krikri
       # line), so like the copy texts it names no part of the task's
       # data - only what kind of value refuses to iterate.
       return true if msg =~ /\ATask failed: Error rendering template: '[\w.]+' object is not iterable\z/
+      # An uncaught exception inside a role-local Python action plugin
+      # (issue #1575, amtega.gitlab_projects_fact's
+      # gitlab_projects_api_rest under --check, whose own `except:` masks
+      # an undefined dependency var into Python's UnboundLocalError): real
+      # prints the block above the censored fatal line. The wording is
+      # CPython's own UnboundLocalError text - it names a local variable
+      # from the PLUGIN's source, never the task's data - so it is safe to
+      # print like the fixed texts above. Python 3.11 reworded it; both
+      # spellings are CPython's own.
+      return true if msg =~ /\ATask failed: (?:cannot access local variable '\w+' where it is not associated with a value|local variable '\w+' referenced before assignment)\z/
       # debconf's get_bin_path miss (issue #578): ansible raises this
       # from its own get_bin_path when the read-back binary is absent,
       # and the message is ansible's fixed wording - it names only the
@@ -1924,6 +1934,17 @@ module Krikri
           # caused-by event carries that value's own Origin and the chain
           # does NOT collapse into the header (see the helper).
           cause.source_context = arg_origin
+        end
+        if result["_ansible_action_crash_context"]?.try(&.as_bool?) == true
+          # An uncaught exception that Python chained onto an earlier one
+          # (the plugin's own `except:` masking the original error): the
+          # leaf carries an implicit non-following "while handling" link,
+          # so real's block does not collapse - the brief names the crash,
+          # then the task's own "Task failed." segment and the crash text
+          # under a caused-by section (live-verified vs 2.21.6, issue
+          # #1575: amtega.gitlab_projects_fact's plugin minimises
+          # AnsibleUndefinedVariable into an UnboundLocalError).
+          cause.with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(""))
         end
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
         return

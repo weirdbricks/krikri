@@ -1,0 +1,26 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [amtega.gitlab_projects_fact : Get projects info] *************************
+[ERROR]: Task failed: cannot access local variable 'result' where it is not associated with a value
+
+Task failed.
+Origin: <WORK>/roles/amtega.gitlab_projects_fact/tasks/main.yml:5:7
+
+3
+4 - block:
+5     - name: Get projects info
+        ^ column 7
+
+<<< caused by >>>
+
+cannot access local variable 'result' where it is not associated with a value
+
+fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

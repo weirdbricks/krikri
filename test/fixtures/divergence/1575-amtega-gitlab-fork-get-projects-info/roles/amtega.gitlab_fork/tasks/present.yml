@@ -1,0 +1,67 @@
+---
+
+- name: Manage gitlab fork present state
+  block:
+    - name: Generate random branch name
+      ansible.builtin.set_fact:
+        git_fork_random_name: >-
+          {{ 999999999999999999999999999999999999 | random | to_uuid }}
+      when: gitlab_fork_name is not defined
+
+    - name: Fork project
+      ansible.builtin.uri:
+        url: >-
+          {{ gitlab_fork_api_url
+             + "/projects/"
+             + gitlab_fork_target_project
+             + "/fork" }}
+        method: POST
+        headers:
+          "Private-Token": "{{ gitlab_fork_token }}"
+        body_format: json
+        body:
+          name: "{{ gitlab_fork_name_effective }}"
+          path: "{{ gitlab_fork_path_effective }}"
+        return_content: yes
+        validate_certs: "{{ gitlab_fork_validate_certs }}"
+        status_code: 201
+      when:
+        (gitlab_fork_allow_duplicated
+         or (not gitlab_fork_allow_duplicated
+                 and not gitlab_fork_is_duplicated))
+        and gitlab_fork_match_list | length == 0
+      changed_when: gitlab_fork_result.json.forked_from_project is defined
+      register: gitlab_fork_result
+      no_log: "{{ gitlab_fork_no_log | bool }}"
+
+    - name: Check project fork status
+      ansible.builtin.uri:
+        url: >-
+          {{ gitlab_fork_api_url
+             + "/projects/"
+             + gitlab_fork_result.json.id | string }}
+        method: GET
+        headers:
+          "Private-Token": "{{ gitlab_fork_token }}"
+        return_content: yes
+        validate_certs: "{{ gitlab_fork_validate_certs }}"
+        status_code: 200
+      when: gitlab_fork_result is changed
+      changed_when: no
+      register: gitlab_fork_check_result
+      until: gitlab_fork_check_result.json.import_status == "finished"
+      retries: "{{ gitlab_fork_check_retries }}"
+      delay: "{{ gitlab_fork_check_delay }}"
+      no_log: "{{ gitlab_fork_no_log | bool }}"
+
+    - name: Setup fact with gitlab project fork info
+      ansible.builtin.set_fact:
+        gitlab_fork_fact: >-
+          {{ (not gitlab_fork_check_result is skipped)
+             | ternary(gitlab_fork_check_result.json | default({}),
+                       gitlab_fork_project_forks | first) }}
+  vars:
+    gitlab_fork_is_duplicated: "{{ gitlab_fork_project_forks | length != 0 }}"
+
+  tags:
+    - role::gitlab_fork

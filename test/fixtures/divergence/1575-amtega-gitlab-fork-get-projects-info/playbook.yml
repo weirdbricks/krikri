@@ -1,0 +1,10 @@
+---
+# The play the round ran, kept verbatim: the fork role's meta dependency on
+# amtega.gitlab_projects_fact runs first, and its action plugin fails there.
+# Only the play is adapted to run against localhost (the round ran it against
+# its testhost inventory).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - amtega.gitlab_fork

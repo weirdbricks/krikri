@@ -1,0 +1,9 @@
+---
+# Role variables
+
+# API url
+
+gitlab_projects_fact_api_url: >-
+  {{ gitlab_projects_fact_server
+     + "/api/v"
+     + gitlab_projects_fact_api_version | string }}

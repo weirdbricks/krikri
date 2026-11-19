@@ -1,0 +1,50 @@
+---
+# Role default lower priority variables
+
+# Gitlab server uri
+
+gitlab_projects_fact_server: https://gitlab.acme.com
+
+# Gitalb server API version tu use
+
+gitlab_projects_fact_api_version: 4
+
+# Gitlab token for user authentication
+
+gitlab_projects_fact_token: mytoken
+
+# Get facts only for owned projects
+
+gitlab_projects_fact_owned: yes
+
+# Get facts only for projects where user is member of
+
+gitlab_projects_fact_membership: yes
+
+# Get facts only for projects matching the search criteria
+
+gitlab_projects_fact_search: ""
+
+# Include ancestor namespaces when matching search criteria
+
+gitlab_projects_fact_search_namespaces: yes
+
+# Return simple facts
+
+gitlab_projects_fact_simple: no
+
+# Maximum number of projects per page. Usually this limit is hardcoded on server
+
+gitlab_projects_fact_max_page_size: 100
+
+# Validate server certificates
+
+gitlab_projects_fact_validate_certs: yes
+
+# Timeout for API operations
+
+gitlab_projects_timeout: 100
+
+# Hide sensitive information
+
+gitlab_projects_fact_no_log: yes

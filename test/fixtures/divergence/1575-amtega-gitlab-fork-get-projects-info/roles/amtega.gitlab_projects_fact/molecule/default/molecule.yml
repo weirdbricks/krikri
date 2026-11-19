@@ -1,0 +1,46 @@
+---
+
+dependency:
+  name: galaxy
+  enabled: yes
+  options:
+    ignore-certs: yes
+    ignore-errors: yes
+    role-file: "${MOLECULE_SCENARIO_DIRECTORY}/requirements.yml"
+    requirements-file: "${MOLECULE_SCENARIO_DIRECTORY}/requirements.yml"
+driver:
+  name: docker
+lint: "${MOLECULE_SCENARIO_DIRECTORY}/linters.sh"
+platforms:
+  - name: "centos8-${INSTANCE_UUID:-1}"
+    image: quay.io/centos/centos:stream8
+    groups:
+      - molecule_hosts
+provisioner:
+  name: ansible
+  ansible_args:
+    - --inventory=${ANSIBLE_INVENTORY}
+    - --vault-password-file=${ANSIBLE_VAULT_PASSWORD_FILE:-/etc/hostname}
+    - "-vvv"
+  inventory:
+    hosts:
+      molecule_hosts:
+        vars:
+          ansible_user: root
+          ansible_python_interpreter: /usr/bin/python3
+scenario:
+  test_sequence:
+    - dependency
+    - lint
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - side_effect
+    - verify
+    - cleanup
+    - destroy
+verifier:
+  name: ansible

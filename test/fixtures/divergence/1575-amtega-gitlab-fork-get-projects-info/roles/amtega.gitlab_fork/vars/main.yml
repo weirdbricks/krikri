@@ -1,0 +1,43 @@
+---
+# Role variables
+
+# API url
+
+gitlab_fork_api_url: >-
+  {{ gitlab_fork_server }}/api/v{{ gitlab_fork_api_version | string }}
+
+# Project to fork path with all necessary character transformations
+
+gitlab_fork_target_project: >-
+  {{ gitlab_fork_project_path | regex_replace("/", "%2F") }}
+
+# Project forks
+
+gitlab_fork_project_forks: >-
+  {{ gitlab_projects_fact
+     | selectattr("forked_from_project", "defined")
+     | rejectattr("forked_from_project", "equalto", none)
+     | selectattr("forked_from_project.path_with_namespace",
+                  "equalto",
+                  gitlab_fork_project_path)
+     | list }}
+
+# Project forks that match target fork
+
+gitlab_fork_match_list: >-
+  {{ gitlab_fork_project_forks
+     | selectattr("name", "equalto", gitlab_fork_name_effective
+                                     | default(git_fork_random_name))
+     | selectattr("path", "equalto", gitlab_fork_path_effective
+                                     | default(git_fork_random_name))
+     | list }}
+
+# Effective fork name and path
+
+gitlab_fork_name_effective: >-
+  {{ gitlab_fork_name | default(git_fork_random_name) }}
+
+gitlab_fork_path_effective: >-
+  {{ gitlab_fork_path
+     | default(gitlab_fork_name)
+     | default(git_fork_random_name) }}
