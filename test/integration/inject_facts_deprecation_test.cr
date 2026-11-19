@@ -2094,3 +2094,69 @@ describe "INJECT_FACTS_AS_VARS deprecation from an environment: value" do
     stderr.includes?("While processing").must_equal(false)
   end
 end
+
+# This engine pre-renders a task-level `vars:` value to decide whether the
+# undefined name its render consumed must keep the value raw, and the
+# krikri-only probe used to display the fact reads it made - while real
+# ansible never templates a value nothing consumes (issue #1573,
+# vbotka.freebsd_ports' skipped debug task: its `msg:` block reads a role
+# default that spells a top-level fact). The same value split across two
+# tasks below - one skipped, one consuming - shows the block belongs to
+# the consuming render only.
+private def run_vars_probe_role_playbook(consume_fact : Bool) : {String, String}
+  dir = PluginSpecHelper.tmp_path("inject-facts-probe-#{Random::Secure.hex(4)}")
+  role = File.join(dir, "roles", "probefact")
+  FileUtils.mkdir_p(File.join(role, "defaults"))
+  FileUtils.mkdir_p(File.join(role, "tasks"))
+  File.write(File.join(role, "defaults", "main.yml"), <<-DEFAULTS)
+    ---
+    fact_default: "{{ ansible_distribution_major_version }}"
+    flag: false
+    DEFAULTS
+  consumer = consume_fact ? <<-CONSUMER : ""
+    - name: consumes the fact-reading default
+      ansible.builtin.debug:
+        msg: "{{ fact_default }}"
+    CONSUMER
+  File.write(File.join(role, "tasks", "main.yml"), <<-TASKS)
+    ---
+    - name: "skipped with flag={{ flag }}"
+      ansible.builtin.debug:
+        msg: hi
+      vars:
+        text: |-
+          fact_default: {{ fact_default }}
+          broken: {{ nope_undefined }}
+      when: false
+    #{consumer}
+    TASKS
+  playbook = File.join(dir, "play.yml")
+  File.write(playbook, <<-PLAYBOOK)
+    - hosts: localhost
+      connection: local
+      gather_facts: true
+      roles:
+        - probefact
+    PLAYBOOK
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+  {stderr.to_s, File.join(role, "defaults", "main.yml")}
+end
+
+describe "INJECT_FACTS_AS_VARS deprecation from the strict-undefined vars probe" do
+  it "stays silent when only the skipped task's own probe makes the read" do
+    stderr, _defaults = run_vars_probe_role_playbook(consume_fact: false)
+
+    stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
+
+  it "still prints the block at the default's declaration when a running task consumes it" do
+    stderr, defaults = run_vars_probe_role_playbook(consume_fact: true)
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{defaults}:2:15\n")
+    stderr.must_include("2 fact_default: \"{{ ansible_distribution_major_version }}\"\n")
+    stderr.must_include("                ^ column 15")
+  end
+end
