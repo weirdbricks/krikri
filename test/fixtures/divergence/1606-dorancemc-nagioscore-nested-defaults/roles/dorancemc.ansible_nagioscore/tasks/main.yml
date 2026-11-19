@@ -1,0 +1,9 @@
+---
+# The role's real rrdtool task is a package install, so it cannot be replayed
+# in-process; the guard on it (`when: install_pnp4nagios | bool`, read from
+# defaults/main/nagios/vars.yaml) is what broke, so the probe reports the
+# nested defaults the role's own tasks read.
+- name: Report pnp4nagios switch
+  ansible.builtin.debug:
+    msg: "pnp4nagios={{ install_pnp4nagios }} nrdp={{ install_nrdp }} version={{ nrdp_version }}"
+  when: install_pnp4nagios | bool
