@@ -1,0 +1,5 @@
+---
+# handlers file for ldap-auth-client
+- name: restart unscd
+  service: name=unscd state=restarted
+  when: ldap_nscd

@@ -272,6 +272,67 @@ describe "loop: source typing errors" do
     output.wont_include("AFTER")
   end
 
+  # A BARE scalar with_dict: source is ONE literal lookup TERM, never a
+  # variable name: ansible's listify_lookup_plugin_terms runs with
+  # convert_bare=False, so the text itself reaches the dict lookup and is
+  # refused as a non-Mapping - even when a variable of that name holds a
+  # real dict (mickengland.ldap-auth-client's own
+  # `with_dict: ldap_auth_config`, issue #1597, live-verified vs
+  # ansible-core 2.21.6). The old parse matched no branch at all, so the
+  # task ran ONCE with `item` unbound ("'item' is undefined" at arg
+  # finalization) where real fails the lookup.
+  it "fails a bare scalar with_dict: at the dict lookup's own refusal shape" do
+    success, output, _pb = run_play_file(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          ldap_auth_config:
+            dbrootlogin:
+              type: boolean
+        tasks:
+          - name: set debconf variables
+            ansible.builtin.debug:
+              msg: "{{ item.key }}"
+            with_dict: ldap_auth_config
+      YAML
+
+    success.must_equal(false)
+    output.must_include(
+      "[ERROR]: The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, got 'ldap_auth_config' of type <class 'ansible.module_utils._internal._datatag._AnsibleTaggedStr'>)")
+    output.must_include("Origin: <unknown>")
+    output.must_include("invoke_lookup()")
+    output.must_include(
+      "fatal: [localhost]: FAILED! => {\"msg\": \"The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, got 'ldap_auth_config' of type <class 'ansible.module_utils._internal._datatag._AnsibleTaggedStr'>)\"}")
+    output.wont_include("'item' is undefined")
+    output.wont_include("Task failed: The lookup plugin 'dict' failed")
+    output.must_include("failed=1")
+  end
+
+  # Every other bare scalar term gets the same refusal, with the class
+  # real's templar tags the term as: str/int/float ride the internal
+  # tagged classes, bool does not (live-verified vs ansible-core 2.21.6).
+  it "names the tagged class of each bare scalar with_dict: term" do
+    success, output, _pb = run_play_file(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_dict: 5
+            ignore_errors: true
+          - ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_dict: true
+            ignore_errors: true
+      YAML
+
+    success.must_equal(true)
+    output.must_include("got '5' of type <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>)")
+    output.must_include("got 'True' of type <class 'bool'>)")
+    output.must_include("ignored=2")
+  end
+
   # The issue's own check-mode shape (round29906962): a replace: whose
   # regexp templates `item` over a with_dict: LIST, target file missing -
   # real fails each ITEM with the module's own "Path ... does not exist !"

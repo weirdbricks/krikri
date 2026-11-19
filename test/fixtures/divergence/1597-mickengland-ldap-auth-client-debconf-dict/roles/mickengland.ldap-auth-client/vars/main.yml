@@ -1,0 +1,42 @@
+---
+ldap_nscd: true
+# vars file for ldap-auth-client
+ldap_auth_config:
+  # Make local root Database admin
+  dbrootlogin:
+    type: boolean
+    value: false
+  # LDAP account for root
+  rootbinddn:
+    type: string
+    value: "cn=manager,dc=example,dc=net"
+  # LDAP root account password
+  rootbinpw:
+    type: password
+    value:
+  # Does the LDAP database require login?
+  dblogin:
+    type: boolean
+    value: false
+  # Unprivileged database user
+  binddn:
+    type: string
+    value: "cn=proxyuser,dc=example,dc=net"
+  # Password for database login account
+  bindpw:
+    type: password
+    value:
+  ldapns/base-dn:
+    type: string
+    value: "dc=example,dc=net"
+  ldapns/ldap_version:
+    # Choices: 3, 2
+    type: select
+    value: 3
+  ldapns/ldap-server:
+    type: string
+    value: "ldapi:///"
+  pam_password:
+    # Choices: clear, crypt, nds, ad, exop, md5
+    type: select
+    value: md5

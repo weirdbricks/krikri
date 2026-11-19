@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Jan Vlnas
+  description: Set up LDAP user authentication using debconf.
+  license: GPLv2
+  min_ansible_version: 1.6
+  platforms:
+  - name: Ubuntu
+    versions:
+    - all
+  - name: Debian
+    versions:
+    - all
+  categories:
+  - system
+dependencies: []
