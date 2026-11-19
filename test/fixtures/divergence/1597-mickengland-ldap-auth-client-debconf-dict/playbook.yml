@@ -1,0 +1,11 @@
+---
+# The role's own failing task, replayed against localhost - the role was run
+# in the cold phase of round29918136, where its first task already fails.
+# `with_dict: ldap_auth_config` is a BARE scalar, which real ansible hands to
+# the dict lookup as that literal text (convert_bare=False), never resolving
+# it as the role's vars/main.yml dictionary.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - mickengland.ldap-auth-client

@@ -992,25 +992,37 @@ module Krikri
       LoopResolver.with_nested(lists)
     end
 
+    # The class name the dict lookup prints for a non-Mapping term. Ansible
+    # templates every term before the lookup runs, so a resolved scalar
+    # reaches it as its internal tagged class - str, int and float alike -
+    # while a bool is not taggable and stays plain (live-verified vs
+    # ansible-core 2.21.6: bare `with_dict: ldap_auth_config`,
+    # `with_dict: 5`, `with_dict: 1.5` and `with_dict: true` print
+    # _AnsibleTaggedStr / _AnsibleTaggedInt / _AnsibleTaggedFloat / bool).
+    private def dict_term_type_name(term : JSON::Any) : String
+      case term.raw
+      when String  then "ansible.module_utils._internal._datatag._AnsibleTaggedStr"
+      when Int64   then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+      when Float64 then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+      else              python_type_name(term)
+      end
+    end
+
     # The dict lookup plugin's own term semantics (lookup/dict.py: every
     # term must be a Mapping, each contributes one {'key','value'} entry per
     # key, and the lookup validates every term BEFORE any item is produced -
     # so one non-dictionary term fails the whole task, never a partial
     # iteration). Shared by the literal with_dict:-as-list path
     # (resolve_loop_dict_terms) and the runtime templated-source path in
-    # resolve_loop_template.
+    # resolve_loop_template. There is no trailing period.
     private def dict_lookup_terms(terms : Array(JSON::Any)) : Array(JSON::Any)
       items = [] of JSON::Any
       terms.each do |term|
         term_hash = term.as_h?
         unless term_hash
-          # Real 2.21.6 words a string term's type as its internal
-          # tagged-string class (same convention the templated-source
-          # non-dict refusals use); there is no trailing period.
-          dict_type = term.raw.is_a?(String) ? "ansible.module_utils._internal._datatag._AnsibleTaggedStr" : python_type_name(term)
           raise LoopLookupError.new(
             "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
-            "got '#{python_str(term)}' of type <class '#{dict_type}'>)")
+            "got '#{python_str(term)}' of type <class '#{dict_term_type_name(term)}'>)")
         end
         items.concat(LoopResolver.with_dict(term_hash.transform_keys(&.to_s)))
       end

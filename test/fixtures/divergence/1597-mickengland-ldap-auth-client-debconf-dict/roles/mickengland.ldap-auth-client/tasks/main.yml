@@ -1,0 +1,24 @@
+---
+# tasks file for ldap-auth-client
+
+- name: set debconf variables
+  debconf: >
+    name=ldap-auth-config
+    question="ldap-auth-config/{{item.key}}"
+    vtype={{item.value.type}}
+    value="{{item.value.value}}"
+  with_dict: ldap_auth_config
+  register: ldap_debconf
+
+- name: install ldap-auth-client
+  apt: pkg=ldap-auth-client state=present
+  register: ldap_install
+
+- name: install unscd
+  apt: pkg=unscd state=present
+  when: ldap_nscd
+
+- name: reconfigure ldap-auth-config
+  shell: dpkg-reconfigure --frontend noninteractive ldap-auth-config
+  when: ldap_debconf.changed and (not ldap_install.changed)
+  notify: restart unscd

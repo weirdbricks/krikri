@@ -4119,6 +4119,22 @@ module Krikri
       nil
     end
 
+    # The scalar (non-array, non-hash) with_dict: value as the ONE literal
+    # lookup TERM real hands the dict plugin. Ansible's
+    # listify_lookup_plugin_terms runs with convert_bare=False, so a bare
+    # `with_dict: ldap_auth_config` is NEVER a variable reference: the text
+    # itself is the term and the dict lookup refuses it as a non-Mapping
+    # (mickengland.ldap-auth-client's own task, issue #1597). nil for every
+    # other shape: the hash/list forms and a `{{ ... }}` template have their
+    # own branches, and the value-less form fails real's parse instead.
+    private def self.scalar_with_dict_value(task_hash : Hash(YAML::Any, YAML::Any)) : JSON::Any?
+      value = task_hash["with_dict"]?
+      return nil unless value
+      return nil if value.raw.nil? || value.as_a? || value.as_h?
+      return nil if value.as_s?.try(&.includes?("{{"))
+      JSON.parse(value.to_json)
+    end
+
     # If task_hash has one of the loop-source keywords set to a scalar
     # string that looks like a Jinja variable reference (rather than a
     # literal inline list/dict), return {keyword, template string}.
@@ -5184,6 +5200,15 @@ module Krikri
           # Keep the raw terms and defer, like loop_nested_sources above.
           task.loop_dict_terms = JSON.parse(with_dict_terms.to_json)
         end
+      elsif with_dict_term = scalar_with_dict_value(task_hash)
+        # A BARE scalar with_dict: source is one literal lookup TERM, never
+        # a variable name - see scalar_with_dict_value. Deferred to the
+        # executor so the dict lookup's own refusal channel prints the
+        # bodyless Origin: <unknown> block and bare registered msg; the
+        # old parse matched no branch at all, so the task ran ONCE with
+        # `item` unbound ("'item' is undefined" at arg finalization) where
+        # real fails the lookup (issue #1597).
+        task.loop_dict_terms = JSON::Any.new([with_dict_term])
       elsif with_nested = task_hash["with_nested"]?.try(&.as_a?)
         # A scalar entry containing {{ }} is a templated SOURCE (usually a
         # whole-list variable reference), not a literal one-item list - its
