@@ -307,4 +307,38 @@ describe "authorized_key plugin" do
     result["changed"].as_bool.must_equal(true)
     File.read(path).must_include("command=\"echo hi\",no-pty ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com")
   end
+
+  it "returns the keyfile content diff in diff mode, between keyfile and changed" do
+    # enforce_state's do_write branch fills params['diff'] with the
+    # existing and the new file contents, both header'd by the resolved
+    # keyfile; --diff prints it as "--- before: <keyfile>" / "+++ after:
+    # <keyfile>" (live-verified vs ansible.posix 2.2.2 / ansible-core
+    # 2.21.6). The key is inserted after keyfile and before changed.
+    path = tmp_path("authorized-key-diff")
+    `rm -rf #{tmp_path("authorized-key-diff")}`
+
+    result = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => RSA_KEY, "_ansible_diff" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    diff = result["diff"]
+    diff["before_header"].as_s.must_equal(path)
+    diff["after_header"].as_s.must_equal(path)
+    diff["before"].as_s.must_equal("")
+    diff["after"].as_s.must_equal("#{RSA_KEY}\n")
+    keys = result.as_h.keys
+    keys.index!("diff").must_equal(keys.index!("changed") - 1)
+
+    # No write, no diff: enforce_state only builds the dict alongside a
+    # real change, and non-diff runs never build it at all.
+    again = PluginSpecHelper.run("authorized_key", {
+      "path" => path, "key" => RSA_KEY, "_ansible_diff" => "true",
+    })
+    again.as_h.has_key?("diff").must_equal(false)
+    plain = PluginSpecHelper.run("authorized_key", {
+      "path" => tmp_path("authorized-key-no-diff"), "key" => RSA_KEY,
+    })
+    plain.as_h.has_key?("diff").must_equal(false)
+  end
 end

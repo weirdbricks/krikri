@@ -62,6 +62,7 @@ private DIVERGENCE_CASES = [
   {issue: 1616, slug: "wabumike-k3s-check-set-fact-parenthesized-filter"},
   {issue: 1606, slug: "dorancemc-nagioscore-nested-defaults"},
   {issue: 1611, slug: "lexa-uw-mailserver-create-volumes-for-mail-data"},
+  {issue: 1624, slug: "authorized-key-diff"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -288,6 +289,11 @@ describe "divergence corpus" do
 
   it "replays 1611-lexa-uw-mailserver-create-volumes-for-mail-data" do
     expected, actual, report = divergence_transcripts(1611, "lexa-uw-mailserver-create-volumes-for-mail-data")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1624-authorized-key-diff" do
+    expected, actual, report = divergence_transcripts(1624, "authorized-key-diff")
     assert_equal(expected, actual, report)
   end
 end

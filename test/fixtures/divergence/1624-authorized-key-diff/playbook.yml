@@ -1,0 +1,16 @@
+---
+# kpg 000010-multi-mysql_query-happy block #10.1, the Authorized_key task,
+# with the absolute /tmp path replaced by playbook_dir so the diff headers
+# land under <WORK>.
+- name: 'Krikri-playbook-generator: multi-task #10.1'
+  hosts: local
+  gather_facts: false
+  tasks:
+    - name: 'Authorized_key #10.1'
+      ansible.posix.authorized_key:
+        key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+            kpg
+        manage_dir: "false"
+        path: "{{ playbook_dir }}/authorized_keys"
+        user: root
+      register: kpg_task_1
