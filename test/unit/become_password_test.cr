@@ -117,14 +117,16 @@ describe "become password command construction (become_password_test.cr)" do
       cmd.includes?("deploy'").must_equal(true)
     end
 
-    it "forwards the controller TERM only into become daemons, as ansible's ssh -tt does" do
-      # Ansible runs become tasks under `ssh -tt`, so the remote sudo and
-      # module see the controller's TERM; non-become daemons get no pty
-      # there and must not get a TERM either (issue #606).
+    it "forwards the controller TERM into every daemon, as ansible's ssh -tt does" do
+      # Ansible's `-tt` is gated on `sudoable` (true for every POSIX
+      # module exec) plus the absence of pipelined stdin, NOT on become:
+      # a plain `command:` task over ssh sees the controller's TERM too
+      # (live-verified against ansible-core 2.21.6, issue #1564), so the
+      # non-become daemon carries it as well (issue #606).
       Krikri::SSHManager.daemon_remote_command("/p/command", "deploy", false, "xterm-ghostty")
         .must_equal("TERM='xterm-ghostty' sudo -H -n -u 'deploy' -- '/p/command' --daemon")
       Krikri::SSHManager.daemon_remote_command("/p/command", nil, false, "xterm-ghostty")
-        .must_equal("'/p/command' --daemon")
+        .must_equal("TERM='xterm-ghostty' '/p/command' --daemon")
       Krikri::SSHManager.daemon_remote_command("/p/command", "deploy", false, "")
         .must_equal("sudo -H -n -u 'deploy' -- '/p/command' --daemon")
     end

@@ -813,6 +813,11 @@ module Krikri
     #   process was alive and reading at that moment, so "it ran and we
     #   can't tell" is real, and re-executing could double-apply the
     #   module. The caller fails the task instead.
+    # *term* rides into the daemon spawn's own environment (see
+    # #daemon_remote_command). It is a per-RUN value, not part of the
+    # daemon key: ansible's pty TERM is constant for a given controller
+    # session, so the first task to spawn a given (host, user,
+    # become_user) daemon settles it for the rest.
     def self.daemon_send(
       host : String,
       user : String,
@@ -827,6 +832,7 @@ module Krikri
       extra_args : Array(String) = [] of String,
       daemon_scope : String? = nil,
       ssh_executable : String? = nil,
+      term : String? = nil,
     ) : JSON::Any
       init
       key = {host, user, port, become_user, daemon_key_sig(connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable), daemon_scope)}
@@ -834,7 +840,7 @@ module Krikri
       # response is classified (see the read rescue).
       fresh_spawn = @@daemon_processes[key]?.nil?
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable, term)
 
       request = {"module" => module_name, "config" => config}.to_json
 
@@ -913,11 +919,12 @@ module Krikri
       become_password : String? = nil,
       extra_args : Array(String) = [] of String,
       ssh_executable : String? = nil,
+      term : String? = nil,
     ) : Hash(Int32, JSON::Any)
       init
       key = {host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable)}
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable, term)
 
       payload = steps.map do |step|
         {
@@ -968,7 +975,7 @@ module Krikri
     # otherwise it spawns `sudo -S -p ''` and the password line is
     # written into this process's stdin pipe BEFORE any frame, where
     # sudo reads it and nothing else ever sees it.
-    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil, extra_args : Array(String) = [] of String, sig : String = "", ssh_executable : String? = nil) : Process
+    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil, extra_args : Array(String) = [] of String, sig : String = "", ssh_executable : String? = nil, term : String? = nil) : Process
       control_path = get_control_path(host, user, port, sig)
       password = password_for(host, user, port)
 
@@ -987,7 +994,7 @@ module Krikri
       end
 
       ssh_cmd = ssh_argv(control_path, identity_file, port, user, host,
-        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password, ENV["TERM"]?)], password, extra_options: extra_args, ssh_executable: ssh_executable)
+        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password, term)], password, extra_options: extra_args, ssh_executable: ssh_executable)
 
       process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
         Process.new(
@@ -1039,19 +1046,23 @@ module Krikri
     # ahead of the frames. Public as a spec seam: the -n/-S command
     # construction is pinned directly in the unit tests.
     #
-    # *term* is the controller's TERM, forwarded only for become daemons.
-    # Ansible's ssh connection runs every become task under `ssh -tt`
-    # (use_tty defaults to true), so the remote sudo and module inherit
-    # the controller's TERM. A script that colours its output via tput
-    # emits ANSI codes there and plain text without TERM (issue #606).
-    # Non-become daemons get no pty in ansible, so they get no TERM here.
+    # *term* is the controller's TERM, forwarded into the daemon's own
+    # environment so the module processes it serves see it. Ansible's ssh
+    # connection runs every module exec under `ssh -tt` (use_tty defaults
+    # to true; only a pipelined module payload, which carries in_data,
+    # skips it), so the remote module inherits the controller's TERM -
+    # become and non-become alike. A script that colours its output via
+    # tput, or gates its colour codes on `$TERM != dumb`, emits ANSI
+    # codes there and plain text without TERM (issues #606, #1564).
+    # Callers pass nil under pipelining, where ansible's module process
+    # keeps the target's own TERM.
     def self.daemon_remote_command(remote_binary_path : String, become_user : String?, sudo_needs_password : Bool = false, term : String? = nil) : String
-      return "#{shell_quote(remote_binary_path)} --daemon" unless become_user
+      term_prefix = term && !term.empty? ? "TERM=#{shell_quote(term)} " : ""
+      return "#{term_prefix}#{shell_quote(remote_binary_path)} --daemon" unless become_user
       # -H (set HOME to the become user's) is part of ansible's sudo
       # become plugin's own defaults - without it the daemon keeps
       # HOME=/root and ~/.ansible/tmp resolves wrong (issue #629).
       flags = sudo_needs_password ? "-H -S -p ''" : "-H -n"
-      term_prefix = term && !term.empty? ? "TERM=#{shell_quote(term)} " : ""
       "#{term_prefix}sudo #{flags} -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
     end
 

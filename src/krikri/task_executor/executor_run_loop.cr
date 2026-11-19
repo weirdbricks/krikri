@@ -2447,7 +2447,8 @@ module Krikri
           become_user: become_user,
           become_password: Passwords.become(vars, host),
           extra_args: conn.ssh_extra_options,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          term: PluginManager.remote_term_forwarding(vars)
         )
         # Same normalization the script transport applies one frame up in
         # interpret_batch_script: the daemon's parsed response is a raw
@@ -2862,7 +2863,7 @@ module Krikri
         }.to_json)
       end
       step_conn = ConnectionSettings.resolve(host, vars_context)
-      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, step_conn.user, Passwords.become(vars_context, host), substituted_become_flags)
+      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, step_conn.user, Passwords.become(vars_context, host), substituted_become_flags, PluginManager.remote_term_forwarding(vars_context))
 
       # The daemon transport (item 3) dispatches by module NAME inside an
       # already-running process, and takes its privilege from which
