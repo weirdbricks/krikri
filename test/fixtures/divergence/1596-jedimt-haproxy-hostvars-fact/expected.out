@@ -1,0 +1,53 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [jedimt.haproxy : Customize haproxy.cfg] **********************************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.blockinfile' failed: Error while resolving value for 'block': object of type 'dict' has no attribute 'k8s_master'
+
+Task failed.
+Origin: <WORK>/roles/jedimt.haproxy/tasks/main.yml:5:3
+
+3 # the undefined `k8s_master` group before the module writes anything, but a
+4 # scratch-relative path keeps the case safe from mutation.
+5 - name: Customize haproxy.cfg
+    ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.blockinfile' failed.
+Origin: <WORK>/roles/jedimt.haproxy/tasks/main.yml:6:3
+
+4 # scratch-relative path keeps the case safe from mutation.
+5 - name: Customize haproxy.cfg
+6   ansible.builtin.blockinfile:
+    ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'block'.
+Origin: <WORK>/roles/jedimt.haproxy/tasks/main.yml:8:12
+
+6   ansible.builtin.blockinfile:
+7     path: haproxy.cfg
+8     block: "{{ lookup('ansible.builtin.template', 'haproxy.j2') }}"
+             ^ column 12
+
+<<< caused by >>>
+
+object of type 'dict' has no attribute 'k8s_master'
+Origin: <WORK>/roles/jedimt.haproxy/templates/haproxy.j2
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.blockinfile' failed: Error while resolving value for 'block': object of type 'dict' has no attribute 'k8s_master'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/jedimt.haproxy/templates/haproxy.j2
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

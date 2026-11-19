@@ -2916,6 +2916,9 @@ module Krikri
       ConditionalEvaluator.referenced_names(condition).each do |name|
         emit_frame_open_read(name, vars, resolver)
       end
+      ConditionalEvaluator.hostvars_fact_reads(condition, vars).each do |name|
+        emit_fact_deprecation(fact_read_origin(name))
+      end
     end
 
     # Emits the INJECT_FACTS_AS_VARS deprecation for every top-level fact an
@@ -2934,6 +2937,90 @@ module Krikri
       return if VariableSubstitutor::JinjaVarResolver.materializing_vars?
       ConditionalEvaluator.referenced_names_in(expr).each do |name|
         emit_frame_open_read(name, vars, resolver)
+      end
+      ConditionalEvaluator.hostvars_fact_reads_in(expr, vars).each do |name|
+        emit_fact_deprecation(fact_read_origin(name))
+      end
+    end
+
+    # The top-level fact reads a TEMPLATE makes through a `hostvars[...]`
+    # entry, emitted before it renders: real prints the block with the
+    # template FILE as Origin, and a render that later FAILS still
+    # printed it first (live-verified vs 2.21.6 on a lookup('template')
+    # whose later `groups[...]` access raised - the jedimt.haproxy
+    # divergence). The `template:` action hands its own engine an
+    # untagged hostvars and prints nothing for the same file, so this is
+    # called from the lookup/param render path only.
+    def self.emit_template_hostvars_fact_deprecations(template : KrikriJinja::Nodes::TemplateNode, vars : Hash(String, JSON::Any)) : Nil
+      return unless vars.has_key?("hostvars")
+      exprs = [] of KrikriJinja::Nodes::ExprNode
+      collect_template_exprs(template.body, exprs)
+      exprs.each do |expr|
+        ConditionalEvaluator.hostvars_fact_reads_in(expr, vars).each do |name|
+          emit_fact_deprecation(fact_read_origin(name))
+        end
+      end
+    end
+
+    # #emit_template_hostvars_fact_deprecations for template SOURCE text,
+    # for the lookup paths that must emit BEFORE their strict-undefined
+    # probe: a template whose later access fails (the jedimt.haproxy
+    # repro's undefined `groups[...]`) still printed the block first in
+    # real, while the probe raises before any render runs.
+    def self.emit_template_source_hostvars_fact_deprecations(source : String, vars : Hash(String, JSON::Any)) : Nil
+      return unless source.includes?("hostvars")
+      # A source the parser rejects has no reads this can place.
+      template = begin
+        KrikriJinja::Parser.parse(source, KrikriJinja::LexerOptions.new(trim_blocks: true))
+      rescue
+        return
+      end
+      emit_template_hostvars_fact_deprecations(template, vars)
+    end
+
+    private def self.collect_template_exprs(nodes : Array(KrikriJinja::Nodes::Node), exprs : Array(KrikriJinja::Nodes::ExprNode)) : Nil
+      nodes.each do |node|
+        case node
+        when KrikriJinja::Nodes::TemplateNode
+          collect_template_exprs(node.body, exprs)
+        when KrikriJinja::Nodes::OutputNode, KrikriJinja::Nodes::DoNode
+          exprs << node.expr
+        when KrikriJinja::Nodes::IfNode
+          node.branches.each do |(test, body)|
+            exprs << test
+            collect_template_exprs(body, exprs)
+          end
+          node.orelse.try { |orelse| collect_template_exprs(orelse, exprs) }
+        when KrikriJinja::Nodes::ForNode
+          exprs << node.iter
+          node.test.try { |test| exprs << test }
+          collect_template_exprs(node.body, exprs)
+          node.orelse.try { |orelse| collect_template_exprs(orelse, exprs) }
+        when KrikriJinja::Nodes::SetNode
+          exprs << node.expr
+          node.attr_target.try { |target| exprs << target }
+          node.filter_args.each { |arg| exprs << arg }
+          node.filter_kwargs.each { |kwarg| exprs << kwarg[1] }
+          node.body.try { |body| collect_template_exprs(body, exprs) }
+        when KrikriJinja::Nodes::BlockNode, KrikriJinja::Nodes::AutoescapeNode
+          collect_template_exprs(node.body, exprs)
+        when KrikriJinja::Nodes::MacroNode
+          node.params.each { |param| param[1].try { |default| exprs << default } }
+          collect_template_exprs(node.body, exprs)
+        when KrikriJinja::Nodes::CallNode
+          exprs << node.macro_expr
+          node.args.each { |arg| exprs << arg }
+          node.kwargs.each { |kwarg| exprs << kwarg[1] }
+          node.body.try { |body| collect_template_exprs(body, exprs) }
+        when KrikriJinja::Nodes::FilterBlockNode
+          exprs << node.filter
+          collect_template_exprs(node.body, exprs)
+        when KrikriJinja::Nodes::WithNode
+          node.bindings.each { |binding| exprs << binding[1] }
+          collect_template_exprs(node.body, exprs)
+        when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
+          exprs << node.template
+        end
       end
     end
 

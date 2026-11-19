@@ -427,9 +427,10 @@ describe "INJECT_FACTS_AS_VARS trigger matrix" do
   #   which Origin it keeps, is unverified.
   #   it "warns once for a block-level when: clause" do ... end
   #
-  # - `hostvars[...]` / `ansible_facts[...]`-mediated reads of the same fact:
-  #   these must NOT warn (they are the migration target), but that is
-  #   unverified for every placement above except the two the existing
-  #   inject_facts_deprecation_test.cr cases cover.
+  # - `ansible_facts[...]`-mediated reads of the same fact stay silent (that
+  #   copy is untagged). The `hostvars[...]` entry spelling does NOT: it hands
+  #   the tagged value back, so the read itself warns while a plain
+  #   `hostvars[host] | length` does not (live-verified vs 2.21.6, and both
+  #   shapes are asserted in top_level_fact_deprecation_test.cr).
   #   it "stays silent for an ansible_facts[] read" do ... end
 end

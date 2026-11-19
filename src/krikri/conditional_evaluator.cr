@@ -382,6 +382,122 @@ module Krikri
       names
     end
 
+    # The top-level fact reads an expression makes by fetching one back
+    # out of a `hostvars[...]` entry. ansible-core tags every injected
+    # fact VALUE, and a hostvars entry hands that tagged value back, so
+    # the access itself trips the deprecation even where the value is
+    # only tested (`is defined`) or sized (live-verified vs 2.21.6:
+    # `{{ hostvars[inventory_hostname]['ansible_default_ipv4'] }}`
+    # prints the block). A render that never evaluates the access - a
+    # dead `{% if %}`/ternary arm, an unentered loop body - stays silent
+    # in real, which these callers cannot always tell: they
+    # over-approximate rather than miss a warning. Only the FIRST key
+    # after the host (a literal subscript or an attribute) can be named
+    # statically; a chain built from a dynamic key stays silent.
+    def self.hostvars_fact_reads_in(expr : KrikriJinja::Nodes::ExprNode, vars : Hash(String, JSON::Any)) : Array(String)
+      return [] of String unless vars.has_key?("hostvars")
+      reads = [] of String
+      collect_hostvars_fact_reads(expr, vars, reads)
+      reads.uniq!
+      reads
+    end
+
+    # #hostvars_fact_reads_in for a whole expression's source text; empty
+    # when the engine's parser rejects it (this evaluator's lenient
+    # grammar accepts shapes jinja2 does not).
+    def self.hostvars_fact_reads(condition : String, vars : Hash(String, JSON::Any)) : Array(String)
+      expr = KrikriJinja.default_engine.parsed_expression(condition)
+      hostvars_fact_reads_in(expr, vars)
+    rescue
+      [] of String
+    end
+
+    # Walks *expr*, returning how many chain links from the `hostvars` name
+    # this node sits at: 1 for the name, 2 for the fetched host entry, 3
+    # for the first key read out of it. Only depth 2's key can be a
+    # tagged fact - a deeper subscript reads a plain container the tag
+    # never touched (`hostvars[h]['ansible_facts']['distribution']` stays
+    # silent, live-verified vs 2.21.6).
+    private def self.collect_hostvars_fact_reads(expr : KrikriJinja::Nodes::ExprNode,
+                                                 vars : Hash(String, JSON::Any),
+                                                 reads : Array(String)) : Int32
+      case expr
+      when KrikriJinja::Nodes::NameNode
+        expr.name == "hostvars" ? 1 : 0
+      when KrikriJinja::Nodes::GetitemNode
+        depth = collect_hostvars_fact_reads(expr.obj, vars, reads)
+        if depth == 2
+          key = expr.key.as?(KrikriJinja::Nodes::ConstNode).try(&.value)
+          reads << key if key.is_a?(String) && hostvars_fact_name?(key, vars)
+        end
+        collect_hostvars_fact_reads(expr.key, vars, reads)
+        depth.zero? || depth >= 3 ? 0 : depth + 1
+      when KrikriJinja::Nodes::GetattrNode
+        depth = collect_hostvars_fact_reads(expr.obj, vars, reads)
+        reads << expr.attr if depth == 2 && hostvars_fact_name?(expr.attr, vars)
+        depth.zero? || depth >= 3 ? 0 : depth + 1
+      when KrikriJinja::Nodes::ConstNode
+        0
+      else
+        collect_hostvars_fact_reads_nested(expr, vars, reads)
+        0
+      end
+    end
+
+    private def self.collect_hostvars_fact_reads_nested(expr : KrikriJinja::Nodes::ExprNode,
+                                                        vars : Hash(String, JSON::Any),
+                                                        reads : Array(String)) : Nil
+      case expr
+      when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
+        expr.items.each { |item| collect_hostvars_fact_reads(item, vars, reads) }
+      when KrikriJinja::Nodes::DictExprNode
+        expr.keys.each { |key| collect_hostvars_fact_reads(key, vars, reads) }
+        expr.values.each { |value| collect_hostvars_fact_reads(value, vars, reads) }
+      when KrikriJinja::Nodes::BinOpNode
+        collect_hostvars_fact_reads(expr.left, vars, reads)
+        collect_hostvars_fact_reads(expr.right, vars, reads)
+      when KrikriJinja::Nodes::UnaryOpNode
+        collect_hostvars_fact_reads(expr.operand, vars, reads)
+      when KrikriJinja::Nodes::CompareNode
+        collect_hostvars_fact_reads(expr.left, vars, reads)
+        expr.comparators.each { |comparator| collect_hostvars_fact_reads(comparator, vars, reads) }
+      when KrikriJinja::Nodes::CondExprNode
+        collect_hostvars_fact_reads(expr.test, vars, reads)
+        collect_hostvars_fact_reads(expr.truthy, vars, reads)
+        expr.falsy.try { |falsy| collect_hostvars_fact_reads(falsy, vars, reads) }
+      when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::TestNode
+        collect_hostvars_fact_reads(expr.target, vars, reads)
+        expr.args.each { |arg| collect_hostvars_fact_reads(arg, vars, reads) }
+        expr.kwargs.each { |kwarg| collect_hostvars_fact_reads(kwarg[1], vars, reads) }
+      when KrikriJinja::Nodes::SliceNode
+        collect_hostvars_fact_reads(expr.obj, vars, reads)
+        expr.start.try { |start| collect_hostvars_fact_reads(start, vars, reads) }
+        expr.stop.try { |stop| collect_hostvars_fact_reads(stop, vars, reads) }
+        expr.step.try { |step| collect_hostvars_fact_reads(step, vars, reads) }
+      when KrikriJinja::Nodes::CallExprNode
+        collect_hostvars_fact_reads(expr.func, vars, reads)
+        expr.args.each { |arg| collect_hostvars_fact_reads(arg, vars, reads) }
+        expr.kwargs.each { |kwarg| collect_hostvars_fact_reads(kwarg[1], vars, reads) }
+      when KrikriJinja::Nodes::ConcatNode
+        expr.parts.each { |part| collect_hostvars_fact_reads(part, vars, reads) }
+      end
+    end
+
+    # Whether *name* reads as an injected top-level fact through ANY
+    # hostvars entry: the entry being read is usually a dynamic
+    # expression, and every gathered host carries the same setup facts,
+    # so any entry answers for the deprecation (the read warns whichever
+    # host it names). Falls back to the reading scope for a hostvars
+    # entry the scope does not carry.
+    private def self.hostvars_fact_name?(name : String, vars : Hash(String, JSON::Any)) : Bool
+      if hosts = vars["hostvars"]?.try(&.as_h?)
+        hosts.each_value do |entry|
+          return true if VarSubstitutor.top_level_fact_name?(name, entry.as_h? || vars)
+        end
+      end
+      VarSubstitutor.top_level_fact_name?(name, vars)
+    end
+
     private def self.collect_expr_names(expr : KrikriJinja::Nodes::ExprNode, names : Array(String)) : Nil
       case expr
       when KrikriJinja::Nodes::NameNode

@@ -1622,4 +1622,67 @@ describe "INJECT_FACTS_AS_VARS deprecation from a parent block's become_user" do
     assert become_at.not_nil! < first_when_at.not_nil!, err
     assert first_when_at.not_nil! < second_when_at.not_nil!, err
   end
+
+  it "reports a hostvars-mediated fact read in a task param" do
+    # Issue #1596's shape: fetching a gathered fact back out of a
+    # `hostvars[...]` entry reads the value ansible TAGGED at injection,
+    # so it warns wherever the read happens - a whole-span param, mixed
+    # text - while merely sizing the entry never reads a tagged value
+    # (live-verified vs 2.21.6).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: whole span
+            debug:
+              msg: "{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
+          - name: mixed text
+            debug:
+              msg: "family {{ hostvars[inventory_hostname]['ansible_os_family'] }}"
+          - name: no fact read
+            debug:
+              msg: "keys {{ hostvars[inventory_hostname] | length }}"
+      PLAYBOOK
+    })
+
+    stdout.must_include("TASK [no fact read]")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:7:14\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:10:14\n")
+  end
+
+  it "reports a hostvars-mediated fact read in a lookup('template') render" do
+    # Issue #1596, jedimt.haproxy: its haproxy.j2 reads
+    # `hostvars[inventory_hostname]['ansible_default_ipv4']` and then
+    # fails on an undefined `groups[...]` member. ansible printed the
+    # block, Origin'd at the template FILE, before the render raised;
+    # this engine printed nothing (live-verified vs 2.21.6).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - probe
+      PLAYBOOK
+      "roles/probe/tasks/main.yml" => <<-TASKS,
+      - name: render from a role
+        debug:
+          msg: "{{ lookup('ansible.builtin.template', 'probe.j2') }}"
+      TASKS
+      "roles/probe/templates/probe.j2" => <<-TEMPLATE,
+      address {{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}
+      missing {{ groups['no_such_group'][0] }}
+      TEMPLATE
+    })
+
+    template = File.join(dir, "roles", "probe", "templates", "probe.j2")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{template}\n")
+    # The render itself still fails on the later lookup, with the file as
+    # the innermost Origin.
+    stdout.must_include("has no attribute 'no_such_group'")
+  end
 end
