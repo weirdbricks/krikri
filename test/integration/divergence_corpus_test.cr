@@ -59,6 +59,7 @@ private DIVERGENCE_CASES = [
   {issue: 1600, slug: "stafwag-ntpd-combine-with-provider-defaults"},
   {issue: 1609, slug: "jedimt-haproxy-check-hostvars-fact"},
   {issue: 1603, slug: "anthony25-postfix-generate-postfix-configuration"},
+  {issue: 1616, slug: "wabumike-k3s-check-set-fact-parenthesized-filter"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -270,6 +271,11 @@ describe "divergence corpus" do
 
   it "replays 1603-anthony25-postfix-generate-postfix-configuration" do
     expected, actual, report = divergence_transcripts(1603, "anthony25-postfix-generate-postfix-configuration")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1616-wabumike-k3s-check-set-fact-parenthesized-filter" do
+    expected, actual, report = divergence_transcripts(1616, "wabumike-k3s-check-set-fact-parenthesized-filter")
     assert_equal(expected, actual, report)
   end
 end

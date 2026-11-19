@@ -1,0 +1,42 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [wabumike.k3s : Find latest version of k3s] *******************************
+skipping: [localhost]
+
+TASK [wabumike.k3s : Set k3s_release to latest releases] ***********************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'k3s_version': object of type 'dict' has no attribute 'content'
+
+Task failed.
+Origin: <WORK>/roles/wabumike.k3s/tasks/get_version.yml:10:3
+
+ 8   when: k3s_version is not defined or not k3s_version
+ 9
+10 - name: Set k3s_release to latest releases
+     ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.set_fact' failed.
+Origin: <WORK>/roles/wabumike.k3s/tasks/get_version.yml:11:3
+
+ 9
+10 - name: Set k3s_release to latest releases
+11   set_fact:
+     ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'k3s_version': object of type 'dict' has no attribute 'content'
+Origin: <WORK>/roles/wabumike.k3s/tasks/get_version.yml:12:18
+
+10 - name: Set k3s_release to latest releases
+11   set_fact:
+12     k3s_version: "{{ (k3s_latest_release.content | from_json).tag_name }}"
+                    ^ column 18
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'k3s_version': object of type 'dict' has no attribute 'content'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=1    rescued=0    ignored=0   
+
