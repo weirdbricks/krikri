@@ -787,11 +787,10 @@ describe Krikri::PlaybookParser do
       # binary still gracefully skipping it (round 043 confirm-phase).
       # Since the issue #8 redirect hop, the bare spelling resolves
       # through ansible_builtin_runtime.yml's redirect onto the FQCN and
-      # refuses with the FQCN's own removal message (rc=1) when the
-      # collection is installed on the controller - the generic
-      # couldn't-resolve wording (rc=4) only without it, which is what
-      # real's redirect chain dies to at the collection import.
-      if Krikri::CollectionIndex.installed?("community", "general")
+      # refuses with the FQCN's own removal message (rc=1). Both tables
+      # are krikri's own baked data, so this no longer depends on whether
+      # this controller has community.general installed.
+      begin
         assert_raises_message(Krikri::RemovedModuleError,
           "The 'community.general.docker_service' module has been removed. " \
           "Use community.docker.docker_compose instead. " \
@@ -809,30 +808,6 @@ describe Krikri::PlaybookParser do
           "The 'community.general.consul_acl' module has been removed. " \
           "Use community.general.consul_token and/or community.general.consul_policy instead. " \
           "This feature was removed from collection 'community.general' version 10.0.0.") do
-          Krikri::PlaybookParser.parse_string(<<-YAML
-            - hosts: all
-              tasks:
-                - name: removed module, bare name
-                  consul_acl:
-            YAML
-          )
-        end
-      else
-        assert_raises_message(Krikri::UnresolvedModuleError,
-          "couldn't resolve module/action 'docker_service'. " \
-          "This often indicates a misspelling, missing collection, or incorrect module path.") do
-          Krikri::PlaybookParser.parse_string(<<-YAML
-            - hosts: all
-              tasks:
-                - name: removed module, bare name
-                  docker_service:
-            YAML
-          )
-        end
-
-        assert_raises_message(Krikri::UnresolvedModuleError,
-          "couldn't resolve module/action 'consul_acl'. " \
-          "This often indicates a misspelling, missing collection, or incorrect module path.") do
           Krikri::PlaybookParser.parse_string(<<-YAML
             - hosts: all
               tasks:
@@ -903,55 +878,31 @@ describe Krikri::PlaybookParser do
       # unavailable_module set and takes the runtime reachability-tracked
       # skip path instead of aborting the whole load.
       #
-      # Machine-state split (the controller collection-set awareness
-      # check): on a controller where kubernetes.core IS installed the
-      # name resolves and the lazy unavailable_module path applies; on
-      # one where it is NOT (CI's bare container) ansible-core itself
-      # refuses the whole playbook at load, and so does the check. Both
-      # shapes are pinned, whichever controller this suite runs on.
-      if Krikri::CollectionIndex.controller_resolves?("kubernetes.core.helm_repository")[:resolves]
-        task = Krikri::PlaybookParser.parse_string(<<-YAML
+      # No machine-state split any more: krikri resolves module names from
+      # its own baked tables and never refuses a playbook over a name it
+      # cannot resolve, so the task parses with unavailable_module set on
+      # every controller.
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: unported module in a real unported collection
+              kubernetes.core.helm_repository:
+                repo_name: foo
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("kubernetes.core.helm_repository")
+
+      # And the same for a collection krikri's capture never saw at all -
+      # an unresolvable name is the executor's business, not the parser's.
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
-              - name: unported module in a real unported collection
-                kubernetes.core.helm_repository:
-                  repo_name: foo
-          YAML
-        ).plays[0].tasks[0]
-        task.unavailable_module.must_equal("kubernetes.core.helm_repository")
-      else
-        assert_raises_message(Krikri::UnresolvedModuleError,
-          "couldn't resolve module/action 'kubernetes.core.helm_repository'. " \
-          "This often indicates a misspelling, missing collection, or incorrect module path.") do
-          Krikri::PlaybookParser.parse_string(<<-YAML
-            - hosts: all
-              tasks:
-                - name: unported module in a real unported collection
-                  kubernetes.core.helm_repository:
-                    repo_name: foo
-            YAML
-          )
-        end
-      end
-
-      # A collection that is NOT installed on the controller is a
-      # different story: ansible-core itself refuses the whole playbook
-      # at load for it (couldn't-resolve rc=4, zero tasks), so the
-      # collection-awareness check refuses too - bodsch.scm is not
-      # installed here, and unlike the kubernetes.core case above real
-      # would never reach the task to skip it.
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'bodsch.scm.github_latest'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-            - hosts: all
-              tasks:
-                - name: niche collection, not installed on the controller
-                  bodsch.scm.github_latest:
-                    repo: foo
-          YAML
-        )
-      end
+              - name: niche collection, not installed on the controller
+                bodsch.scm.github_latest:
+                  repo: foo
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("bodsch.scm.github_latest")
     end
 
     it "keeps a not-yet-implemented module from a RECOGNIZED collection as unavailable_module too (0.9.1050)" do
@@ -962,11 +913,9 @@ describe Krikri::PlaybookParser do
       # unimplemented module inside a
       # collection the engine otherwise ships modules for (amazon.aws)
       # both parse through with unavailable_module set instead of
-      # refusing the whole run - on a controller where the collection
-      # IS installed and ships the module file, which is the only
-      # controller on which the lazy path can apply (an absent
-      # collection is one ansible-core itself refuses at load; the
-      # installed-but-file-missing shape is pinned separately below).
+      # refusing the whole run. Deterministic now: the verdict comes from
+      # krikri's baked tables, never from what this controller has
+      # installed.
       task = Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
@@ -976,82 +925,14 @@ describe Krikri::PlaybookParser do
       ).plays[0].tasks[0]
       task.unavailable_module.must_equal("ansible.builtin.macports")
 
-      if Krikri::CollectionIndex.controller_resolves?("amazon.aws.autoscaling_group_info")[:resolves]
-        task = Krikri::PlaybookParser.parse_string(<<-YAML
-            - hosts: all
-              tasks:
-                - name: unimplemented module in an implemented collection
-                  amazon.aws.autoscaling_group_info:
-          YAML
-        ).plays[0].tasks[0]
-        task.unavailable_module.must_equal("amazon.aws.autoscaling_group_info")
-      else
-        assert_raises_message(Krikri::UnresolvedModuleError,
-          /couldn't resolve module\/action 'amazon.aws.autoscaling_group_info'/) do
-          Krikri::PlaybookParser.parse_string(<<-YAML
-              - hosts: all
-                tasks:
-                  - name: unimplemented module in an implemented collection
-                    amazon.aws.autoscaling_group_info:
-            YAML
-          )
-        end
-      end
-    end
-
-    it "keeps a task using an unimplemented plugin as unavailable_module instead of raising (0.9.1050)" do
-      # A fictional module name, deliberately - a real module name planted
-      # here has twice now stopped being "unimplemented" out from under
-      # this spec (first ansible.builtin.mount, then ansible.builtin.
-      # add_host, each fixed in a later round without anyone remembering
-      # this spec pinned its wording to that exact name).
       task = Krikri::PlaybookParser.parse_string(<<-YAML
-        - name: Uses unavailable plugin
-          hosts: all
-          tasks:
-            - name: Not implemented
-              ansible.builtin.totally_fake_unimplemented_module_xyz:
-                path: /mnt/data
+          - hosts: all
+            tasks:
+              - name: unimplemented module in an implemented collection
+                amazon.aws.autoscaling_group_info:
         YAML
       ).plays[0].tasks[0]
-      task.unavailable_module.must_equal("ansible.builtin.totally_fake_unimplemented_module_xyz")
-    end
-
-    it "refuses an underscore-prefixed name nothing on the controller resolves (parse-time UnresolvedModuleError)" do
-      # Real bug found benchmarking amtega.check_platform/amtega.epel
-      # (round814/815): resolve_module_name used to blanket-pass any
-      # module name starting with '_' straight through as "resolved",
-      # on the mistaken assumption every leading-underscore name was one
-      # of this engine's own internal pseudo-modules (_block, _meta,
-      # etc - which are never routed through resolve_module_name at all,
-      # they're constructed directly via Task.new). A role's own custom
-      # action plugin conventionally named with a leading underscore hit
-      # that bypass instead, got treated as available with no backing
-      # plugin binary, and crashed the whole run outright in
-      # PluginManager#get_local_plugin_path ("Plugin binary not found:
-      # _check_platform").
-      #
-      # This spec has no role context (no library/_check_platform.py to
-      # find) and the name is neither an ansible-core module nor
-      # redirected anywhere, so the CONTROLLER could not resolve it
-      # either - ansible-core refuses the whole playbook at load with
-      # the generic couldn't-resolve wording (live-verified vs 2.19.11),
-      # and the collection-awareness check matches that. See the
-      # integration-level role-private-module spec for the case where a
-      # real backing library/ source DOES exist and the task keeps
-      # running.
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action '_check_platform'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - name: Uses a role-local custom module
-            hosts: all
-            tasks:
-              - name: Check platform
-                _check_platform:
-          YAML
-        )
-      end
+      task.unavailable_module.must_equal("amazon.aws.autoscaling_group_info")
     end
 
     it "raises when no plays parse successfully" do
@@ -3191,42 +3072,32 @@ describe Krikri::PlaybookParser do
     # entire playbook at load (rc=4, zero tasks) where real ran the role
     # on to its next task.
     describe "FQCRs with plugin-type subdir segments (issue #1253)" do
-      it "runs the resource module the controller resolves, not the dotted leaf" do
-        # Machine-state guard on the PLAIN FQCN (a name this issue's rule
-        # does not touch), so the spec still exercises the regression on
-        # any controller that ships locale_gen rather than turning itself
-        # off with the bug.
-        if Krikri::CollectionIndex.controller_resolves?("community.general.locale_gen")[:resolves]
-          task = single_task(<<-YAML)
-            - name: t
-              community.general.locale_gen.locale_gen:
-                name: en_US.UTF-8
-                state: present
-            YAML
-          task.module_name.must_equal("community.general.locale_gen")
-          Krikri::PluginManager.simple_plugin_name(task.module_name).must_equal("locale_gen")
-          task.unavailable_module.must_be_nil
-          # The banner still echoes the source spelling, as real's does.
-          task.action_name.must_equal("community.general.locale_gen.locale_gen")
-        end
+      it "runs the resource module krikri's captured collection resolves, not the dotted leaf" do
+        task = single_task(<<-YAML)
+          - name: t
+            community.general.locale_gen.locale_gen:
+              name: en_US.UTF-8
+              state: present
+          YAML
+        task.module_name.must_equal("community.general.locale_gen")
+        Krikri::PluginManager.simple_plugin_name(task.module_name).must_equal("locale_gen")
+        task.unavailable_module.must_be_nil
+        # The banner still echoes the source spelling, as real's does.
+        task.action_name.must_equal("community.general.locale_gen.locale_gen")
       end
 
-      it "still refuses a dotted leaf the controller cannot resolve" do
-        # No installed collection ships a `bogus_subdir` plugin file for
-        # the subdir package to import: real refuses the whole playbook at
-        # load, exactly as this engine's controller check does.
-        assert_raises_message(Krikri::UnresolvedModuleError,
-          "couldn't resolve module/action 'community.general.bogus_subdir.locale_gen'. " \
-          "This often indicates a misspelling, missing collection, or incorrect module path.") do
-          Krikri::PlaybookParser.parse_string(<<-YAML
-            - hosts: all
-              tasks:
-                - name: bogus subdir segment
-                  community.general.bogus_subdir.locale_gen:
-                    name: en_US.UTF-8
-            YAML
-          )
-        end
+      it "leaves a dotted leaf the captured collection cannot resolve on the unavailable path" do
+        # The captured community.general ships no `bogus_subdir` plugin
+        # file for the subdir package to import - so this engine does not
+        # invent a module for it. The name simply stays unresolved
+        # (unavailable_module), which is the executor's business; the
+        # parser no longer refuses the whole playbook over a module name.
+        task = single_task(<<-YAML)
+          - name: bogus subdir segment
+            community.general.bogus_subdir.locale_gen:
+              name: en_US.UTF-8
+          YAML
+        task.unavailable_module.must_equal("community.general.bogus_subdir.locale_gen")
       end
     end
 

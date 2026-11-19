@@ -1,0 +1,5 @@
+---
+# Trimmed to the two flags the failing include is gated on (the real role's
+# defaults set them from role params; both default to true there).
+syncthing_install_user: true
+syncthing_configure: true

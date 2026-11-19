@@ -56,8 +56,9 @@ unless they already said "all". Never start more than 2 Crush jobs at once.
 For each issue, follow `fix-divergence` end to end (worktree off current
 `main`, confirm the root cause yourself with a minimal repro against
 `ansible-playbook`, tight prompt to Crush, read the diff line by line,
-`./build.sh`, full `scripts/minitest.sh -- -p 4`, `ameba`, merge). Add to what
-that skill says:
+`./build.sh`, the corpus case under `test/fixtures/divergence/<issue>-<slug>/`
+plus its replay test, full `scripts/minitest.sh -- -p 4`, `ameba`, merge).
+Add to what that skill says:
 
 - Name the issue in the Crush prompt and put `Fixes #N` in the commit message
   so the merge closes it.

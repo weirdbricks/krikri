@@ -1,0 +1,20 @@
+---
+- name: Automatically select the Oracle License
+  tags: java
+  shell: echo debconf shared/accepted-oracle-license-v1-1 select true | sudo debconf-set-selections
+  changed_when: false
+
+- name: add sunjava repository
+  sudo: yes
+  action: apt_repository repo="ppa:webupd8team/java" state=present update_cache=yes 
+  tags: sunjava
+
+- name: install sunjava versions
+  sudo: yes
+  action: apt pkg="{{item}}" state=present update_cache=yes
+  with_items:
+      - oracle-java6-installer
+      - oracle-java7-installer
+      - oracle-java8-installer
+  tags: sunjava
+

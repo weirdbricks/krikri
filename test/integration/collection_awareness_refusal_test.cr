@@ -1,41 +1,35 @@
 require "../minitest_helper"
 require "file_utils"
 
-# The controller collection-set awareness refusal, end to end through
-# the krikri-playbook binary: a module name the CONTROLLER cannot
-# resolve (not an ansible-core module, not redirected anywhere, no
-# installed collection providing it) refuses the WHOLE playbook at load
-# - rc=4, zero tasks run, no PLAY RECAP, the generic couldn't-resolve
-# wording plus the offending task's Origin block on stderr, byte-shape
-# verified against ansible-core 2.21.6 on this machine. 2.21's loader
-# swallows the ImportError an absent collection raises while it reads
-# routing metadata, so no "Error loading plugin" [WARNING] precedes the
-# refusal (2.19 printed one; issue #965).
+# A module name krikri cannot resolve no longer refuses the WHOLE playbook
+# at load, and nothing about it depends on what this controller has
+# installed. krikri resolves module names from its OWN baked tables
+# (CollectionIndex: the pinned ansible-core name/redirect tables and the
+# captured collections' file trees) and leaves an unresolvable name to the
+# executor's unavailable-module flow: a `when:`-gated task skips cleanly
+# (round 811000), a genuinely reached one is reported and the run exit(4)s
+# at the end.
 #
-# A name real CAN resolve keeps the existing behavior: an installed
-# collection's module krikri hasn't ported skips lazily (round 811000),
-# and the `collections:` keyword's listed collections participate in
-# resolution.
+# The earlier "controller collection-set awareness" refused the whole run
+# (rc=4, zero tasks) whenever real's installed set would have, which made
+# the same playbook behave differently on two controllers - it was never
+# approved and is gone. These specs pin the new contract, including the
+# part that matters most: pointing ANSIBLE_COLLECTIONS_PATH at a fixture
+# tree (which used to flip the verdict) changes nothing.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# A controller-shaped collection tree for the specs whose pin depends on
-# what the controller has installed: community.docker present (so a
-# missing module file inside it is the installed-collection refusal
-# shape, no import warning), kubernetes.core shipping helm_repository
-# (so the unported module keeps its lazy skip path), and community.google
-# deliberately absent (so bare `gc_storage:`'s redirect dies on an
-# absent collection INSIDE a present namespace). Pointed at via
-# ANSIBLE_COLLECTIONS_PATH for the spawned binary only (child env, no
-# process-wide state); the dev machine's own
-# installed collections sit behind it in the search order and agree with
-# every pin.
+# A controller-shaped collection tree, pointed at via
+# ANSIBLE_COLLECTIONS_PATH for the spawned binary only. Under the old
+# resolution these files decided whether a name resolved; now nothing may
+# read them.
 private def fixture_collections_root : String
   root = PluginSpecHelper.tmp_path("collection-awareness-fixture")
   FileUtils.mkdir_p(File.join(root, "ansible_collections", "community", "docker", "plugins", "modules"))
   FileUtils.mkdir_p(File.join(root, "ansible_collections", "kubernetes", "core", "plugins", "modules"))
   File.write(File.join(root, "ansible_collections", "kubernetes", "core", "plugins", "modules", "helm_repository.py"), "#!/usr/bin/python\n")
+  File.write(File.join(root, "ansible_collections", "community", "docker", "plugins", "modules", "added_by_fixture.py"), "#!/usr/bin/python\n")
   root
 end
 
@@ -50,52 +44,29 @@ ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
 
-describe "controller collection-set awareness refuses unresolvable module names at load" do
-  it "refuses a missing-collection FQCN with rc=4, the [ERROR] + Origin block, and zero tasks (no loader warning)" do
+describe "unresolvable module names never refuse the whole playbook" do
+  it "runs the other tasks and reports a missing-collection FQCN as unimplemented (exit 4)" do
     status, stdout, stderr = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
         gather_facts: false
         tasks:
+          - name: normal
+            ansible.builtin.debug: msg=hi
           - name: missing coll
             freeipa.ansible_freeipa.ipaclient_setup_nis:
               state: present
       YAML
     status.exit_code.must_equal(4, "stderr:\n#{stderr}")
-    # Nothing ran - not even a play banner.
-    stdout.must_equal("")
-    # ansible-core 2.21 prints no loader [WARNING] for an absent
-    # collection (issue #965: bodsch.geoip's `bodsch.core.check_mode`).
-    stderr.wont_include("[WARNING]: Error loading plugin")
-    stderr.must_include("[ERROR]: couldn't resolve module/action 'freeipa.ansible_freeipa.ipaclient_setup_nis'. This often indicates a misspelling, missing collection, or incorrect module path.")
-    stderr.must_include("Origin: ")
-    stderr.must_include("- name: missing coll")
-    stderr.must_include("^ column 7")
-    stderr.wont_include("PLAY RECAP")
+    stdout.must_include("TASK [normal]")
+    stdout.must_include("TASK [missing coll]")
+    stdout.must_include("PLAY RECAP")
+    stdout.must_include("uses unimplemented plugin: freeipa.ansible_freeipa.ipaclient_setup_nis")
+    stderr.wont_include("couldn't resolve module/action")
+    stderr.wont_include("Error loading plugin")
   end
 
-  it "refuses a role task's absent-collection FQCN without the pre-2.21 loader warning (issue #965)" do
-    # The exact bodsch.geoip shape: a bare-key task whose FQCN names a
-    # collection that is not installed. Real 2.21.6 goes straight to the
-    # couldn't-resolve [ERROR] + Origin, with no "Error loading plugin"
-    # line ahead of it (live-verified on the role's own prepare.yml).
-    status, stdout, stderr = run_playbook(<<-YAML)
-      - hosts: localhost
-        connection: local
-        gather_facts: false
-        tasks:
-          - name: detect ansible check_mode
-            bodsch.core.check_mode:
-            register: _check_mode
-      YAML
-    status.exit_code.must_equal(4, "stderr:\n#{stderr}")
-    stdout.must_equal("")
-    stderr.wont_include("[WARNING]: Error loading plugin")
-    stderr.must_include("[ERROR]: couldn't resolve module/action 'bodsch.core.check_mode'. This often indicates a misspelling, missing collection, or incorrect module path.")
-    stderr.wont_include("PLAY RECAP")
-  end
-
-  it "refuses a bare name real cannot resolve (docker) with the generic wording and NO warning" do
+  it "does the same for a bare name real cannot resolve either (docker)" do
     status, stdout, stderr = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -106,13 +77,12 @@ describe "controller collection-set awareness refuses unresolvable module names 
               state: present
       YAML
     status.exit_code.must_equal(4, "stderr:\n#{stderr}")
-    stdout.must_equal("")
-    stderr.wont_include("[WARNING]")
-    stderr.must_include("[ERROR]: couldn't resolve module/action 'docker'. This often indicates a misspelling, missing collection, or incorrect module path.")
-    stderr.must_include("Origin: ")
+    stdout.must_include("PLAY RECAP")
+    stdout.must_include("uses unimplemented plugin: docker")
+    stderr.wont_include("couldn't resolve module/action")
   end
 
-  it "refuses a bare name whose builtin redirect dies on an absent collection, NO loader warning" do
+  it "does the same for a bare name whose builtin redirect lands in an uncaptured collection" do
     status, stdout, stderr = run_playbook(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
       - hosts: localhost
         connection: local
@@ -123,31 +93,12 @@ describe "controller collection-set awareness refuses unresolvable module names 
               bucket: x
       YAML
     status.exit_code.must_equal(4, "stderr:\n#{stderr}")
-    stdout.must_equal("")
-    stderr.wont_include("[WARNING]: Error loading plugin")
-    stderr.must_include("[ERROR]: couldn't resolve module/action 'gc_storage'. This often indicates a misspelling, missing collection, or incorrect module path.")
+    stdout.must_include("PLAY RECAP")
+    stdout.must_include("uses unimplemented plugin: gc_storage")
+    stderr.wont_include("couldn't resolve module/action")
   end
 
-  it "refuses an installed collection's missing module file with the [ERROR] + Origin but NO warning" do
-    status, stdout, stderr = run_playbook(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
-      - hosts: localhost
-        connection: local
-        gather_facts: false
-        tasks:
-          - name: coll installed module missing
-            community.docker.not_a_real_module:
-              state: present
-      YAML
-    status.exit_code.must_equal(4, "stderr:\n#{stderr}")
-    stdout.must_equal("")
-    stderr.wont_include("[WARNING]")
-    stderr.must_include("[ERROR]: couldn't resolve module/action 'community.docker.not_a_real_module'. This often indicates a misspelling, missing collection, or incorrect module path.")
-  end
-
-  it "keeps a when:-gated task of an INSTALLED collection's unported module on the lazy skip path" do
-    # The round-811000 concern is untouched: real CAN resolve
-    # kubernetes.core.helm_repository (the fixture collection ships the
-    # module file), so the task parses through and skips at run time.
+  it "keeps a when:-gated unimplemented module on the lazy skip path" do
     status, stdout, stderr = run_playbook(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
       - hosts: localhost
         connection: local
@@ -167,11 +118,36 @@ describe "controller collection-set awareness refuses unresolvable module names 
     stderr.wont_include("couldn't resolve module/action")
   end
 
+  it "answers identically with the collection env pointed at a fixture tree" do
+    # The fixture ships a module file the old index would have resolved
+    # (community.docker.added_by_fixture) and helm_repository for
+    # kubernetes.core. Neither may change a single line of output.
+    playbook = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: normal
+            ansible.builtin.debug: msg=hi
+          - name: fixture-provided
+            community.docker.added_by_fixture:
+          - name: gated unported
+            kubernetes.core.helm_repository:
+              repo_name: foo
+            when: false
+      YAML
+    plain_status, plain_out, plain_err = run_playbook(playbook)
+    fixture_status, fixture_out, fixture_err = run_playbook(playbook,
+      {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
+
+    fixture_status.exit_code.must_equal(plain_status.exit_code)
+    fixture_status.exit_code.must_equal(4)
+    fixture_out.must_equal(plain_out)
+    fixture_err.must_equal(plain_err)
+    plain_out.must_include("uses unimplemented plugin: community.docker.added_by_fixture")
+  end
+
   it "resolves a bare module name through the play's collections: keyword" do
-    # community.crypto is installed here and ships x509_certificate.py,
-    # so the bare spelling resolves through the keyword list exactly as
-    # ansible-core does (a bare spelling without the keyword is refused,
-    # no builtin redirect exists for the target name).
     status, stdout, stderr = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -190,10 +166,10 @@ describe "controller collection-set awareness refuses unresolvable module names 
   end
 
   it "resolves a bare module name through the role's meta/main.yml collections:" do
-    # ansible-core folds the ROLE's own meta/main.yml collections:
-    # declaration into its bare-name resolution for the role's tasks
-    # (live-verified vs 2.19.11); the collection-awareness check honors
-    # it too instead of refusing.
+    # community.crypto is one of the captured collections, so the bare
+    # spelling resolves onto krikri's own x509_certificate plugin - the
+    # role's meta declaration is read from the ROLE (not from any
+    # installation).
     role_root = File.join(PluginSpecHelper.tmp_path("collection-role-meta"), "role_meta")
     FileUtils.mkdir_p(File.join(role_root, "meta"))
     FileUtils.mkdir_p(File.join(role_root, "tasks"))

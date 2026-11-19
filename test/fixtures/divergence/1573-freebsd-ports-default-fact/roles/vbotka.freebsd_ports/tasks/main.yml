@@ -1,0 +1,16 @@
+---
+# tasks for freebsd_ports
+#
+# Trimmed for the corpus case: only the two imports that reach the failing
+# shape are kept (the real tasks/main.yml runs the same two first). Everything
+# that would touch the host (dirs.yml, config.yml, cron.yml, ...) is dropped so
+# the case stays read-only.
+
+- name: Import vars.yml
+  ansible.builtin.import_tasks: vars.yml
+  tags: [ports_vars, always]
+
+- name: Import debug.yml
+  ansible.builtin.import_tasks: debug.yml
+  when: ports_debug | bool
+  tags: ports_debug

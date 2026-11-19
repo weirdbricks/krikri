@@ -178,13 +178,21 @@ For each group decide:
   different exit code, a task `changed` on one side only, a task skipped or
   run on one side only, a different result structure. Confirm with a minimal
   repro against `ansible-playbook` (below) before treating it as one.
-- **Krikri output gap** — same behaviour, different text: error context
-  (Ansible prints `Origin: <file>:<line>:<col>` and a source excerpt under
-  task errors), module error wording, extra warnings. **These are real
-  differences. Do not propose masking them** — a mask hides the gap and makes a
-  later fix undetectable. Masks are only for output that can never be identical
-  (a host IP, a probe-driven Ansible warning); they live in `Compare::MASKS`
-  in the krikri-role-tester repo, and adding one is the user's call.
+- **Krikri output gap (structured, tier 2)** — same behaviour, different text
+  that a user or a script acts on: error context (Ansible prints `Origin:
+  <file>:<line>:<col>` and a source excerpt under task errors), module error
+  wording, `no_log` censoring, recap counters. **These are real differences.
+  Do not propose masking them** — a mask hides the gap and makes a later fix
+  undetectable. Masks are only for output that can never be identical (a host
+  IP, a probe-driven Ansible warning); they live in `Compare::MASKS` in the
+  krikri-role-tester repo, and adding one is the user's call.
+- **Krikri output gap (cosmetic, tier 3)** — `[WARNING]`/`[DEPRECATION
+  WARNING]` block text, order and dedup, and Python-internal notices krikri
+  counterfeits (`INJECT_FACTS_AS_VARS`, `to_text`-import deprecations).
+  Best-effort against pinned ansible-core 2.21.6: do NOT file a divergence
+  issue for these (see KNOWN_MISSING.md's tier note) — record them in the step
+  10 round note instead, and never mask them. Tier 1 (behaviour) and tier 2
+  always get issues.
 - **Mask candidate (rare)** — a difference that can *never* be identical by
   nature: a timestamp, temp path, random ID, PID, or a probe-driven Ansible
   warning. Hold this to a high bar: if krikri could produce the same bytes with
@@ -223,8 +231,9 @@ Then go to step 9. Do not start fixing: that is a separate skill.
 ## 9. Offer to file GitHub issues
 
 After the step 8 report, offer to file one GitHub issue per confirmed root
-cause (the real krikri bugs and output gaps - not infra, not
-`COMMUNITY_MODULE_MISSING`, not `MATCHED_FAILURE`). Filing an issue publishes
+cause (the real krikri bugs and tier-2 output gaps - not infra, not
+`COMMUNITY_MODULE_MISSING`, not `MATCHED_FAILURE`, not the tier-3 cosmetic
+warning tier). Filing an issue publishes
 text, so ask first; do not file them unprompted. The issues are the hand-off:
 the `work-issues` skill reads them to decide what to fix.
 
@@ -247,7 +256,8 @@ write a repro for it, it is not an issue yet: say so in the report instead.
    block: the fix tooling drops issues without one), the krikri commit and
    version from `versions.txt`, and the original evidence path
    (`<dir>/<role>/compare_cold.diff`) as a pointer only. Keep home-directory
-   paths out of the body. Say whether it is a behavioural bug or an output gap.
+   paths out of the body. Say whether it is a behavioural bug or a tier-2
+   output gap (tier-3 cosmetic findings are not filed).
 4. Give the user the issue numbers and tell them to run `work-issues` when
    they want fixes started.
 

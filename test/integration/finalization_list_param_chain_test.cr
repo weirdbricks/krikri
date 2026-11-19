@@ -1,18 +1,26 @@
 require "../minitest_helper"
 require "file_utils"
 
-# A block-style LIST param (s2ansible.zabbix_host's local_action
-# zabbix_host `host_groups` with an undefined var, issue #323) chains
+# A block-style LIST param (`host_groups` with an undefined var, issue #323,
+# from s2ansible.zabbix_host's local_action task) chains
 # the same two MORE error levels as a block-style mapping param (issue
 # #265): ansible-core 2.19.11 shortens the params stanza to "Error while
 # resolving value for 'K'." with Origin at the list's FIRST item line
 # (the dash, column = indent+1), and appends a plain "'V' is undefined"
 # stanza with Origin at the failing item's value token right after the
 # "- " marker (quote included) - byte-for-byte live-captured from real
-# 2.19.11 on the s2ansible.zabbix_host task. A flow-style list value on
+# 2.19.11. A flow-style list value on
 # the `K:` line itself splits the same way (live-captured 2.19.11);
 # only stanza 3 keeps the flow value's own position instead of the
 # list's first dash.
+#
+# The module is `ansible.builtin.command`, not the role's bare `zabbix_host`:
+# krikri resolves module names only from its baked tables now (never from the
+# controller's installed collections - see KNOWN_MISSING "krikri never
+# consults an installed ansible-core or collections tree"), so a bare
+# `zabbix_host` no longer resolves here and would fail at "Cannot resolve"
+# before ever reaching arg finalization. The finalization chain under test is
+# module-agnostic, so any resolvable+implemented module preserves it.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -44,7 +52,7 @@ describe "task-arg finalization error block (block-style list param)" do
       # tasks file for ansible-role-zabbix-host
         - name: Create a new host or update an existing host's info
           local_action:
-            module: zabbix_host
+            module: ansible.builtin.command
             server_url: "{{ zabbix_server_url }}"
             login_user: "{{ zabbix_login_user }}"
             login_password: "{{ zabbix_login_password }}"
@@ -73,7 +81,7 @@ describe "task-arg finalization error block (block-style list param)" do
     text.must_include(expected)
     # the fatal line still carries the full single-sentence message
     status.exit_code.must_equal(2)
-    text.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'community.zabbix.zabbix_host' failed: Error while resolving value for 'host_groups': 'zabbix_host_groups' is undefined"}))
+    text.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.command' failed: Error while resolving value for 'host_groups': 'zabbix_host_groups' is undefined"}))
   ensure
     FileUtils.rm_rf(tempdir) if tempdir
   end

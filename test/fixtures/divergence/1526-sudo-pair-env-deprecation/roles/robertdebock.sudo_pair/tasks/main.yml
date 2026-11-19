@@ -1,0 +1,7 @@
+- name: Build sudo_pair
+  ansible.builtin.command:
+    cmd: cargo build --release
+    chdir: "{{ sudo_pair_unpack_directory }}"
+    creates: "{{ sudo_pair_unpack_directory }}/target/release/libsudo_pair.so"
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/bin"

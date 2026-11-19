@@ -1,0 +1,10 @@
+---
+# krikri-role-tester ran the role in check mode (issue "check:..."), with no
+# kasm_package given - the role's own first task is the guard for that.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    display_creds: false
+  roles:
+    - monolithprojects.kasm_server

@@ -1,0 +1,13 @@
+# issue	role/playbook	why this cannot run in the fast suite
+1563	charliemaiors.shinobi_db	needs a live MySQL/MariaDB server: the divergence is mysql_user's connection-failure text (fundamental 2002/2003 socket error detail) and its looped fatal dumps
+1560	alvistack.kata	unarchive into /opt/kata plus systemd: needs root and real filesystem mutation (and a real kernel/filesystem module)
+1574	AnwarYagoub.glusterfs	package install plus glusterd: the check-mode ok-vs-changed split depends on the packages really being present on the host
+1520	TalhaJuikar.kubernetes	firewalld, SELinux and systemd modules: needs a real systemd host with those services, and disabling them is a host mutation
+1527	stafwag.proxy_env	writes /etc/profile: proving the include/`ok` shape needs the real file to be edited
+1466	kpg debconf (happy path)	debconf writes real dpkg debconf selections: mutating the dpkg database is exactly what a corpus case may never do
+1445	kpg apt_repository (happy path)	writes /etc/apt/sources.list.d and refreshes the apt cache: real system mutation
+1451	kpg apt (chaos: dpkg_options, fail_on_autoremove)	real package installation/removal, and the error text differs only when dpkg really reports it
+1511	kpg rpm_key (happy path)	imports into the RPM database: needs a rpm/dnf host and writes its trusted-key store
+1540	kpg dnf (chaos: skip_broken)	real dnf transaction (and the serial-token crash shape needs dnf installed)
+1543	ansible.cfg ssh_args	needs a real sshd plus two dials through one ControlMaster: no in-process substitute for the ssh connection plugin's master reuse
+1564	ctorgalson.docksal	runs `fin`, which needs root netlink (RTNETLINK answers: Operation not permitted) and a Docker daemon

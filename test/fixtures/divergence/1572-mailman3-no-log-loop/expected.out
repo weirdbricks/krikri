@@ -1,0 +1,40 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [ucr.mailman3 : set mailman3 debconf options] *****************************
+ok: [localhost] => (item={'name': 'mailman3', 'question': 'mailman3/database-type', 'vtype': 'select', 'value': 'pgsql'}) => {
+    "msg": "mailman3: mailman3/database-type"
+}
+ok: [localhost] => (item={'name': 'mailman3', 'question': 'mailman3/remote/newhost', 'vtype': 'string', 'value': 'localhost'}) => {
+    "msg": "mailman3: mailman3/remote/newhost"
+}
+ok: [localhost] => (item={'name': 'mailman3', 'question': 'mailman3/db/dbname', 'vtype': 'string', 'value': 'mailman3'}) => {
+    "msg": "mailman3: mailman3/db/dbname"
+}
+ok: [localhost] => (item={'name': 'mailman3', 'question': 'mailman3/db/app-user', 'vtype': 'string', 'value': 'mailman3@localhost'}) => {
+    "msg": "mailman3: mailman3/db/app-user"
+}
+ok: [localhost] => (item=(censored due to no_log))
+ok: [localhost] => (item=(censored due to no_log))
+ok: [localhost] => (item={'name': 'mailman3-web', 'question': 'mailman3-web/database-type', 'vtype': 'select', 'value': 'pgsql'}) => {
+    "msg": "mailman3-web: mailman3-web/database-type"
+}
+ok: [localhost] => (item={'name': 'mailman3-web', 'question': 'mailman3-web/remote/newhost', 'vtype': 'string', 'value': 'localhost'}) => {
+    "msg": "mailman3-web: mailman3-web/remote/newhost"
+}
+ok: [localhost] => (item={'name': 'mailman3-web', 'question': 'mailman3-web/db/dbname', 'vtype': 'string', 'value': 'mailman3web'}) => {
+    "msg": "mailman3-web: mailman3-web/db/dbname"
+}
+ok: [localhost] => (item={'name': 'mailman3-web', 'question': 'mailman3-web/db/app-user', 'vtype': 'string', 'value': 'mailman3web@localhost'}) => {
+    "msg": "mailman3-web: mailman3-web/db/app-user"
+}
+ok: [localhost] => (item=(censored due to no_log))
+ok: [localhost] => (item=(censored due to no_log))
+ok: [localhost] => (item={'name': 'mailman3-web', 'question': 'mailman3-web/superuser-mail', 'vtype': 'string', 'value': 'root@localhost'}) => {
+    "msg": "mailman3-web: mailman3-web/superuser-mail"
+}
+ok: [localhost] => (item=(censored due to no_log))
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

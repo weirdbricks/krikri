@@ -37,6 +37,9 @@ Lint/Formatting:
   - src/krikri/variable_substitutor/expression_evaluator.cr
   - src/krikri/filters/filter_args.cr
   - src/krikri/filters/filter_dispatch.cr
+  # Machine-generated from scripts/gen_collection_runtime_data.py; its
+  # formatter-cleanliness is the generator's concern, not hand-edited here.
+  - src/krikri/collection_runtime_data.cr
 
 Lint/NotNil:
   Excluded:
@@ -225,6 +228,8 @@ Naming/BlockParameterName:
   - test/minitest_helper.cr
   - test/integration/cron_test.cr
   - test/unit/shell_test.cr
+  # Machine-generated (scripts/gen_collection_runtime_data.py).
+  - src/krikri/collection_runtime_data.cr
 
 Performance/ChainedCallWithNoBang:
   Excluded:

@@ -1,0 +1,7 @@
+---
+# The real configure.yml's first task, verbatim; the rest of that file
+# (pip installs, an included role) is dropped because it mutates the host.
+- name: Check if syncthing_devices needs to be defined
+  ansible.builtin.set_fact:
+    syncthing_autogenerate_devices: "{{ syncthing_devices is not defined | bool }}"
+  when: syncthing_autogenerate_devices is not defined

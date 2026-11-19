@@ -1,0 +1,12 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [diademiemi.syncthing : Configure syncthing for user] *********************
+included: <WORK>/roles/diademiemi.syncthing/tasks/setup/common//configure.yml for localhost
+
+TASK [diademiemi.syncthing : Check if syncthing_devices needs to be defined] ***
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

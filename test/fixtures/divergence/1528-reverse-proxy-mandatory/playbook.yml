@@ -1,0 +1,7 @@
+---
+# krikri-role-tester ran the role in check mode with proxy_domains unset.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - stuvusIT.reverse_proxy

@@ -1,0 +1,48 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [vbotka.freebsd_ports : Vars: Set the lists for x86_64] *******************
+ok: [localhost]
+
+TASK [vbotka.freebsd_ports : Vars: Debug for ports_debug=False] ****************
+skipping: [localhost]
+
+TASK [vbotka.freebsd_ports : Debug ports_debug=False] **************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/vbotka.freebsd_ports/tasks/vars.yml:2:9
+
+1 ---
+2 - name: "Vars: Set the lists for {{ ansible_architecture }}"
+          ^ column 9
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/vbotka.freebsd_ports/tasks/vars.yml:4:15
+
+2 - name: "Vars: Set the lists for {{ ansible_architecture }}"
+3   ansible.builtin.set_fact:
+4     pkg_dict: "{{ pkg_dict | d([]) +
+                ^ column 15
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/vbotka.freebsd_ports/tasks/vars.yml:7:15
+
+5                   lookup('vars', 'pkg_dict_' ~ ansible_architecture, default=[]) |
+6                   sort(attribute='pkglist') }}"
+7     pkg_list: "{{ pkg_list | d([]) +
+                ^ column 15
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

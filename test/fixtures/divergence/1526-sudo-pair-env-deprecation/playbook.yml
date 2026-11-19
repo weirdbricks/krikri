@@ -1,0 +1,7 @@
+---
+# krikri-role-tester ran the role in check mode ("check:robertdebock.sudo_pair").
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - robertdebock.sudo_pair

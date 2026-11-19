@@ -1790,8 +1790,15 @@ module Krikri
             vars_context.delete(key)
           end
         end
-        if KrikriJinja.miss_count > signal_before && strict_var_value_miss(raw, vars_context)
-          vars_context[key] = raw
+        if KrikriJinja.miss_count > signal_before
+          # The probe is krikri-only: real ansible never templates a
+          # task-level `vars:` value nothing consumes, so the reads it
+          # makes must stay silent. A read the task DOES consume warns at
+          # its own consuming render regardless (issue #1573,
+          # vbotka.freebsd_ports' skipped debug task: its `msg:` block
+          # reads a role default that spells a top-level fact).
+          miss = VarSubstitutor.suppress_eager_scope_deprecations { strict_var_value_miss(raw, vars_context) }
+          vars_context[key] = raw if miss
         end
       end
     end

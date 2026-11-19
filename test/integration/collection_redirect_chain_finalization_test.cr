@@ -4,13 +4,18 @@ require "../minitest_helper"
 # chain the task-args finalization error reports the end of. The first
 # hop is ansible-core's builtin runtime (ansible_builtin_runtime.yml),
 # which still routes the legacy bare `hcloud_ssh_key` spelling onto
-# hetzner.hcloud.hcloud_ssh_key - but hetzner.hcloud 7.x renames its
-# modules back onto unprefixed files in its own runtime.yml
-# (hcloud_ssh_key -> ssh_key). Real ansible 2.19.11 reports the chain END
-# ('hetzner.hcloud.ssh_key') in the finalization error, for the bare
-# spelling AND for the legacy FQCN spelling alike; krikri used to stop at
-# the first hop and report the intermediate FQCN (issue #800,
-# siw36.ansible_hcloud_vm).
+# hetzner.hcloud.hcloud_ssh_key - but hetzner.hcloud renames its modules
+# back onto unprefixed files in its own runtime.yml (hcloud_ssh_key ->
+# ssh_key). Real ansible reports the chain END ('hetzner.hcloud.ssh_key')
+# in the finalization error, for the bare spelling AND for the legacy FQCN
+# spelling alike; krikri used to stop at the first hop and report the
+# intermediate FQCN (issue #800, siw36.ansible_hcloud_vm).
+#
+# Both routing tables are krikri's OWN baked data now
+# (collection_runtime_data.cr, captured from the pinned environment), so
+# this spec plants a DECOY collection tree via ANSIBLE_COLLECTIONS_PATH
+# and asserts the answer does not move: nothing at run time reads an
+# installed collections tree.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -18,6 +23,9 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 private def run_playbook(yaml : String)
   playbook = File.tempname("collection-redirect-chain", ".yml")
   File.write(playbook, yaml)
+  # A decoy tree: its hetzner.hcloud runtime.yml redirects the SAME
+  # names somewhere else entirely. If the run read it, the reported chain
+  # end would change.
   fixture_root = File.tempname("collection-redirect-collections")
   collection = File.join(fixture_root, "ansible_collections", "hetzner", "hcloud")
   FileUtils.mkdir_p(File.join(collection, "plugins", "modules"))
@@ -26,12 +34,12 @@ private def run_playbook(yaml : String)
     plugin_routing:
       modules:
         hcloud_ssh_key:
-          redirect: hetzner.hcloud.ssh_key
+          redirect: hetzner.hcloud.decoy_target
         hcloud_ssh_key_info:
-          redirect: hetzner.hcloud.ssh_key_info
+          redirect: hetzner.hcloud.decoy_target_info
     YAML
   )
-  ["ssh_key.py", "ssh_key_info.py"].each do |leaf|
+  ["decoy_target.py", "decoy_target_info.py"].each do |leaf|
     File.write(File.join(collection, "plugins", "modules", leaf), "#!/usr/bin/python\n")
   end
   output = IO::Memory.new

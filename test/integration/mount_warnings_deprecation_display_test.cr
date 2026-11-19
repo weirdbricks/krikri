@@ -111,18 +111,16 @@ describe "ansible.posix.mount's exit_json warnings deprecation display" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  # The other side of the 2.1.x-vs-2.2.x split (issue #1060): with an
-  # ansible.posix 2.2.x tree on the controller, real ansible prints NO
-  # deprecation at all for a mount task - the 2.2.x mount.py warns
-  # through AnsibleModule.warn and takes to_bytes/to_native from
-  # `common.text.converters`, so neither the exit_json `warnings`
-  # deprecation nor the _text import pair exists there (live-verified
-  # vs 2.21.6 + ansible.posix 2.2.2). krikri printed the 2.1.x set
-  # anyway because it modeled one module line unconditionally; the
-  # executor now pins the resolved release on the wire
-  # (build_plugin_config's `collection_version` field), which this
-  # end-to-end run is the only cover for.
-  it "prints no deprecation lines when the controller resolves an ansible.posix 2.2.x tree" do
+  # The 2.1.x-vs-2.2.x split (issue #1060) now follows krikri's PINNED
+  # capture (ansible.posix 2.1.0), not whatever posix release this
+  # controller has: a planted 2.2.x tree must not silence the lines. Real
+  # against a 2.2.x tree prints none (its mount.py warns through
+  # AnsibleModule.warn and imports to_bytes/to_native from
+  # `common.text.converters`), so a controller that really runs 2.2.x is a
+  # known parity gap on that release line - the accepted cost of not
+  # reading the controller's collections (see KNOWN_MISSING.md). What
+  # this spec pins is that the output does NOT vary with the planted tree.
+  it "prints the pinned 2.1.x deprecation lines even when the controller's own posix tree is 2.2.x" do
     root = PluginSpecHelper.tmp_path("posix-2.2.x-tree")
     posix = File.join(root, "ansible_collections", "ansible", "posix")
     FileUtils.mkdir_p(File.join(posix, "plugins", "modules"))
@@ -154,8 +152,10 @@ describe "ansible.posix.mount's exit_json warnings deprecation display" do
       env: ENV.to_h.merge({"ANSIBLE_COLLECTIONS_PATH" => root}))
 
     err = stderr.to_s
-    err.wont_include("[DEPRECATION WARNING]")
-    err.wont_include("Deprecation warnings can be disabled")
+    MOUNT_UTILS_TEXT_LINES.each do |line|
+      err.scan("[DEPRECATION WARNING]: #{line}").size.must_equal(1)
+    end
+    err.must_include("[WARNING]: Deprecation warnings can be disabled")
     stdout.to_s.wont_include("DEPRECATION")
     stdout.to_s.must_include("ok=1")
     status.success?.must_equal(true)

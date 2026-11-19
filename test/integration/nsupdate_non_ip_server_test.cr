@@ -41,14 +41,17 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-localhost-local.ini")
 
-# The [ERROR] block that crash drives through the executor: the plugin's
-# _ansible_crash_context marker has to survive to ResultDisplay for the
-# two-segment block (see task_error_chain) and the bare brief to be the
-# fatal msg. The crash only exists on the pre-12.3 module line, which later
-# releases replaced with an up-front "Failed to resolve server ..." failure,
-# so the controller has to resolve an 11.2.1 tree.
-describe "nsupdate non-IP server crash display" do
-  it "prints real's two-segment block and the bare Module failed msg" do
+# The 11.2.x message-less crash (covered at the plugin level above by
+# forcing `collection_version: "11.2.1"`) is NOT reproducible end to end:
+# krikri models its BAKED community.general release (12.5.0), whose nsupdate
+# fails with an inlined msg instead of the bare "Module failed.". That is
+# exactly real's 12.5.0 behaviour (live-verified vs ansible-core 2.21.6),
+# and krikri reaches it no matter what ANSIBLE_COLLECTIONS_PATH points at -
+# so the fixture tree below is there to prove it is IGNORED, not to steer
+# the answer (see KNOWN_MISSING "krikri never consults an installed
+# ansible-core or collections tree").
+describe "nsupdate non-IP server resolves the baked release, not the controller's tree" do
+  it "models 12.5.0 (inlined msg) though an 11.2.1 tree is on the search path" do
     root = PluginSpecHelper.tmp_path("nsupdate-11.2.1-tree")
     general = File.join(root, "ansible_collections", "community", "general")
     FileUtils.mkdir_p(File.join(general, "plugins", "modules"))
@@ -85,7 +88,14 @@ describe "nsupdate non-IP server crash display" do
 
     status.success?.must_equal(true)
     text = output.to_s
-    text.must_include("[ERROR]: Task failed: Module failed.\n\nTask failed: Module failed.\nOrigin: #{playbook}:6:7\n")
-    text.must_include("\n<<< caused by >>>\n\nfatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Module failed.\"}\n")
+    # 12.5.0 inlines the module msg (the exact DNS text depends on the local
+    # resolver, so only pin the stable shape: the single "[ERROR] ... Module
+    # failed: <msg>" segment, its Origin, no two-segment crash split, and the
+    # fatal's msg carried through).
+    text.must_include("[ERROR]: Task failed: Module failed:")
+    text.must_include("Origin: #{playbook}:6:7\n")
+    text.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": ))
+    text.must_include("\n...ignoring\n")
+    text.wont_include("<<< caused by >>>")
   end
 end

@@ -2505,29 +2505,19 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     end
   end
 
-  # issue #1511: on a controller with NO ansible-core (the podman benchmark's
-  # krikri-only containers) `{{ lookup('kpg_undefined') }}` rendered the
-  # literal "undefined" and the task ran green, where real ansible fails it
-  # at arg finalization with "The lookup plugin 'kpg_undefined' was not
-  # found.". The bare-name gate used to answer "unsure" there; the baked
-  # 2.21.6 lookup names/redirects make it the definite refusal real gives.
-  # exclusive!: the seam changes the memoized builtin resolution every other
-  # in-process parse in this process reads.
-  describe "unknown bare lookup with no ansible-core installed (issue #1511)" do
-    exclusive!
+  # issue #1511: `{{ lookup('kpg_undefined') }}` used to render the literal
+  # "undefined" and the task ran green, where real ansible fails it at arg
+  # finalization with "The lookup plugin 'kpg_undefined' was not found.".
+  # The bare-name gate answers from krikri's OWN baked lookup tables (the
+  # pinned ansible-core name set plus the captured collections' lookup
+  # plugins), so it gives real's definite refusal on every controller -
+  # including one with no ansible-core and no collections installed at all
+  # - and the answer never varies with the environment.
+  describe "unknown bare lookup (issue #1511)" do
+    serial!
 
     private def evaluator
       Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
-    end
-
-    before_each do
-      ENV["KRIKRI_TEST_NO_ANSIBLE_CORE"] = "1"
-      Krikri::CollectionIndex.reset!
-    end
-
-    after_each do
-      ENV.delete("KRIKRI_TEST_NO_ANSIBLE_CORE")
-      Krikri::CollectionIndex.reset!
     end
 
     it "fails it with Ansible's not-found message instead of rendering the 'undefined' sentinel" do
@@ -2539,6 +2529,24 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
     it "keeps a native builtin lookup working (the baked name set must not refuse them)" do
       evaluator.evaluate("lookup('env', 'PATH')").wont_equal("undefined")
+    end
+
+    it "answers the same with ANSIBLE_COLLECTIONS_PATH pointing at an unrelated tree" do
+      # The lookup decision is baked, not scanned: re-pointing the
+      # collection env at a scratch tree (which no longer even exists)
+      # must not change a single answer.
+      begin
+        ENV["ANSIBLE_COLLECTIONS_PATH"] = "/nonexistent/krikri-lookup-fixture"
+        Krikri::CollectionIndex.reset!
+        ex = assert_raises(Krikri::PythonLookupRunner::LookupError) do
+          evaluator.evaluate("lookup('kpg_undefined')")
+        end
+        ex.message.must_equal("The lookup plugin 'kpg_undefined' was not found.")
+        evaluator.evaluate("lookup('env', 'PATH')").wont_equal("undefined")
+      ensure
+        ENV.delete("ANSIBLE_COLLECTIONS_PATH")
+        Krikri::CollectionIndex.reset!
+      end
     end
   end
 

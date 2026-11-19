@@ -3582,13 +3582,14 @@ module Krikri
         "params" => final_params,
         "vars"   => wire_vars,
         # Read by the plugin binary (BasePlugin#resolved_collection_version):
-        # the release whose module source this task's name resolves to, from
-        # the CONTROLLER's own collection tree - the binary runs on the
-        # target and cannot see it. Plugins that model release-dependent
-        # module behavior (the ansible.posix 2.1.x-vs-2.2.x deprecation
-        # surface, issue #1060) decide from this; null when no release can
-        # be pinned (ansible-core's own modules, role-private library/
-        # sources, a collection tree without a MANIFEST.json).
+        # the pinned release whose module source this task's name resolves
+        # to, from krikri's OWN baked per-module release pins
+        # (collection_runtime_data.cr) - not from whatever collections this
+        # controller has. Plugins that model release-dependent module
+        # behavior (the ansible.posix 2.1.x-vs-2.2.x deprecation surface,
+        # issue #1060) decide from this; null when no release is pinned
+        # (ansible-core's own modules, role-private library/ sources, a
+        # captured release without a MANIFEST.json).
         "collection_version" => CollectionIndex.module_provider_version(task.module_name),
         # Read by PluginManager, not by the plugin binary itself - become:
         # wraps the *whole* plugin process (local spawn or the remote SSH

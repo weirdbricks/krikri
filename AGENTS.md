@@ -37,6 +37,19 @@ fix) goes in the krikri-jinja repo (sibling checkout
 bump its version, tag `v0.4.N`, push, then bump the `tag:` in this
 repo's `shard.yml` and `shards update krikri-jinja`.
 
+krikri has **no runtime dependency on an Ansible installation**: its
+module-name resolution, collection release pins and module_utils
+deprecation data all come from baked tables under `src/krikri/`
+(`builtin_module_names_data.cr`, `collection_runtime_data.cr`, generated
+by the two `scripts/gen_*_runtime_data.py` scripts). Nothing in `src/` may
+scan an installed ansible-core or `ansible_collections` tree to make a
+parity decision - the moving parts live in the generators, which are
+dev-time tooling only (see KNOWN_MISSING.md's "krikri never consults an
+installed ansible-core or collections tree"). Executing python plugins is
+different and still allowed: a role's/playbook's `library/*.py` module, a
+collection's python plugin and the `ansible.module_utils` imports those
+executed modules resolve come from the environment.
+
 Each Ansible module is its own tiny compiled binary under `plugins/`,
 uploaded to and executed on the target host (or run locally for
 `ansible_connection=local`). `src/krikri/plugin_manager.cr`
@@ -80,6 +93,9 @@ scripts/deps_audit.sh               # pinned shard versions vs newest upstream t
 python3 scripts/gen_builtin_runtime_data.py --check
                                      # baked ansible-core name/redirect tables vs the
                                      #   installed package; regenerate after a target bump
+python3 scripts/gen_collection_runtime_data.py --check
+                                     # baked collection routing/version/action-plugin/
+                                     #   deprecation tables vs the capture environment
 ameba                               # lint
 ```
 
@@ -175,9 +191,10 @@ pipes, and nothing else bounds a wedged local plugin).
 - `serial!` only serializes serial-vs-serial: a concurrently running
   non-serial test keeps executing straight through a serial test's
   window. If that window disturbs state OTHER tests read without
-  opting in (the `CollectionIndex` fixture scan, which re-points
-  ANSIBLE_COLLECTIONS_PATH and resets the memoized index that every
-  in-process parse consults), the describe calls `exclusive!` instead:
+  opting in (a fixture that re-points `ANSIBLE_COLLECTIONS_PATH` and
+  resets a memo every in-process parse consults - the retired
+  `CollectionIndex` fixture scan was the example), the describe calls
+  `exclusive!` instead:
   it runs with the whole process quiesced - no other test's
   setup/body/teardown overlaps it. Costs the process's other worker
   fibers for the window, so it is for genuinely process-visible
@@ -274,16 +291,24 @@ skill's first step is to ask for it, and it documents the layout.
    For the rest, read `<role>/compare.txt`, then `compare_<phase>.diff`, then the `.out`
    files around the named task. Then dedupe the collected divergences - if two or more
    roles hit the same root cause, that's one fix to make, not two. A difference in output
-   *text* (e.g. Ansible's `Origin:` error context) is a real krikri gap, not something to
-   mask; masks (`Compare::MASKS` in krikri-role-tester) are only for output that can never
+   *text* is a real krikri gap at the parity tiers that matter (behaviour; structured output
+   like `Origin:` error context, `no_log` censoring, recap counters); the cosmetic warning
+   tier (deprecation/warning text, order, dedup) is best-effort and not a divergence to file -
+   see KNOWN_MISSING.md's tier note. Neither kind is something to mask; masks
+   (`Compare::MASKS` in krikri-role-tester) are only for output that can never
    be identical. The `triage-round` skill walks through this and files GitHub issues for the confirmed root causes; the `work-issues` skill then picks issues to fix.
 
 4. **Fix phase (serial):** apply fixes one at a time against the unit tests (concurrent edits to
    the same evaluator/plugin code aren't safe to parallelize even though the discovery phase is).
-   Add a regression test where practically possible (some things - real dpkg/apt mutation, real
-   crontab mutation, real pip installs - have no test at all by design; verify those live instead
-   and say so in the commit message). Bump `VERSION` per logical fix or tightly-related group of
-   fixes, run the full `scripts/minitest.sh` suite (defaults to 8 worker
+   A fix isn't done until its repro is a divergence-corpus case under
+   `test/fixtures/divergence/<issue>-<slug>/`: the round's failing task YAML copied verbatim,
+   `NOTES.md` with the issue link, `expected.out` captured from pinned real ansible-core 2.21.6
+   (a case asserting krikri's own output as "expected" is wrong). The replay test
+   (`test/integration/divergence_corpus_test.cr`) compares exactly, so extra output fails like
+   missing output. Real package/service/crontab/pip mutation can't run in-process: those go in
+   `test/fixtures/divergence/live/cases.txt` for a real-host round, and only a repro truly
+   inexpressible there gets a plain regression test instead. Bump `VERSION` per logical fix or
+   tightly-related group of fixes, run the full `scripts/minitest.sh` suite (defaults to 8 worker
    fibers), and `./build.sh`.
 
 5. **Confirm phase:** ask the user to re-run *only* the roles that diverged
@@ -330,6 +355,10 @@ Atlantic.net API keys used in the real-host benchmark workflow come from.
 - **GitHub issues** - open gaps: defects with an unknown or unfinished fix. File one per root cause
   (label `divergence`/`bug`; `tracking` for long-running verification coverage), close with
   `Fixes #N`. No per-round narrative anywhere: it lives in `git log`.
+- `test/fixtures/divergence/` - the divergence regression corpus: one `<issue>-<slug>/` directory per
+  fixed divergence (real-role task YAML, real-ansible `expected.out` from pinned ansible-core 2.21.6,
+  `NOTES.md`), plus `live/cases.txt` for the cases the in-process suite can't run. A fix lands with its
+  case; a case's expected transcript is never rewritten to match krikri's own output.
 - `KNOWN_MISSING.md` - **Deliberate limits** only: decisions already made, with the reasoning attached,
   plus test-environment notes. An item that turns out to be a defect becomes an issue and is deleted
   from here.

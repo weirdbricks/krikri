@@ -370,7 +370,11 @@ if [ "$STATIC" = false ] && [ "$IS_DARWIN" = false ] && [ -f "scripts/fmod_compa
     if [ ! -f "$SHIM_OBJ" ] || [ "scripts/fmod_compat.s" -nt "$SHIM_OBJ" ]; then
         cc -c scripts/fmod_compat.s -o "$SHIM_OBJ" || { echo -e "${RED}❌ Failed to assemble the fmod shim${NC}"; exit 1; }
     fi
-    LINK_SHIM_ARGS="--link-flags=$SHIM_OBJ"
+    # The shim tail-jumps to libm's pre-2.38 `fmod` node, so any binary that
+    # links it also needs libm. The main executables use math and pull libm in
+    # on their own, but a minimal tool (krikri-capture-case) does not, and
+    # without an explicit `-lm` the linker fails with an undefined `fmod`.
+    LINK_SHIM_ARGS="--link-flags=$SHIM_OBJ --link-flags=-lm"
     BUILD_FLAGS="$BUILD_FLAGS $LINK_SHIM_ARGS"
 fi
 
@@ -699,6 +703,39 @@ if [ "$NEEDS_BUILD" = true ]; then
 else
     echo -e "   ${BLUE}✓${NC} krikri-lint (up to date)"
     echo -e "${GREEN}✅ krikri-lint up to date${NC}"
+fi
+echo ""
+
+# Build krikri-capture-case (divergence corpus capture tool, see
+# src/krikri/divergence_transcript.cr). Nothing shipped links it, but it is
+# the only sanctioned way to record a case's expected.out and it must exist as
+# a prebuilt binary: test/fixtures/divergence/README.md points at it, and a
+# script that compiled itself per call would be slow and would take the host
+# compile lock in the middle of a round.
+echo -e "${YELLOW}🔨 Building krikri-capture-case...${NC}"
+
+CAPTURE_BINARY="$OUTPUT_DIR/krikri-capture-case"
+CAPTURE_SOURCE="krikri-capture-case.cr"
+
+NEEDS_BUILD=false
+
+if [ "$FORCE_ALL" = true ]; then
+    NEEDS_BUILD=true
+elif [ ! -f "$CAPTURE_BINARY" ]; then
+    NEEDS_BUILD=true
+elif [ "$CAPTURE_SOURCE" -nt "$CAPTURE_BINARY" ]; then
+    NEEDS_BUILD=true
+elif find src -name '*.cr' -newer "$CAPTURE_BINARY" -print -quit | grep -q .; then
+    # It requires src/krikri/divergence_transcript.cr, so an edit there must
+    # rebuild it - the same all-of-src/ scan the other binaries use.
+    NEEDS_BUILD=true
+fi
+
+if [ "$NEEDS_BUILD" = true ]; then
+    MAIN_BUILDS+=("krikri-capture-case|$CAPTURE_SOURCE|$CAPTURE_BINARY")
+else
+    echo -e "   ${BLUE}✓${NC} krikri-capture-case (up to date)"
+    echo -e "${GREEN}✅ krikri-capture-case up to date${NC}"
 fi
 echo ""
 
@@ -1164,6 +1201,7 @@ for task in "${MAIN_BUILDS[@]}"; do
         krikri-playbook) echo -e "${GREEN}✅ Main executable built: $OUTPUT_DIR/krikri-playbook${NC}" ;;
         krikri)          echo -e "${GREEN}✅ krikri built: $OUTPUT_DIR/krikri${NC}" ;;
         krikri-lint)     echo -e "${GREEN}✅ krikri-lint built: $OUTPUT_DIR/krikri-lint${NC}" ;;
+        krikri-capture-case) echo -e "${GREEN}✅ krikri-capture-case built: $OUTPUT_DIR/krikri-capture-case${NC}" ;;
     esac
 done
 

@@ -1,0 +1,29 @@
+---
+- name: "Vars: Set the lists for {{ ansible_architecture }}"
+  ansible.builtin.set_fact:
+    pkg_dict: "{{ pkg_dict | d([]) +
+                  lookup('vars', 'pkg_dict_' ~ ansible_architecture, default=[]) |
+                  sort(attribute='pkglist') }}"
+    pkg_list: "{{ pkg_list | d([]) +
+                  lookup('vars', 'pkg_list_' ~ ansible_architecture, default=[]) |
+                  unique | sort }}"
+    pkg_list_deinstall: "{{ pkg_list_deinstall | unique | sort }}"
+    pkg_dict_select: "{{ pkg_dict_select | unique | sort }}"
+
+- name: "Vars: Debug for ports_debug={{ ports_debug }}"
+  vars:
+    msg: |-
+      ansible_architecture: {{ ansible_architecture }}
+      pkg_dict:
+        {{ pkg_dict | sort(attribute='pkglist') | to_nice_yaml(indent=2) | indent(2) }}
+      pkg_list:
+        {{ pkg_list | sort | to_nice_yaml(indent=2) | indent(2) }}
+      pkg_list_deinstall:
+        {{ pkg_list_deinstall | to_nice_yaml(indent=2) | indent(2) }}
+      pkg_dict_select:
+        {{ pkg_dict_select | to_nice_yaml(indent=2) | indent(2) }}
+  ansible.builtin.debug:
+    msg: "{{ '{}'.format(msg) }}"
+  when: ports_debug | bool
+
+# EOF

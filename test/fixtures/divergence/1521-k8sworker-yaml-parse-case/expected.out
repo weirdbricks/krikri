@@ -1,0 +1,8 @@
+[ERROR]: YAML parsing failed: Did not find expected <document start>.
+Origin: <WORK>/roles/akshayavb99.k8sworker_setup_sample_role/tasks/main.yml:3:1
+
+1 ---i
+2 # tasks file for k8smaster-setup
+3 - name: "Creating YUM repo to install Kubernetes"
+  ^ column 1
+

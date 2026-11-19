@@ -1,5 +1,6 @@
 require "file_utils"
 require "../minitest_helper"
+require "../../src/krikri/ansible_install"
 
 # `serial:` batches a play: Ansible runs the WHOLE play against one
 # batch of hosts at a time, which is what makes a rolling restart
@@ -126,37 +127,33 @@ describe "serial:" do
     stderr.wont_include "PLAY RECAP"
   end
 
-  # The install path the frames spell, and the PEP 657 caret runs under
-  # them, belong to the ansible-core that would have printed the block on
-  # this host: a root pip install lives under /usr/local/lib/python3.X,
-  # a `pip install --user` one under ~/.local, and Python 3.13 stops
-  # printing the carets for a frame whose failing instruction is a plain
-  # call statement - every frame here - while 3.11/3.12 print one under
-  # each (live-verified vs ansible-core 2.21.6, issue #1540). The fixture
-  # installs are the assertions' paths, so neither depends on which
-  # ansible the test machine happens to carry.
-  it "spells the traceback with the host ansible install's path and carets" do
+  # The install path the frames spell comes from krikri's OWN captured
+  # install path (this interpreter's sysconfig purelib + AnsibleInstall::
+  # CAPTURED_PACKAGE), never from a discovered ansible package - so a
+  # controller's install, or a HOME-pointed fake tree, cannot move it (see
+  # KNOWN_MISSING "krikri never consults an installed ansible-core or
+  # collections tree"). Python 3.13 stops printing the PEP 657 carets for a
+  # frame whose failing instruction is a plain call statement - every frame
+  # here - while 3.11/3.12 print one under each, so the carets follow the
+  # captured interpreter's version (live-verified vs ansible-core 2.21.6,
+  # issue #1540).
+  it "spells the traceback with krikri's captured install path, independent of the controller" do
     home = File.tempname("serial-home")
     begin
-      install = File.join(home, ".local", "lib", "python3.12", "site-packages", "ansible")
-      Dir.mkdir_p(File.join(install, "utils"))
-      File.write(File.join(install, "utils", "helpers.py"), "")
+      fake = File.join(home, ".local", "lib", "python3.12", "site-packages", "ansible")
+      Dir.mkdir_p(File.join(fake, "utils"))
+      File.write(File.join(fake, "utils", "helpers.py"), "")
       _code, _stdout, stderr = run_serial_streams("kpg-many", env: {"HOME" => home})
-      stderr.must_include "  File \"#{install}/cli/__init__.py\", line 663, in cli_executor\n" \
-                          "    exit_code = cli.run()\n" \
-                          "                ^^^^^^^^^\n"
-      stderr.must_include "  File \"#{install}/utils/helpers.py\", line 32, in pct_to_int\n" \
-                          "    return int(value)\n" \
-                          "           ^^^^^^^^^^\n"
-
-      FileUtils.mv(File.join(home, ".local", "lib", "python3.12"),
-        File.join(home, ".local", "lib", "python3.13"))
-      install = File.join(home, ".local", "lib", "python3.13", "site-packages", "ansible")
-      _code, _stdout, stderr = run_serial_streams("kpg-many", env: {"HOME" => home})
-      stderr.must_include "  File \"#{install}/utils/helpers.py\", line 32, in pct_to_int\n" \
-                          "    return int(value)\n" \
-                          "ValueError:"
-      stderr.wont_include "^^^^^^^^^"
+      install = Krikri::AnsibleInstall.package_path
+      stderr.must_include "  File \"#{install}/cli/__init__.py\", line 663, in cli_executor"
+      stderr.must_include "  File \"#{install}/utils/helpers.py\", line 32, in pct_to_int"
+      # The fake HOME tree is never consulted for the path.
+      stderr.wont_include fake
+      if Krikri::AnsibleInstall.caret_lines?
+        stderr.must_include "^^^^^^^^^"
+      else
+        stderr.wont_include "^^^^^^^^^"
+      end
     ensure
       FileUtils.rm_rf(home)
     end

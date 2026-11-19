@@ -212,14 +212,15 @@ module PluginSpecHelper
   # keeps running right through a serial test's window - fine for the
   # usual ENV-poking specs, which only disturb other tests that also
   # opt in, but not for a spec that re-points ANSIBLE_COLLECTIONS_PATH
-  # and re-scans CollectionIndex while ~140 other unit files' in-process
-  # parses read that same memoized state (observed as flaky
-  # tombstone/local-action failures once the shard grouping co-scheduled
-  # them in one process; count-based grouping had just never hit the
-  # interleaving). The busy-wait sleeps yield the fiber scheduler, and a
-  # parallel test's worst-case tail is bounded by the plugin watchdog,
-  # so the wait is bounded. Lock order is EXCL_MUTEX before
-  # STATE_MUTEX everywhere.
+  # while ~140 other unit files' in-process parses read that same env
+  # through a process-wide memo (the retired CollectionIndex fixture
+  # scan did exactly that, and the flaky tombstone/local-action failures
+  # it caused are why this gate exists; nothing in the engine scans
+  # installed collections any more, so today's remaining users are the
+  # specs that memoize their own ENV-derived state). The busy-wait sleeps
+  # yield the fiber scheduler, and a parallel test's worst-case tail is
+  # bounded by the plugin watchdog, so the wait is bounded. Lock order is
+  # EXCL_MUTEX before STATE_MUTEX everywhere.
   #
   # EXCL_MUTEX is HELD ACROSS the whole exclusive window, not borrowed to
   # flip a flag: an exclusive ticket granted while another exclusive test
@@ -350,7 +351,7 @@ module PluginSpecHelper
   # fact-less wire shape passes "ansible_pkg_mgr" => "" explicitly.
   #
   # `collection_version` pins the top-level config field the executor
-  # normally fills from the controller's collection tree (see
+  # normally fills from krikri's own baked per-module release pins (see
   # build_plugin_config): a spec modeling a particular release line
   # (ansible.posix 2.1.x vs 2.2.x, issue #1060) passes it; leaving it
   # nil models the unpinned wire, where plugins default to the older
@@ -675,9 +676,12 @@ class Minitest::Spec
   # concurrently-running test finished and none started - call
   # `exclusive!` in their body (implies serial!). Only for specs whose
   # window of disturbed global state is visible to tests that do not
-  # opt in themselves (the CollectionIndex fixture scan, today); the
-  # plain serial! scope stays the default for ENV/engine-state poking,
-  # because exclusive tests idle the process's other worker fibers.
+  # opt in themselves (the retired CollectionIndex fixture scan used to
+  # be the example: it re-pointed ANSIBLE_COLLECTIONS_PATH and reset a
+  # memo every in-process parse read; krikri no longer scans installed
+  # collections, so no engine-side scan is left to disturb). The plain
+  # serial! scope stays the default for ENV/engine-state poking, because
+  # exclusive tests idle the process's other worker fibers.
   macro exclusive!
     def serial? : Bool
       true

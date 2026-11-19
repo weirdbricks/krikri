@@ -1,0 +1,7 @@
+---
+- include_tasks: certificates.yml
+  with_items: "{{ proxy_domains | mandatory }}"
+  loop_control:
+    loop_var: target
+  tags:
+    - reverse_proxy_certificates

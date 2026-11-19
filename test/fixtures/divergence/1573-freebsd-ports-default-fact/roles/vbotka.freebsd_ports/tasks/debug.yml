@@ -1,0 +1,61 @@
+---
+- name: "Debug ports_debug={{ ports_debug }}"
+  vars:
+    msg: |-
+      ports_role_version: {{ ports_role_version }}
+      ansible_architecture: {{ ansible_architecture }}
+      ansible_os_family: {{ ansible_os_family }}
+      ansible_distribution: {{ ansible_distribution }}
+      ansible_distribution_major_version: {{ ansible_distribution_major_version }}
+      ansible_distribution_version: {{ ansible_distribution_version }}
+      ansible_distribution_release: {{ ansible_distribution_release }}
+      ansible_python_version: {{ ansible_python_version }}
+
+      freebsd_install_method: {{ freebsd_install_method }}
+      freebsd_install_retries: {{ freebsd_install_retries }}
+      freebsd_install_delay: {{ freebsd_install_delay }}
+      freebsd_use_packages: {{ freebsd_use_packages }}
+
+      ports_backup_conf: {{ ports_backup_conf }}
+      ports_sanity: {{ ports_sanity }}
+      ports_config: {{ ports_config }}
+      ports_dryrun: {{ ports_dryrun }}
+      ports_update: {{ ports_update }}
+      ports_stat: {{ ports_stat }}
+      ports_outdated_enable: {{ ports_outdated_enable }}
+
+      ports_portsnap_index: {{ ports_portsnap_index }}
+      ports_portsnap_refuse: {{ ports_portsnap_refuse }}
+      ports_portsnap_conf_file: {{ ports_portsnap_conf_file }}
+      ports_portsnap_workdir: {{ ports_portsnap_workdir }}
+      ports_portsnap_portsdir: {{ ports_portsnap_portsdir }}
+      ports_portsnap_servername: {{ ports_portsnap_servername }}
+      ports_portsnap_conf:
+        {{ ports_portsnap_conf | to_nice_yaml(indent=2) | indent(2) }}
+      ports_cron: {{ ports_cron }}
+      ports_cron_user: {{ ports_cron_user | d('UNDEFINED') }}
+      ports_cron_mailto: {{ ports_cron_mailto | d('UNDEFINED') }}
+      ports_cron_name: {{ ports_cron_name | d('UNDEFINED') }}
+      ports_cron_command: {{ ports_cron_command | d('UNDEFINED') }}
+      ports_cron_hour: {{ ports_cron_hour | d('UNDEFINED') }}
+      ports_cron_minute: {{ ports_cron_minute | d('UNDEFINED') }}
+      ports_cron_backup: {{ ports_cron_backup | d('UNDEFINED') }}
+      ports_cron_month: {{ ports_cron_month | d('UNDEFINED') }}
+      ports_cron_day: {{ ports_cron_day | d('UNDEFINED') }}
+      ports_cron_weekday: {{ ports_cron_weekday | d('UNDEFINED') }}
+      ports_cron_special_time: {{ ports_cron_special_time | d('UNDEFINED') }}
+
+      pkg_dict:
+        {{ pkg_dict | to_nice_yaml(indent=2) | indent(2) }}
+      pkg_list:
+        {{ pkg_list | to_yaml(indent=2) | indent(2) }}
+      pkg_list_deinstall:
+        {{ pkg_list_deinstall | to_yaml(indent=2) | indent(2) }}
+      pkg_dict_all: {{ pkg_dict_all }}
+      pkg_dict_select:
+        {{ pkg_dict_select | to_nice_yaml(indent=2) | indent(2) }}
+
+  ansible.builtin.debug:
+    msg: "{{ '{}'.format(msg) }}"
+
+# EOF

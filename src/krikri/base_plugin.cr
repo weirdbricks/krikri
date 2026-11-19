@@ -520,12 +520,13 @@ module Krikri
     # Abstract method - must be implemented by subclasses
     abstract def execute : PluginResult
 
-    # The version of the installed collection release whose module source
-    # this task resolves to - a top-level config field the executor sets
-    # (see build_plugin_config) from the CONTROLLER's collection tree,
-    # because this binary runs on the target and cannot see it. nil when
-    # the executor could pin no release (ansible-core's own modules,
-    # role-private library/ sources, a tree without a MANIFEST.json).
+    # The pinned collection release whose module source this task resolves
+    # to - a top-level config field the executor sets (see
+    # build_plugin_config) from krikri's OWN baked per-module release pins
+    # (collection_runtime_data.cr), so the answer is the same on the
+    # controller and on this target. nil when no release is pinned
+    # (ansible-core's own modules, role-private library/ sources, a
+    # captured release without a MANIFEST.json).
     def resolved_collection_version : String?
       @config["collection_version"]?.try(&.as_s?)
     end

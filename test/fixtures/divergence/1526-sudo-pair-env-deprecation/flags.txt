@@ -1,0 +1,3 @@
+--check
+-e
+sudo_pair_unpack_directory=sudo_pair-unpack

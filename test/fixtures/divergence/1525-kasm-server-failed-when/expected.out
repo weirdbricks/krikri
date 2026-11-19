@@ -1,0 +1,18 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [monolithprojects.kasm_server : Fail when my_var is not defined] **********
+[ERROR]: Task failed: Action failed: A 'failed_when' expression evaluated to 'True'.
+Origin: <WORK>/roles/monolithprojects.kasm_server/tasks/main.yml:2:3
+
+1 ---
+2 - name: Fail when my_var is not defined
+    ^ column 3
+
+fatal: [localhost]: FAILED! => {
+    "msg": "kasm_package is required"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

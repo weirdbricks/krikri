@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.2946-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.2947-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.21.6-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -16,11 +16,15 @@ the same syntax you already write, unmodified. There's no Python, no
 `ansible-core`, no `pip`, and no collections install required, on either
 the controller or the target - it's one compiled binary
 (`krikri-playbook`) plus a directory of small compiled module binaries.
-When the controller *does* have ansible-core or collections installed,
-krikri reads them as reference data only (real's module-name resolution,
-collection releases, deprecation source) so it refuses a playbook exactly
-where real would; no collection module is ever run in place of a native
-plugin.
+It never needs, reads or depends on an Ansible installation: module-name
+resolution, collection-releases gating and the deprecation text it
+counterfeits all come from krikri's own baked tables (captured at build
+time from the pinned ansible-core release and a pinned collection set),
+so the same playbook behaves identically on a controller with ansible-core
+and collections installed and on one that has never seen them. A role's or
+playbook's own `library/*.py` Python modules still run, through the
+target's `python3`, imports and all; no collection module is ever run in
+place of a native plugin.
 
 Three binaries ship: `krikri-playbook` (runs playbooks, the
 `ansible-playbook` equivalent), `krikri` (ad-hoc commands, the `ansible`

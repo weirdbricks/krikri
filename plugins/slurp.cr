@@ -27,6 +27,16 @@ module Krikri
       src = @params["src"]? || @params["path"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: src") unless src
 
+      # slurp's src is a `type: path` argspec option, and Ansible's
+      # check_type_path runs os.path.expanduser(os.path.expandvars(...))
+      # before the module body ever looks at it - so both the file it
+      # opens and the `source`/msg text carry the expanded path.
+      # jesperberth.el_k3s's own "Set Kubectl release" slurps the
+      # `~/stable.txt` its get_url task just wrote; unexpanded, the read
+      # failed with "File not found: ~/stable.txt" and the play aborted
+      # (issue #1568).
+      src = expand_tilde(expand_dollar_vars(src))
+
       armor = @params["armor"]?.nil? ? true : true?(@params["armor"])
 
       # Ansible 2.19.11's slurp fails the task with msg "File not found: <src>"

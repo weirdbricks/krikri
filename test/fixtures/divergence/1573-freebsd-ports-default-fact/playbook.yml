@@ -1,0 +1,8 @@
+---
+# The play krikri-role-tester runs for the role; only the inventory differs
+# (localhost instead of the round's testhost).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - vbotka.freebsd_ports

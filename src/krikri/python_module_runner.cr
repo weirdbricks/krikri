@@ -305,10 +305,13 @@ module Krikri
     # interpreter, issue #692; an ansible-galaxy user install under
     # ~/.ansible/collections, which no python has on sys.path) the
     # import died with ModuleNotFoundError where ansible-playbook ran
-    # the module fine. The roots are the same ones CollectionIndex
-    # already enumerates for module-name resolution (ANSIBLE_COLLECTIONS_PATH,
-    # the default install locations, the ansible-playbook shebang's
-    # virtualenv site-packages). A root may name either a collections
+    # the module fine. This is PLUGIN EXECUTION, not reference data: the
+    # roots are where an EXECUTED python module's own
+    # `ansible_collections...` / `ansible.module_utils` imports can be
+    # resolved from this controller (ANSIBLE_COLLECTIONS_PATH, the default
+    # install locations, the python package dirs - CollectionIndex.roots),
+    # never a source of krikri's own name-resolution or deprecation
+    # answers. A root may name either a collections
     # ROOT (a directory CONTAINING an ansible_collections/ tree) or a
     # path pointing directly AT an ansible_collections dir - Python
     # needs the PARENT of ansible_collections on sys.path either way.

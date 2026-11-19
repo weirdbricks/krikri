@@ -2538,6 +2538,38 @@ module Krikri
       end
     end
 
+    # One loop ITEM's view of the task's vars: the base context with this
+    # item bound (item/loop_var/index_var/ansible_loop) and the task's own
+    # `vars:` re-applied in their RAW form, since base_vars_context
+    # rendered them once before "item" existed. Callers that need them
+    # settled call render_task_vars on the copy; ansible's own per-item
+    # keyword post-validation sees exactly these bindings.
+    private def loop_item_bound_context(task : Task, item : JSON::Any, idx : Int32, loop_items : Array(JSON::Any), base : Hash(String, JSON::Any), host : Host) : Hash(String, JSON::Any)
+      item_context = base.dup
+      item_context["item"] = item
+      if loop_var = task.loop_var
+        item_context[loop_var] = item
+      end
+      item_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+      # loop_control.index_var is bound during execution -
+      # a label referencing it (`label: "LBL-{{ i }}"`)
+      # rendered as "LBL-undefined" without the binding
+      # here (live-verified vs 2.19.11: the label sees the
+      # index).
+      if index_var = task.index_var
+        item_context[index_var] = JSON::Any.new(idx.to_i64)
+      end
+      # Re-apply the task's own `vars:` with this item bound, same as both
+      # execution paths do (see aisbergg.beats' loop_control.label, which
+      # rendered "undefined" for a task var referencing item).
+      task.vars.each do |key, raw_value|
+        next if key == "item" || key == task.loop_var || key == task.index_var
+        next if set_fact_outranks_task_var?(host.name, key)
+        item_context[key] = raw_value
+      end
+      item_context
+    end
+
     # The same rendering WITHOUT the LoopLabelError swallow: the
     # skipped-block path needs the failure itself, because real still
     # templates the label per item under a False block when: and the
@@ -2547,35 +2579,7 @@ module Krikri
     # would be worse than a wrong label.
     private def loop_item_strict_label(task : Task, item : JSON::Any, idx : Int32, loop_items : Array(JSON::Any), label_base_context : Hash(String, JSON::Any)?, host : Host) : String
       return item_display(item) unless base = label_base_context
-      label_context = base.dup
-      label_context["item"] = item
-      if loop_var = task.loop_var
-        label_context[loop_var] = item
-      end
-      label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
-      # loop_control.index_var is bound during execution -
-      # a label referencing it (`label: "LBL-{{ i }}"`)
-      # rendered as "LBL-undefined" without the binding
-      # here (live-verified vs 2.19.11: the label sees the
-      # index).
-      if index_var = task.index_var
-        label_context[index_var] = JSON::Any.new(idx.to_i64)
-      end
-      # Re-apply + re-render the task's own `vars:` with
-      # this item bound, same as both execution paths do -
-      # base_vars_context's copy was rendered once before
-      # "item" existed (and a task var referencing item was
-      # raise-to-absent deleted there), so a loop_control.
-      # label referencing it rendered as literal "undefined"
-      # (aisbergg.beats' `label: "{{ (state in ['present',
-      # 'latest']) | ternary('install', 'uninstall') }}
-      # {{ item }}"` showed "undefined auditbeat" instead of
-      # Ansible's "uninstall auditbeat").
-      task.vars.each do |key, raw_value|
-        next if key == "item" || key == task.loop_var || key == task.index_var
-        next if set_fact_outranks_task_var?(host.name, key)
-        label_context[key] = raw_value
-      end
+      label_context = loop_item_bound_context(task, item, idx, loop_items, base, host)
       # The vars: themselves already got
       # their real per-item verdict during execution.
       begin
@@ -2584,6 +2588,28 @@ module Krikri
         nil
       end
       item_label_for(task, item, label_context, host)
+    end
+
+    # ansible post-validates every task keyword per loop ITEM
+    # (TaskExecutor._run_loop copies the task and re-templates no_log
+    # against that item's own vars), so a role's `no_log: "{{ item.vtype ==
+    # 'password' }}"` censors only the secret iterations. Resolving the
+    # expression once against base_vars_context - built before "item" was
+    # bound - printed those items' dicts in full (ucr.mailman3's debconf
+    # loops, issue #1572).
+    private def resolve_loop_item_no_log(task : Task, item : JSON::Any, idx : Int32, loop_items : Array(JSON::Any), base_vars_context : Hash(String, JSON::Any)?, host : Host) : Bool
+      return task.no_log? unless task.no_log_expr
+      base = base_vars_context || build_vars_context(task, host)
+      item_context = loop_item_bound_context(task, item, idx, loop_items, base, host)
+      # A task var referencing the item only renders now that it is bound;
+      # its per-item verdict belongs to the execution path, so a rendering
+      # failure here leaves the expression to resolve as-is.
+      begin
+        render_task_vars(task, item_context, host.name)
+      rescue VariableSubstitutor::FilterEngine::UnknownFilterError | WhenEvaluationError
+        nil
+      end
+      resolve_task_no_log(task, item_context)
     end
 
     # The failed result a loop_control.label templating failure becomes:
@@ -2773,7 +2799,7 @@ module Krikri
           connection_host = host.name
           # no_log censors the loop item on the skipping line too (Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)
-          item_shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : item_label
+          item_shown = resolve_loop_item_no_log(task, item, idx, loop_items, base_vars_context, host) ? "(censored due to no_log)" : item_label
           unless Krikri::Oneline.enabled?
             puts "skipping: [#{connection_host}] => (item=#{item_shown}) #{Krikri::ResultDisplay.skip_result_suffix(result, loop_items[idx]?, task.loop_var)}".colorize(:cyan)
           end
@@ -2816,7 +2842,7 @@ module Krikri
           # block's shape follows the ORIGIN host's own connection - sole
           # brief segment for an ssh origin, the chain for a local one
           # (see loop_unreachable_error_node for real's two shapes).
-          if unreachable_task_result?(result) && !Krikri::Oneline.enabled? && !resolve_task_no_log(task, base_vars_context)
+          if unreachable_task_result?(result) && !Krikri::Oneline.enabled? && !resolve_loop_item_no_log(task, item, idx, loop_items, base_vars_context, host)
             unreachable_msg = unreachable_loop_item_msg(result, base_vars_context, host)
             if result_h = result.as_h?
               # ansible's converted item result carries no transport
@@ -2875,7 +2901,7 @@ module Krikri
           # stash_finalization_error_block) - print it in iteration order,
           # just before this item's failed line, where Ansible puts it.
           TaskExecutor.flush_deferred_finalization_error_block(result)
-          ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, base_vars_context), item_label: item_label, ignore_errors: resolve_failure_ignore_errors(task, result, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
+          ResultDisplay.display_result(host, result, resolve_task_diff_mode(task, base_vars_context), item_label: item_label, ignore_errors: resolve_failure_ignore_errors(task, result, base_vars_context), no_log: resolve_loop_item_no_log(task, item, idx, loop_items, base_vars_context, host), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
         end
 
         result_hash = result.as_h.dup

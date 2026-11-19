@@ -1,0 +1,20 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [jesperberth.el_k3s : Download Kubectl release] ***************************
+changed: [localhost]
+
+TASK [jesperberth.el_k3s : Set Kubectl release] ********************************
+ok: [localhost]
+
+TASK [jesperberth.el_k3s : Set Kubectl_ver release variable] *******************
+ok: [localhost]
+
+TASK [jesperberth.el_k3s : Show the release the slurp read] ********************
+ok: [localhost] => {
+    "msg": "v1.30.0\n"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

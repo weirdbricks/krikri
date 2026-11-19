@@ -1,0 +1,29 @@
+---
+# tasks file for el_k3s
+#
+# Corpus case: the role's own get_url -> slurp -> set_fact chain, verbatim.
+# Two adaptations, both only so the case runs offline against localhost:
+#   * the URL is the file:// source shipped beside this case instead of
+#     https://storage.googleapis.com/... (same get_url action plugin, same
+#     dest path - the `~/stable.txt` tilde is what the case pins),
+#   * the package/install tasks above and below this chain are dropped,
+#     because they mutate the host.
+- name: Download Kubectl release
+  ansible.builtin.get_url:
+    url: "file://{{ playbook_dir }}/stable.txt"
+    dest: "~/stable.txt"
+
+- name: Set Kubectl release
+  slurp:
+    src: "~/stable.txt"
+  register: kubectlver
+
+- name: Set Kubectl_ver release variable
+  set_fact:
+    kubectl_ver: "{{ kubectlver['content'] | b64decode }}"
+
+# Corpus-only: surfaces what the slurp returned, since the role's next task
+# (download kubectl from the internet) cannot run here.
+- name: Show the release the slurp read
+  ansible.builtin.debug:
+    msg: "{{ kubectl_ver }}"

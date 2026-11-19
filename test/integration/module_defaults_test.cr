@@ -109,8 +109,15 @@ describe "module_defaults:" do
   end
 end
 
-# Action groups proper: membership comes from the installed collections'
-# own meta/runtime.yml, the same source Ansible reads.
+# Action groups proper: membership comes from krikri's OWN baked capture of
+# the collections' meta/runtime.yml (collection_runtime_data.cr), not from
+# anything installed on this machine - so a group resolves the same way on
+# every controller and a collection tree planted via
+# ANSIBLE_COLLECTIONS_PATH changes nothing.
+# A decoy runtime.yml for the action-group specs below: it defines a
+# `demo` group (and an `extended` one that extends it) exactly the way a
+# collection the operator had installed would. krikri's action groups come
+# from its OWN baked capture, so nothing here may resolve.
 private ACTION_GROUP_RUNTIME = <<-YAML
   action_groups:
     demo:
@@ -123,6 +130,8 @@ private ACTION_GROUP_RUNTIME = <<-YAML
 
 private def run_with_collections(playbook : String, runtime : String) : {Int32, String}
   dir = File.tempname("action-groups")
+  # A DECOY collection whose runtime.yml defines a `demo` group: under the
+  # old scan this is what made `group/demo` resolvable.
   meta = File.join(dir, "collections", "ansible_collections", "testns", "testcoll", "meta")
   Dir.mkdir_p(meta)
   File.write(File.join(meta, "runtime.yml"), runtime)
@@ -139,43 +148,52 @@ ensure
 end
 
 describe "module_defaults: action groups" do
-  it "expands a collection's action group to its member modules" do
+  # community.docker's own `docker` group is in krikri's capture (its
+  # members are the docker_* modules), so it resolves and the rest of the
+  # mapping still applies.
+  it "accepts a captured collection's action group" do
     code, output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
       - hosts: all
         gather_facts: false
         module_defaults:
-          group/testns.testcoll.demo:
-            msg: "FROM_GROUP"
+          group/community.docker.docker:
+            docker_host: unix:///var/run/docker.sock
+          debug:
+            msg: "STILL_APPLIED"
         tasks:
           - name: t
             ansible.builtin.debug:
       YAML
 
     code.must_equal(0)
-    output.must_include("FROM_GROUP")
+    output.must_include("STILL_APPLIED")
   end
 
-  # metadata/extend_group pulls in another group's members.
-  it "follows extend_group" do
-    code, output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
+  # metadata/extend_group pulls in another group's members:
+  # community.mysql's `all` extends ansible.mysql's `all`.
+  it "follows extend_group in the captured tables" do
+    groups = Krikri::ActionGroups.groups
+    groups["community.mysql.all"]?.must_equal(Krikri::ActionGroups.groups["ansible.mysql.all"])
+    code, _output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
       - hosts: all
         gather_facts: false
         module_defaults:
-          group/testns.testcoll.extended:
-            msg: "FROM_EXTENDED"
+          group/community.mysql.all:
+            login_user: krikri
+          debug:
+            msg: "STILL_APPLIED"
         tasks:
           - name: t
             ansible.builtin.debug:
       YAML
-
     code.must_equal(0)
-    output.must_include("FROM_EXTENDED")
   end
 
-  # A group nothing defines is an ERROR, with Ansible's own message
-  # and exit code 4 - a bare name resolves in ansible.builtin, so
-  # `group/demo` does NOT match a collection's `demo` group.
-  it "refuses an unresolvable group the way Ansible does" do
+  # A group nothing defines is an ERROR, with Ansible's own message and
+  # exit code 4 - a bare name resolves in ansible.builtin, so `group/demo`
+  # does NOT match a collection's `demo` group... and the planted decoy
+  # that would have defined one no longer counts.
+  it "refuses an unresolvable group the way Ansible does, whatever is installed" do
     code, output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
       - hosts: all
         gather_facts: false

@@ -10,9 +10,13 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # Real 2.19.11 resolves a mapping-form legacy `action:`'s module LAZILY,
 # at run time - so a `when: false` task with an unknown module name still
 # loads, printing the mapping deprecation (Origin at the mapping's first
-# key) at load, and only a later REACHABLE unresolvable task aborts.
+# key) at load. krikri does NOT refuse a bare unresolvable name at load any
+# more (KNOWN_MISSING "krikri never consults an installed ansible-core or
+# collections tree"): the reached `ec2:` takes the executor's
+# unavailable-module flow instead - skipped with a trailer line, and the
+# run still exits 4 at the very end.
 describe "mapping-form action deprecation and lazy module resolution" do
-  it "warns at load for the mapping action and refuses only the later bare ec2 task" do
+  it "warns at load for the mapping action and runs the later bare ec2 through the unavailable flow" do
     playbook = File.tempname("action-mapping-deprecation", ".yml")
     File.write(playbook, <<-YAML)
       - name: repro
@@ -30,20 +34,25 @@ describe "mapping-form action deprecation and lazy module resolution" do
 
     stdout = IO::Memory.new
     stderr = IO::Memory.new
-    Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr)
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr)
     err = stderr.to_s
+    out = stdout.to_s
 
     err.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.")
     err.must_include("[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.")
     err.must_match(/\^ column \d+\n\nUse a string value for `action`\./)
     err.must_include("Origin: #{File.expand_path(playbook)}:7:9")
-    err.must_include("couldn't resolve module/action 'ec2'")
+    # The bare ec2 is no longer a load abort: both tasks run (the when:false
+    # mapping and the unavailable ec2 both skip), PLAY RECAP prints, and the
+    # run reports the unimplemented module and exit(4)s at the end.
+    out.must_include("skipping: [localhost]")
+    out.must_include("PLAY RECAP")
+    out.must_include("uses unimplemented plugin: ec2")
+    status.exit_code.must_equal(4)
     # The Origin context block legitimately echoes the `module:` source
-    # line; the refusal itself must never name the mapping's module.
+    # line, but nothing may name the mapping's module as unresolvable.
+    err.wont_include("couldn't resolve module/action 'ec2'")
     err.wont_include("couldn't resolve module/action 'some_unknown_module_xyz'")
-    # The bare ec2 refusal is a playbook-load abort (real: rc=4, no task
-    # output), so stdout never reaches a PLAY RECAP.
-    stdout.to_s.wont_include("PLAY RECAP")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end

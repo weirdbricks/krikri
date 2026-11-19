@@ -1,0 +1,69 @@
+---
+# defaults for freebsd_ports
+ports_role_version: 2.6.3
+
+# Install params
+freebsd_install_method: ports
+freebsd_install_retries: 10
+freebsd_install_delay: 5
+freebsd_use_packages: true
+
+# Create backups of the configuration files if changed.
+# ports_backup_conf: true
+ports_backup_conf: false
+
+ports_debug: false
+ports_dryrun: false
+
+# Sanity
+ports_sanity: true
+
+# See vbotka.freebsd_postinstall/defaults/main/pkgdict_*.yml
+# pkg_dict: []            # see tasks/vars.yml
+# pkg_list: []            # see tasks/vars.yml
+pkg_list_deinstall: []
+# Sellect all lists from pkg_dict
+pkg_dict_all: false
+# Sellect lists from pkg_dict
+pkg_dict_select: []
+
+# Configure portsnap
+ports_config: false
+ports_portsnap_index: "{{ ansible_distribution_major_version }}"
+ports_portsnap_refuse: ""
+ports_portsnap_conf_file: /etc/portsnap.conf
+ports_portsnap_workdir: /var/db/portsnap
+ports_portsnap_portsdir: /usr/ports
+ports_portsnap_servername: portsnap.FreeBSD.org
+ports_portsnap_conf:
+  WORKDIR: "{{ ports_portsnap_workdir }}"
+  PORTSDIR: "{{ ports_portsnap_portsdir }}"
+  SERVERNAME: "{{ ports_portsnap_servername }}"
+
+# Update ports
+ports_update: false
+
+# Cron
+ports_cron: false
+ports_cron_user: root
+ports_cron_mailto: root
+ports_cron_name: Fetch a compressed snapshot of the ports tree
+ports_cron_command: /usr/sbin/portsnap cron
+ports_cron_hour: "*/6"
+ports_cron_minute: "15"
+ports_cron_backup: true
+# ports_cron_month
+# ports_cron_day
+# ports_cron_weekday
+# ports_cron_special_time
+
+# Status
+ports_stat: false
+ports_outdated_enable: false
+ports_outdated: "{{ dict(ansible_play_hosts |
+                         zip(ansible_play_hosts |
+                             map('extract', hostvars, ['ports_outdated_out', 'stdout_lines']) |
+                             map('map', 'split') |
+                             map('map', 'first'))) }}"
+
+# EOF

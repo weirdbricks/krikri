@@ -1,0 +1,63 @@
+---
+# Trimmed to the one default the failing task loops over. The list is the
+# role's own mailman3_debconf, copied verbatim; only the password variable it
+# references is spelled as a literal so the case needs no vault.
+
+mailman3_debconf:
+  - name: mailman3
+    question: mailman3/database-type
+    vtype: select
+    value: "pgsql"
+  - name: mailman3
+    question: mailman3/remote/newhost
+    vtype: string
+    value: "localhost"
+  - name: mailman3
+    question: mailman3/db/dbname
+    vtype: string
+    value: "mailman3"
+  - name: mailman3
+    question: mailman3/db/app-user
+    vtype: string
+    value: "mailman3@localhost"
+  - name: mailman3
+    question: mailman3/pgsql/app-pass
+    vtype: password
+    value: "change_db_pass"
+  - name: mailman3
+    question: mailman3/app-password-confirm
+    vtype: password
+    value: "change_db_pass"
+  - name: mailman3-web
+    question: mailman3-web/database-type
+    vtype: select
+    value: "pgsql"
+  - name: mailman3-web
+    question: mailman3-web/remote/newhost
+    vtype: string
+    value: "localhost"
+  - name: mailman3-web
+    question: mailman3-web/db/dbname
+    vtype: string
+    value: "mailman3web"
+  - name: mailman3-web
+    question: mailman3-web/db/app-user
+    vtype: string
+    value: "mailman3web@localhost"
+  - name: mailman3-web
+    question: mailman3-web/pgsql/app-pass
+    vtype: password
+    value: "change_web_db_pass"
+  - name: mailman3-web
+    question: mailman3-web/app-password-confirm
+    vtype: password
+    value: "change_web_db_pass"
+  - name: mailman3-web
+    question: mailman3-web/superuser-mail
+    vtype: string
+    value: "root@localhost"
+  - name: mailman3-web
+    question: mailman3-web/superuser-password
+    vtype: password
+    value: "change_web_admin_pass"
+

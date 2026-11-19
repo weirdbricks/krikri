@@ -203,16 +203,19 @@ module Krikri
       end
 
       # The match for the file's own first task carrying a module name
-      # the real controller cannot resolve to a module file - the same
-      # CollectionIndex verdict the parser consults, with the same
-      # inputs (the task's own `collections:` replaces the play's list
-      # plus the role's meta declaration), but without the parser's
-      # native-module carve-out: a name krikri has ported still refuses
-      # here, because upstream's ansible-playbook --syntax-check has no
-      # such carve-out. Ansible's check stops at the first such name, so
-      # only that task is reported. Names resolution cannot decide (no
-      # discoverable ansible-core, templated action strings) stay
+      # krikri's OWN baked reference tables say cannot resolve to a module
+      # file (CollectionIndex.reference_resolves?), with the same inputs
+      # the real load uses (the task's own `collections:` replaces the
+      # play's list plus the role's meta declaration). The tables are
+      # captured, not read from this controller, so the rule reports the
+      # same files whether or not ansible-core/collections are installed
+      # here. Ansible's check stops at the first such name, so only that
+      # task is reported. Names the tables cannot decide (a collection
+      # krikri kept no file tree for, templated action strings) stay
       # permissive, so a file reports only on a definite negative.
+      # Unlike the parser, this rule does not exempt names krikri has
+      # ported: upstream's ansible-playbook --syntax-check has no such
+      # carve-out.
       private def unknown_module(file : PositionedFile, role_path : String?) : Violation?
         playbook_dir = File.dirname(File.expand_path(file.path))
         inherited = play_collections(file) +
@@ -220,7 +223,7 @@ module Krikri
         TaskWalker.each_task(file) do |task|
           name = action_module_name(task) || next
           collections = task_collections(task) || inherited
-          resolution = CollectionIndex.controller_resolves?(name, collections,
+          resolution = CollectionIndex.reference_resolves?(name, collections,
             role_path, playbook_dir)
           if resolution[:resolves] == false
             return SyntaxCheckRule.unknown_module(file, task, name)

@@ -458,35 +458,37 @@ module Krikri::Lint
     end
   end
 
-  describe "Runner with a shadowed collection copy" do
-    # Poking ANSIBLE_COLLECTIONS_PATH and resetting the CollectionIndex
-    # scan disturbs memoized state every in-process parse reads, so this
-    # describe quiesces the whole process.
-    exclusive!
+  describe "Runner against a collection krikri's tables do not know" do
+    # The unknown-module rule answers from krikri's OWN baked tables now
+    # (a captured collection's file tree), never from an installed
+    # collections tree - so a collection the capture never saw stays
+    # UNDECIDED (permissive) however the collection env is pointed, and no
+    # syntax-check gate fires on it. serial! because the spec pokes ENV.
+    serial!
 
-    it "reports only the syntax-check match when the module lives in a shadowed later copy" do
-      # ansible-core loads a collection from the FIRST copy it finds and
-      # reads no other, so a module shipped only by a later copy is
-      # unresolvable: ansible-playbook --syntax-check fails the playbook
-      # (syntax-check[unknown-module]) and ansible-lint then runs no
-      # other rule on it, leaving the unnamed debug task without the
-      # name[missing] upstream never reports (issue #1493).
-      dir = PluginSpecHelper.tmp_path("lint_shadowed_collection")
-      first = File.join(dir, "first")
+    it "stays permissive for a name outside the captured tables, whatever the collection env says" do
+      dir = PluginSpecHelper.tmp_path("lint_uncaptured_collection")
       later = File.join(dir, "later")
-      FileUtils.mkdir_p(File.join(first, "ansible_collections", "testns", "dup"))
+      FileUtils.mkdir_p(File.join(dir, "first", "ansible_collections", "testns", "dup"))
       FileUtils.mkdir_p(File.join(later, "ansible_collections", "testns", "dup", "plugins", "modules"))
       File.write(File.join(later, "ansible_collections", "testns", "dup", "plugins", "modules", "shadowed.py"),
         "# fixture module\n")
-      ENV["ANSIBLE_COLLECTIONS_PATH"] = "#{first}:#{later}"
-      Krikri::CollectionIndex.reset!
       path = File.join(dir, "play.yml")
       File.write(path, "---\n- hosts: all\n  tasks:\n" \
                         + "    - testns.dup.shadowed:\n" \
                            + "    - ansible.builtin.debug:\n        msg: hi\n")
       begin
-        violations = Runner.new(RuleRegistry.default).run([path])
-        violations.map(&.rule_id).must_equal(["syntax-check[unknown-module]"])
+        plain = Runner.new(RuleRegistry.default).run([path]).map(&.rule_id)
+
+        ENV["ANSIBLE_COLLECTIONS_PATH"] = "#{File.join(dir, "first")}:#{later}"
+        Krikri::CollectionIndex.reset!
+        with_env = Runner.new(RuleRegistry.default).run([path]).map(&.rule_id)
+
+        with_env.must_equal(plain)
+        # Undecided means no syntax-check gate: the ordinary rules keep
+        # running (the unnamed tasks get name[missing]).
+        plain.wont_include("syntax-check[unknown-module]")
+        plain.count { |id| id == "name[missing]" }.must_equal(2)
       ensure
         ENV.delete("ANSIBLE_COLLECTIONS_PATH")
         Krikri::CollectionIndex.reset!

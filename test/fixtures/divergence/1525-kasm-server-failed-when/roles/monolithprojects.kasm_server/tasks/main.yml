@@ -1,0 +1,5 @@
+---
+- name: Fail when my_var is not defined
+  debug:
+    msg: "kasm_package is required"
+  failed_when: kasm_package is not defined

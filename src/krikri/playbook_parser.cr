@@ -136,18 +136,17 @@ module Krikri
     # distinction: real's raw action reads ONLY `_raw_params`, so a
     # mapping-form raw without one crashes where the bare string runs.
     property? module_args_string_form : Bool = false
-    # A MAPPING-form legacy `action:`/`local_action:` whose module name is
-    # DEFINITIVELY unresolvable on the controller (CollectionIndex#
-    # controller_resolves? verdict resolves: false - no collection ships
-    # it, nothing redirects to it). Ansible does not refuse such a
-    # playbook at load the way it refuses a bare-key module name: the
-    # mapping's module resolves lazily, so the task only fails (per host,
-    # rc=2, "Cannot resolve '...' to an action or module.", issue #666)
-    # when its own when: actually lets it run - behind `when: false` it
-    # is an ordinary skip. Deliberately distinct from unavailable_module
-    # (a name the controller CAN resolve but krikri has not ported -
-    # those keep the graceful skip plus the exit-4 reachable_unavailable_
-    # modules accounting); the executor's reached-unavailable paths key
+    # A MAPPING-form legacy `action:`/`local_action:` whose module name
+    # krikri's OWN baked tables say cannot resolve (CollectionIndex#
+    # reference_resolves? verdict resolves: false - no captured module
+    # file, nothing redirects to it, no role-local library/ source). The
+    # mapping's module resolves lazily in real, so the task only fails
+    # (per host, rc=2, "Cannot resolve '...' to an action or module.",
+    # issue #666) when its own when: actually lets it run - behind
+    # `when: false` it is an ordinary skip. Deliberately distinct from
+    # unavailable_module (a name krikri has not ported - those keep the
+    # graceful skip plus the exit-4 reachable_unavailable_modules
+    # accounting); the executor's reached-unavailable paths key
     # on this flag to fail instead of skip.
     property? unresolvable_mapping_module : Bool = false
     # The as-written module name the failure message echoes.
@@ -2343,7 +2342,7 @@ module Krikri
            (target = CollectionIndex.builtin_module_redirect(leaf)) &&
            (custom = REMOVED_MODULE_TOMBSTONES[target]?) &&
            (target_parts = target.split('.')).size >= 3 &&
-           CollectionIndex.installed?(target_parts[0], target_parts[1])
+           CollectionIndex.known_collection?(target_parts[0], target_parts[1])
           raise RemovedModuleError.new(custom,
             origin_error_render(custom, source_file, source_map, prefix))
         end
@@ -2449,12 +2448,12 @@ module Krikri
       # An FQCR with subdir segments runs the RESOURCE module of that
       # collection, not a module named after the whole dotted leaf: real
       # executes plugins/modules/<resource>.py for
-      # `ns.coll.subdir.resource` (see
-      # CollectionIndex.collection_subdir_leaf_file?), so it maps onto
-      # this engine's own plugin for the same `ns.coll.<resource>` name.
-      # Only when the controller really resolves it - a subdir the
-      # controller lacks makes real refuse the playbook at load, and this
-      # engine must not run a module real never gets to.
+      # `ns.coll.subdir.resource`, so it maps onto this engine's own
+      # plugin for the same `ns.coll.<resource>` name. Only when krikri's
+      # captured collection tree really resolves it (see
+      # CollectionIndex.fqcr_subdir_resolves?) - a subdir or resource the
+      # captured release lacks is not something real would run either, and
+      # this engine must not invent a module for it.
       if canonical = collection_subdir_module_name(raw)
         return canonical if AVAILABLE_PLUGINS.includes?(canonical)
       end
@@ -2465,7 +2464,8 @@ module Krikri
     # The canonical `ns.coll.resource` real's loader actually runs for an
     # FQCR whose extra segments are plugintype SUBDIRS
     # (`community.general.locale_gen.locale_gen`, issue #1253), or nil
-    # when the name is not one or the controller does not resolve it.
+    # when the name is not one or krikri's captured collection tree does
+    # not resolve it.
     private def self.collection_subdir_module_name(raw : String) : String?
       parts = raw.split('.')
       return nil if parts.size < 4
@@ -4903,25 +4903,26 @@ module Krikri
             source_file, source_map, task_source_prefix(source_prefix, index))
         end
 
-        # Controller collection-set awareness: real refuses the WHOLE
-        # playbook at load (rc=4, zero tasks run, the generic
-        # couldn't-resolve wording + this task's Origin block) for any
-        # module name it could not resolve to an existing module file on
-        # the CONTROLLER - a bare name that is neither an ansible-core
-        # module nor redirected by ansible_builtin_runtime.yml (bare
-        # `docker:`, `ec2_facts:`, `yum_versionlock:` - live-verified vs
-        # 2.19.11), an FQCN whose collection directory is absent
-        # (freeipa.ansible_freeipa.*), or an installed collection that
-        # ships no such module file. krikri implements community modules
-        # natively and would otherwise run (or lazily skip) all of them.
-        # The check runs on the as-written name, echoes it in the
-        # message, and fires BEFORE the when:-gate concern below: a name
-        # real CAN resolve (an installed collection's module krikri
-        # hasn't ported, a role-private library/ source) keeps the lazy
-        # unavailable_module flow - only definitely-unresolvable names
-        # flip to the parse refusal, exactly the set ansible-core itself
-        # refuses. Unsure outcomes (no discoverable ansible-core
-        # install, unreadable runtime data) keep running.
+        # The task's own collection scope: its `collections:` keyword,
+        # else the play's list plus the role's own meta/main.yml
+        # declaration (both folded into bare-name resolution by real).
+        # The scope is recorded on the Task (the executor's action-plugin
+        # scope uses it) and feeds the mapping-form check below.
+        #
+        # krikri does NOT refuse a playbook wholesale over a module name it
+        # cannot resolve. Resolution here comes from krikri's OWN baked
+        # tables (CollectionIndex) - never from what this controller has
+        # installed - and an unresolvable name takes the executor's
+        # unavailable-module flow: a when:-gated task still skips cleanly
+        # (round 811000: robertdebock.podman's podman_container and ~24
+        # other roles were aborted at load by the old parse-time refusal),
+        # and a genuinely reached one still exit(4)s at the end. The
+        # verdict only picks the FLAVOR for a mapping-form
+        # `action:`/`local_action:` directive, whose module real resolves
+        # lazily at run time: a name krikri's tables say cannot exist
+        # becomes a per-host task FAILURE if the task is ever reached
+        # ("Cannot resolve '...' to an action or module.", issue #666) and
+        # an ordinary skip behind `when: false`.
         task_collections = task_hash["collections"]?.try do |collections_yaml|
           if list = collections_yaml.as_a?
             list.compact_map(&.as_s?)
@@ -4929,48 +4930,10 @@ module Krikri
             (s = collections_yaml.as_s?) ? [s] : nil
           end
         end
-        # A task's own collections: list replaces the inherited scope;
-        # otherwise the play's list plus the role's own meta/main.yml
-        # declaration (both folded into bare-name resolution by real).
         task_collections ||= play.collections + CollectionIndex.role_meta_collections(role_path)
-        resolution = CollectionIndex.controller_resolves?(module_name, task_collections, role_path, playbook_dir)
-        # A name krikri implements natively never refuses here, whatever
-        # the controller's collection state: the engine can actually run
-        # it, so "the controller lacks the collection" must not turn into
-        # a load-time refusal for it (a collection-less controller - CI
-        # containers, krikri-only hosts - would otherwise refuse whole
-        # playbooks of community.crypto/community.general tasks real runs
-        # wherever krikri has the port). The refusal keeps its teeth for
-        # names krikri has NOT ported - those genuinely cannot run here,
-        # exactly the set ansible-core refuses on such a controller.
-        # A MAPPING-form directive's module (action_mapping now covers
-        # both `action:` and `local_action:`) is never refused here:
-        # ansible resolves a mapping's module lazily at run time, so a
-        # definitively-unresolvable name (this same resolves:false
-        # verdict) is recorded on the Task (unresolvable_mapping_module)
-        # and becomes a per-host task FAILURE only if the task is ever
-        # reached - behind `when: false` it is an ordinary skip (issue
-        # #666). Tombstoned names already refused above; a bare-key
-        # (non-mapping) task keeps the whole-playbook load refusal.
-        # One carve-out from the never-refuse policy above - the four
-        # mariadb fork-alias spellings (MARIADB_FORK_ALIASES): the
-        # MODULE_ALIASES mapping would make resolved_module_name non-nil
-        # and exempt them, but on a controller without ansible.mariadb
-        # real refuses every one of them at playbook load (the FQCNs
-        # because the collection is absent, the bare ones because no
-        # builtin runtime redirect carries them), so the alias must not
-        # outlive the collection that justifies it (issue #499).
-        mariadb_fork_refusal =
-          MARIADB_FORK_ALIASES.includes?(module_name) && resolution[:resolves] == false
+        resolution = CollectionIndex.reference_resolves?(module_name, task_collections, role_path, playbook_dir)
         mapping_module_unresolvable =
-          action_mapping && resolution[:resolves] == false && (resolved_module_name.nil? || mariadb_fork_refusal)
-        if !action_mapping && resolution[:resolves] == false && (resolved_module_name.nil? || mariadb_fork_refusal)
-          message = "couldn't resolve module/action '#{module_name}'. " \
-                    "This often indicates a misspelling, missing collection, or incorrect module path."
-          prefix = task_source_prefix(source_prefix, index)
-          render = (source_file && source_map && source_map.at?(prefix)) ? origin_error_render(message, source_file, source_map, prefix) : nil
-          raise UnresolvedModuleError.new(message, render)
-        end
+          action_mapping && resolution[:resolves] == false && resolved_module_name.nil?
 
         unless resolved_module_name
           # Every other unresolvable name - a module krikri simply

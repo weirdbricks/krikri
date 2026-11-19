@@ -187,37 +187,22 @@ describe "parse-time tombstone refusal for collection-removed modules" do
         YAML
       )
     end
-    # The helm_repository half is controller-state-dependent: where
-    # kubernetes.core is installed the name resolves and the graceful
-    # unavailable_module flow applies; where it is not (a bare CI
-    # container) ansible-core refuses the whole load at parse time, and
-    # so does the engine - a genuinely-unresolvable name can never reach
-    # the lazy path. Either way it must NOT take the RemovedModuleError
-    # rc=1 path.
-    if Krikri::CollectionIndex.controller_resolves?("kubernetes.core.helm_repository")[:resolves]
-      parsed = Krikri::PlaybookParser.parse_string(<<-YAML
-        - hosts: all
-          tasks:
-            - name: unimplemented, unresolved - graceful, not refused
-              kubernetes.core.helm_repository:
-                repo_name: foo
-        YAML
-      )
-      parsed.plays[0].tasks[0].unavailable_module.must_equal("kubernetes.core.helm_repository")
-    else
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'kubernetes.core.helm_repository'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: unimplemented, unresolved - graceful, not refused
-                kubernetes.core.helm_repository:
-                  repo_name: foo
-          YAML
-        )
-      end
-    end
+    # The helm_repository half is NOT controller-state-dependent: krikri
+    # never refuses a playbook over a name its own tables cannot resolve
+    # (that refusal was never approved and made the whole run depend on
+    # what the controller had installed), so the name always parses into
+    # the graceful unavailable_module flow - whatever
+    # ANSIBLE_COLLECTIONS_PATH says - and never takes the
+    # RemovedModuleError rc=1 path.
+    parsed = Krikri::PlaybookParser.parse_string(<<-YAML
+      - hosts: all
+        tasks:
+          - name: unimplemented, unresolved - graceful, not refused
+            kubernetes.core.helm_repository:
+              repo_name: foo
+      YAML
+    )
+    parsed.plays[0].tasks[0].unavailable_module.must_equal("kubernetes.core.helm_repository")
   end
 
   it "lets a role's own library/consul_acl.py shadow the collection tombstone for bare consul_acl (issue #724)" do
@@ -254,25 +239,18 @@ describe "parse-time tombstone refusal for collection-removed modules" do
     # file and skip its expected refusal.
     FileUtils.rm_rf(root)
 
-    # The no-library half is controller-state-dependent, like the
-    # redirect-hop refusals below: with community.general installed the
-    # redirect chain dies in its tombstone (RemovedModuleError rc=1);
-    # without it the chain dies at the collection import and the generic
-    # couldn't-resolve refusal fires instead. Neither may be escaped by
-    # anything but a real library/ source.
-    if Krikri::CollectionIndex.installed?("community", "general")
-      assert_raises_message(Krikri::RemovedModuleError,
-        "The 'community.general.consul_acl' module has been removed. " \
-        "Use community.general.consul_token and/or community.general.consul_policy instead. " \
-        "This feature was removed from collection 'community.general' version 10.0.0.") do
-        parse_bare_consul_acl_role
-      end
-    else
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'consul_acl'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        parse_bare_consul_acl_role
-      end
+    # The no-library half is fixed by krikri's OWN tables, like the
+    # redirect-hop refusals below: the builtin runtime redirects bare
+    # `consul_acl` onto community.general.consul_acl, krikri knows that
+    # collection, so the chain dies in its tombstone (RemovedModuleError
+    # rc=1) - identically whether or not this controller has
+    # community.general installed. Only a real library/ source may escape
+    # it.
+    assert_raises_message(Krikri::RemovedModuleError,
+      "The 'community.general.consul_acl' module has been removed. " \
+      "Use community.general.consul_token and/or community.general.consul_policy instead. " \
+      "This feature was removed from collection 'community.general' version 10.0.0.") do
+      parse_bare_consul_acl_role
     end
   end
 end
@@ -351,39 +329,23 @@ describe "parse-time tombstone refusal end to end (krikri-playbook binary)" do
 end
 
 describe "redirect-target and builtin-runtime tombstone refusals (issue #8)" do
-  # The bare-spelling redirect hop is gated on the target collection's
-  # presence on the controller (real's redirect chain dies at the
-  # collection import without it, and the name falls back to the
-  # generic couldn't-resolve refusal), so the assertions follow the
-  # helm_repository precedent and branch on CollectionIndex.
+  # The bare-spelling redirect hop is keyed on krikri's OWN knowledge of
+  # the target collection (known_collection?, baked from the captured
+  # environment), not on what this controller has installed - so the
+  # assertion is the same everywhere.
   it "refuses bare docker_service with community.general.docker_service's removal message" do
-    if Krikri::CollectionIndex.installed?("community", "general")
-      assert_raises_message(Krikri::RemovedModuleError,
-        "The 'community.general.docker_service' module has been removed. " \
-        "Use community.docker.docker_compose instead. This feature was " \
-        "removed from collection 'community.general' version 2.0.0.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: removed via redirect
-                docker_service:
-                  project_name: x
-          YAML
-        )
-      end
-    else
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'docker_service'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: removed via redirect
-                docker_service:
-                  project_name: x
-          YAML
-        )
-      end
+    assert_raises_message(Krikri::RemovedModuleError,
+      "The 'community.general.docker_service' module has been removed. " \
+      "Use community.docker.docker_compose instead. This feature was " \
+      "removed from collection 'community.general' version 2.0.0.") do
+      Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: removed via redirect
+              docker_service:
+                project_name: x
+        YAML
+      )
     end
   end
 
@@ -392,7 +354,7 @@ describe "redirect-target and builtin-runtime tombstone refusals (issue #8)" do
     # builtin-runtime redirect and refuses with the RESOLVED FQCN's
     # message (live-verified vs 2.19.11: neither spelling echoes
     # ansible.builtin./ansible.legacy. in the message).
-    return unless Krikri::CollectionIndex.installed?("community", "general")
+    Krikri::CollectionIndex.known_collection?("community.general").must_equal(true)
     ["ansible.builtin.docker_service", "ansible.legacy.docker_service"].each do |spelling|
       assert_raises_message(Krikri::RemovedModuleError,
         "The 'community.general.docker_service' module has been removed. " \
@@ -417,7 +379,7 @@ describe "redirect-target and builtin-runtime tombstone refusals (issue #8)" do
     # as-written spelling (live-verified vs 2.19.11: bare
     # `docker_image_facts:` -> community.general.docker_image_facts,
     # rc=1).
-    return unless Krikri::CollectionIndex.installed?("community", "general")
+    Krikri::CollectionIndex.known_collection?("community.general").must_equal(true)
     assert_raises_message(Krikri::RemovedModuleError,
       "The 'community.general.docker_image_facts' module has been removed. " \
       "Use community.docker.docker_image_info instead. This feature was " \
@@ -479,22 +441,24 @@ describe "redirect-target and builtin-runtime tombstone refusals (issue #8)" do
     end
   end
 
-  it "keeps f5_utils on the generic couldn't-resolve path" do
+  it "keeps f5_utils on the lazy unavailable path, not the tombstone refusal" do
     # f5_utils's builtin-runtime entry is plugin_routing.module_utils -
-    # not a module tombstone - so real resolves nothing for a bare
-    # `f5_utils:` and refuses with the generic wording rc=4
-    # (live-verified vs 2.19.11).
-    assert_raises_message(Krikri::UnresolvedModuleError,
-      "couldn't resolve module/action 'f5_utils'. " \
-      "This often indicates a misspelling, missing collection, or incorrect module path.") do
-      Krikri::PlaybookParser.parse_string(<<-YAML
-        - hosts: all
-          tasks:
-            - name: module_utils tombstone is not a module tombstone
-              f5_utils:
-        YAML
-      )
-    end
+    # not a module tombstone. krikri refuses only TOMBSTONES at load (see
+    # KNOWN_MISSING "krikri never consults an installed ansible-core or
+    # collections tree"): a generic unresolvable name flows through with
+    # unavailable_module set, and the executor skips it / exit(4)s at the
+    # end - so the load-time generic "couldn't resolve" refusal no longer
+    # fires for it.
+    pb = Krikri::PlaybookParser.parse_string(<<-YAML
+      - hosts: all
+        tasks:
+          - name: module_utils tombstone is not a module tombstone
+            f5_utils:
+      YAML
+    )
+    task = pb.plays[0].tasks[0]
+    task.unavailable_module.must_equal("f5_utils")
+    task.unresolvable_mapping_module?.must_equal(false)
   end
 
   it "rc=1 with the [ERROR] + Origin block on stderr and zero tasks run for bare docker_service" do
@@ -502,7 +466,7 @@ describe "redirect-target and builtin-runtime tombstone refusals (issue #8)" do
     # community.general.docker_service message naming the RESOLVED FQCN
     # (never the as-written bare spelling), the task's Origin block on
     # stderr, zero tasks run.
-    return unless Krikri::CollectionIndex.installed?("community", "general")
+    Krikri::CollectionIndex.known_collection?("community.general").must_equal(true)
     status, stdout, stderr = run_playbook_binary(<<-YAML)
       - hosts: localhost
         connection: local
@@ -549,45 +513,28 @@ describe "kubernetes.core.k8s_facts tombstone (issue #847)" do
     end
   end
 
-  it "refuses the bare spelling through the redirect hop when kubernetes.core is installed" do
-    if Krikri::CollectionIndex.installed?("kubernetes", "core")
-      assert_raises_message(Krikri::RemovedModuleError,
-        "The 'kubernetes.core.k8s_facts' module has been removed. " \
-        "Use kubernetes.core.k8s_info instead. This feature was removed " \
-        "from collection 'kubernetes.core' version 2.0.0.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: removed module, bare spelling
-                k8s_facts:
-                  api_version: v1
-                  kind: Namespace
-          YAML
-        )
-      end
-    else
-      # Without the collection real's redirect chain dies at the
-      # collection import and the generic couldn't-resolve refusal
-      # fires - which the bare spelling's absence from the table
-      # preserves.
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'k8s_facts'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: removed module, bare spelling
-                k8s_facts:
-                  api_version: v1
-                  kind: Namespace
-          YAML
-        )
-      end
+  it "refuses the bare spelling through the builtin-runtime redirect hop" do
+    # krikri's captured tables carry both hops (the builtin runtime
+    # redirect and the collection it lands in), so this answer no longer
+    # depends on whether kubernetes.core is installed here.
+    assert_raises_message(Krikri::RemovedModuleError,
+      "The 'kubernetes.core.k8s_facts' module has been removed. " \
+      "Use kubernetes.core.k8s_info instead. This feature was removed " \
+      "from collection 'kubernetes.core' version 2.0.0.") do
+      Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: removed module, bare spelling
+              k8s_facts:
+                api_version: v1
+                kind: Namespace
+        YAML
+      )
     end
   end
 
   it "rc=1 with the [ERROR] + Origin block on stderr and zero tasks run for bare k8s_facts" do
-    return unless Krikri::CollectionIndex.installed?("kubernetes", "core")
+    Krikri::CollectionIndex.known_collection?("kubernetes.core").must_equal(true)
     status, stdout, stderr = run_playbook_binary(<<-YAML)
       - hosts: localhost
         connection: local

@@ -125,16 +125,30 @@ skip the check.
    check for a dropped `return`, a wrong variable name, or logic that
    doesn't match the stated root cause.
 3. `./build.sh` must build clean.
-4. `scripts/minitest.sh` (full suite, not just the new test file) — the
+4. **Add the divergence-corpus case** under
+   `test/fixtures/divergence/<issue-number>-<slug>/`, named for the issue the
+   fix closes (file one first if none exists, see step 6): the failing task
+   YAML copied verbatim from the real role in the round, not an invented
+   minimal repro; `expected.out` captured from real `ansible-playbook` on the
+   pinned ansible-core 2.21.6, never from krikri's own output; `NOTES.md` with
+   the issue link. `test/integration/divergence_corpus_test.cr` asserts
+   krikri's output EQUALS that transcript, so extra output fails like missing
+   output. A case that needs real package/service/crontab/pip mutation can't
+   run in-process — it goes in `test/fixtures/divergence/live/cases.txt`
+   (issue number plus a one-line reason) and is replayed in a real-host round
+   instead. The fix is not done until the case (or, only when the repro is
+   truly inexpressible in the corpus, a plain regression test) exists and the
+   replay test passes.
+5. `scripts/minitest.sh` (full suite, not just the new test file) — the
    only conditional ones are `test/integration/cli_test.cr`'s docker
    tests (skip themselves when no Docker/Podman daemon). Anything else
    failing is real; don't land it.
-5. `ameba` on the changed files — copy the binary in if the worktree doesn't
+6. `ameba` on the changed files — copy the binary in if the worktree doesn't
    have one (`cp /home/labros/git_work/krikri/bin/ameba <worktree>/bin/ameba`).
    A finding on a changed line is real; a finding on an unrelated
    pre-existing line (check by running `ameba` on that same file on `main`)
    is not your problem.
-6. **Re-run the repro yourself**, and where practical, diff it directly
+7. **Re-run the repro yourself**, and where practical, diff it directly
    against `ansible-playbook`'s own output/recap — not just "looks
    plausible." `ansible-playbook` needs a pty to avoid this sandbox's
    non-blocking-stdio error: `script -qec "ansible-playbook ..." /dev/null`.

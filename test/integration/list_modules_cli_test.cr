@@ -13,7 +13,7 @@ raise "bin/krikri-playbook missing - run ./build.sh first" unless File.exists?(B
 private def list_modules : Array(String)
   output = IO::Memory.new
   status = Process.run(BINARY, ["--list-modules"], output: output, error: output, chdir: PROJECT_ROOT)
-  status.success?.must_equal(true, "krikri-playbook --list-modules exited #{status.exit_code}: #{output.to_s}")
+  status.success?.must_equal(true, "krikri-playbook --list-modules exited #{status.exit_code}: #{output}")
   Array(String).from_json(output.to_s)
 end
 

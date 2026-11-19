@@ -1,0 +1,8 @@
+[ERROR]: conflicting action statements: apt_repository, sudo
+Origin: <WORK>/roles/ansibl3.ubuntu_sunjava/tasks/main.yml:7:3
+
+5   changed_when: false
+6
+7 - name: add sunjava repository
+    ^ column 3
+

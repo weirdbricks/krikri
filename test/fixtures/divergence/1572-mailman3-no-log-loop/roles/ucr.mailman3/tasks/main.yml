@@ -1,0 +1,14 @@
+---
+# The role's tasks/debconf.yml, third task, verbatim except for the module.
+# `debconf` lives in community.general (not installed for ansible-core
+# 2.21.6 here) and writes dpkg debconf selections, which a corpus case must
+# never do on the developer's machine - so the same parameter set is fed to
+# ansible.builtin.debug, which keeps every line of the divergence (the loop,
+# the per-item vars, the templated no_log) and nothing else. See NOTES.md.
+- name: set mailman3 debconf options
+  loop: "{{ mailman3_debconf }}"
+  vars:
+    this_no_log: "{{ true if item.vtype == 'password' else false }}"
+  no_log: "{{ this_no_log }}"
+  ansible.builtin.debug:
+    msg: "{{ item.name }}: {{ item.question }}"

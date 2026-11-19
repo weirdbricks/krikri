@@ -1,0 +1,4 @@
+---
+- name: Configure syncthing for user
+  when: syncthing_install_user and syncthing_configure
+  ansible.builtin.include_tasks: setup/common//configure.yml

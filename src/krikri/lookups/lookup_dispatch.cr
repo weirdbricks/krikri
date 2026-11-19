@@ -284,19 +284,21 @@ module Krikri
       # the whole dispatch to the "undefined" sentinel instead let the
       # task silently succeed with the lookup's consumer holding the
       # literal text "undefined". Only a fully-qualified ns.coll.name
-      # whose collection is DEFINITELY absent fails here: bare names keep
-      # the fallback, ansible.builtin/ansible.legacy and community.general
-      # are stripped above (and never fail), and a collection that IS
-      # installed may still carry lookups this evaluator does not
+      # whose collection krikri's captured tables do not know at all fails
+      # here: bare names keep the fallback, ansible.builtin/ansible.legacy
+      # and community.general are stripped above (and never fail), and a
+      # known collection may still carry lookups this evaluator does not
       # implement - those keep the "undefined" degradation exactly as
-      # before. ansible's own errors= option cannot rescue this either -
-      # the plugin loader's not-found failure happens before any plugin
-      # run could be wrapped.
+      # before. The collection set is krikri's OWN baked reference data, so
+      # the verdict is identical whether or not the controller has any
+      # collections installed. ansible's own errors= option cannot rescue
+      # this either - the plugin loader's not-found failure happens before
+      # any plugin run could be wrapped.
       private def unknown_fqcn_lookup_failure(original : String?, stripped : String?) : Nil
         return unless name = stripped
         return unless name.matches?(/\A\w+\.\w+\.\w+\z/)
         namespace, collection, _leaf = name.split('.', 3)
-        return if Krikri::CollectionIndex.installed?(namespace, collection)
+        return if Krikri::CollectionIndex.known_collection?(namespace, collection)
         raise PythonLookupRunner::LookupError.new("The lookup plugin '#{original}' was not found.")
       end
 
@@ -307,13 +309,14 @@ module Krikri
       # to an empty list and a plain lookup() to the literal text, so a
       # typo'd lookup name silently emptied its consumer. Real's loader
       # resolves a bare lookup name through ansible.builtin, the builtin
-      # runtime's lookup redirects and EVERY installed collection's
-      # plugins/lookup (live-verified vs 2.19.11: bare `dig` runs
-      # community.general's plugin), so the raise only fires when the
-      # name is definitely absent from all of them - a name an installed
-      # collection provides (or an ansible-core lookup file this
-      # evaluator does not natively implement) keeps the "undefined"
-      # degradation, and a playbook-adjacent/role-local custom
+      # runtime's lookup redirects and EVERY collection's plugins/lookup
+      # (live-verified vs 2.19.11: bare `dig` runs community.general's
+      # plugin); krikri answers all three from its own baked tables
+      # (CollectionIndex.bare_lookup_resolves?), so the raise fires
+      # identically on a controller with no collections installed at all
+      # - a name the captured collections provide (or an ansible-core
+      # lookup file this evaluator does not natively implement) keeps the
+      # "undefined" degradation, and a playbook-adjacent/role-local custom
       # lookup_plugins/<name>.py source keeps running the real plugin
       # through the custom-python dispatch above.
       private def unknown_bare_lookup_failure(original : String?, stripped : String?) : Nil

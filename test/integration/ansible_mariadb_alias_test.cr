@@ -7,27 +7,19 @@ require "../../src/krikri/collection_index"
 # MODULE_ALIASES onto community.mysql's mysql_db/mysql_user plugin
 # binaries (the Ansible modules are functionally identical forks,
 # verified against both collections' sources; fauust.mariadb, round
-# 6002). The aliases are only live where the controller actually has
-# ansible.mariadb: without it real refuses the whole playbook at load
-# (rc=4, "couldn't resolve module/action ...", issue #499), so the
-# parse-time controller-collection refusal covers all four spellings
-# (MARIADB_FORK_ALIASES) too - the alias must not exempt a name real
-# cannot even resolve.
+# 6002).
 #
-# The controller's collection state decides which half of the behavior
-# the specs pin: refusal (with the as-written name in the message and
-# the loader's [WARNING] line for the FQCN spellings) where the
-# collection is absent, live aliasing where it is present or the
-# controller state is unsure.
+# The aliases are unconditional, like every other MODULE_ALIASES entry:
+# krikri's behavior does not depend on what the controller has installed,
+# so the four spellings resolve onto the community.mysql port here whether
+# or not ansible.mariadb is present (real only resolves them where it is,
+# issue #499 - see KNOWN_MISSING.md's "krikri never consults an installed
+# ansible-core or collections tree").
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
 
-private def mariadb_collection_state : Bool?
-  Krikri::CollectionIndex.controller_resolves?("ansible.mariadb.mariadb_db")[:resolves]
-end
-
-private def run_playbook(module_name : String) : {Process::Status, String}
+private def run_playbook(module_name : String, env : Hash(String, String)? = nil) : {Process::Status, String}
   playbook = File.tempname("mariadb-alias", ".yml")
   File.write(playbook, <<-YAML)
     - hosts: localhost
@@ -40,7 +32,7 @@ private def run_playbook(module_name : String) : {Process::Status, String}
             state: absent
     YAML
   captured = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured, env: env)
   {status, captured.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -50,52 +42,53 @@ end
 # describe/it macros cannot expand inside a runtime block, so the loop
 # is unrolled into one it per module name.
 describe "ansible.mariadb module resolution" do
-  it "refuses ansible.mariadb.mariadb_db at load (rc=4) on a controller without the collection, no loader warning" do
-    if mariadb_collection_state == false
-      status, output = run_playbook("ansible.mariadb.mariadb_db")
-      status.exit_code.must_equal(4, output)
-      output.wont_include("[WARNING]: Error loading plugin")
-      output.must_include("[ERROR]: couldn't resolve module/action 'ansible.mariadb.mariadb_db'. This often indicates a misspelling, missing collection, or incorrect module path.")
-      output.wont_include("PLAY RECAP")
-    else
-      status, output = run_playbook("ansible.mariadb.mariadb_db")
-      output.wont_include("uses unimplemented plugin: ansible.mariadb.mariadb_db")
-      output.wont_include("unavailable modules")
-      status.exit_code.wont_equal(4)
-    end
+  it "runs ansible.mariadb.mariadb_db through the community.mysql port, never as unimplemented" do
+    status, output = run_playbook("ansible.mariadb.mariadb_db")
+    output.wont_include("uses unimplemented plugin: ansible.mariadb.mariadb_db")
+    output.wont_include("unavailable modules")
+    output.wont_include("couldn't resolve module/action")
+    status.exit_code.wont_equal(4)
   end
 
-  it "refuses ansible.mariadb.mariadb_user at load (rc=4) on a controller without the collection, no loader warning" do
-    if mariadb_collection_state == false
-      status, output = run_playbook("ansible.mariadb.mariadb_user")
-      status.exit_code.must_equal(4, output)
-      output.wont_include("[WARNING]: Error loading plugin")
-      output.must_include("[ERROR]: couldn't resolve module/action 'ansible.mariadb.mariadb_user'. This often indicates a misspelling, missing collection, or incorrect module path.")
-      output.wont_include("PLAY RECAP")
-    else
-      status, output = run_playbook("ansible.mariadb.mariadb_user")
-      output.wont_include("uses unimplemented plugin: ansible.mariadb.mariadb_user")
-      output.wont_include("unavailable modules")
-      status.exit_code.wont_equal(4)
-    end
+  it "runs ansible.mariadb.mariadb_user through the community.mysql port" do
+    status, output = run_playbook("ansible.mariadb.mariadb_user")
+    output.wont_include("uses unimplemented plugin: ansible.mariadb.mariadb_user")
+    output.wont_include("unavailable modules")
+    output.wont_include("couldn't resolve module/action")
+    status.exit_code.wont_equal(4)
   end
 
-  it "refuses bare mariadb_db at load (rc=4) on a controller without the collection, no warning" do
-    if mariadb_collection_state == false
-      status, output = run_playbook("mariadb_db")
-      status.exit_code.must_equal(4, output)
-      output.wont_include("[WARNING]: Error loading plugin")
-      output.must_include("[ERROR]: couldn't resolve module/action 'mariadb_db'. This often indicates a misspelling, missing collection, or incorrect module path.")
-      output.wont_include("PLAY RECAP")
-    else
-      status, output = run_playbook("mariadb_db")
-      output.wont_include("uses unimplemented plugin: mariadb_db")
-      output.wont_include("unavailable modules")
-      status.exit_code.wont_equal(4)
-    end
+  it "runs bare mariadb_db through the community.mysql port" do
+    status, output = run_playbook("mariadb_db")
+    output.wont_include("uses unimplemented plugin: mariadb_db")
+    output.wont_include("unavailable modules")
+    output.wont_include("couldn't resolve module/action")
+    status.exit_code.wont_equal(4)
   end
 
-  it "refuses ansible.mariadb.mariadb_db reached through include_tasks (rc=4) on a controller without the collection" do
+  it "runs bare mariadb_user through the community.mysql port" do
+    status, output = run_playbook("mariadb_user")
+    output.wont_include("uses unimplemented plugin: mariadb_user")
+    output.wont_include("unavailable modules")
+    output.wont_include("couldn't resolve module/action")
+    status.exit_code.wont_equal(4)
+  end
+
+  it "keeps the alias when ANSIBLE_COLLECTIONS_PATH points at an empty tree" do
+    # The pre-redesign index refused all four spellings on a controller
+    # without ansible.mariadb, so the same playbook behaved differently
+    # depending on the machine. Point the collection env at a tree whose
+    # ansible.mariadb has no module file: the alias must still resolve.
+    root = PluginSpecHelper.tmp_path("mariadb-empty-collections")
+    FileUtils.mkdir_p(File.join(root, "ansible_collections", "ansible", "mariadb", "plugins", "modules"))
+    status, output = run_playbook("ansible.mariadb.mariadb_db",
+      {"ANSIBLE_COLLECTIONS_PATH" => root})
+    output.wont_include("uses unimplemented plugin: ansible.mariadb.mariadb_db")
+    output.wont_include("couldn't resolve module/action")
+    status.exit_code.wont_equal(4)
+  end
+
+  it "runs ansible.mariadb.mariadb_db reached through include_tasks" do
     dir = File.tempname("mariadb-include")
     Dir.mkdir_p(dir)
     begin
@@ -118,30 +111,10 @@ describe "ansible.mariadb module resolution" do
       captured = IO::Memory.new
       status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
       output = captured.to_s
-      if mariadb_collection_state == false
-        status.exit_code.must_equal(4, output)
-        output.must_include("[ERROR]: couldn't resolve module/action 'ansible.mariadb.mariadb_db'. This often indicates a misspelling, missing collection, or incorrect module path.")
-        output.wont_include("PLAY RECAP")
-      else
-        status.exit_code.wont_equal(4)
-      end
+      status.exit_code.wont_equal(4)
+      output.wont_include("couldn't resolve module/action")
     ensure
       FileUtils.rm_rf(dir)
-    end
-  end
-
-  it "refuses bare mariadb_user at load (rc=4) on a controller without the collection, no warning" do
-    if mariadb_collection_state == false
-      status, output = run_playbook("mariadb_user")
-      status.exit_code.must_equal(4, output)
-      output.wont_include("[WARNING]: Error loading plugin")
-      output.must_include("[ERROR]: couldn't resolve module/action 'mariadb_user'. This often indicates a misspelling, missing collection, or incorrect module path.")
-      output.wont_include("PLAY RECAP")
-    else
-      status, output = run_playbook("mariadb_user")
-      output.wont_include("uses unimplemented plugin: mariadb_user")
-      output.wont_include("unavailable modules")
-      status.exit_code.wont_equal(4)
     end
   end
 end
