@@ -1,0 +1,43 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [jedimt.vcenter_ovf : Scan for VCSA OVA file name] ************************
+ok: [localhost]
+
+TASK [jedimt.vcenter_ovf : Set VCSA OVA filename] ******************************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'vcsa_ova_filename': ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList object has no element 0
+
+Task failed.
+Origin: <WORK>/roles/jedimt.vcenter_ovf/tasks/main.yml:10:3
+
+ 8   register: vcsa_ova_directory_contents
+ 9
+10 - name: Set VCSA OVA filename
+     ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.set_fact' failed.
+Origin: <WORK>/roles/jedimt.vcenter_ovf/tasks/main.yml:11:3
+
+ 9
+10 - name: Set VCSA OVA filename
+11   ansible.builtin.set_fact:
+     ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'vcsa_ova_filename': ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList object has no element 0
+Origin: <WORK>/roles/jedimt.vcenter_ovf/tasks/main.yml:12:24
+
+10 - name: Set VCSA OVA filename
+11   ansible.builtin.set_fact:
+12     vcsa_ova_filename: "{{ vcsa_ova_directory_contents.files[0].path.split('/')[-1] }}"
+                          ^ column 24
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'vcsa_ova_filename': ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList object has no element 0"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Skipped '/tmp/krikri-1581-ovf-iso/vcsa' path due to this access issue: '/tmp/krikri-1581-ovf-iso/vcsa' is not a directory
