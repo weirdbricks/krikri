@@ -51,6 +51,15 @@ the normalized transcript to `expected.out`. Capture rules:
   fails `get_bin_path` names every directory it searched, so the developer
   shell's PATH (this box's carries a random AppImage mount point) would make
   the recording differ from every replay.
+- The docker daemon selectors (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`,
+  `DOCKER_TLS`, `DOCKER_TLS_VERIFY`, `DOCKER_TLS_HOSTNAME`, `DOCKER_CERT_PATH`,
+  `DOCKER_API_VERSION`) are cleared, always - they decide which daemon a
+  `docker_*` module talks to, so an inherited `DOCKER_HOST` makes a case run
+  against a different daemon than its recording (issue #1611: real ansible
+  connected to rootless podman during the capture gate and succeeded where the
+  recording had failed). Unset, both engines use `/var/run/docker.sock`; a case
+  that needs a specific (for example unreachable) socket pins it in its own
+  `playbook.yml`'s `environment:`.
 - The transcript is **stdout followed by stderr**, captured to separate files
   and concatenated. A `2>&1` capture is not reproducible: python's stdout is
   block-buffered when redirected, so real ansible's stderr lands in one block

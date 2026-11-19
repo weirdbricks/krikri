@@ -120,13 +120,32 @@ module Krikri
     # appends.
     CASE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+    # A container client's daemon is part of a case's input, not of the
+    # developer's or the runner's shell: with DOCKER_HOST inherited, a case
+    # recorded against an unreachable socket connected to rootless podman
+    # instead - real ansible then succeeded where the recording failed, and
+    # the capture gate reported the case's expected.out as not reproducible
+    # (issue #1611). Unset, the docker CLI/SDK falls back to
+    # /var/run/docker.sock, the one target a recording and its replays share.
+    DOCKER_ENV = [
+      "DOCKER_HOST",
+      "DOCKER_CONTEXT",
+      "DOCKER_CONFIG",
+      "DOCKER_TLS",
+      "DOCKER_TLS_VERIFY",
+      "DOCKER_TLS_HOSTNAME",
+      "DOCKER_CERT_PATH",
+      "DOCKER_API_VERSION",
+    ]
+
     # Everything a run must not inherit from the developer's or the runner's
     # shell: this box exports ANSIBLE_GATHERING/ANSIBLE_CACHE_PLUGIN, which
     # change both the task list and the facts, HOME decides where `~` points
     # (a case may use `~/...`, and must never write into the real home
-    # directory), and PATH is pinned for the reason above.
+    # directory), PATH is pinned for the reason above, and the docker daemon
+    # selectors are cleared for the reason in DOCKER_ENV.
     def self.env(home_dir : String) : Hash(String, String?)
-      {
+      env = {
         "ANSIBLE_NOCOLOR"                 => "1",
         "HOME"                            => home_dir,
         "PATH"                            => CASE_PATH,
@@ -134,6 +153,8 @@ module Krikri
         "ANSIBLE_CACHE_PLUGIN"            => nil,
         "ANSIBLE_CACHE_PLUGIN_CONNECTION" => nil,
       }
+      DOCKER_ENV.each { |name| env[name] = nil }
+      env
     end
   end
 end

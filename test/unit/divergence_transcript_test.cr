@@ -122,6 +122,18 @@ describe "divergence case invocation" do
     env.has_key?("ANSIBLE_GATHERING").must_equal(true)
   end
 
+  it "clears the docker daemon selectors a case's recording and replay must share" do
+    env = Krikri::DivergenceCase.env("/tmp/case/home")
+    # DOCKER_HOST alone flips a docker_* case between "unreachable socket" and
+    # "rootless podman answers": the same role succeeded in a capture and
+    # failed in the replay, and the capture gate called the case's expected.out
+    # unreproducible (issue #1611).
+    Krikri::DivergenceCase::DOCKER_ENV.each do |name|
+      env.has_key?(name).must_equal(true)
+      env[name]?.must_be_nil
+    end
+  end
+
   it "pins PATH so a get_bin_path failure names the same directories every run" do
     env = Krikri::DivergenceCase.env("/tmp/case/home")
     # get_bin_path's failure text lists the directories it searched, so an
