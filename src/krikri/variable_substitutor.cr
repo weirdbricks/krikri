@@ -2649,6 +2649,19 @@ module Krikri
       true
     end
 
+    # Whether an unevaluated EXPRESSION names a top-level fact alias. The
+    # lenient is-defined handler (ConditionalEvaluator) answers such a
+    # clause without resolving the name, so no read ever reaches this
+    # class and the expression text is the only place the read is visible.
+    # The names come from the engine's own parse, so a bare fact spelling
+    # (`getent_passwd is defined`, issue #1599 - real 2.21.6 warns for it
+    # exactly as for the prefixed one) is found without a text scan; the
+    # `ansible_` scan stays as the fallback for text the parser rejects.
+    def self.fact_alias_named_in_expression?(text : String, vars : Hash(String, JSON::Any)) : Bool
+      return true if ConditionalEvaluator.referenced_names(text).any? { |name| top_level_fact_name?(name, vars) }
+      text.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| top_level_fact_name?(match[0], vars) }
+    end
+
     # ansible-core records at most ONE INJECT_FACTS_AS_VARS deprecation per
     # top-level templating operation: the deprecate tag instance is shared by
     # every injected fact, so its audit context keeps the first access only.

@@ -6574,7 +6574,11 @@ module Krikri
     # (live-verified: `ansible_os_family is defined` in a playbook's only task).
     private def maybe_fact_alias_defined_deprecation(task : Task, raw : String, vars_context : Hash(String, JSON::Any)) : Nil
       return unless ConditionalEvaluator.whole_condition_is_defined_test?(raw)
-      reads_fact = raw.scan(/ansible_[A-Za-z0-9_]+/).any? { |match| VarSubstitutor.top_level_fact_name?(match[0], vars_context) }
+      # Any injected spelling counts, not just the `ansible_`-prefixed one:
+      # opendevshop.users' `when: getent_passwd is defined` reads the bare
+      # getent fact, and real warns for it the same way (issue #1599,
+      # live-verified against 2.21.6).
+      reads_fact = VarSubstitutor.fact_alias_named_in_expression?(raw, vars_context)
       # Same lenient-is-defined gap for the internal `vars` dict read
       # (`when: vars is defined`, `when: vars.x is defined` - issue #1028,
       # live-verified against 2.21.6): real prints its own block, Origin'd
