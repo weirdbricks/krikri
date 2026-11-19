@@ -2160,3 +2160,40 @@ describe "INJECT_FACTS_AS_VARS deprecation from the strict-undefined vars probe"
     stderr.must_include("                ^ column 15")
   end
 end
+
+describe "INJECT_FACTS_AS_VARS deprecation from a fact read inside a loop item's mapping" do
+  # Issue #1602, wasilak.centos-docker: a with_items: entry written as a
+  # flow mapping puts the fact-naming template one level INSIDE the item,
+  # where the loop source's `- ` element scan cannot see it - the read had
+  # no placeable Origin and printed nothing. Real tags every stored YAML
+  # scalar, so the block points at the leaf's own value token (the opening
+  # quote), for a hostvars-mediated read exactly as for a bare fact name
+  # (live-verified against 2.21.6).
+  it "origins a hostvars read at the item's own leaf value token" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: add docker repo
+            debug:
+              msg: "{{ item.name }}"
+            with_items:
+            - {
+                name: "docker-ce-stable",
+                baseurl: 'https://example/{{ hostvars[inventory_hostname]["ansible_distribution_major_version"] }}/x'
+              }
+            when: hostvars[inventory_hostname]["ansible_distribution"] == "CentOS"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(2)
+    stderr.must_include("Origin: ")
+    stderr.must_include(":11:20\n")
+    stderr.must_include(" 9       - {\n")
+    stderr.must_include("11           baseurl: 'https://example/{{ hostvars[inventory_hostname][\"ansible_distribution_major_version\"] }}/x'\n")
+    stderr.must_include("                      ^ column 20")
+    stderr.must_include(":13:13\n")
+    stderr.must_include("13       when: hostvars[inventory_hostname][\"ansible_distribution\"] == \"CentOS\"\n")
+    stderr.must_include("               ^ column 13")
+  end
+end
