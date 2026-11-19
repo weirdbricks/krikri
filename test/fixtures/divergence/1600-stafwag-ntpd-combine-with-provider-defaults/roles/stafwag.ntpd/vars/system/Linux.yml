@@ -1,0 +1,4 @@
+---
+ntpd_system_defaults:
+  provider:
+    chrony

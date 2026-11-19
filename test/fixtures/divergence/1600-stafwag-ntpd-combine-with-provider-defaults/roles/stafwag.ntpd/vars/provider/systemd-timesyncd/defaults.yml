@@ -1,0 +1,13 @@
+ntpd_provider_defaults:
+  packages:
+  service:
+    systemd-timesyncd
+  services_to_disable:
+    - ntpd
+    - chronyd
+    - ntp
+    - chrony
+  template:
+    timesyncd.conf.j2
+  conf_file:
+    /etc/systemd/timesyncd.conf

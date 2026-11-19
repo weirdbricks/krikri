@@ -1,0 +1,4 @@
+---
+ntpd_provider_defaults:
+  driftfile: /var/lib/ntp/drift
+  service: ntp

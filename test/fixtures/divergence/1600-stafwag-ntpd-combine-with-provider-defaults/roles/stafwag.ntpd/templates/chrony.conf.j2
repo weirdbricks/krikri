@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+
+{% for item in _ntpd.servers %}
+server {{ item }}
+{% endfor %}
+
+driftfile {{ _ntpd.driftfile }}
+
+makestep 1.0 3
+
+rtcsync
+
+# Specify directory for log files.
+logdir /var/log/chrony

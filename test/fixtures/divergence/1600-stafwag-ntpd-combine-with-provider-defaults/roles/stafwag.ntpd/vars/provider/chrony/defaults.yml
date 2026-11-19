@@ -1,0 +1,12 @@
+---
+ntpd_provider_defaults:
+  packages:
+    - chrony
+  service:
+    chronyd
+  driftfile:
+    /var/lib/chrony/drift
+  template:
+    chrony.conf.j2
+  conf_file:
+    /etc/chrony.conf

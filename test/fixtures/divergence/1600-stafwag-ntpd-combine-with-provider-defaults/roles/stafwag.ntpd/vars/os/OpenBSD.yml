@@ -1,0 +1,3 @@
+---
+ntpd_os_defaults:
+  driftfile: /var/db/ntpd.drift

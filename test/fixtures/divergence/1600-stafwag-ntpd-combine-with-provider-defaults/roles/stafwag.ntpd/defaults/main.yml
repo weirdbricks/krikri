@@ -1,0 +1,9 @@
+---
+# defaults file for ntpd
+
+_ntpd:
+  {}
+
+ntpd_defaults:
+  servers:
+    - pool.ntp.org

@@ -1,0 +1,10 @@
+---
+ntpd_provider_defaults:
+  service:
+    ntpd
+  template:
+    ntp.conf.j2
+  conf_file:
+    /etc/ntp.conf
+  driftfile:
+    /var/lib/ntp/drift

@@ -425,6 +425,53 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
 
+  # A container reached through the one-argument `default(...)`
+  # pass-through keeps the lineage of where it was DEFINED: real labels
+  # `when: ntpd_provider_defaults | default(false)` over an
+  # include_vars:-loaded dict with the dict's own value position in the
+  # included file, not the when: token (issue #1600, stafwag.ntpd -
+  # live-verified vs 2.21.6; the role's provider file puts the dict's
+  # first key at line 3, column 3).
+  it "labels a `dict | default(false)` when: error with the included vars file's position" do
+    dir = File.tempname("when-default-dict-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "vars"))
+    provider_file = File.join(dir, "roles", "testrole", "vars", "provider.yml")
+    File.write(provider_file, <<-YAML)
+      ---
+      ntpd_provider_defaults:
+        packages:
+          - chrony
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: Set provider related variables
+        ansible.builtin.include_vars: "provider.yml"
+      - name: Combine with provider_defaults
+        ansible.builtin.set_fact:
+          _ntpd: "{{ ntpd_provider_defaults | ansible.builtin.combine({}) }}"
+        when:
+          - ntpd_provider_defaults | default(false)
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    expected = "was derived from value of type 'dict' at '#{provider_file}:3:3'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
   # Same decoration must survive an include_tasks: hop inside the role:
   # the included file's tasks are parsed outside the role, so without the
   # origins travelling with the values they describe the location silently

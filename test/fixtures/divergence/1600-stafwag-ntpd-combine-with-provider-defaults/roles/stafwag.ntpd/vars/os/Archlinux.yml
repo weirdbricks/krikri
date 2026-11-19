@@ -1,0 +1,4 @@
+---
+ntpd_os_defaults:
+  provider:
+    systemd-timesyncd

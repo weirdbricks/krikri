@@ -1,0 +1,17 @@
+---
+# The task krikri-role-tester extracted from stafwag.ntpd; only the play is adapted
+# to run it against localhost (the round ran it against its testhost inventory).
+# The vars load stands in for the role's own include_vars: task, which is what
+# defines ntpd_provider_defaults in the round - without it the guarded task is
+# simply skipped and pins nothing.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Set OS/ntp_provider related variables
+      ansible.builtin.include_vars: "roles/stafwag.ntpd/vars/provider/chrony/defaults.yml"
+    - name: Combine with provider_defaults
+      ansible.builtin.set_fact:
+        _ntpd: "{{ ntpd_provider_defaults | ansible.builtin.combine(_ntpd) }}"
+      when:
+        - ntpd_provider_defaults | default(false)
