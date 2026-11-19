@@ -1808,7 +1808,8 @@ module Krikri
                         ["--", "sudo"] + local_sudo_argv(sudo_user, plugin_path, interactive, become_flags),
                         input: Process::Redirect::Pipe,
                         output: stdout,
-                        error: stderr
+                        error: stderr,
+                        env: local_plugin_env
                       )
                     else
                       # No shell involved (args passed as a real argv array,
@@ -1820,7 +1821,8 @@ module Krikri
                         local_sudo_argv(sudo_user, plugin_path, interactive, become_flags),
                         input: Process::Redirect::Pipe,
                         output: stdout,
-                        error: stderr
+                        error: stderr,
+                        env: local_plugin_env
                       )
                     end
                   elsif task_timeout && task_timeout > 0
@@ -1829,14 +1831,16 @@ module Krikri
                       ["--", plugin_path],
                       input: Process::Redirect::Pipe,
                       output: stdout,
-                      error: stderr
+                      error: stderr,
+                      env: local_plugin_env
                     )
                   else
                     Process.new(
                       plugin_path,
                       input: Process::Redirect::Pipe,
                       output: stdout,
-                      error: stderr
+                      error: stderr,
+                      env: local_plugin_env
                     )
                   end
 
@@ -2630,6 +2634,18 @@ module Krikri
       rescue
         ENV["USER"]?
       end
+    end
+
+    # The environment a locally exec'd plugin starts with. Ansible runs a
+    # local module through `sh -c`, and a shell always resets PWD to the
+    # process's own working directory - krikri's direct exec would hand the
+    # plugin whatever PWD the controller was started with, which is stale
+    # as soon as that differs from the cwd (`Process.run(chdir:)` leaves
+    # PWD untouched; juju4.lxdconfigure's env-fact dump printed the
+    # controller's directory where real ansible printed the module's,
+    # issue #1584).
+    def self.local_plugin_env : Hash(String, String)
+      ENV.to_h.merge({"PWD" => Dir.current})
     end
 
     # Single-quotes *str* for shell embedding - shared implementation in

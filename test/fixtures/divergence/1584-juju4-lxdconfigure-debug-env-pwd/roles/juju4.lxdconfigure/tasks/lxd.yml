@@ -1,0 +1,184 @@
+---
+
+- name: Ensure service is started and enabled
+  ansible.builtin.service:
+    name: "{{ lxdconfigure_service }}"
+    state: started
+    enabled: yes
+
+- name: Lxc info
+  ansible.builtin.command:
+    cmd: "{{ lxd_cmd }} info"
+  register: lxc_info_src
+  run_once: true
+  changed_when: false
+
+- name: Lxc+docker | don't use zfs
+  ansible.builtin.set_fact:
+    lxdconfigure_init: '--storage-backend dir'
+  when: >
+    (ansible_facts['virtualization_type'] is defined and (ansible_facts['virtualization_type'] == "lxc" or ansible_facts['virtualization_type'] == "docker"))
+
+- name: Debug
+  ansible.builtin.debug:
+    msg: "{{ 'storage: \"\",' in lxc_info_src.stdout }}"
+
+## duplicate of lxd role?
+## creates=/var/lib/lxd/lxd.db ? correct?
+- name: Configure lxd daemon
+  ansible.builtin.command: "lxd init --auto {{ lxdconfigure_init }}"
+  register: lxdinit
+  args:
+    creates: "/var/lib/lxd/disks/{{ lxd_storage_pool }}.img"
+  changed_when:
+    - lxdinit.rc == 0
+    - "lxdinit.stderr is not defined or 'Error: Storage has already been configured' not in lxdinit.stderr"
+  failed_when:
+    - lxdinit.rc != 0
+    - "lxdinit.stderr is not defined or 'Error: Storage has already been configured' not in lxdinit.stderr"
+  when:
+    - "'storage: \"\",' in lxc_info_src.stdout"
+    - not (ansible_facts['virtualization_type'] is defined and (ansible_facts['virtualization_type'] == "lxc" or ansible_facts['virtualization_type'] == "docker"))
+    - lxc_cmd == 'lxc'
+
+- name: Configure incus daemon
+  ansible.builtin.command: "incus admin init --auto {{ lxdconfigure_init }}"
+  register: incusinit
+  args:
+    creates: "/var/lib/incus/disks/{{ lxd_storage_pool }}.img"
+  changed_when:
+    - incusinit.rc == 0
+    - "incusinit.stderr is not defined or 'Error: Storage has already been configured' not in incusinit.stderr"
+  failed_when:
+    - incusinit.rc != 0
+    - "incusinit.stderr is not defined or 'Error: Storage has already been configured' not in incusinit.stderr"
+  when:
+    - "'storage: \"\",' in lxc_info_src.stdout"
+    - not (ansible_facts['virtualization_type'] is defined and (ansible_facts['virtualization_type'] == "lxc" or ansible_facts['virtualization_type'] == "docker"))
+    - lxc_cmd == 'incus'
+
+- name: Lxc storage list
+  ansible.builtin.shell:
+    cmd: "{{ lxd_cmd }} storage list 2>&1 | egrep -v '(NAME|---)'"
+  register: lxc_storage_ls
+  run_once: true
+  ignore_errors: true
+  changed_when: false
+
+# https://lxd.readthedocs.io/en/latest/storage/
+- name: Create zfs storage pool
+  ansible.builtin.command:
+    cmd: "{{ lxd_cmd }} storage create {{ lxd_storage_pool }} zfs zfs.pool\_name={{ lxd_zpool }}"
+  register: lxcstor
+  args:
+    creates: "/var/lib/lxd/disks/{{ lxd_storage_pool }}.img"
+  changed_when:
+    - lxcstor.rc == 0
+    - "lxcstor.stderr is not defined or 'Error: The storage pool already exists' not in lxcstor.stderr"
+  failed_when:
+    - lxcstor.rc != 0
+    - "lxcstor.stderr is not defined or 'Error: The storage pool already exists' not in lxcstor.stderr"
+  when:
+    - lxd_storage_backend == 'zfs'
+    - not (ansible_facts['virtualization_type'] is defined and (ansible_facts['virtualization_type'] == "lxc" or ansible_facts['virtualization_type'] == "docker"))
+    - "'| ' + lxd_storage_pool + ' |' not in lxc_storage_ls.stdout"
+
+- name: Create dir storage pool
+  ansible.builtin.command:
+    cmd: "{{ lxd_cmd }} storage create {{ lxd_storage_pool }} dir source={{ lxd_zpool }}"
+  register: lxcstor
+  changed_when:
+    - lxcstor.rc == 0
+    - "lxcstor.stderr is not defined or 'Error: The storage pool already exists' not in lxcstor.stderr"
+  failed_when:
+    - lxcstor.rc != 0
+    - "lxcstor.stderr is not defined or 'Error: The storage pool already exists' not in lxcstor.stderr"
+  when:
+    - lxd_storage_backend == 'dir'
+    - not (ansible_facts['virtualization_type'] is defined and (ansible_facts['virtualization_type'] == "lxc" or ansible_facts['virtualization_type'] == "docker"))
+    - "'| ' + lxd_storage_pool + ' |' not in lxc_storage_ls.stdout"
+
+- name: Check default profile
+  ansible.builtin.command:
+    cmd: "{{ lxd_cmd }} profile show default"
+  register: lxc_profile_show
+  ignore_errors: true
+  changed_when: false
+
+- name: Add storage pool to default profile  # noqa no-changed-when
+  ansible.builtin.command:
+    cmd: >
+      {{ lxd_cmd }} profile device add default root disk path=/ pool={{ lxd_storage_pool }}
+  when:
+    not (lxd_storage_pool in lxc_profile_show.stdout) and
+    lxd_storage_backend == 'zfs' and
+    not (ansible_facts['virtualization_type'] is defined and (ansible_facts['virtualization_type'] == "lxc" or ansible_facts['virtualization_type'] == "docker"))
+
+- name: Check network
+  ansible.builtin.command:
+    cmd: "{{ lxd_cmd }} network list"
+  register: lxc_network_list
+  ignore_errors: true
+  changed_when: false
+
+- name: Debug | lxc network
+  ansible.builtin.debug:
+    var: lxc_network_list
+    verbosity: 1
+
+- name: Incus | default network
+  when:
+    - lxd_cmd == 'incus'
+    - "'incusbr0' not in lxc_network_list.stdout"
+  block:
+    - name: Create incusbr0
+      ansible.builtin.command:  # noqa no-changed-when
+        cmd: "incus network create incusbr0"
+    - name: Add incusbr0 to default profile
+      ansible.builtin.command:  # noqa no-changed-when
+        cmd: "incus profile device add default eth0 nic name=eth0 network=incusbr0"
+
+- name: List existing lxc images
+  ansible.builtin.command: "{{ lxd_cmd }} image list -c L"
+  changed_when: false
+  register: imagelist
+- name: Pre copy lxc images
+  ansible.builtin.include_tasks: lxc-image-copy.yml
+  vars:
+    current: "{{ imagelist }}"
+    image: "{{ item.i | default('') }}"
+    alias: "{{ item.alias | default('') }}"
+  with_items: "{{ lxd_preloadimages }}"
+
+- name: List existing lxc images
+  ansible.builtin.command: "{{ lxd_cmd }} image list"
+  changed_when: false
+  register: imagelist2
+- name: List existing lxc instances
+  ansible.builtin.command: "{{ lxd_cmd }} list"
+  changed_when: false
+  register: lxclist2
+
+- name: Preconfigure images
+  when:
+    - lxd_preconfigure is defined
+    - lxd_preconfigure | length > 0
+    - lxd_preconfigure != []
+  block:
+    - name: Debug | lxd_preconfigure
+      ansible.builtin.debug:
+        var: lxd_preconfigure
+    - name: Pre-configure lxc images
+      ansible.builtin.include_tasks: lxd-preconfigure.yml
+      vars:
+        imagelist: "{{ imagelist2 }}"
+        lxclist: "{{ lxclist2 }}"
+        guest: "{{ outer_item.guest | default('') }}"
+        template: "{{ outer_item.template | default('') }}"
+        publishalias: "{{ outer_item.publishalias | default('') }}"
+        privileged: "{{ outer_item.privileged | default('') }}"
+        shellcmds: "{{ outer_item.shellcmds | default([]) }}"
+        files: "{{ outer_item.files | default([]) }}"
+      with_items: "{{ lxd_preconfigure }}"
+      loop_control:
+        loop_var: outer_item

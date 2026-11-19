@@ -1,0 +1,48 @@
+---
+## when Ansible 2.2.0 released: use lxd_container module
+
+- name: Lxd images published
+  when:
+    # Task failed: A 'when' expression failed: Syntax error in expression: chunk after expression
+    # Not https://docs.ansible.com/projects/ansible/latest/porting_guides/porting_guide_core_2.19.html#example-expression-syntax-error
+    - "' ' + publishalias + ' ' not in imagelist.stdout"
+    # - imagelist.stdout.find(' ' + publishalias + ' ') == -1
+  block:
+    - name: Start lxc instance {{ guest }}
+      ansible.builtin.shell:  # noqa no-changed-when command-instead-of-shell
+        cmd: "{{ item }}"
+      with_items:
+        - "{{ lxd_cmd }} init {{ template }} {{ guest }}"
+        - "{{ lxd_cmd }} start {{ guest }}"
+        ## mostly for images from linuxcontainers.org + centos, necessary for CI testing, especially travis
+        ##  --stdin not supported on xenial
+        # - "openssl rand -base64 48 | lxc exec {{ guest }} -- passwd root --stdin"
+        - "openssl rand -base64 48 | perl -ne 'print \"$_\" x2' | {{ lxd_cmd }} exec {{ guest }} -- passwd root"
+      # when:
+      #   - '" " + guest " " not in lxclist.stdout'
+
+    - name: Configure lxc instance {{ guest }}  # noqa no-changed-when
+      ansible.builtin.command:
+        cmd: "{{ lxd_cmd }} exec {{ guest }} -- {{ item }}"
+      with_items: "{{ shellcmds }}"
+      # ignore_errors: true
+
+    - name: Push files to host {{ guest }}
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "/tmp/{{ item.src | basename }}"
+        mode: '0600'
+      with_items: "{{ files }}"
+
+    - name: Push files from host to guest {{ guest }}  # noqa no-changed-when
+      ansible.builtin.command:
+        cmd: "{{ lxd_cmd }} file push --mode {{ idem.mode | default('0644') }} /tmp/{{ item.src | basename }} {{ guest }}/{{ item.dest }}"
+      with_items: "{{ files }}"
+
+    - name: Stop and publish lxc instance {{ guest }}  # noqa no-changed-when
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      with_items:
+        - "{{ lxd_cmd }} stop {{ guest }} --force"
+        - "{{ lxd_cmd }} publish {{ guest }} --alias {{ publishalias }}"
+        - "{{ lxd_cmd }} delete {{ guest }}"

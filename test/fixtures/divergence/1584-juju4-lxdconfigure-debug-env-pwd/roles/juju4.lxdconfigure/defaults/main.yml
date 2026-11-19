@@ -1,0 +1,53 @@
+---
+
+# lxd_cmd: incus
+lxd_cmd: lxc
+
+# lxdconfigure_init: '--storage-backend dir'
+## loop zfs 16GB
+lxd_storage_backend: zfs
+lxd_storage_pool: myzfspool
+lxd_zpool: lxd_tank
+lxdconfigure_init: "--storage-backend {{ lxd_storage_backend }} --storage-create-loop 16 --storage-pool {{ lxd_storage_pool }}"
+
+lxd_preloadimages:
+  - { i: 'images:ubuntu/resolute/amd64', alias: 'ubuntu-26.04-nopython' }
+  # - { i: 'images:centos/8/amd64', alias: 'centos-8-nossh' }
+  - { i: 'images:fedora/44/amd64', alias: 'fedora-44-nossh' }
+  # - { i: 'images:debian/buster/amd64', alias: 'debian-buster-nossh' }
+  # - { i: 'images:alpine/3.13/amd64', alias: 'alpine-3.13-nossh' }
+
+## packages are the ones necessary for kitchen+ansible
+lxd_preconfigure: [
+  { guest: 'default-ubuntu-2604', template: 'ubuntu-26.04-nopython',
+    publishalias: 'ubuntu-26.04', privileged: false, shellcmds: [
+      "dhclient eth0",
+      "ping -c 1 8.8.8.8",
+      ## Job for iscsid.service failed because a configured resource limit was exceeded. See \"systemctl status iscsid.service\" and \"journalctl -xe\" for details.\r\ninvoke-rc.d: initscript iscsid, action \"restart\" failed.
+      ## https://bugs.launchpad.net/ubuntu/+source/juju-core/+bug/1571082
+      "apt-get -y remove open-iscsi",
+      "apt-get update",
+      'env DEBIAN_FRONTEND=noninteractive DEBIAN_PRIORITY=critical apt-get -y -o "Dpkg::Options::=--force-confdef" -o "Dpkg::Options::=--force-confold" upgrade',
+      "apt-get install -y python3",
+      "apt-get clean all",
+    ],
+    files: [
+      { dest: /home/deploy/.ssh/authorized_keys, src: authorized_keys-deploy }
+    ]
+  },
+  ## https://github.com/ansible/ansible-modules-core/issues/5582
+  { guest: 'default-fedora-44', template: 'fedora-44-nossh',
+    publishalias: 'fedora-44', privileged: false, shellcmds: [
+      "dhclient eth0 || true",
+      "sleep 5",
+      "ping -c 1 8.8.8.8",
+      "dnf -y upgrade",
+      "dnf install -y openssh-server sudo python3-dnf",
+      "dnf clean -y all",
+      "systemctl enable sshd.service",
+      "service sshd start",
+      "mkdir /root/.ssh || true",
+      "gem install busser",
+    ]
+  }
+]

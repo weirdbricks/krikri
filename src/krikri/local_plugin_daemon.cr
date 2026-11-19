@@ -207,7 +207,8 @@ module Krikri
           argv[1..],
           input: Process::Redirect::Pipe,
           output: Process::Redirect::Pipe,
-          error: IO::Memory.new
+          error: IO::Memory.new,
+          env: PluginManager.local_plugin_env
         )
       end
 

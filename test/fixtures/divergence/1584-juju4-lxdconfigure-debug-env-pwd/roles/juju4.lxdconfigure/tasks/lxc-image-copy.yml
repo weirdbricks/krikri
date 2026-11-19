@@ -1,0 +1,8 @@
+---
+
+# - debug: var=current
+
+- name: "Download lxc image {{ image }}" # noqa no-changed-when
+  ansible.builtin.command:
+    cmd: "{{ lxd_cmd }} image copy {{ image }} local: --alias={{ alias }}"
+  when: current is defined and current.stdout.find(alias) == -1 and alias is defined

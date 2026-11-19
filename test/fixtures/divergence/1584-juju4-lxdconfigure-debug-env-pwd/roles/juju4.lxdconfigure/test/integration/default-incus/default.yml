@@ -1,0 +1,30 @@
+---
+
+- name: Test integration playbook
+  hosts: all
+  vars:
+    lxd_cmd: incus
+    # lxd_preloadimages:
+    lxd_preloadimages:
+      - { i: 'images:ubuntu/resolute/amd64', alias: 'ubuntu-26.04-nopython' }
+    lxd_preconfigure: []
+    ## must be different than lxc host if relevant
+    lxd_bridgeconf_ipv4_addr: "10.252.10.1"
+    lxd_bridgeconf_ipv4_network: "10.252.10.1/24"
+    lxd_bridgeconf_ipv4_dhcp_range: "10.252.10.2-10.252.10.200"
+    lxd_fanconf_underlay_subnet: "10.123.123.0/24"
+    # github ci kernel too recent for ubuntu 24.04 zfs
+    # None of the expected \"blkdev_get_by_path()\" interfaces were detected.
+    lxdconfigure_init: '--storage-backend dir'
+    lxd_storage_backend: dir
+    lxd_storage_pool: default
+    lxd_zpool: /var/lib/incus/storage-pools/default
+  pre_tasks:
+    - name: Incus package
+      ansible.builtin.package:
+        name:
+          - incus
+          # - incus-ui-canonical
+        state: present
+  roles:
+    - juju4.lxdconfigure
