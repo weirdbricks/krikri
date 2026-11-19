@@ -2211,7 +2211,7 @@ module Krikri
         return daemon_result
       end
 
-      target = remote_plugin_target(plugin_name, become, become_user, conn.user, Passwords.become(vars, host), become_flags)
+      target = remote_plugin_target(plugin_name, become, become_user, conn.user, Passwords.become(vars, host), become_flags, remote_term_forwarding(vars))
 
       # Execute plugin remotely with config via stdin.
       #
@@ -2413,7 +2413,8 @@ module Krikri
           become_password: Passwords.become(vars, host),
           extra_args: extra_args,
           daemon_scope: daemon_scope,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          term: remote_term_forwarding(vars)
         )
       rescue ex : SSHManager::DaemonDispatchUnknownError
         # The request reached the daemon but its response did not come
@@ -2638,10 +2639,43 @@ module Krikri
       Shell.single_quote(str)
     end
 
-    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil, become_password : String? = nil, become_flags : String? = nil) : String
+    # The TERM value ansible's ssh connection hands a remote module
+    # through its pty, or nil when krikri should leave the target's own
+    # value alone. ansible wraps every module exec in `ssh -tt` (ssh's
+    # `use_tty` default) unless the module payload rides exec_command's
+    # in_data - i.e. pipelining is off, the default - so the module
+    # process inherits the CONTROLLER's TERM, not the one sshd's own
+    # environment carries. That decides any script gating its color
+    # output on TERM: docksal's `fin` emits ESC codes only when
+    # `$TERM != "dumb"`, and a container whose sshd started without a
+    # TERM exports TERM=dumb, so krikri printed fin's notice as plain
+    # text where ansible's had colors (issue #1564). With pipelining on
+    # ansible sends the module over stdin, allocates no tty, and the
+    # target's own TERM stands - the split #remote_plugin_target's
+    # *term* follows.
+    def self.remote_term_forwarding(vars : Hash(String, JSON::Any)? = nil) : String?
+      return nil if SSHUnreachableMsg.pipelining_enabled?(vars)
+      term = ENV["TERM"]?
+      term.nil? || term.empty? ? nil : term
+    end
+
+    # The `TERM=<value> ` assignment that prefixes a remote plugin launch,
+    # or "" when *term* is nil - one spelling for every launch shape (bare
+    # plugin path, plain sudo, the become-password probe wrapper).
+    private def self.remote_term_prefix(term : String?) : String
+      term && !term.empty? ? "TERM=#{Shell.quote_arg(term)} " : ""
+    end
+
+    # *term* (see #remote_term_forwarding) rides as an assignment prefix:
+    # on the plugin path itself when no escalation is needed, otherwise on
+    # the sudo invocation launching it - sudo carries TERM into the become
+    # user's environment, the same assumption the become daemon's own
+    # `TERM=... sudo` spawn already relies on (issue #606).
+    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil, become_password : String? = nil, become_flags : String? = nil, term : String? = nil) : String
       simple_name = simple_plugin_name(plugin_name)
       remote_plugin_path = "#{remote_plugin_dir(remote_user)}/#{simple_name}"
-      return remote_plugin_path unless become_needed?(become, become_user, remote_user)
+      term_prefix = remote_term_prefix(term)
+      return "#{term_prefix}#{remote_plugin_path}" unless become_needed?(become, become_user, remote_user)
       # -H matches ansible's sudo become plugin (sets HOME to the become
       # user's), so ~/.ansible/tmp resolves like ansible's and its
       # unusable-tempdir warning reproduces (issue #536; the daemon path
@@ -2651,9 +2685,9 @@ module Krikri
       # preservation of `-E` (issue #1486), and any other sudo option the
       # task tuned.
       unless become_password
-        return "sudo #{sudo_flags_command(sudo_become_flags(become_flags, false))} -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}"
+        return "#{term_prefix}sudo #{sudo_flags_command(sudo_become_flags(become_flags, false))} -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}"
       end
-      sudo_password_become_wrapper(remote_plugin_path, become_user.to_s, become_password, become_flags)
+      sudo_password_become_wrapper(remote_plugin_path, become_user.to_s, become_password, become_flags, term)
     end
 
     # The become-password variant of the `sudo -H -n -u <user> -- <path>`
@@ -2698,8 +2732,12 @@ module Krikri
     # CPython ignores EPIPE on the stdin write, so silencing the feeder
     # matches real output instead of masking a divergence (same rationale
     # as java_cert_command's stdin feeder). sudo's own stderr still flows.
-    def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String, become_flags : String? = nil) : String
+    def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String, become_flags : String? = nil, term : String? = nil) : String
       q_user = Shell.quote_arg(become_user)
+      # The TERM assignment goes on the sudo invocations, never in front of
+      # the `if` probe below: `TERM=x if ...` is not valid shell, and sudo
+      # is what puts the value into the plugin's environment anyway.
+      term_prefix = remote_term_prefix(term)
       # -H (HOME = the become user's) matches ansible's sudo become
       # plugin, so ~/.ansible/tmp and its warning behave as ansible's
       # (issue #536) - same reason as ssh_manager's daemon command. A
@@ -2714,12 +2752,12 @@ module Krikri
       # consumed from: sudo refuses and fails the task, as it does under
       # ansible-playbook with the same flags.
       unless sudo_flags_read_stdin?(password_flags)
-        return "sudo #{plain_flags} -u #{q_user} -- #{plugin_path}"
+        return "#{term_prefix}sudo #{plain_flags} -u #{q_user} -- #{plugin_path}"
       end
       "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
-      "then sudo #{plain_flags} -u #{q_user} -- #{plugin_path}; " \
+      "then #{term_prefix}sudo #{plain_flags} -u #{q_user} -- #{plugin_path}; " \
       "else { printf '%s\\n' #{Shell.single_quote(become_password)} 2>/dev/null; cat 2>/dev/null; } | " \
-      "sudo #{sudo_flags_command(password_flags)} -u #{q_user} -- #{plugin_path}; fi"
+      "#{term_prefix}sudo #{sudo_flags_command(password_flags)} -u #{q_user} -- #{plugin_path}; fi"
     end
 
     # The plain-command equivalent of the wrapper above (no staged plugin
