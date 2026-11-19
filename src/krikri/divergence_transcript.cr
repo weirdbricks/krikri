@@ -112,15 +112,24 @@ module Krikri
       inventory_args(case_dir) + ["-c", "local"] + flags(case_dir) + [PLAYBOOK]
     end
 
+    # The PATH a case runs under. A module's get_bin_path failure names every
+    # directory it searched, so an inherited PATH (this box's carries a random
+    # AppImage mount point) would make the transcript differ between the
+    # recording and every replay; the standard system directories are the same
+    # on every host and already include the three sbin dirs get_bin_path
+    # appends.
+    CASE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
     # Everything a run must not inherit from the developer's or the runner's
     # shell: this box exports ANSIBLE_GATHERING/ANSIBLE_CACHE_PLUGIN, which
-    # change both the task list and the facts, and HOME decides where `~`
-    # points (a case may use `~/...`, and must never write into the real home
-    # directory).
+    # change both the task list and the facts, HOME decides where `~` points
+    # (a case may use `~/...`, and must never write into the real home
+    # directory), and PATH is pinned for the reason above.
     def self.env(home_dir : String) : Hash(String, String?)
       {
         "ANSIBLE_NOCOLOR"                 => "1",
         "HOME"                            => home_dir,
+        "PATH"                            => CASE_PATH,
         "ANSIBLE_GATHERING"               => nil,
         "ANSIBLE_CACHE_PLUGIN"            => nil,
         "ANSIBLE_CACHE_PLUGIN_CONNECTION" => nil,

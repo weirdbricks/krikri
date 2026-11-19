@@ -47,6 +47,10 @@ the normalized transcript to `expected.out`. Capture rules:
   -u ANSIBLE_CACHE_PLUGIN_CONNECTION` and `ANSIBLE_NOCOLOR=1`, always - this
   box's `ANSIBLE_GATHERING`/fact-cache env would otherwise change both the
   task list and the facts.
+- `PATH` is pinned to the standard system directories, always - a module that
+  fails `get_bin_path` names every directory it searched, so the developer
+  shell's PATH (this box's carries a random AppImage mount point) would make
+  the recording differ from every replay.
 - The transcript is **stdout followed by stderr**, captured to separate files
   and concatenated. A `2>&1` capture is not reproducible: python's stdout is
   block-buffered when redirected, so real ansible's stderr lands in one block

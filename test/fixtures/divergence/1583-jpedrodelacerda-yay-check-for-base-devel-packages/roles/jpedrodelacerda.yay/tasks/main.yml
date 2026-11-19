@@ -1,0 +1,14 @@
+---
+# The role's two pacman tasks, verbatim except for a dropped `become: yes`
+# (see NOTES.md: the round's testhost was root, a localhost capture cannot
+# sudo, and the probe does not need it). Nothing below the first task runs in
+# real ansible - its fatal ends the play.
+- name: Check for base-devel packages
+  pacman:
+    name: base-devel
+    state: present
+
+- name: Check for git package
+  pacman:
+    name: git
+    state: present

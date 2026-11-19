@@ -855,6 +855,17 @@ because anyone intends to fix them.
   quadlet unit-file generation (real drives `podman`/writes `/etc/containers/systemd/*.container`).
   The plugin answers a plain ok there, so on a host WITH podman krikri reports ok where real reports
   the real work's changed/ok - revisit if a round lands on a podman-present host.
+- `community.general.pacman` (issue #1583) - ported surface: the AnsibleModule argument validation
+  (community.general 12.x setup_module spec, required_one_of, mutually_exclusive) and the
+  `get_bin_path(executable, required=True)` probe Pacman.__init__ runs before ANY package work,
+  check mode included - so a host without pacman fatals the task with real's
+  `Failed to find required executable "pacman" in paths: ...` (jpedrodelacerda.yay on Ubuntu used to
+  get the graceful skip + engine-limit exit 4 there, which let the play run on past the point real
+  stopped). Everything AFTER a successful probe is deliberately unported: the package inventory and
+  install/remove/upgrade/update_cache work (real drives `pacman --print-format` against a real Arch
+  package database). The plugin answers a plain ok there, so on an Arch host krikri reports ok where
+  real reports the real work's changed/ok - out of scope with apt/dnf/yum backends, this engine
+  targets Ubuntu and RHEL-family hosts.
 - `meta:` - every action in Ansible's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,
   `reset_connection`), each matched to Ansible's observed behavior. Non-obvious ones: `end_play` and
