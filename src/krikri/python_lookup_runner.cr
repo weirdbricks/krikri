@@ -2,6 +2,11 @@ require "json"
 require "./bigint_json"
 require "./spawn_error"
 require "./controller_python"
+# run_wrapper funnels the load's controller-context deprecations through
+# ResultDisplay.emit_core_deprecation (run-wide dedup plus the one-time
+# "deprecation_warnings=False" hint) - a leaf-file require, so a compile
+# that pulls only this file still defines the constant.
+require "./task_executor/result_display"
 
 # Runner for role-local custom LOOKUP plugins - a role's own
 # `lookup_plugins/*.py` (and the playbook-adjacent `lookup_plugins/`),
@@ -270,6 +275,12 @@ module Krikri
       # than Int64 made plain JSON.parse raise "Invalid Int64".
       parsed = (Krikri::BigJson.parse(captured[:stdout]) rescue nil)
       return nil unless parsed && parsed.as_h?
+      # The load's controller-context deprecations (see
+      # ControllerPython#stderr_deprecations) are on stderr only, so print
+      # them here - real shows them at the load, before the result.
+      ControllerPython.stderr_deprecations(captured).each do |text|
+        ResultDisplay.emit_core_deprecation(text)
+      end
       parsed
     end
 

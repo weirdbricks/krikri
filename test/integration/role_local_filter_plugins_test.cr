@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "file_utils"
+require "socket"
 require "../../src/krikri/python_filter_runner"
 require "../../src/krikri/python_test_runner"
 
@@ -1168,6 +1169,131 @@ describe "role-local filter_plugins import deprecation display (issue #1180)" do
       text_idx = output.index(to_text_text)
       flunk("expected Skipping plugin -> hint -> to_bytes -> to_text within:\n#{output}") unless skip_idx && hint_idx && bytes_idx && text_idx &&
                                                                                                  skip_idx < hint_idx && hint_idx < bytes_idx && bytes_idx < text_idx
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+end
+
+# f500.php7_dev's filter_plugins/prefix.py (issue #1565) imports
+# `ansible.errors` BEFORE the deprecated `_text` name, so the import runs
+# in ansible's controller context: real displays that deprecation through
+# Display straight to stderr at the import, never through the
+# `_global_deprecations` buffer the wrapper's response replays.
+describe "role-local filter_plugins import deprecation in controller context (issue #1565)" do
+  it "prints a deprecation fired after the plugin imported ansible.errors" do
+    root = File.tempname("filter-controller-context-deprecation")
+    begin
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "filter_plugins", "prefix.py"), <<-PYTHON)
+        from ansible import errors
+        from ansible.module_utils._text import to_text
+
+
+        def prefix(value, prefix):
+            try:
+                return prefix + value
+            except TypeError:
+                raise errors.AnsibleFilterError('This filter only works on a string, offending value: ' + to_text(value))
+
+
+        class FilterModule(object):
+            def filters(self):
+                return {'prefix': prefix}
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: map the role's filter over a list
+          ansible.builtin.debug:
+            msg: "{{ ['json'] | map('prefix', 'php-') | list }}"
+        YAML
+
+      status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+
+      status.success?.must_equal(true, output)
+      output.must_include("php-json", output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+end
+
+# Batching only engages off the local connection, so this ordering case
+# needs a real sshd (it skips without one; the throwaway server
+# task_timeout_ssh_loop_test.cr's header documents works, override
+# KRIKRI_TEST_SSHD_HOST/PORT/USER/KEY to point elsewhere).
+private FILTER_SSHD_HOST = ENV["KRIKRI_TEST_SSHD_HOST"]? || "127.0.0.1"
+private FILTER_SSHD_PORT = (ENV["KRIKRI_TEST_SSHD_PORT"]? || "2224").to_i
+private FILTER_SSHD_USER = ENV["KRIKRI_TEST_SSHD_USER"]? || "root"
+private FILTER_SSHD_KEY  = ENV["KRIKRI_TEST_SSHD_KEY"]? || "/tmp/kkt-key"
+
+private def filter_sshd_reachable? : Bool
+  return false unless File.exists?(FILTER_SSHD_KEY)
+  TCPSocket.new(FILTER_SSHD_HOST, FILTER_SSHD_PORT, connect_timeout: 1).close
+  true
+rescue
+  false
+end
+
+# Batch-build renders later members' args up front, so the filter plugin's
+# import deprecation used to print ahead of every member that runs (issue
+# #1565, f500.php7_dev over SSH). Real shows it at the task whose
+# templating resolves the filter, after the earlier member's own block.
+describe "batch-built filter_plugins import deprecation (issue #1565)" do
+  it "prints at the member that resolves the filter, after an earlier member's block" do
+    skip "no reachable test sshd (see this file's header for the throwaway setup)" unless filter_sshd_reachable?
+
+    root = File.tempname("filter-batch-import-deprecation")
+    begin
+      Dir.mkdir_p(File.join(root, "filter_plugins"))
+      File.write(File.join(root, "filter_plugins", "prefix.py"), <<-PYTHON)
+        from ansible import errors
+        from ansible.module_utils._text import to_text
+
+
+        def prefix(value, prefix):
+            try:
+                return prefix + value
+            except TypeError:
+                raise errors.AnsibleFilterError('This filter only works on a string, offending value: ' + to_text(value))
+
+
+        class FilterModule(object):
+            def filters(self):
+                return {'prefix': prefix}
+        PYTHON
+      inventory = File.join(root, "inv.ini")
+      File.write(inventory, "[target]\ntarget ansible_connection=ssh ansible_host=#{FILTER_SSHD_HOST} " \
+                            "ansible_user=#{FILTER_SSHD_USER} ansible_port=#{FILTER_SSHD_PORT} " \
+                            "ansible_ssh_private_key_file=#{FILTER_SSHD_KEY} " \
+                            "ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null " \
+                            "-o IdentitiesOnly=yes -o ConnectTimeout=5'\n")
+      File.write(File.join(root, "pb.yml"), <<-YAML)
+        - hosts: target
+          gather_facts: true
+          tasks:
+            - name: reads a top-level fact
+              ansible.builtin.command: echo "{{ ansible_os_family }}"
+            - name: uses the custom filter
+              ansible.builtin.command: echo "{{ ['a'] | map('prefix', 'php-') | list }}"
+        YAML
+
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
+      status = Process.run(BINARY, ["-i", inventory, "pb.yml"], output: stdout, error: stderr, chdir: root)
+      output = stderr.to_s
+
+      status.success?.must_equal(true, output)
+      fact_idx = output.index("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS")
+      filter_idx = output.index("[DEPRECATION WARNING]: Importing 'to_text'")
+      flunk("expected the fact block before the filter import's block within:\n#{output}") unless fact_idx && filter_idx && fact_idx < filter_idx
     ensure
       FileUtils.rm_rf(root) if root
     end

@@ -156,6 +156,27 @@ module Krikri
       end
     end
 
+    # The `[DEPRECATION WARNING]` texts a wrapper printed on stderr, without
+    # the prefix. ansible-core 2.21 displays a module_utils deprecation
+    # immediately through Display once anything from the controller package
+    # has flipped `_internal.is_controller` (a plugin's own
+    # `from ansible import errors` does that mid-import), so the line never
+    # reaches the `_global_deprecations` buffer the plugin wrappers replay
+    # from their response - the wrapper's stderr is the only place it
+    # appears (issue #1565).
+    def stderr_deprecations(captured : Captured) : Array(String)
+      marker = "[DEPRECATION WARNING]: "
+      captured[:stderr].each_line.compact_map do |raw|
+        # A forced-color run wraps Display's line in SGR escapes, so find
+        # the marker instead of requiring it at column 0, and drop the
+        # trailing reset - the replay colorizes the text itself.
+        line = raw.chomp
+        next unless index = line.index(marker)
+        text = line[(index + marker.size)..]
+        text.ends_with?("\e[0m") ? text[0...-4] : text
+      end.to_a
+    end
+
     private def probe(python : String) : Bool
       process = begin
         Process.new(python, ["-c", PROBE],
