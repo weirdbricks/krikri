@@ -1418,16 +1418,16 @@ module Krikri
       # spelling must NOT resolve: bare `ipaddr` is not a core filter,
       # and real ansible-core fails it ("Syntax error in template: No
       # filter named 'ipaddr'.") even with ansible.utils installed -
-      # bersace.dockerdns round, issue #335. Same treatment ipwrap gets
-      # (issue #134). The engine's own unknown-filter error flows into
-      # JinjaRenderer/template_action_plugin's "No filter named" wording,
-      # so no krikri-side gate is needed here.
+      # bersace.dockerdns round, issue #335. Same treatment ipwrap's bare
+      # spelling gets (issue #134). The engine's own unknown-filter error
+      # flows into JinjaRenderer/template_action_plugin's "No filter
+      # named" wording, so no krikri-side gate is needed here.
       KrikriJinja.register_default_json_filter("ansible.utils.ipaddr") do |value, args, _kwargs|
         IpAddrCore.ipaddr(value, ipaddr_query_text(args[0]?))
       end
 
-      # No bare spellings, no ipwrap: ansible.utils collection filters,
-      # rejected as unknown like ansible-core does - issue #134/#335.
+      # No bare spellings: ansible.utils collection filters, rejected as
+      # unknown like ansible-core does - issue #134/#335.
       KrikriJinja.register_default_json_filter("ansible.utils.ipv4") do |value, args, _kwargs|
         IpAddrCore.ipaddr(value, ipaddr_query_text(args[0]?), 4, "ipv4")
       end
@@ -1475,6 +1475,14 @@ module Krikri
       # the text the core parses (same treatment ip4_hex gets).
       KrikriJinja.register_default_json_filter("ansible.utils.nthhost") do |value, args, _kwargs|
         IpAddrCore.nthhost(value, ipaddr_query_text(args[0]?))
+      end
+
+      # Real resolves the FQCN against the installed ansible.utils
+      # collection (Anthony25.postfix's postfix_mynetworks maps its
+      # addresses through it, issue #1591); the bare `ipwrap` spelling
+      # stays unknown, exactly like ipaddr (#134).
+      KrikriJinja.register_default_json_filter("ansible.utils.ipwrap") do |value, args, _kwargs|
+        IpAddrCore.ipwrap(value, ipaddr_query_text(args[0]?))
       end
 
       KrikriJinja.register_default_json_filter("json_query") do |value, args, _kwargs|

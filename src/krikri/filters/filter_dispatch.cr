@@ -1640,12 +1640,12 @@ module Krikri
           # "skipped") that would recur in any role using this common
           # required-facts guard pattern.
           JSON::Any.new(FilterCore.difference(FilterCore.to_set_items(value), FilterCore.to_set_items(resolve_expression(filter_args))))
-          # ipwrap is not in this when-list, and neither is any BARE
-          # ansible.utils name: both are ansible.utils collection filters,
-          # not core, so they fall through to krikri's unknown-filter
-          # failure like ansible-core does (issues #134 and #335 -
-          # bersace.dockerdns rounds run bare `ipaddr`/`ipaddr(1)`, the
-          # exact shapes real fails at template compile or finalization).
+          # No BARE ansible.utils name is in this when-list: they are
+          # ansible.utils collection filters, not core, so they fall
+          # through to krikri's unknown-filter failure like ansible-core
+          # does (issues #134 and #335 - bersace.dockerdns rounds run bare
+          # `ipaddr`/`ipaddr(1)`, the exact shapes real fails at template
+          # compile or finalization).
           # Only the FQCN spellings dispatch here: real resolves
           # `| ansible.utils.ipaddr` against the installed collection
           # (live-verified), including integer queries (`ipaddr(1)`).
@@ -1653,7 +1653,7 @@ module Krikri
              "ansible.utils.ipsubnet", "ansible.utils.ipmath",
              "ansible.utils.next_nth_usable", "ansible.utils.previous_nth_usable",
              "ansible.utils.network_in_network", "ansible.utils.network_in_usable",
-             "ansible.utils.ip4_hex", "ansible.utils.nthhost"
+             "ansible.utils.ip4_hex", "ansible.utils.nthhost", "ansible.utils.ipwrap"
           # ansible.utils ipaddr family - shared core in ipaddr_core.cr,
           # mirrored against ansible-core 2.19.4 + ansible.utils +
           # netaddr 1.3.0 (every query probed live). Also registered on
@@ -1693,6 +1693,8 @@ module Krikri
             # both work live); the core parses it and returns FALSE for
             # empty/non-integer instead of erroring
             IpAddrCore.nthhost(value, resolved_query_arg(args[0]?))
+          when "ipwrap"
+            IpAddrCore.ipwrap(value, resolved_query_arg(args[0]?))
           else
             raise UnknownFilterError.new("No filter named '#{filter_name}'.")
           end

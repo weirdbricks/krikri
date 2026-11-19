@@ -161,8 +161,40 @@ describe Krikri::IpAddrCore do
     end
   end
 
-  # (No ipwrap tests: the filter is not implemented at all - it is an
-  # ansible.utils filter, not core, and is rejected as unknown, #134.)
+  # ---- ipwrap (ansible.utils, FQCN only) ----
+
+  it "wraps IPv6 addresses and networks in brackets" do
+    Krikri::IpAddrCore.ipwrap(j("::1")).must_equal(j("[::1]"))
+    Krikri::IpAddrCore.ipwrap(j("::1/128")).must_equal(j("[::1]/128"))
+    # netaddr keeps the dotted quad inside the ::ffff:: prefix here
+    Krikri::IpAddrCore.ipwrap(j("::ffff:127.0.0.0/104")).must_equal(j("[::ffff:127.0.0.0]/104"))
+    Krikri::IpAddrCore.ipwrap(j("2001:db8::1/64")).must_equal(j("[2001:db8::1]/64"))
+  end
+
+  it "leaves IPv4 addresses, hostnames, and empty values untouched" do
+    ["127.0.0.1", "127.0.0.0/8", "not-an-ip", ""].each do |value|
+      Krikri::IpAddrCore.ipwrap(j(value)).must_equal(j(value))
+    end
+    Krikri::IpAddrCore.ipwrap(JSON::Any.new(true)).must_equal(JSON::Any.new(true))
+  end
+
+  it "wraps each element of a list, keeping the rest verbatim" do
+    # Anthony25.postfix's own postfix_mynetworks join (issue #1591),
+    # live-verified against ansible-playbook 2.21.6 + ansible.utils 6.0.0.
+    list = JSON.parse(%q(["127.0.0.0/8", "::ffff:127.0.0.0/104", "::1/128", "10.0.0.5", "::1", "not-an-ip"]))
+    Krikri::IpAddrCore.ipwrap(list).as_a.map(&.as_s).must_equal(
+      ["127.0.0.0/8", "[::ffff:127.0.0.0]/104", "[::1]/128", "10.0.0.5", "[::1]", "not-an-ip"]
+    )
+  end
+
+  it "rejects operand types the collection's wrapper rejects" do
+    assert_raises_message(Krikri::IpAddrCore::IpError, "Unrecognized type <<class 'int'>> for ipwrap filter <value>") do
+      Krikri::IpAddrCore.ipwrap(jv(1_i64))
+    end
+    assert_raises_message(Krikri::IpAddrCore::IpError, "Unrecognized type <<class 'NoneType'>> for ipwrap filter <value>") do
+      Krikri::IpAddrCore.ipwrap(JSON::Any.new(nil))
+    end
+  end
 
   # ---- ipsubnet ----
 
@@ -272,6 +304,18 @@ describe Krikri::IpAddrCore do
       Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError, "No filter named 'ipaddr'."
     ) do
       engine.apply(j("192.168.0.1/24"), "ipaddr('network')")
+    end
+  end
+
+  it "wraps IPv6 values through FilterEngine under the FQCN only" do
+    engine = Krikri::VariableSubstitutor::FilterEngine.new
+    engine.apply(j("::1"), "ansible.utils.ipwrap").must_equal(j("[::1]"))
+    engine.apply(JSON.parse(%q(["::1/128", "10.0.0.5"])), "ansible.utils.ipwrap")
+      .as_a.map(&.as_s).must_equal(["[::1]/128", "10.0.0.5"])
+    assert_raises_message(
+      Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError, "No filter named 'ipwrap'."
+    ) do
+      engine.apply(j("::1"), "ipwrap")
     end
   end
 

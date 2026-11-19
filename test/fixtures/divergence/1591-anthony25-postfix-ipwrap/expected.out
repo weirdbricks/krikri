@@ -1,0 +1,13 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Create the scratch output directory] *************************************
+changed: [localhost]
+
+TASK [Generate Postfix configuration] ******************************************
+changed: [localhost] => (item=main.cf)
+changed: [localhost] => (item=master.cf)
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

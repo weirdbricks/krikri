@@ -1,0 +1,593 @@
+---
+# Default variables
+# =================
+
+# .. contents:: Sections
+#    :local:
+#
+# ---------------------------------
+#   General Postfix configuration
+# ---------------------------------
+
+# Configuration options for Postfix. Many options are configured automatically
+# using templates, here you can (mostly) add your own entries to Postfix lists
+# (look in the Postfix manual for details), they will by added or replaced in
+# the templates.
+
+
+# .. envvar:: postfix
+#
+# List of active Postfix capabilities. By default Postfix is configured with
+# local mail disabled, all mail is sent to a local MX server configured in DNS.
+# See :ref:`postfix_capabilities` for more details.
+postfix: [ 'null' ]
+
+
+# .. envvar:: postfix_capabilities
+#
+# List of active Postfix capabilities. By default Postfix is configured with
+# local mail disabled, all mail is sent to a local MX server configured in DNS.
+# See :ref:`postfix_capabilities` for more details.
+postfix_capabilities: '{{ postfix | d([], true) }}'
+
+
+# .. envvar:: postfix_packages
+#
+# List of additional Postfix packages.
+postfix_packages: []
+
+
+# .. envvar:: postfix_purge_packages
+#
+# Remove packages and configuration of other SMTP servers.
+postfix_purge_packages: [ 'exim4-base', 'exim4-config',
+                          'exim4-daemon-light', 'nullmailer' ]
+
+
+# .. envvar:: postfix_relayhost
+#
+# Address of a mail host where this host should relay all mail to instead of
+# delivering them directly. (Automatic configuration).
+postfix_relayhost: False
+
+
+# .. envvar:: postfix_mailname
+#
+# Mail host name as configured in :file:`/etc/mailname`.
+postfix_mailname: '{{ ansible_fqdn }}'
+
+
+# .. envvar:: postfix_mydomain
+#
+# Domain name to use for outgoing mail messages.
+postfix_mydomain: '{{ ansible_domain }}'
+
+
+# .. envvar:: postfix_smtpd_banner
+#
+# Default SMTP server greeting string.
+postfix_smtpd_banner: '$myhostname ESMTP'
+
+
+# .. envvar:: postfix_delay_warning_time
+#
+# How long to wait before notifying users about delivery problems.
+postfix_delay_warning_time: '4h'
+
+
+# .. envvar:: postfix_relay_domains
+#
+# List of relay domains this host accepts.
+postfix_relay_domains: []
+
+
+# .. envvar:: postfix_inet_interfaces
+#
+# On what interfaces Postfix should listen to by default (not a list).
+# (Automatic configuration)
+postfix_inet_interfaces: False
+
+
+# .. envvar:: postfix_mydestination
+#
+# List of local domains accepted by Postfix. (Automatic configuration)
+postfix_mydestination: []
+
+
+# .. envvar:: postfix_mynetworks
+#
+# List of networks Postfix accepts by default. (localhost is always enabled)
+postfix_mynetworks: []
+
+
+# .. envvar:: postfix_transport_maps
+#
+# List of Postfix transport maps. (Automatic configuration)
+postfix_transport_maps: []
+
+
+# .. envvar:: postfix_virtual_alias_maps
+#
+# List of Postfix virtual alias maps. (Automatic configuration)
+postfix_virtual_alias_maps: []
+
+
+# .. envvar:: postfix_message_size_limit
+#
+# Message size limit in megabytes
+postfix_message_size_limit: 50
+
+
+# ---------------------------
+#   PKI / TLS configuration
+# ---------------------------
+
+# .. envvar:: postfix_pki
+#
+# Enable or disable support for TLS in Postfix (using ``debops.pki``).
+postfix_pki: '{{ (True
+                  if (ansible_local|d() and ansible_local.pki|d() and
+                      ansible_local.pki.enabled|d() | bool)
+                  else False) | bool }}'
+
+
+# .. envvar:: postfix_pki_path
+#
+# Base PKI directory.
+postfix_pki_path: '{% if (ansible_local is defined and ansible_local.pki is defined) %}{{ ansible_local.pki.base_path }}{% else %}/etc/pki{% endif %}'
+
+
+# .. envvar:: postfix_pki_realm
+#
+# Default PKI realm used by Postfix.
+postfix_pki_realm: '{% if (ansible_local is defined and ansible_local.pki is defined) %}{{ ansible_local.pki.realm }}{% else %}system{% endif %}'
+
+
+# .. envvar:: postfix_pki_crt
+#
+# Default certificate, relative to ``postfix_pki_realm`` variable.
+postfix_pki_crt: 'default.crt'
+
+
+# .. envvar:: postfix_pki_key
+#
+# Default private key, relative to ``postfix_pki_realm`` variable.
+postfix_pki_key: 'default.key'
+
+
+# -----------------------------
+#   Diffie-Hellman parameters
+# -----------------------------
+
+# .. envvar:: postfix_smtpd_tls_dhparam_set
+#
+# Name of the Diffie-Hellman parameter set to use in Postfix configuration. See
+# ``debops.dhparam`` role for more details.
+postfix_smtpd_tls_dhparam_set: 'default'
+
+
+# .. envvar:: postfix_smtpd_tls_dh1024_param_file
+#
+# Absolute path to Diffie-Hellman parameters file which should be used for
+# non-export grade connections.
+postfix_smtpd_tls_dh1024_param_file: '{{ (ansible_local.dhparam[postfix_smtpd_tls_dhparam_set]
+                                          if (ansible_local|d() and ansible_local.dhparam|d() and
+                                              ansible_local.dhparam[postfix_smtpd_tls_dhparam_set]|d())
+                                          else "") }}'
+
+
+# .. envvar:: postfix_smtpd_tls_dh512_param_file
+#
+# Absolute path to Diffie-Hellman parameters file which should be used for
+# export grade connections.
+postfix_smtpd_tls_dh512_param_file: '{{ (ansible_local.dhparam[postfix_smtpd_tls_dhparam_set]
+                                         if (ansible_local|d() and ansible_local.dhparam|d() and
+                                             ansible_local.dhparam[postfix_smtpd_tls_dhparam_set]|d())
+                                         else "") }}'
+
+
+# --------------------------
+#   Firewall configuration
+# --------------------------
+
+# If ``network`` and any of needed Postfix capabilities are
+# enabled, all hosts can send mail to this Postfix instance. You can limit
+# access to specific hosts or networks using ``postfix_allow_*`` variables.
+
+# .. envvar:: postfix_allow_smtp
+#
+# List of hosts/networks that can access the ``smtp`` port (25).
+postfix_allow_smtp: []
+
+
+# .. envvar:: postfix_allow_submission
+#
+# List of hosts/networks that can access the ``submission`` port (587).
+postfix_allow_submission: []
+
+
+# .. envvar:: postfix_allow_smtps
+#
+# List of hosts/networks that can access the ``smtps`` port (465), deprecated.
+postfix_allow_smtps: []
+
+
+# -------------------------------
+#   Postfix SMTP client options
+# -------------------------------
+
+# .. envvar:: postfix_smtp_sasl_password_map_per_host
+#
+# Enable or disable the use of separate per-host passwords in the default smtp
+# password map.
+postfix_smtp_sasl_password_map_per_host: True
+
+
+# .. envvar:: postfix_smtp_sasl_password_map
+#
+# Map of SMTP SASL passwords used in SMTP client authentication by Postfix.
+# You need to add ``client`` in Postfix capabilities to enable this feature.
+# See :ref:`postfix_smtp_sasl_password_map` for more details.
+postfix_smtp_sasl_password_map: {}
+
+
+# .. envvar:: postfix_sender_dependent_relayhost_map
+#
+# Map of sender dependent relayhosts used in SMTP client mail relay by Postfix.
+# You need to add ``client`` and ``sender_dependent`` in Postfix capabilities to
+# enable this feature.
+#
+# Example::
+#
+#   postfix_sender_dependent_relayhost_map:
+#     '<sender-address>': '<relay-host>'
+#     'user@example.org': '[smtp.example.org]:submission'
+#
+postfix_sender_dependent_relayhost_map: {}
+
+
+# ------------------------
+#   Mail archive options
+# ------------------------
+
+# Archiving is enabled by the ``archive`` option in Postfix capabilities.
+# Remember that an archive account on the receiving server needs to exist.
+
+
+# .. envvar:: postfix_archive_method
+#
+# How Postfix should redistribute archived messages:
+#
+# - ``all``:            Send all mail without sorting.
+#
+# - ``domain``:         Send mail sorted by domain.
+#
+# - ``domain-account``: Send mail sorted by domain and account, divided by separator.
+#
+postfix_archive_method: 'all'
+
+
+# .. envvar:: postfix_archive_to
+#
+# Optional address of a mail account to send the archived mails to. If not
+# specified, Ansible will generate an address by itself of the format:
+#
+# - ``<postfix_archive_account>@<ansible_fqdn>`` (if local mail is enabled)
+#
+# - ``<postfix_archive_account>@<postfix_archive_subdomain>.<ansible_domain>`` (if local mail is disabled).
+#
+postfix_archive_to: ''
+
+
+# .. envvar:: postfix_archive_account
+#
+# Mail account to send archived mail to (used by Ansible to generate archive address).
+postfix_archive_account: 'mail-archive'
+
+
+# .. envvar:: postfix_archive_subdomain
+#
+# Subdomain part of a domain used to generate archive address, if ``local`` mail
+# is not enabled in Postfix capabilities (dot at the end is required).
+postfix_archive_subdomain: 'archive.'
+
+
+# .. envvar:: postfix_archive_separator
+#
+# Character used to separate domain and account part in sorted archive mails.
+# If you use virtual mail delivery, you can sort mail into subdirectories by
+# setting separator as '/' (does not work on local mail delivery).
+postfix_archive_separator: '='
+
+
+# .. envvar:: postfix_archive_domains
+#
+# List of domains to archive. If it's empty, everything is archived.
+postfix_archive_domains: []
+
+
+# ---------------------------
+#   Anti-spam configuration
+# ---------------------------
+
+# .. envvar:: postfix_postscreen_dnsbl_sites
+#
+# List of DNS Blacklists enabled in ``postscreen`` service. Disabled by
+# default. To enable blacklists, you need to add ``dnsbl`` in Postfix
+# capabilities.
+postfix_postscreen_dnsbl_sites:
+
+  # Spamhaus ZEN: https://www.spamhaus.org/zen/
+  # Might require registration.
+  - 'zen.spamhaus.org*3'
+
+  # Barracuda Reputation Block List: http://barracudacentral.org/rbl
+  # Requires registration.
+  #- 'b.barracudacentral.org*2'
+
+  # Spam Eating Monkey: http://spameatingmonkey.com/lists.html
+  # Might require registration.
+  - 'bl.spameatingmonkey.net*2'
+  - 'backscatter.spameatingmonkey.net*2'
+
+  # SpamCop Blocking List: https://www.spamcop.net/bl.shtml
+  - 'bl.spamcop.net'
+
+  # Passive Spam Block List: http://psbl.org/
+  - 'psbl.surriel.com'
+
+  # mailspike: http://mailspike.net/usage.html
+  # Might require contact.
+  - 'bl.mailspike.net'
+
+
+# .. envvar:: postfix_postscreen_dnswl_sites
+#
+# List of DNS Whitelists enabled in ``postscreen`` service. Disabled by
+# default. To enable whitelists, you need to add ``dnswl`` in Postfix
+# capabilities.
+postfix_postscreen_dnswl_sites:
+
+  # SpamHaus Whitelist: http://www.spamhauswhitelist.com/en/usage.html
+  # Might require registration.
+  - 'swl.spamhaus.org*-4'
+
+  # DNS Whitelist: https://dnswl.org/tech
+  # Might require registration.
+  - 'list.dnswl.org=127.[0..255].[0..255].0*-2'
+  - 'list.dnswl.org=127.[0..255].[0..255].1*-3'
+  - 'list.dnswl.org=127.[0..255].[0..255].[2..255]*-4'
+
+
+# ---------------------------
+#   SASL Auth configuration
+# ---------------------------
+
+# .. envvar:: postfix_smtpd_sasl_type
+#
+# The SASL plug-in type that the Postfix SMTP server should use for
+# authentication (currently supported: ``cyrus`` and ``dovecot``).
+postfix_smtpd_sasl_type: 'cyrus'
+
+
+# .. envvar:: postfix_smtpd_conf:
+#
+# Configuration for Cyrus and Dovecot SASL authentication plugin, in text block
+# format.  See `Postfix SASL README <http://www.postfix.org/SASL_README.html>`_
+# for more details.
+postfix_smtpd_conf: |
+  pwcheck_method: saslauthd
+  mech_list: PLAIN LOGIN
+
+
+# .. envvar:: postfix_saslauthd_mechanisms
+#
+# Configuration parameters passed to the :program:`saslauthd` daemon. Which
+# authentication mechanisms should saslauthd use. See :manpage:`saslauthd(8)`
+# for more details.
+postfix_saslauthd_mechanisms: 'pam'
+
+
+# .. envvar:: postfix_saslauthd_options
+#
+# Configuration parameters passed to the :program:`saslauthd` daemon. Path to
+# the UNIX socket is added automatically. See :manpage:`saslauthd(8)` for more
+# details.
+postfix_saslauthd_options: '-c'
+
+
+# ------------------------------
+#   Postfix SMTPD restrictions
+# ------------------------------
+
+# ``debops.postfix`` creates a base set of various smtpd restrictions by
+# itself, to protect the SMTP server against spam. However this functionality
+# is currently basic. Using the lists below you can define your own set of
+# smtpd restrictions, which will override anything generated automatically by
+# the role.
+
+# .. envvar:: postfix_smtpd_client_restrictions
+#
+# Client restrictions, processed at the connection stage.
+postfix_smtpd_client_restrictions: []
+
+
+# .. envvar:: postfix_smtpd_helo_restrictions
+#
+# Hello restrictions, processed at HELO/EHLO stage.
+postfix_smtpd_helo_restrictions: []
+
+
+# .. envvar:: postfix_smtpd_sender_restrictions
+#
+# Sender restrictions, processed at MAIL FROM stage.
+postfix_smtpd_sender_restrictions: []
+
+
+# .. envvar:: postfix_smtpd_relay_restrictions
+#
+# Relay restrictions (currently not supported in the role).
+postfix_smtpd_relay_restrictions: []
+
+
+# .. envvar:: postfix_smtpd_recipient_restrictions
+#
+# Recipient restrictions, processed at RCPT TO stage.
+postfix_smtpd_recipient_restrictions: []
+
+
+# .. envvar:: postfix_smtpd_data_restrictions
+#
+# Data restrictions, processed at DATA stage.
+postfix_smtpd_data_restrictions: []
+
+
+# ----------------
+#   Mail aliases
+# ----------------
+
+# The Postfix role automatically manages the :file:`/etc/aliases` file with a
+# set of default aliases redirected to ``root`` and ``staff`` accounts.
+
+
+# .. envvar:: postfix_default_local_alias_recipients
+#
+# List of default recipients for local aliases which have no recipients
+# specified, by default current $USER managing Ansible
+postfix_default_local_alias_recipients: ['{{ lookup("env","USER") }}']
+
+
+# .. envvar:: postfix_local_aliases
+#
+# Hash of local aliases which will be merged with default aliases in
+# vars/main.yml.
+#
+# Examples::
+#
+#   postfix_local_aliases:
+#     'alias': [ 'account1', 'account2' ]
+#     'other': [ 'user@email', '"|/dir/command"' ]
+#     'blackhole': [ '/dev/null' ]
+#     'send_to_default_recipients': []
+#
+postfix_local_aliases: {}
+
+
+# --------------------------------
+#   Postfix custom configuration
+# --------------------------------
+
+# .. envvar:: postfix_local_maincf
+#
+# Custom Postfix configuration added at the end of :file:`/etc/postfix/main.cf`
+# in a text block format
+postfix_local_maincf: False
+
+
+# .. envvar:: postfix_local_mastercf
+#
+# Custom Postfix configuration added at the end of :file:`/etc/postfix/master.cf`
+# in a text block format
+postfix_local_mastercf: False
+
+
+# .. envvar:: postfix_dependent_lists
+#
+# This variable can be used in Postfix dependency role definition to configure
+# additional lists used in Postfix main.cf configuration file. This variable
+# will be saved in Ansible facts and updated when necessary.
+# See :ref:`postfix_dependent_lists` for more information.
+postfix_dependent_lists: {}
+
+
+# .. envvar:: postfix_dependent_maincf
+#
+# Here you can specify Postfix configuration options which should be enabled in
+# :file:`/etc/postfix/main.cf` using debops.postfix dependency role definition.
+# Configuration will be saved in Ansible facts and updated when necessary.
+# See :ref:`postfix_dependent_maincf` for more information.
+postfix_dependent_maincf: []
+
+
+# .. envvar:: postfix_dependent_mastercf
+#
+# This list can be used to configure services in Postfix master.cf using
+# Postfix dependency variables. Configured services will be saved in Ansible
+# facts and updated when necessary.
+# See :ref:`postfix_dependent_mastercf` for more information.
+postfix_dependent_mastercf: []
+
+
+# --------------------------
+#   Mail service debugging
+# --------------------------
+
+# .. envvar:: postfix_smtpd_authorized_xclient_hosts
+#
+# List of clients and networks which will have access to ``XCLIENT`` protocol
+# extension when ``test`` Postfix capability is enabled.
+postfix_smtpd_authorized_xclient_hosts: [ '127.0.0.1/32' ]
+
+
+# ----------------------------------
+#   External service configuration
+# ----------------------------------
+
+# .. envvar:: postfix_dependencies
+#
+# Enable or disable Ansible role dependencies used by Postfix role.
+postfix_dependencies: True
+
+
+# .. envvar:: postfix_ferm_weight
+#
+# Determines the order of the files in the configuration directory, and order
+# of the firewall rules.
+postfix_ferm_weight: '40'
+
+
+# .. envvar:: postfix_ferm_dependent_rules
+#
+# Configuration of the firewall rules managed by ``debops.ferm`` role.
+postfix_ferm_dependent_rules:
+
+  - type: 'accept'
+    weight: '{{ postfix_ferm_weight }}'
+    role: 'postfix'
+    name: 'smtp'
+    dport: [ 'smtp' ]
+    saddr: '{{ postfix_allow_smtp }}'
+    accept_any: True
+    when: '{{ ("network" in postfix_capabilities and
+               ("mx" in postfix_capabilities or
+                "submission" in postfix_capabilities)) | bool }}'
+    delete: '{{ ("network" not in postfix_capabilities or
+                 ("mx" not in postfix_capabilities and
+                  "submission" not in postfix_capabilities)) | bool }}'
+
+  - type: 'accept'
+    weight: '{{ postfix_ferm_weight }}'
+    role: 'postfix'
+    name: 'smtps'
+    dport: [ 'smtps' ]
+    saddr: '{{ postfix_allow_smtps }}'
+    accept_any: True
+    when: '{{ ("network" in postfix_capabilities and
+               "submission" in postfix_capabilities and
+               "deprecated" in postfix_capabilities) | bool }}'
+    delete: '{{ ("network" not in postfix_capabilities or
+                 ("submission" not in postfix_capabilities or
+                  "deprecated" not in postfix_capabilities)) | bool }}'
+
+  - type: 'accept'
+    weight: '{{ postfix_ferm_weight }}'
+    role: 'postfix'
+    name: 'submission'
+    dport: [ 'submission' ]
+    saddr: '{{ postfix_allow_submission }}'
+    accept_any: True
+    when: '{{ ("network" in postfix_capabilities and
+               "submission" in postfix_capabilities) | bool }}'
+    delete: '{{ ("network" not in postfix_capabilities or
+                 "submission" not in postfix_capabilities) | bool }}'
+

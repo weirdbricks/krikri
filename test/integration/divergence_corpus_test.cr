@@ -47,6 +47,7 @@ private DIVERGENCE_CASES = [
   {issue: 1588, slug: "elk-backup-elasticsearch-plugin"},
   {issue: 1587, slug: "rooland-provisioning-atom-editor-install-atom-editor"},
   {issue: 1592, slug: "aplyca-deployab-ec2-elb-facts"},
+  {issue: 1591, slug: "anthony25-postfix-ipwrap"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -198,6 +199,11 @@ describe "divergence corpus" do
 
   it "replays 1592-aplyca-deployab-ec2-elb-facts" do
     expected, actual, report = divergence_transcripts(1592, "aplyca-deployab-ec2-elb-facts")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1591-anthony25-postfix-ipwrap" do
+    expected, actual, report = divergence_transcripts(1591, "anthony25-postfix-ipwrap")
     assert_equal(expected, actual, report)
   end
 end
