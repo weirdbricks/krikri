@@ -1,0 +1,29 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [jedimt.customize_vms : Wait for SSH] *************************************
+[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: object of type 'HostVarsVars' has no attribute 'skip_vm_check'
+
+Task failed.
+Origin: <WORK>/roles/jedimt.customize_vms/tasks/main.yml:5:3
+
+3
+4 # Wait for SSH to come online so we know the VMs are up
+5 - name: Wait for SSH
+    ^ column 3
+
+<<< caused by >>>
+
+A 'when' expression failed: Error while evaluating conditional: object of type 'HostVarsVars' has no attribute 'skip_vm_check'
+Origin: <WORK>/roles/jedimt.customize_vms/tasks/main.yml:6:9
+
+4 # Wait for SSH to come online so we know the VMs are up
+5 - name: Wait for SSH
+6   when: not hostvars['localhost']['skip_vm_check']
+          ^ column 9
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Error while evaluating conditional: object of type 'HostVarsVars' has no attribute 'skip_vm_check'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

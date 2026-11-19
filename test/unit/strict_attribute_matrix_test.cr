@@ -158,6 +158,20 @@ describe "strict missing-attribute matrix (ansible-core 2.19 semantics)" do
     error.message.must_equal("object of type 'HostVarsVars' has no attribute 'redis_role'")
   end
 
+  # Issue #1595 (jedimt.customize_vms, live-verified vs 2.21.6): a QUOTED
+  # bracket key must keep the same label in a compound `when:` - real
+  # Ansible names the HostVarsVars wrapper there too.
+  it "keeps the HostVarsVars label for quoted hostvars bracket keys in a when: condition" do
+    vars = matrix_vars_hash
+    vars["hostvars"] = JSON.parse(%({"localhost": {}}))
+
+    error = assert_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
+      Krikri::ConditionalEvaluator.evaluate(
+        "not hostvars['localhost']['skip_vm_check']", vars, raise_undefined: true)
+    end
+    error.message.must_equal("object of type 'HostVarsVars' has no attribute 'skip_vm_check'")
+  end
+
   # Issue 353 (pinkeen.intnet, live-verified vs 2.19.11): a bracket
   # subscript KEY is its own sub-expression - the chain inside the key
   # evaluates first and ITS miss is what gets reported (the HostVarsVars

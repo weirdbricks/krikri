@@ -692,10 +692,6 @@ range.
 These change no outcome and no recap. Listed so they aren't re-reported as bugs, not
 because anyone intends to fix them.
 
-- **A `hostvars[host].<missing>` attribute names the wrong type.** Ansible fails with
-  `object of type 'HostVarsVars' has no attribute 'x'`; krikri fails the same task (and
-  `is defined`/`default()` behave the same) but says `object of type 'dict'`, since each
-  host's vars reach the template engine as a plain dict.
 - **An erroring task NAME prints an inline marker instead of Ansible's warning.** When a task's
   `name:` itself fails to template (e.g. it reads an undefined `_latest_release.json`), Ansible emits
   `[WARNING]: Encountered 1 template error` and the task runs on; krikri runs it too but renders an
