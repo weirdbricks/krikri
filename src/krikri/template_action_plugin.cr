@@ -78,6 +78,14 @@ module Krikri
     # @render_error (crash_failure's #error_origin).
     @directive_error : String? = nil
 
+    # The lexer options this render parsed its template with, and the
+    # include files it actually loaded (see
+    # TemplateSearchPathLoader#resolved_templates). The fact-read probe
+    # re-parses the loaded includes to attribute their reads to this
+    # file's templating operation (issue #1603).
+    @render_lexer_options : KrikriJinja::LexerOptions? = nil
+    @loaded_template_files = [] of String
+
     # Raised for an invalid `#jinja2:` directive value - Ansible's
     # TemplateOverrides dataclass post-init validation (or ast.
     # literal_eval) dying inside the template ACTION plugin. The message
@@ -434,6 +442,7 @@ module Krikri
         trim_blocks: directive_overrides.fetch("trim_blocks", true?(@params["trim_blocks"]?, default: true)),
         lstrip_blocks: directive_overrides.fetch("lstrip_blocks", true?(@params["lstrip_blocks"]?, default: false))
       )
+      @render_lexer_options = options
 
       # Same deferred filter_plugins trigger as the bridge entries (see
       # PythonFilterRunner#scan_for_filter_use): a template-module .j2
@@ -459,8 +468,10 @@ module Krikri
       # #emit_template_deprecation_probes); the gate that emission walks
       # needs this render's own engine and scope up front (see
       # #prepare_frame_gate).
+      template_loader = build_template_loader(template_path)
+      @loaded_template_files = template_loader.try(&.resolved_templates) || [] of String
       engine = KrikriJinja.derive_engine(
-        build_template_loader(template_path), options,
+        template_loader, options,
         KrikriJinja.ansible_strict_undefined, JinjaHostContext.new(template_vars)
       )
       if template = parsed_template
@@ -809,29 +820,46 @@ module Krikri
       # INJECT_FACTS_AS_VARS block with `Origin: <file>` and no excerpt -
       # keyed per file, so two hosts rendering the same template warn
       # once).
-      if probe_walk(->(name : String) { VarSubstitutor.top_level_fact_name?(name, template_vars) }, template, failed)
-        VarSubstitutor.emit_fact_deprecation(file_origin)
-      end
-      # A read reached only through another variable's own value: real
-      # templates that value lazily when the file reads the variable, so
-      # the warning points at the value's DEFINING site - a role
-      # default's defaults/main.yml line - and not at this file (issue
-      # #961, live-verified against 2.21.6). Only names the file actually
-      # reads are tested, so the scope's eager pre-render cannot produce
-      # a warning for a value this template never uses.
+      #
+      # A read reached only through another variable's own value belongs
+      # to the SAME templating operation and therefore the same single
+      # block: real templates that value lazily at the moment the file
+      # reads the variable, so that access warns at the value's DEFINING
+      # site - a role default's defaults/main.yml line - and not at this
+      # file (issue #961, live-verified against 2.21.6), but only if it
+      # is the operation's FIRST fact access. Two separate probes printed
+      # two blocks where real prints one: Anthony25.postfix's
+      # `postfix_mailname | default(ansible_fqdn)` both reaches the fact
+      # through the default's value and names `ansible_fqdn` directly
+      # (issue #1603). Only names the file actually reads are tested, so
+      # the scope's eager pre-render cannot produce a warning for a value
+      # this template never uses.
       var_value_origin : String? = nil
       read_paths = {} of String => Array(String)
-      names_a_fact_through_its_value = ->(read : String) do
-        if (origin = re_rendered_var_fact_origin(read, access: read_paths[read]?))
+      first_fact_read = ->(read : String) do
+        if origin = re_rendered_var_fact_origin(read, access: read_paths[read]?)
           var_value_origin = origin
+          true
+        elsif VarSubstitutor.top_level_fact_name?(read, template_vars)
+          var_value_origin = file_origin
           true
         else
           false
         end
       end
-      if probe_walk(names_a_fact_through_its_value, template, failed, read_paths)
-        VarSubstitutor.emit_fact_deprecation(var_value_origin)
+      found_fact_read = probe_walk(first_fact_read, template, failed, read_paths)
+      # An included template runs INSIDE this file's templating operation,
+      # and real reports its reads at this file's Origin too - the outer
+      # template alone names no fact, so Anthony25.postfix's main.cf
+      # (whose `{% include %}` loop is the only fact reader) printed no
+      # block at all (issue #1603, live-verified against 2.21.6: a .j2
+      # including `{{ ansible_fqdn }}` warns once, Origin the INCLUDING
+      # file). Only a completed render's loads count: a crash may have
+      # removed an include that recorded its source but never ran.
+      unless found_fact_read || failed
+        found_fact_read = probe_loaded_templates_for_fact(first_fact_read, template_vars, template_path, read_paths)
       end
+      VarSubstitutor.emit_fact_deprecation(var_value_origin) if found_fact_read
       # The internal `vars`-dict deprecation (issue #1028,
       # ome.debug_dumpallvars' dumpall.j2 `{{ vars | ... }}`): a direct
       # `vars` name in the AST is the read itself, and a read of a
@@ -1156,6 +1184,54 @@ module Krikri
       end
     end
 
+    # Walks the include/import/extends files this render loaded, in load
+    # order, looking for the fact read the outer template's own AST does
+    # not name. Real renders them inside the outer file's templating
+    # operation, so the read still warns with the outer file's Origin (or
+    # the reached value's declaration) and the whole render keeps ONE
+    # block - Anthony25.postfix's main.cf names no fact itself, only its
+    # included parts do (issue #1603).
+    private def probe_loaded_templates_for_fact(matcher : String -> Bool,
+                                                template_vars : Hash(String, JSON::Any),
+                                                template_path : String,
+                                                read_paths : Hash(String, Array(String))) : Bool
+      options = @render_lexer_options
+      return false unless options
+      # Arming each include replaces the gate's per-file state; the probes
+      # that still walk THIS template afterwards must see its own again.
+      previous_bound = @frame_gate_bound
+      previous_names = @frame_gate_names
+      previous_for_entry = @for_entry_memo
+      begin
+        outer_path = File.expand_path(template_path)
+        @loaded_template_files.each do |include_path|
+          next if include_path == outer_path
+          next unless File.file?(include_path)
+          content = begin
+            File.read(include_path)
+          rescue
+            next
+          end
+          include_template = begin
+            KrikriJinja::Parser.parse(content, options)
+          rescue KrikriJinja::TemplateError
+            next
+          end
+          # The include has its own bindings and macros; the scope it
+          # resolves against is the outer render's.
+          if engine = @frame_gate_engine
+            prepare_frame_gate(engine, template_vars, include_template)
+          end
+          return true if probe_walk(matcher, include_template, false, read_paths)
+        end
+        false
+      ensure
+        @frame_gate_bound = previous_bound
+        @frame_gate_names = previous_names
+        @for_entry_memo = previous_for_entry
+      end
+    end
+
     # Arms the frame-entry gate for one render: the engine and scope the
     # render itself will use (so the gate's answers match it exactly), and
     # every name the template reads anywhere. A macro body counts as
@@ -1454,7 +1530,7 @@ module Krikri
     # Loader rooted at the template's own directory plus its role's
     # templates/ ancestors, matching Ansible's role template search
     # path (the engine's default loader searches only the CWD).
-    private def build_template_loader(template_path : String) : KrikriJinja::Loader?
+    private def build_template_loader(template_path : String) : TemplateSearchPathLoader?
       tpl_dir = File.dirname(File.expand_path(template_path))
       return nil unless tpl_dir.starts_with?("/")
 

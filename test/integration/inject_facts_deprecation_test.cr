@@ -1164,6 +1164,7 @@ describe "INJECT_FACTS_AS_VARS deprecation from a template task's variable scope
       ---
       vm_like_repo_url: "https://example.invalid/releases"
       vm_like_download_url: "{{ vm_like_repo_url }}/{{ go_arch }}-v1.0.0.tar.gz"
+      vm_like_mail_host: "{{ ansible_fqdn }}"
       YAML
     File.write(File.join(dir, "roles", "vm_like", "tasks", "main.yml"), <<-YAML)
       ---
@@ -1211,6 +1212,47 @@ describe "INJECT_FACTS_AS_VARS deprecation from a template task's variable scope
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
     stderr.must_include("Origin: #{File.join(dir, "roles", "vm_like", "vars", "main.yml")}:7:10\n")
     stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
+  # Issue #1603 (Anthony25.postfix): a template that BOTH reaches a fact
+  # through another value's own template and names the fact directly is
+  # still ONE templating operation, and real keeps only its first access -
+  # one block, at the reached value's declaration (live-verified against
+  # 2.21.6: `{{ v | default(ansible_fqdn) }}` warns once, at `v`'s line).
+  it "prints one block for a direct fact read that follows a reached value's own read" do
+    dir = template_role_dir("inject-facts-template-mixed")
+    File.write(File.join(dir, "roles", "vm_like", "templates", "config.j2"),
+      "{{ vm_like_mail_host | default(ansible_fqdn) }}\n")
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "roles", "vm_like", "defaults", "main.yml")}:4:20\n")
+  end
+
+  # Issue #1603: an included template renders INSIDE the outer file's
+  # templating operation, so real reports its fact read at the outer
+  # file's Origin - and since the outer file's own AST names no fact,
+  # krikri printed no block at all (live-verified against 2.21.6).
+  it "warns at the including file's origin for a fact read only an include makes" do
+    dir = template_role_dir("inject-facts-template-include")
+    File.write(File.join(dir, "roles", "vm_like", "templates", "config.j2"), <<-TEMPLATE)
+      {% for part in ['part'] %}
+      {% include part + '.j2' %}
+      {% endfor %}
+      TEMPLATE
+    File.write(File.join(dir, "roles", "vm_like", "templates", "part.j2"), "{{ ansible_fqdn }}\n")
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", File.join(dir, "play.yml")], output: stdout, error: stderr, chdir: dir)
+
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "roles", "vm_like", "templates", "config.j2")}\n")
   end
 end
 

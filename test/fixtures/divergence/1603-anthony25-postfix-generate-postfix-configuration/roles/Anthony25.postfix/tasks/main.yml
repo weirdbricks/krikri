@@ -1,0 +1,41 @@
+---
+
+- name: Make sure Ansible local facts directory exists
+  file:
+    dest: '/etc/ansible/facts.d'
+    state: 'directory'
+    owner: 'root'
+    group: 'root'
+    mode: '0755'
+
+- name: Configure Postfix local facts
+  template:
+    src: 'etc/ansible/facts.d/postfix.fact.j2'
+    dest: '/etc/ansible/facts.d/postfix.fact'
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+  register: postfix_register_local_facts
+
+- name: Re-read local facts if they have been modified
+  action: setup
+  when: postfix_register_local_facts.changed
+
+- include_tasks: install_divert.yml
+  when: postfix | length > 0
+
+- include_tasks: configure.yml
+  when: postfix | length > 0
+
+- include_tasks: auth_sasl.yml
+  when: ((postfix is defined and postfix | length > 0) and
+         ('auth' in postfix and ( postfix_smtpd_sasl_type == 'cyrus'
+          or postfix_smtpd_sasl_type == 'dovecot')))
+
+- include_tasks: cleanup_sasl.yml
+  when: ((postfix is defined and postfix | length > 0) and
+         ('auth' not in postfix or ( postfix_smtpd_sasl_type != 'cyrus'
+          and postfix_smtpd_sasl_type != 'dovecot')))
+
+- include_tasks: disable_revert.yml
+  when: postfix | length == 0

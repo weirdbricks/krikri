@@ -1,0 +1,10 @@
+---
+
+- name: Install Postfix base packages
+  package:
+    name: '{{ item }}'
+    state: 'present'
+  with_items:
+    - 'postfix'
+    - '{{ postfix_packages }}'
+  when: item is defined and item != ''

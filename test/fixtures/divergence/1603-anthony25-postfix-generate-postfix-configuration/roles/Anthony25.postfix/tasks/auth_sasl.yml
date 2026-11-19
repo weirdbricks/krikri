@@ -1,0 +1,40 @@
+---
+
+- name: Install Cyrus SASL if enabled
+  package:
+    name: 'cyrus-sasl'
+    state: 'present'
+  when: postfix_smtpd_sasl_type == 'cyrus'
+
+- name: Add Postfix user to sasl group
+  user:
+    name: 'postfix'
+    groups: 'sasl'
+    append: True
+    createhome: False
+  notify: [ 'Check postfix and restart' ]
+
+- name: Make sure /etc/postfix/sasl exists
+  file:
+    path: '/etc/postfix/sasl'
+    state: 'directory'
+
+- name: Configure Cyrus SASL Authentication
+  template:
+    src: 'etc/postfix/sasl/smtpd.conf.j2'
+    dest: '/etc/postfix/sasl/smtpd.conf'
+    owner: 'root'
+    group: 'sasl'
+    mode: '0640'
+  when: postfix_smtpd_sasl_type == 'cyrus'
+
+- name: Configure saslauthd service
+  template:
+    src: 'etc/default/saslauthd-smtpd.j2'
+    dest: '/etc/default/saslauthd-smtpd'
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+  when: postfix_smtpd_sasl_type == 'cyrus'
+  notify: [ 'Restart saslauthd' ]
+  register: postfix_register_configure_saslauthd

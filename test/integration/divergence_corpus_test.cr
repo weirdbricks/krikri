@@ -58,6 +58,7 @@ private DIVERGENCE_CASES = [
   {issue: 1593, slug: "dorancemc-ansible-nagioscore-install-rrdtool-packages"},
   {issue: 1600, slug: "stafwag-ntpd-combine-with-provider-defaults"},
   {issue: 1609, slug: "jedimt-haproxy-check-hostvars-fact"},
+  {issue: 1603, slug: "anthony25-postfix-generate-postfix-configuration"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -264,6 +265,11 @@ describe "divergence corpus" do
 
   it "replays 1609-jedimt-haproxy-check-hostvars-fact" do
     expected, actual, report = divergence_transcripts(1609, "jedimt-haproxy-check-hostvars-fact")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1603-anthony25-postfix-generate-postfix-configuration" do
+    expected, actual, report = divergence_transcripts(1603, "anthony25-postfix-generate-postfix-configuration")
     assert_equal(expected, actual, report)
   end
 end

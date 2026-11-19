@@ -1,0 +1,55 @@
+---
+
+- name: Override Postfix capabilities if FQDN is not set
+  set_fact:
+    postfix: [ 'local' ]
+  when: ansible_domain is defined and not ansible_domain
+
+- name: Configure aliases database
+  template:
+    src: 'etc/aliases.j2'
+    dest: '/etc/aliases'
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+
+- name: Configure mail system
+  template:
+    src: '{{ item }}.j2'
+    dest: '/{{ item }}'
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+  with_items: [ 'etc/mailname' ]
+
+- name: Generate Postfix configuration
+  template:
+    src: 'etc/postfix/{{ item }}/ansible.j2'
+    dest: '/etc/postfix/{{ item }}'
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+  with_items: [ 'main.cf', 'master.cf' ]
+  notify: [ 'Check postfix and restart' ]
+
+- name: copy necessary files for chroot
+  file:
+    path: '/var/spool/postfix/etc/'
+    state: 'directory'
+- shell: 'cp /etc/services /var/spool/postfix/etc/services'
+- shell: 'cp /etc/resolv.conf /var/spool/postfix/etc/resolv.conf'
+
+- name: Restart Postfix if capabilities change
+  template:
+    src: 'etc/postfix/postfix-capabilities.j2'
+    dest: '/etc/postfix/postfix-capabilities'
+    owner: 'root'
+    group: 'root'
+    mode: '0644'
+  notify: [ 'Check postfix and restart' ]
+
+- name: Enable Postfix service
+  service:
+    name: 'postfix'
+    enabled: yes
+
