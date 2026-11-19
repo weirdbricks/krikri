@@ -264,6 +264,14 @@ module Krikri
       # FQCN spelling stays deliberately unregistered (KNOWN_MISSING.md's
       # macOS-first limit for the linuxbrew roles).
       "ansible.builtin.homebrew",
+      # ansible.builtin.homebrew_cask (issue #1587,
+      # rooland-provisioning.atom-editor): the same builtin-runtime redirect
+      # (ansible_builtin_runtime.yml sends it to
+      # community.general.homebrew_cask) and the same symptom - real runs
+      # the module, which fails get_bin_path's brew lookup on a Linux host,
+      # while krikri skipped the task ("uses unimplemented plugin") and
+      # exited rc=4. plugins/homebrew_cask.cr ports that module.
+      "ansible.builtin.homebrew_cask",
       "community.general.npm",
       "community.general.alternatives",
       # ansible.builtin.alternatives (round 601430, T2L.php): same
