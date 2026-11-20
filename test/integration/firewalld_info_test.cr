@@ -263,4 +263,147 @@ describe "firewalld_info plugin" do
       "warnings", "firewalld_info",
     ])
   end
+
+  # With no system-bus daemon listening, firewalld's FirewallClient wraps the
+  # D-Bus failure in firewall.errors.FirewallError, which the module's own
+  # try block does not catch - real ends the task as an uncaught module
+  # exception, not with the module's "Unable to gather firewalld settings"
+  # fail_json. The crash result is built from the exception alone, so the
+  # module's collected import deprecation does not ride along either
+  # (live-verified vs 2.21.6 against this exact stub stack, issue #1627).
+  it "reports a client-construction crash the way Ansible's module wrapper does" do
+    stub = PluginSpecHelper.tmp_path("firewalld-crash-stub")
+    Dir.mkdir_p(File.join(stub, "dbus"))
+    Dir.mkdir_p(File.join(stub, "firewall"))
+    File.write(File.join(stub, "dbus", "__init__.py"), [
+      "class exceptions:",
+      "    class DBusException(Exception):",
+      "        pass",
+      "",
+    ].join("\n"))
+    File.write(File.join(stub, "firewall", "__init__.py"), "")
+    File.write(File.join(stub, "firewall", "config.py"), "VERSION = \"2.4.4\"\n")
+    File.write(File.join(stub, "firewall", "client.py"), [
+      "import dbus",
+      "",
+      "",
+      "class FirewallError(Exception):",
+      "    pass",
+      "",
+      "",
+      "def _impl(func):",
+      "    def wrapper(*args, **kwargs):",
+      "        try:",
+      "            return func(*args, **kwargs)",
+      "        except dbus.exceptions.DBusException:",
+      "            raise FirewallError(\"DBUS_ERROR: Failed to connect to socket \"",
+      "                                \"/run/dbus/system_bus_socket: No such file or directory\")",
+      "",
+      "    return wrapper",
+      "",
+      "",
+      "class FirewallClient:",
+      "    @_impl",
+      "    def __init__(self):",
+      "        raise dbus.exceptions.DBusException(",
+      "            \"org.freedesktop.DBus.Error.FileNotFound: Failed to connect to socket \"",
+      "            \"/run/dbus/system_bus_socket: No such file or directory\")",
+      "",
+    ].join("\n"))
+
+    result = PluginSpecHelper.run("firewalld_info", {"zones" => %(["public"])},
+      env: {"PYTHONPATH" => stub})
+
+    detail = "DBUS_ERROR: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory"
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: #{detail}")
+    result["_ansible_error_detail"].as_s.must_equal(detail)
+    result["_ansible_crash_context"].as_bool.must_equal(true)
+    result.as_h.has_key?("deprecations").must_equal(false)
+    result.as_h.has_key?("_ansible_core_deprecations").must_equal(false)
+  end
+end
+
+private FIREWALLD_ORDER_PROJECT_ROOT = File.expand_path("../..", __DIR__)
+private FIREWALLD_ORDER_BINARY       = File.join(FIREWALLD_ORDER_PROJECT_ROOT, "bin", "krikri-playbook")
+private FIREWALLD_ORDER_INVENTORY    = File.join(FIREWALLD_ORDER_PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+
+# A result can carry module warnings AND deprecations at once, and real's
+# callback (_handle_warnings) walks the result's `warnings` list first and
+# its `deprecations` list second. firewalld_info 2.1.x is exactly that
+# shape: the ignored-zones note rides `warnings`, while the deprecated
+# `_text` import and the `warnings`-kwarg exit_json deprecation ride
+# `deprecations`. The stub D-Bus/firewall stack keeps the runnable shape
+# independent of a running firewalld daemon - the expected order is what
+# ansible-playbook 2.21.6 + ansible.posix 2.1.0 prints for the same stub.
+describe "firewalld_info's warnings and deprecations display order" do
+  it "prints the ignored-zones warning before the module's deprecations (issue #1627)" do
+    stub = PluginSpecHelper.tmp_path("firewalld-order-stub")
+    Dir.mkdir_p(File.join(stub, "dbus"))
+    Dir.mkdir_p(File.join(stub, "firewall"))
+    File.write(File.join(stub, "dbus", "__init__.py"), [
+      "class exceptions:",
+      "    class DBusException(Exception):",
+      "        pass",
+      "",
+    ].join("\n"))
+    File.write(File.join(stub, "firewall", "__init__.py"), "")
+    File.write(File.join(stub, "firewall", "config.py"), "VERSION = \"2.4.4\"\n")
+    File.write(File.join(stub, "firewall", "client.py"), [
+      "class _Settings:",
+      "    def getTarget(self): return \"default\"",
+      "    def getIcmpBlockInversion(self): return False",
+      "    def getInterfaces(self): return []",
+      "    def getSources(self): return []",
+      "    def getServices(self): return []",
+      "    def getPorts(self): return []",
+      "    def getProtocols(self): return []",
+      "    def getMasquerade(self): return False",
+      "    def getForwardPorts(self): return []",
+      "    def getSourcePorts(self): return []",
+      "    def getIcmpBlocks(self): return []",
+      "    def getRichRules(self): return []",
+      "    def getForward(self): return False",
+      "",
+      "",
+      "class FirewallClient:",
+      "    def getDefaultZone(self): return \"public\"",
+      "    def getZones(self): return [\"public\", \"trusted\"]",
+      "    def getActiveZones(self): return {\"public\": []}",
+      "    def getZoneSettings(self, zone): return _Settings()",
+      "",
+    ].join("\n"))
+
+    playbook = File.join(stub, "repro.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.posix.firewalld_info:
+              zones:
+                - wmnfiv
+                - lecefn
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    status = Process.run(FIREWALLD_ORDER_BINARY, ["-i", FIREWALLD_ORDER_INVENTORY, playbook],
+      output: stdout, error: stderr, env: ENV.to_h.merge({"PYTHONPATH" => stub}))
+
+    status.success?.must_equal(true)
+    stdout.to_s.must_match(/ok=1\b/)
+
+    note = "[WARNING]: Please note: zone:(wmnfiv,lecefn) have been ignored in the gathering process."
+    hint = "[WARNING]: Deprecation warnings can be disabled"
+    import_line = "[DEPRECATION WARNING]: Importing 'to_native' from 'ansible.module_utils._text' is deprecated."
+    kwarg_line = "[DEPRECATION WARNING]: Passing `warnings` to `exit_json` or `fail_json` is deprecated."
+    err = stderr.to_s
+    err.must_include(note)
+    err.must_include(import_line)
+    err.must_include(kwarg_line)
+    (err.index!(note) < err.index!(hint)).must_equal(true)
+    (err.index!(hint) < err.index!(import_line)).must_equal(true)
+    (err.index!(import_line) < err.index!(kwarg_line)).must_equal(true)
+  end
 end

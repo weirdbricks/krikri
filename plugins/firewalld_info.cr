@@ -114,7 +114,22 @@ module Krikri
         File.write(script_path, GATHER_SCRIPT)
 
         stdout = IO::Memory.new
-        Process.run(python, {script_path, params_path}, output: stdout, error: Process::Redirect::Close)
+        stderr = IO::Memory.new
+        status = Process.run(python, {script_path, params_path}, output: stdout, error: stderr)
+
+        # The module itself lets everything but AttributeError and
+        # dbus.exceptions.DBusException escape main()'s try block, and the
+        # most common escape is firewalld's own client construction: with no
+        # system-bus daemon listening, FirewallClient wraps the D-Bus failure
+        # in firewall.errors.FirewallError. Ansible then reports an uncaught
+        # module exception ("Task failed: Module failed: <exception str>" with
+        # a caused-by section) instead of the module's fail_json wording, and
+        # drops the warnings/deprecations it had collected (live-verified vs
+        # 2.21.6 against a target with python3-firewall but no firewalld
+        # daemon, issue #1627's kpg round). The probe's traceback carries that
+        # exception str, so a nonzero exit is real's crash, not a gather
+        # failure to report with our own wording.
+        return crash_result(stderr.to_s) unless status.success?
 
         # BigJson, not JSON.parse: the probe's stdout is Python result
         # data (issue #695) - a wide int must arrive as the bigint
@@ -127,6 +142,56 @@ module Krikri
       ensure
         FileUtils.rm_rf(work_dir)
       end
+    end
+
+    # An uncaught probe exception rendered the way Ansible's crash wrapper
+    # reports a module that died: the brief is "Task failed: Module failed: "
+    # plus the exception's own str(), and a Python implicit __context__ (a
+    # raise inside an except block, as firewalld's D-Bus wrapper does) splits
+    # the [ERROR] block into a second segment with a "<<< caused by >>>"
+    # leaf. A message-less exception keeps the bare brief.
+    private def crash_result(stderr : String) : PluginResult
+      detail = exception_message(stderr)
+      msg = detail.empty? ? "Task failed: Module failed." : "Task failed: Module failed: #{detail}"
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: msg,
+        _ansible_error_detail: detail,
+        _ansible_crash_context: stderr.includes?("During handling of the above exception, another exception occurred") ||
+                                stderr.includes?("The above exception was the direct cause of the following exception"),
+      )
+    end
+
+    # The crash wrapper rebuilds the result from the exception alone, so the
+    # deprecations firewalld_info's payload collected while importing do not
+    # ride along on a crash (live-verified vs 2.21.6 through `register`: the
+    # registered dict is only changed/exception/failed/msg).
+    def finalize_result(result : PluginResult) : PluginResult
+      return result if result.msg.starts_with?("Task failed: Module failed")
+      super
+    end
+
+    # Python's traceback ends each chained exception with one line naming the
+    # exception class and its str() ("firewall.errors.FirewallError: <str>").
+    # Real renders str() alone (the class prefix stays out of the message), so
+    # take the tail after the class on the LAST such header - the innermost
+    # exception, the one Ansible's error event carries.
+    private def exception_message(stderr : String) : String
+      header = /\A(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*: (.*)\z/
+      stderr.lines.reverse_each do |raw|
+        line = raw.rstrip
+        next if line.empty?
+        if match = line.match(header)
+          return match[1]
+        end
+        # A bare class name is Python's message-less (or multi-line) tail; the
+        # message itself, if any, belongs to an earlier header line.
+        return "" if line.matches?(/\A(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*\z/)
+        # Anything else (indented traceback text, a warning) is not the
+        # exception tail; keep looking.
+      end
+      ""
     end
 
     # The probe's parsed stdout turned into the module's result: the
