@@ -74,6 +74,7 @@ private DIVERGENCE_CASES = [
   {issue: 1643, slug: "palvarez89-easyrsa3-synchronize-rsync-missing"},
   {issue: 1645, slug: "standardtech-substrate-assert-chain"},
   {issue: 1647, slug: "artem-shestakov-elasticsearch-exporter-consul-check"},
+  {issue: 1651, slug: "pgkehle-nvm-reserved-tag"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -361,6 +362,11 @@ describe "divergence corpus" do
 
   it "replays 1647-artem-shestakov-elasticsearch-exporter-consul-check" do
     expected, actual, report = divergence_transcripts(1647, "artem-shestakov-elasticsearch-exporter-consul-check")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1651-pgkehle-nvm-reserved-tag" do
+    expected, actual, report = divergence_transcripts(1651, "pgkehle-nvm-reserved-tag")
     assert_equal(expected, actual, report)
   end
 end

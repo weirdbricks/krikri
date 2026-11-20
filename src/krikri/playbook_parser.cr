@@ -3145,6 +3145,7 @@ module Krikri
       # play tag, so `--tags that-tag` selection missed it.
       if tags_yaml = yaml["tags"]?
         play.tags = flatten_tag_list(tags_yaml)
+        warn_reserved_tagnames(tags_yaml, source_file, source_map, "#{index}/tags")
       end
 
       # pre_tasks:/post_tasks: - Ansible's execution order is
@@ -3842,6 +3843,9 @@ module Krikri
       # list form silently dropped a scalar, so a `tags: never` import ran
       # on an ordinary no-`--tags` invocation where real Ansible skips it.
       import_tags = hash["tags"]?.try { |tags_yaml| flatten_tag_list(tags_yaml) } || [] of String
+      if tags_yaml = hash["tags"]?
+        warn_reserved_tagnames(tags_yaml, source_file, source_map, "#{task_source_prefix(source_prefix, source_index)}/tags")
+      end
       # The import line's ignore_errors: is inherited by every task the
       # import statically inlines, exactly like the when:/tags:/notify:
       # propagation just below - real's FieldAttribute inherit rule
@@ -5860,6 +5864,47 @@ module Krikri
       end
     end
 
+    # The tag words ansible-core treats as reserved (Taggable._RESERVED);
+    # every parsed object carrying one in its `tags:` warns.
+    RESERVED_TAG_NAMES = {"tagged", "all", "untagged"}
+
+    # ansible-core's Taggable._load_tags warns whenever the tags it just
+    # loaded name a reserved word. The Origin points at the tags VALUE
+    # node, not the key: the opening bracket of a flow list, the first
+    # item's line for a block list, the scalar itself otherwise
+    # (live-verified vs 2.21.6). A scalar is comma-split first, exactly
+    # as _load_tags splits it, so `tags: "all, foo"` warns for 'all'.
+    # When two or more reserved words appear, real's own list comes from
+    # a Python set (process-randomized order), so document order is used
+    # here instead - the only order that stays reproducible.
+    # *prefix* is the tags VALUE node's source-map path.
+    @@reserved_tag_warnings = Set(String).new
+    RESERVED_TAG_WARN_MUTEX = Mutex.new
+
+    def self.warn_reserved_tagnames(tags_yaml : YAML::Any, source_file : String?, source_map : YamlSourceMap?, prefix : String) : Nil
+      return unless sf = source_file
+      return unless source_map && File.file?(sf)
+
+      names = if list = tags_yaml.as_a?
+                list.map { |entry| safe_yaml_to_string(entry) }
+              else
+                safe_yaml_to_string(tags_yaml).split(',').map(&.strip)
+              end
+      found = names.uniq.select { |tag| RESERVED_TAG_NAMES.includes?(tag) }
+      return if found.empty?
+      pos = source_map.at?(prefix) || return
+
+      text = "[WARNING]: Found reserved tagnames in tags: [#{found.map { |tag| "'#{tag}'" }.join(", ")}], we do not recommend doing this as it might give unexpected results\n" \
+             "#{ErrorBlock.origin_context(File.expand_path(sf), pos[0], pos[1])}\n\n"
+      # Display's own warning dedupe keys on the whole formatted block, so
+      # the same tags position parsed twice (a role loaded again at run
+      # time by an include_role:) prints once.
+      RESERVED_TAG_WARN_MUTEX.synchronize do
+        return unless @@reserved_tag_warnings.add?(text)
+      end
+      STDERR.print text
+    end
+
     # ansible-core 2.19 warns for a task's `register:` name too (issue
     # #469) - same text, Origin pointing at the register VALUE token.
     private def self.warn_reserved_register(register : String?, source_file : String?, from_line : Int32, task : Task? = nil) : Nil
@@ -6218,6 +6263,7 @@ module Krikri
 
       if tags_yaml = task_hash["tags"]?
         task.tags = flatten_tag_list(tags_yaml)
+        warn_reserved_tagnames(tags_yaml, source_file, source_map, "#{task_source_prefix(source_prefix, source_index)}/tags")
       end
 
       # A non-mapping `vars:` (a sequence of single-key mappings is the
