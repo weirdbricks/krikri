@@ -11,3 +11,4 @@
 1540	kpg dnf (chaos: skip_broken)	real dnf transaction (and the serial-token crash shape needs dnf installed)
 1543	ansible.cfg ssh_args	needs a real sshd plus two dials through one ControlMaster: no in-process substitute for the ssh connection plugin's master reuse
 1564	ctorgalson.docksal	runs `fin`, which needs root netlink (RTNETLINK answers: Operation not permitted) and a Docker daemon
+1626	kpg firewalld (happy path)	needs a running firewalld daemon (D-Bus): an undefined icmp_block is only rejected at the transaction's add, after Ansible has appended its context msg

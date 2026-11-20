@@ -44,6 +44,7 @@ private def with_fake_firewall_cmd(&)
       case "$arg" in
         --zone=*) zone="${arg#--zone=}";;
         --list-services) action="list";;
+        --list-icmp-blocks) action="list";;
         --query-service=*) action="query_service"; value="${arg#--query-service=}";;
         --query-*) action="query"; value="${arg#*=}";;
         --add-*) action="add"; value="${arg#*=}";;
@@ -52,9 +53,10 @@ private def with_fake_firewall_cmd(&)
     done
     case "$action" in
       list)
-        # Ansible's ServiceTransaction reads the zone's whole service list
-        # (`service in self.fw.getServices(zone)`), space-separated on one line (like firewall-cmd) -
-        # NOT a --query-service probe, which rejects an undefined name.
+        # Ansible's ServiceTransaction/IcmpBlockTransaction read the zone's
+        # whole service/icmp-block list (`service in
+        # self.fw.getServices(zone)`), space-separated on one line (like
+        # firewall-cmd) - NOT a --query-<thing> probe.
         if [ -f "$KRIKRI_FW_STATE" ]; then
           grep -F "$zone|" "$KRIKRI_FW_STATE" | cut -d'|' -f2 | tr '\n' ' '; echo
         fi
@@ -91,6 +93,14 @@ private def with_fake_firewall_cmd(&)
         if [ "$value" = "kop_nosuch_svc" ]; then
           echo "Error: INVALID_SERVICE: Zone '$zone': '$value' not among existing services" >&2
           exit 1
+        fi
+        # Real firewalld rejects an ICMP type no icmptype XML defines, on
+        # BOTH --query-icmp-block and --add-icmp-block (firewalld 2.3.1
+        # exits 107) - verified live. Ansible only ever hits the add,
+        # since its probe reads --list-icmp-blocks instead.
+        if [ "$value" = "fftre" ]; then
+          echo "Error: INVALID_ICMPTYPE: $value" >&2
+          exit 107
         fi
         echo "$zone|$value" >> "$KRIKRI_FW_STATE"
         exit 0
@@ -237,6 +247,43 @@ describe "firewalld plugin - round994003 runtime shapes (fake firewall-cmd)" do
 
       result["msg"].as_s.must_equal(
         "Non-permanent operation, Changed port 8789/tcp to enabled")
+    end
+  end
+
+  it "reads the zone's icmp-block LIST so an unknown ICMP type fails at the add, with Ansible's context msg" do
+    # issue #1626 (kpg 000022-multi-firewalld-happy): Ansible's
+    # IcmpBlockTransaction.get_enabled_immediate is
+    # `icmp_block in self.fw.getIcmpBlocks(self.zone)`, so an undefined
+    # type reads as "not enabled" and only the later add raises - by
+    # then the transaction has appended "Non-permanent operation".
+    # Probing with --query-icmp-block= fails at the probe instead
+    # (firewall-cmd rejects the undefined type outright), which is what
+    # dropped the trailing context msg from krikri's failure.
+    with_fake_firewall_cmd do |env, log, _state|
+      result = run_fw(env, {"zone" => "public", "icmp_block" => "fftre",
+                            "state" => "enabled", "timeout" => "39"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal(
+        "ERROR: Exception caught: org.fedoraproject.FirewallD1.Exception: " \
+        "INVALID_ICMPTYPE: fftre Non-permanent operation")
+      calls = File.read(log)
+      calls.includes?("--zone=public --list-icmp-blocks").must_equal(true)
+      calls.includes?("--query-icmp-block=").must_equal(false)
+    end
+  end
+
+  it "registers an idempotent icmp_block rerun as the bare context msg" do
+    with_fake_firewall_cmd do |env, log, state|
+      File.write(state, "public|echo-request\n")
+      result = run_fw(env, {"zone" => "public", "icmp_block" => "echo-request",
+                            "state" => "enabled"})
+
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Non-permanent operation")
+      calls = File.read(log)
+      calls.includes?("--zone=public --list-icmp-blocks").must_equal(true)
+      calls.includes?("--add-icmp-block").must_equal(false)
     end
   end
 end
