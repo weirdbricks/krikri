@@ -1,0 +1,26 @@
+
+PLAY [Openssl_publickey check mode] ********************************************
+
+TASK [Openssl_publickey #26.0] *************************************************
+changed: [localhost]
+
+TASK [Kpg result] **************************************************************
+ok: [localhost] => {
+    "kpg_task_0": {
+        "changed": true,
+        "diff": {
+            "after": {},
+            "before": {}
+        },
+        "failed": false,
+        "filename": "<WORK>/dest-0444.txt",
+        "fingerprint": {},
+        "format": "PEM",
+        "privatekey": "<WORK>/dest-0440.txt",
+        "publickey": "kpg locked dest\nsecond line\n"
+    }
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

@@ -179,12 +179,14 @@ module Krikri
       res
     end
 
-    # Ansible's check-mode branch (`PublicKey.check()`): it computes
-    # `changed` from the file that is there right now and never writes or
-    # derives a key that does not exist (a missing private key makes
-    # `_check_privatekey` return False, i.e. changed). Only when both the
-    # public key file and the private key are present does it derive and
-    # compare, and a bad passphrase is still an error there.
+    # Ansible's check-mode branch (`PublicKey.check()`) looks at the file
+    # that is there right now and never writes or derives a key that does
+    # not exist (a missing private key makes `_check_privatekey` return
+    # False, i.e. changed). Only when both the public key file and the
+    # private key are present does it derive and compare, and a bad
+    # passphrase is still an error there. PublicKey.dump() runs before
+    # check(), so the registered result carries construction-time empty
+    # fingerprint/diff and the current file content (kpg #1633).
     private def check_present(path : String, format : String, privatekey_path : String?,
                               privatekey_content : String?) : PluginResult
       changed = true?(@params["force"]?)
@@ -211,7 +213,32 @@ module Krikri
           changed = desired.nil? || !same_key(existing, desired, format)
         end
       end
-      result(changed, path, privatekey_path, format, nil, nil)
+      check_result(changed, path, privatekey_path, format)
+    end
+
+    # PublicKey.dump() in check mode: the empty fingerprint/diff from
+    # construction and the current file content (null when it is missing),
+    # with the key order the module's dict has.
+    private def check_result(changed : Bool, path : String, privatekey_path : String?,
+                             format : String) : PluginResult
+      res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
+      res.extra["privatekey"] = JSON::Any.new(privatekey_path) if privatekey_path
+      res.extra["filename"] = JSON::Any.new(path)
+      res.extra["format"] = JSON::Any.new(format)
+      res.extra["fingerprint"] = JSON::Any.new({} of String => JSON::Any)
+      if true?(@params["return_content"]?)
+        content = begin
+          File.read(path)
+        rescue
+          nil
+        end
+        res.extra["publickey"] = JSON::Any.new(content)
+      end
+      res.diff = JSON::Any.new({
+        "before" => JSON::Any.new({} of String => JSON::Any),
+        "after"  => JSON::Any.new({} of String => JSON::Any),
+      } of String => JSON::Any)
+      res
     end
 
     private def parsable_public_key?(content : String, format : String) : Bool
