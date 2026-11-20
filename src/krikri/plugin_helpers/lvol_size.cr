@@ -29,6 +29,11 @@ module Krikri
         whole : String?,
         # the bare numeric string (operator and unit stripped)
         value : String,
+        # lvol.py's own `size` variable at the point it formats a message:
+        # the +/- operator is already gone and, for absolute sizes, so is
+        # the unit suffix, so its errors quote the remainder rather than
+        # what the playbook typed
+        stripped : String,
         # "L" (absolute/`--size`) or "l" (extents/`--extents`)
         opt : String,
         # unit letter appended to the -L/-l value: "" for extents, the
@@ -84,11 +89,11 @@ module Krikri
           # would parse it; "1e3" IS accepted - first char is a digit and
           # float() handles the exponent).
           if rest.empty? || !rest[0].ascii_number? || rest.to_f?.nil?
-            return {nil, "Bad size specification of '#{size}'"}
+            return {nil, "Bad size specification of '#{rest}'"}
           end
         end
 
-        {Parsed.new(operator, percent, whole, rest, opt, unit, opt == "l" ? DEFAULT_EXTENT_UNIT : unit), nil}
+        {Parsed.new(operator, percent, whole, rest, rest, opt, unit, opt == "l" ? DEFAULT_EXTENT_UNIT : unit), nil}
       end
     end
   end

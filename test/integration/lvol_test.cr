@@ -33,6 +33,15 @@ describe "lvol plugin" do
     result["msg"].as_s.must_equal("Bad size specification of 'abc'")
   end
 
+  it "reports the size with its unit suffix stripped" do
+    # lvol.py strips a trailing unit letter before validating, so its
+    # message quotes 'znbmk' for a size of 'znbmkp'
+    result = PluginSpecHelper.run("lvol", {"vg" => "vg0", "lv" => "test", "size" => "znbmkp"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Bad size specification of 'znbmk'")
+  end
+
   it "fails on a percentage above 100 before touching LVM" do
     result = PluginSpecHelper.run("lvol", {"vg" => "vg0", "lv" => "test", "size" => "150%VG"})
 

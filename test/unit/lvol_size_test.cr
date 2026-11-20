@@ -66,12 +66,30 @@ describe Krikri::PluginHelpers::LvolSize do
     end
 
     it "rejects bad size specifications" do
-      # the Ansible module's own message, with the size as typed
-      [".5", "abc", "1x", "-"].each do |bad|
+      # none of these have a unit suffix, so the message is the size as typed
+      [".5", "abc", "1x"].each do |bad|
         parsed, error = Krikri::PluginHelpers::LvolSize.parse(bad)
         parsed.must_be_nil
         error.must_equal("Bad size specification of '#{bad}'")
       end
+    end
+
+    it "quotes the size after the unit suffix was stripped" do
+      # lvol.py strips a trailing unit letter before validating and the
+      # fail_json message shows that remainder, so 'znbmkp' reports 'znbmk'
+      parsed, error = Krikri::PluginHelpers::LvolSize.parse("znbmkp")
+      parsed.must_be_nil
+      error.must_equal("Bad size specification of 'znbmk'")
+
+      parsed, error = Krikri::PluginHelpers::LvolSize.parse("+znbmkp")
+      parsed.must_be_nil
+      error.must_equal("Bad size specification of 'znbmk'")
+
+      # Ansible raises an uncaught IndexError for a bare "-" (size[0] of an
+      # empty string); report the emptied remainder instead of crashing
+      parsed, error = Krikri::PluginHelpers::LvolSize.parse("-")
+      parsed.must_be_nil
+      error.must_equal("Bad size specification of ''")
     end
 
     it "rejects a bare operator with no value" do
