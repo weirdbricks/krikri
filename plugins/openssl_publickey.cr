@@ -1,5 +1,6 @@
 #!/usr/bin/env crystal
 
+require "base64"
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
@@ -197,7 +198,12 @@ module Krikri
         rescue
           nil
         end
-        if existing.nil?
+        # `_check_privatekey` bails out with False (a plain change) as soon
+        # as the file on disk is not a public key in the requested format,
+        # BEFORE `_create_publickey` loads the private key. Deriving first
+        # turned a broken private key into a task failure where real only
+        # reports changed (#1634).
+        if existing.nil? || !parsable_public_key?(existing, format)
           changed = true
         else
           desired, load_error = derive(path, format, privatekey_path, privatekey_content)
@@ -206,6 +212,33 @@ module Krikri
         end
       end
       result(changed, path, privatekey_path, format, nil, nil)
+    end
+
+    private def parsable_public_key?(content : String, format : String) : Bool
+      return openssh_public_key?(content) if format == "OpenSSH"
+
+      pkey = Pkey.load_public(content)
+      return false unless pkey
+      Pkey.free_pkey(pkey)
+      true
+    end
+
+    # cryptography's `load_ssh_public_key`: "<type> <base64>[ comment]",
+    # where the blob starts with an SSH string naming the same type.
+    private def openssh_public_key?(content : String) : Bool
+      line = content.lines.find { |candidate| !candidate.strip.empty? }
+      return false unless line
+      parts = line.strip.split(' ', remove_empty: true)
+      return false if parts.size < 2
+      blob = begin
+        Base64.decode(parts[1])
+      rescue
+        return false
+      end
+      return false if blob.size < 4
+      length = (blob[0].to_i << 24) | (blob[1].to_i << 16) | (blob[2].to_i << 8) | blob[3].to_i
+      return false if length < 0 || blob.size < 4 + length
+      String.new(blob[4, length]) == parts[0]
     end
 
     # Loads the private key through libcrypto (what the Ansible module's

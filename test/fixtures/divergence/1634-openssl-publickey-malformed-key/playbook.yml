@@ -1,0 +1,24 @@
+---
+# kpg 000026-multi-openssl_publickey-happy #26.0, the Openssl_publickey task
+# verbatim; the malformed private key the generator seeds in /tmp/kpg-work is
+# written by a preceding task instead (the corpus may only write inside its
+# own scratch tree), and the local inventory alias stands in for target2.
+- name: 'Krikri-playbook-generator: multi-task #26.0'
+  hosts: kpg_targets
+  gather_facts: false
+  tasks:
+    - name: Seed malformed private key
+      ansible.builtin.copy:
+        content: "kpg locked dest\nsecond line\n"
+        dest: '{{ playbook_dir }}/dest-0440.txt'
+    - name: 'Openssl_publickey #26.0'
+      community.crypto.openssl_publickey:
+        backup: false
+        path: '{{ playbook_dir }}/dest-0444.txt'
+        privatekey_passphrase: vfhpng
+        return_content: true
+        select_crypto_backend: auto
+        unsafe_writes: false
+        privatekey_path: '{{ playbook_dir }}/dest-0440.txt'
+      register: kpg_task_0
+      ignore_errors: true

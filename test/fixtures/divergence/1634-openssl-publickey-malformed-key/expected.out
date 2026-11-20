@@ -1,0 +1,21 @@
+
+PLAY [Krikri-playbook-generator: multi-task #26.0] *****************************
+
+TASK [Seed malformed private key] **********************************************
+changed: [localhost]
+
+TASK [Openssl_publickey #26.0] *************************************************
+[ERROR]: Task failed: Module failed: Wrong passphrase provided for private key, or private key cannot be parsed: Unable to load PEM file. See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file for more details. MalformedFraming
+Origin: <WORK>/playbook.yml:14:7
+
+12         content: "kpg locked dest\nsecond line\n"
+13         dest: '{{ playbook_dir }}/dest-0440.txt'
+14     - name: 'Openssl_publickey #26.0'
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Wrong passphrase provided for private key, or private key cannot be parsed: Unable to load PEM file. See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file for more details. MalformedFraming"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+

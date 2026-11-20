@@ -153,10 +153,10 @@ describe "Krikri::PluginHelpers::Pkey" do
 
   # load_checked reproduces `cryptography`'s load_pem_private_key failure
   # semantics - the exact messages the Ansible module's load_privatekey maps
-  # onto its fail_json msg (live-diffed vs ansible-playbook 2.19.11,
-  # kpg35 sweep #247/#249/#251). The OpenSSLError tuple entries come from
-  # libcrypto's own error queue, so they match real byte-for-byte on the
-  # same libcrypto the target ships.
+  # onto its fail_json msg (live-diffed vs ansible-core 2.21.6 with
+  # cryptography 50, the reference-host pair). cryptography 50 parses the PEM
+  # framing in Rust before OpenSSL, hence the framing/newline messages; key
+  # blocks that reach OpenSSL keep the older OpenSSLError tuple text.
   describe "load_checked" do
     GARBAGE = "hpzbar"
 
@@ -167,8 +167,7 @@ describe "Krikri::PluginHelpers::Pkey" do
       failure.not_nil!.passphrase_problem.must_equal(false)
       failure.not_nil!.message.must_equal(
         "Wrong passphrase provided for private key, or private key cannot be parsed: " \
-        "('Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters).', " \
-        "[<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>])")
+        "Unable to load PEM file. See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file for more details. MalformedFraming")
     end
 
     it "fails garbage content without a passphrase with the same message" do
@@ -177,8 +176,31 @@ describe "Krikri::PluginHelpers::Pkey" do
       failure.wont_be_nil
       failure.not_nil!.passphrase_problem.must_equal(false)
       failure.not_nil!.message.must_include("Wrong passphrase provided for private key, or private key cannot be parsed:")
-      failure.not_nil!.message.must_include("Could not deserialize key data.")
-      failure.not_nil!.message.must_include("<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>")
+      failure.not_nil!.message.must_include("MalformedFraming")
+    end
+
+    it "fails PEM without a private-key block with cryptography's delimiter message" do
+      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
+      public_pem = String.new(Krikri::PluginHelpers::Pkey.public_pem(pkey).not_nil!)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+
+      loaded, failure = Krikri::PluginHelpers::Pkey.load_checked(public_pem, nil)
+      loaded.must_be_nil
+      failure.wont_be_nil
+      failure.not_nil!.passphrase_problem.must_equal(false)
+      failure.not_nil!.message.must_equal(
+        "Wrong passphrase provided for private key, or private key cannot be parsed: " \
+        "Valid PEM but no BEGIN/END delimiters for a private key found. Are you sure this is a private key?")
+    end
+
+    it "fails mismatched PEM delimiters with the parser's MismatchedTags message" do
+      loaded, failure = Krikri::PluginHelpers::Pkey.load_checked(
+        "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n", nil)
+      loaded.must_be_nil
+      failure.wont_be_nil
+      failure.not_nil!.message.must_equal(
+        "Wrong passphrase provided for private key, or private key cannot be parsed: " \
+        "Unable to load PEM file. See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file for more details. MismatchedTags(\"PRIVATE KEY\", \"RSA PRIVATE KEY\")")
     end
 
     it "reports the passphrase-mismatch branch for a password on an unencrypted key" do
@@ -217,8 +239,7 @@ describe "Krikri::PluginHelpers::Pkey" do
       failure.not_nil!.passphrase_problem.must_equal(false)
       failure.not_nil!.message.must_equal(
         "Wrong passphrase provided for private key, or private key cannot be parsed: " \
-        "('Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters).', " \
-        "[<OpenSSLError(code=478150756, lib=57, reason=100, reason_text=bad decrypt)>, <OpenSSLError(code=75497573, lib=9, reason=101, reason_text=bad decrypt)>])")
+        "Incorrect password, could not decrypt key")
     end
 
     it "loads an encrypted key with its correct passphrase" do
