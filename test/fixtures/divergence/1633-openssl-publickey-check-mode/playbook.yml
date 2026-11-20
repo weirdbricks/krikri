@@ -1,0 +1,19 @@
+---
+- name: 'Openssl_publickey check mode'
+  hosts: local
+  gather_facts: false
+  tasks:
+    - name: 'Openssl_publickey #26.0'
+      community.crypto.openssl_publickey:
+        backup: false
+        path: '{{ playbook_dir }}/dest-0444.txt'
+        privatekey_passphrase: vfhpng
+        return_content: true
+        select_crypto_backend: auto
+        unsafe_writes: false
+        privatekey_path: '{{ playbook_dir }}/dest-0440.txt'
+      register: kpg_task_0
+      ignore_errors: true
+    - name: Kpg result
+      ansible.builtin.debug:
+        var: kpg_task_0

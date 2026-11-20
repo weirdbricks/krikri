@@ -200,4 +200,44 @@ describe "openssl_publickey plugin" do
 
     forced["changed"].as_bool.must_equal(true)
   end
+
+  # #1633: PublicKey.dump() runs before check(), so the registered result
+  # carries the empty fingerprint/diff from construction plus the content
+  # of the file that is there right now, even when it is not a key.
+  it "reports the construction-time fingerprint, diff and current content in check mode" do
+    key = PluginSpecHelper.tmp_path("shape.key")
+    pub = PluginSpecHelper.tmp_path("shape.pub")
+    File.write(key, "kpg locked dest\nsecond line\n")
+    File.write(pub, "kpg locked dest\nsecond line\n")
+
+    result = PluginSpecHelper.run("openssl_publickey", {
+      "path"                  => pub,
+      "privatekey_path"       => key,
+      "privatekey_passphrase" => "vfhpng",
+      "return_content"        => "true",
+      "_ansible_check_mode"   => "true",
+    })
+
+    result["failed"]?.must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    result["fingerprint"].as_h.empty?.must_equal(true)
+    result["publickey"].as_s.must_equal("kpg locked dest\nsecond line\n")
+    result["diff"].as_h["before"].as_h.empty?.must_equal(true)
+    result["diff"].as_h["after"].as_h.empty?.must_equal(true)
+  end
+
+  it "reports a null publickey in check mode when the file is missing and return_content is set" do
+    result = PluginSpecHelper.run("openssl_publickey", {
+      "path"                  => PluginSpecHelper.tmp_path("absent-check.pub"),
+      "privatekey_path"       => PluginSpecHelper.tmp_path("absent-check.key"),
+      "privatekey_passphrase" => "vfhpng",
+      "return_content"        => "true",
+      "_ansible_check_mode"   => "true",
+    })
+
+    result["failed"]?.must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    result["fingerprint"].as_h.empty?.must_equal(true)
+    result["publickey"].raw.must_be_nil
+  end
 end
