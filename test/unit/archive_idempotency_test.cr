@@ -181,3 +181,155 @@ describe "archive rerun idempotency" do
     FileUtils.rm_rf(work) if work
   end
 end
+
+# community.general.archive's --check branch. Live-verified against
+# ansible-playbook 2.21.6: with targets and an existing dest nothing is
+# written, `destination_state` stays the STATE_ABSENT it was initialised
+# to, `archived` stays empty, and `changed` is dest-absent/must_archive
+# OR'd with update_permissions' pending owner:/group:/mode:/attributes:
+# differences - so a seeded dest whose only difference is the requested
+# mode still reports changed while staying byte- and mode-identical.
+describe "archive check mode" do
+  it "reports changed for a pending mode without touching the dest" do
+    work = PluginSpecHelper.tmp_path("archive-check-mode")
+    src = File.join(work, "tree", "b.conf")
+    Dir.mkdir_p(File.dirname(src))
+    File.write(src, "kpg-b\n")
+    dest = File.join(work, "dest-0444.txt")
+    File.write(dest, "kpg locked dest\nsecond line\n")
+    File.chmod(dest, 0o444)
+
+    result = PluginSpecHelper.run("archive", {
+      "path"                => src,
+      "dest"                => dest,
+      "format"              => "gz",
+      "mode"                => "0440",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["dest_state"].as_s.must_equal("absent")
+    result["archived"].as_a.must_be_empty
+    result["mode"].as_s.must_equal("0444")
+    File.info(dest).permissions.value.must_equal(0o444)
+    File.read(dest).must_equal("kpg locked dest\nsecond line\n")
+  ensure
+    FileUtils.rm_rf(work) if work
+  end
+
+  it "reports ok once the archive and its mode already match, still writing nothing" do
+    work = PluginSpecHelper.tmp_path("archive-check-converged")
+    src = File.join(work, "source.txt")
+    Dir.mkdir_p(work)
+    File.write(src, "compress me\n")
+    dest = File.join(work, "pack.gz")
+
+    PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "gz", "mode" => "0640"})
+    info = File.info(dest)
+
+    result = PluginSpecHelper.run("archive", {
+      "path"                => src,
+      "dest"                => dest,
+      "format"              => "gz",
+      "mode"                => "0640",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result["dest_state"].as_s.must_equal("absent")
+    result["archived"].as_a.must_be_empty
+    File.info(dest).modification_time.must_equal(info.modification_time)
+    File.info(dest).size.must_equal(info.size)
+  ensure
+    FileUtils.rm_rf(work) if work
+  end
+
+  it "reports changed for a missing dest and creates nothing" do
+    work = PluginSpecHelper.tmp_path("archive-check-absent")
+    src = File.join(work, "source.txt")
+    Dir.mkdir_p(work)
+    File.write(src, "compress me\n")
+    dest = File.join(work, "pack.gz")
+
+    result = PluginSpecHelper.run("archive", {
+      "path"                => src,
+      "dest"                => dest,
+      "format"              => "gz",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["dest_state"].as_s.must_equal("absent")
+    result["archived"].as_a.must_be_empty
+    File.exists?(dest).must_equal(false)
+  ensure
+    FileUtils.rm_rf(work) if work
+  end
+
+  it "reports changed for a must_archive shape and keeps the sources" do
+    work = PluginSpecHelper.tmp_path("archive-check-must-archive")
+    src = File.join(work, "tree")
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "a.txt"), "alpha\n")
+    dest = File.join(work, "pack.tar")
+
+    result = PluginSpecHelper.run("archive", {
+      "path"                => src,
+      "dest"                => dest,
+      "format"              => "tar",
+      "remove"              => "true",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(dest).must_equal(false)
+    File.exists?(src).must_equal(true)
+    File.exists?(File.join(src, "a.txt")).must_equal(true)
+  ensure
+    FileUtils.rm_rf(work) if work
+  end
+
+  it "reports changed in real mode when only the requested mode differs" do
+    work = PluginSpecHelper.tmp_path("archive-mode-only")
+    src = File.join(work, "source.txt")
+    Dir.mkdir_p(work)
+    File.write(src, "compress me\n")
+    dest = File.join(work, "pack.gz")
+
+    PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "gz", "mode" => "0640"})
+    File.chmod(dest, 0o640)
+
+    result = PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "gz", "mode" => "0600"})
+
+    result["changed"].as_bool.must_equal(true)
+    File.info(dest).permissions.value.must_equal(0o600)
+  ensure
+    FileUtils.rm_rf(work) if work
+  end
+end
+
+# Python's gzip.open(<dest>, "wb"), which community.general.archive's
+# single-file gz path uses, records the DESTINATION's basename in the
+# gzip header's FNAME field and marks the stream as maximum-compression
+# (XFL 2). The FNAME makes real's dest larger by the name plus its NUL,
+# so a playbook that stats the archive sees a different size unless
+# krikri writes the same header.
+describe "archive single-file gzip header" do
+  it "names the gzip stream after the dest, like Python's gzip.open" do
+    work = PluginSpecHelper.tmp_path("archive-gzip-name")
+    src = File.join(work, "source.txt")
+    Dir.mkdir_p(work)
+    File.write(src, "compress me\n")
+    dest = File.join(work, "pack-0044.txt")
+
+    PluginSpecHelper.run("archive", {"path" => src, "dest" => dest, "format" => "gz"})
+
+    bytes = File.read(dest).to_slice
+    (bytes[3] & 0x08).must_equal(0x08)
+    bytes[8].must_equal(2_u8)
+    name_end = bytes[10..].index(0_u8) || 0
+    String.new(bytes[10, name_end]).must_equal(File.basename(dest))
+  ensure
+    FileUtils.rm_rf(work) if work
+  end
+end

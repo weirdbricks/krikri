@@ -55,7 +55,7 @@ module Krikri
   #   via chcon - matches Ansible's own confirmed no-op-when-
   #   SELinux-isn't-enabled behavior (`AnsibleModule.selinux_enabled()`,
   #   checked here via `/sys/fs/selinux/enforce`'s own existence, the
-  #   same file `selinuxenabled(8)` tests) - see `#apply_selinux_context`
+  #   same file `selinuxenabled(8)` tests) - see `#settle_dest_metadata`
   #   for the one part of this NOT live-verified (the chcon-invocation
   #   shape on an actually-SELinux-enabled host).
   #
@@ -155,6 +155,7 @@ module Krikri
       return absent_result(dest, missing, expanded_paths, expanded_excludes) if found_paths.empty?
 
       single_compress = single_file_compress?(force_archive, format, candidate_paths, found_paths)
+      must_archive = must_archive?(force_archive, requested_paths, candidate_paths)
 
       # Real archive's dest-defaulting (ansible-core community.general
       # source): dest is OPTIONAL. When omitted and the call is a
@@ -168,7 +169,7 @@ module Krikri
       # both required") - found live via modules_data.yml's gz
       # single-file probe, which Ansible runs fine with no dest.
       unless dest
-        if must_archive?(force_archive, requested_paths, candidate_paths)
+        if must_archive
           return PluginResult.new(changed: false, failed: true,
             msg: "Error, must specify \"dest\" when archiving multiple files or trees")
         end
@@ -176,6 +177,18 @@ module Krikri
       end
 
       root = PluginHelpers::ArchivePaths.common_path(candidate_paths)
+
+      # community.general.archive declares check_mode support and its
+      # main() branches on it BEFORE any archive work: under --check dest
+      # is never opened, no source is removed, and the reported change is
+      # only "would the archive differ" (see #check_mode_result). krikri
+      # used to write the archive (and chmod/unlink the sources) under
+      # --check, which also left the follow-up run comparing against its
+      # own output and reporting ok where Ansible reports changed.
+      if true?(@params["_ansible_check_mode"]?)
+        return check_mode_result(dest, must_archive, root, missing, expanded_paths, expanded_excludes)
+      end
+
       members = single_compress ? found_paths : collect_members(found_paths, root, exclusion_patterns)
 
       build_and_finalize(dest, format, single_compress, root, members, found_paths, missing, expanded_paths, expanded_excludes, remove)
@@ -323,7 +336,7 @@ module Krikri
       tmp_dest = "#{dest}.krikri-playbook-tmp-#{Random::Secure.hex(6)}"
 
       build_result = if single_compress
-                       build_compress(found_paths[0], format, tmp_dest)
+                       build_compress(found_paths[0], format, tmp_dest, File.basename(dest))
                      else
                        build_archive(root, members, format, tmp_dest)
                      end
@@ -346,9 +359,9 @@ module Krikri
       remove_sources(found_paths) if remove
 
       dest_state = missing.empty? ? (single_compress ? "compress" : "archive") : "incomplete"
-      failure, secontext_changed = settle_dest_metadata(dest)
+      failure, attributes_changed = settle_dest_metadata(dest, check_mode: false)
       return failure if failure
-      changed = true if secontext_changed
+      changed = true if attributes_changed
 
       archived = single_compress ? found_paths : members
       stat_fields = dest_stat_fields(dest)
@@ -381,21 +394,116 @@ module Krikri
       )
     end
 
-    # The dest's own metadata pass: attributes, then the SELinux context.
-    # Real ORs the latter into `changed` (set_fs_attributes_if_different's
-    # return is assigned back over archive.changed), so a task whose only
-    # difference is the SELinux context reports changed.
-    private def settle_dest_metadata(dest : String) : {PluginResult?, Bool}
-      apply_dest_attributes(dest)
-      if error = apply_attributes(dest)
-        return {error, false}
-      end
-      secontext_changed, error = apply_selinux_context(dest)
-      return {error, false} if error
-      {nil, secontext_changed}
+    # --check's result - the STATE_ABSENT destination_state and empty
+    # `archived` community.general.archive's main() leaves behind when it
+    # skips add_single_target/add_targets entirely. `changed` is "an
+    # archive would be written" (must_archive always, otherwise only a
+    # missing dest) OR'd with update_permissions' pending metadata
+    # differences, which still run in check mode. Live-verified against
+    # ansible-playbook 2.21.6 for all three shapes: an existing correct
+    # archive reports ok, an existing dest with a differing mode:/group:
+    # reports changed, and a missing dest reports changed - none of them
+    # touching dest.
+    private def check_mode_result(
+      dest : String,
+      must_archive : Bool,
+      root : String,
+      missing : Array(String),
+      expanded_paths : Array(String),
+      expanded_exclude_paths : Array(String),
+    ) : PluginResult
+      changed = must_archive || !File.exists?(dest)
+      changed = true if File.exists?(dest) && (dest_attributes_pending?(dest) || !pending_secontext_change(dest).nil?)
+
+      result = PluginResult.new(
+        changed: changed,
+        failed: false,
+        msg: "",
+        dest: dest,
+        dest_state: "absent",
+        archived: [] of String,
+        missing: missing,
+        expanded_paths: expanded_paths,
+        expanded_exclude_paths: expanded_exclude_paths,
+        arcroot: root,
+        key_order: %w[archived dest dest_state changed arcroot missing expanded_paths expanded_exclude_paths uid gid owner group mode state size]
+      )
+      attach_dest_stat(result, dest)
+      result
     end
 
-    private def build_compress(source : String, format : String, tmp_dest : String) : Bool
+    # exit_json's add_path_info stats the result's dest whenever it exists
+    # (basic.py reads `kwargs['path']`, falling back to `dest`) - the
+    # check-mode result carries that block too, for the dest as it is
+    # BEFORE any change.
+    private def attach_dest_stat(result : PluginResult, dest : String) : Nil
+      return unless native_stat(dest, false)
+
+      fields = dest_stat_fields(dest)
+      result.extra["uid"] = JSON::Any.new(fields[:uid])
+      result.extra["gid"] = JSON::Any.new(fields[:gid])
+      result.extra["owner"] = JSON::Any.new(fields[:owner])
+      result.extra["group"] = JSON::Any.new(fields[:group])
+      result.extra["mode"] = JSON::Any.new(fields[:mode])
+      result.extra["state"] = JSON::Any.new(fields[:state])
+      result.extra["size"] = JSON::Any.new(fields[:size])
+    end
+
+    # The dest's own metadata pass: the SELinux context, then owner/group/
+    # mode/attributes - basic.py's set_fs_attributes_if_different order.
+    # Real ASSIGNS that call's return back over archive.changed, so a task
+    # whose only difference is the requested metadata reports changed even
+    # when the archive itself is identical, under --check too (where the
+    # comparison runs but nothing is applied).
+    private def settle_dest_metadata(dest : String, check_mode : Bool) : {PluginResult?, Bool}
+      changed = false
+
+      if pending = pending_secontext_change(dest)
+        changed = true
+        unless check_mode
+          current, desired = pending
+          if err = set_selinux_context(dest, desired)
+            return {selinux_context_failure(dest, err, current, desired, secontext_input_was), false}
+          end
+        end
+      end
+
+      if dest_attributes_pending?(dest)
+        changed = true
+        unless check_mode
+          apply_dest_attributes(dest)
+          if error = apply_attributes(dest)
+            return {error, false}
+          end
+        end
+      end
+
+      {nil, changed}
+    end
+
+    # basic.py's set_fs_attributes_if_different comparison side: whether
+    # any requested owner:/group:/mode:/attributes: still differs from
+    # dest. Reads only, so check mode can report it without applying.
+    private def dest_attributes_pending?(dest : String) : Bool
+      stat = native_stat(dest, false)
+      return false unless stat
+
+      if owner = @params["owner"]?
+        return true if stat["uid"].as_i64 != resolve_owner_uid(owner).to_i64
+      end
+      if group = @params["group"]?
+        return true if stat["gid"].as_i64 != resolve_group_gid(group).to_i64
+      end
+      if mode = @params["mode"]?
+        current_bits = stat["mode"].as_s.to_i(8)
+        target_bits = mode =~ /\A0?[0-7]{1,4}\z/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)
+        return true if current_bits != target_bits
+      end
+
+      attr_changed?(dest)
+    end
+
+    private def build_compress(source : String, format : String, tmp_dest : String, dest_basename : String) : Bool
       case format
       when "bz2"
         File.open(tmp_dest, "w") do |file|
@@ -413,9 +521,23 @@ module Krikri
         true
       else
         File.open(tmp_dest, "w") do |file|
-          Compress::Gzip::Writer.open(file) do |gzio|
+          Compress::Gzip::Writer.open(file, level: Compress::Gzip::BEST_COMPRESSION) do |gzio|
+            # Python's gzip.open(<dest>, "wb") names the stream after the
+            # DESTINATION file it was handed, so real's dest carries that
+            # basename in its FNAME header field - and therefore has a
+            # different, observable size (stat/gzip -l) than a header-less
+            # stream. The level is Python's own gzip default (9).
+            gzio.header.name = dest_basename
             File.open(source) { |src| IO.copy(src, gzio) }
           end
+        end
+        # Crystal's gzip header hardcodes the XFL byte to 0; Python writes
+        # 2 at level 9 (RFC 1952: 2 = maximum compression). The remaining
+        # header differences are then only the MTIME stamp, which real
+        # itself writes from the wall clock and rewrites on every run.
+        File.open(tmp_dest, "r+") do |file|
+          file.seek(8)
+          file.write_byte(2_u8)
         end
         true
       end
@@ -803,13 +925,16 @@ module Krikri
     # are (that swallowing is this module's OWN documented convention,
     # not something Ansible does for chattr).
     private def apply_attributes(dest : String) : PluginResult?
-      attributes = @params["attributes"]?
-      return nil if attributes.nil? || attributes.empty?
+      # chattr only runs when the flags actually differ (or the request is
+      # '-'-prefixed), exactly like basic.py's set_attributes_if_different -
+      # re-running chattr on an already-set immutable dest fails EPERM on
+      # the real side too, which is why it never does.
+      parsed = attr_args
+      return nil unless parsed
+      return nil unless attr_changed?(dest)
 
-      mod = attributes[0].in?('+', '-') ? attributes[0] : '='
-      flags = attributes[0].in?('+', '-') ? attributes[1..] : attributes
-
-      result = remote_exec("chattr #{mod}#{shell_single_quote(flags.to_s)} #{shell_single_quote(dest)}")
+      mod, flags = parsed
+      result = remote_exec("chattr #{mod}#{shell_single_quote(flags)} #{shell_single_quote(dest)}")
       if result[:exit_code] != 0 || !result[:stderr].empty?
         return PluginResult.new(changed: false, failed: true, msg: "chattr failed: #{result[:stdout]}#{result[:stderr]}")
       end
@@ -817,28 +942,10 @@ module Krikri
       nil
     end
 
-    # `seuser:`/`serole:`/`setype:`/`selevel:` - the SELinux file context,
-    # applied to *dest* through BasePlugin's shared helpers (the same ones
-    # file, copy, template and stat use): the parts merge into the file's
-    # current context the way AnsibleModule's set_context_if_different
-    # does, "_default" resolves through matchpathcon instead of being
-    # passed to chcon literally, and a change is DETECTED (returned as the
-    # changed flag) rather than blindly re-applied. A no-op on any
-    # non-SELinux host - the same skip `if not self.selinux_enabled():
-    # return changed` opens with. Returns {changed, failure}; the failure
-    # is that fail_json's shape (msg='invalid selinux context: <err>',
-    # path, cur_context, new_context, input_was).
-    private def apply_selinux_context(dest : String) : {Bool, PluginResult?}
-      return {false, nil} unless pending = pending_secontext_change(dest)
-      current, desired = pending
-
-      if err = set_selinux_context(dest, desired)
-        return {false, selinux_context_failure(dest, err, current, desired, secontext_input_was)}
-      end
-
-      {true, nil}
-    end
-
+    # The dest's own stat block, which exit_json's add_path_info appends
+    # for the result's `dest` (basic.py falls back from `path` to `dest`).
+    # Read after the metadata pass so it reflects what the task left
+    # behind.
     private def dest_stat_fields(dest : String) : NamedTuple(size: Int64, uid: Int64, gid: Int64, owner: String, group: String, mode: String, state: String)
       stat_hash = native_stat(dest, false)
 
