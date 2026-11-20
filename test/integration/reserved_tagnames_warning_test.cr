@@ -1,17 +1,26 @@
 require "../minitest_helper"
 require "file_utils"
 
-# ansible-core's Taggable._load_tags warns whenever the tags it just
-# loaded name one of the reserved words ('tagged'/'all'/'untagged'), for
-# every Taggable object - play, block, task, roles: entry, import_tasks:
-# line. The Origin points at the tags VALUE node, not at the `tags:` key:
-# the opening bracket of a flow list, the first item's line of a block
-# list, the scalar itself otherwise (live-verified vs 2.21.6; issue #1651
-# is pgkehle.nvm's `tags: ["all"]` in a role task).
+# ansible-core's Taggable._load_tags warns at load time for every tags
+# value naming a reserved tag ('all'/'tagged'/'untagged'):
+#   [WARNING]: Found reserved tagnames in tags: ['all'], we do not
+#   recommend doing this as it might give unexpected results
+# followed by the value's own Origin block. 'always'/'never' are ordinary
+# tags there, a templated value is compared as written, and an include's
+# apply:{tags:} is loaded only when the include actually runs. All
+# byte-for-byte vs ansible-playbook 2.21.6 (issues #1644 and #1651, both
+# pgkehle.nvm's `tags: ["all"]`).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 private WARNING_TEXT = "[WARNING]: Found reserved tagnames in tags: ['all'], we do not recommend doing this as it might give unexpected results"
+
+private def run_tagname_playbook(pb : String)
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  Process.run(BINARY, ["-i", INVENTORY, pb], output: stdout, error: stderr)
+  {stdout.to_s, stderr.to_s}
+end
 
 describe "reserved tagnames warning" do
   it "warns for a role task's reserved tag with the tags value's Origin" do
@@ -132,5 +141,120 @@ describe "reserved tagnames warning" do
     refute(errors.to_s.includes?("Found reserved tagnames"))
   ensure
     FileUtils.rm_rf(src_dir) if src_dir && Dir.exists?(src_dir)
+  end
+
+  it "warns at load for play, task, comma-string and block tags, before the block's children" do
+    dir = PluginSpecHelper.tmp_path("reserved-tagnames")
+    FileUtils.mkdir_p(dir)
+    pb = File.join(dir, "pb.yml")
+    File.write(pb, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tags: all
+        tasks:
+          - name: reserved list
+            debug: msg=one
+            tags: ["all"]
+
+          - name: comma string
+            debug: msg=two
+            tags: "all, tagged"
+
+          - name: never and always are ordinary tags
+            debug: msg=three
+            tags: [never, always]
+
+          - block:
+              - name: child reserved
+                debug: msg=four
+                tags: [untagged]
+            tags: [tagged]
+      YAML
+
+    stdout, stderr = run_tagname_playbook(pb)
+    # Byte-identical block for the task-level case: the tags VALUE node's
+    # mark (the `[` of the flow list), two preceding source lines, caret.
+    stderr.must_include("[WARNING]: Found reserved tagnames in tags: ['all'], we do not recommend doing this as it might give unexpected results\n" \
+                        "Origin: #{pb}:7:13\n\n" \
+                        "5     - name: reserved list\n" \
+                        "6       debug: msg=one\n" \
+                        "7       tags: [\"all\"]\n" \
+                        "              ^ column 13\n")
+    stderr.must_include("[WARNING]: Found reserved tagnames in tags: ['all', 'tagged'], we do not recommend doing this as it might give unexpected results")
+    stderr.must_include("Origin: #{pb}:3:9")
+    stderr.must_include("Origin: #{pb}:11:13")
+    # A block's own tags warn before the children load (real's Block.load
+    # order), and `always`/`never` never warn.
+    stderr.scan("Found reserved tagnames").size.must_equal(5)
+    play_pos = stderr.index!("Origin: #{pb}:3:9")
+    task_pos = stderr.index!("Origin: #{pb}:7:13")
+    comma_pos = stderr.index!("Origin: #{pb}:11:13")
+    block_pos = stderr.index!("Origin: #{pb}:21:13")
+    child_pos = stderr.index!("Origin: #{pb}:20:17")
+    (play_pos < task_pos).must_equal(true, stderr)
+    (task_pos < comma_pos).must_equal(true, stderr)
+    (comma_pos < block_pos).must_equal(true, stderr)
+    (block_pos < child_pos).must_equal(true, stderr)
+    stdout.must_include("\"msg\": \"four\"")
+  end
+
+  it "warns for an import statement's tags before the imported file's own tasks load" do
+    dir = PluginSpecHelper.tmp_path("reserved-tagnames-import")
+    FileUtils.mkdir_p(dir)
+    sub = File.join(dir, "sub.yml")
+    pb = File.join(dir, "pb.yml")
+    File.write(sub, <<-YAML)
+      - name: child reserved
+        debug: msg=child
+        tags: [untagged]
+      YAML
+    File.write(pb, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: import with tags
+            import_tasks: sub.yml
+            tags: [all]
+      YAML
+
+    stdout, stderr = run_tagname_playbook(pb)
+    statement_pos = stderr.index!("Origin: #{pb}:6:13")
+    child_pos = stderr.index!("Origin: #{sub}:3:9")
+    (statement_pos < child_pos).must_equal(true, stderr)
+    stdout.must_include("\"msg\": \"child\"")
+  end
+
+  it "warns for an include's apply tags at run time and not when the include is skipped" do
+    dir = PluginSpecHelper.tmp_path("reserved-tagnames-apply")
+    FileUtils.mkdir_p(dir)
+    sub = File.join(dir, "sub.yml")
+    pb = File.join(dir, "pb.yml")
+    File.write(sub, "- debug:\n    msg: applied\n")
+    File.write(pb, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: include with apply tags
+            include_tasks:
+              file: sub.yml
+              apply:
+                tags: [all]
+
+          - name: skipped include with apply tags
+            include_tasks:
+              file: sub.yml
+              apply:
+                tags: [untagged]
+            when: false
+      YAML
+
+    stdout, stderr = run_tagname_playbook(pb)
+    stderr.must_include("[WARNING]: Found reserved tagnames in tags: ['all'], we do not recommend doing this as it might give unexpected results")
+    stderr.must_include("Origin: #{pb}:8:17")
+    # Real builds the implicit apply-Block only when the include runs, so
+    # the skipped statement's tags never warn.
+    stderr.scan("Found reserved tagnames").size.must_equal(1)
+    stdout.must_include("included: #{File.expand_path(sub)} for localhost")
+    stdout.must_include("\"msg\": \"applied\"")
   end
 end

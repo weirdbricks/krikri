@@ -5725,6 +5725,16 @@ module Krikri
     # 2.19.11). The exemption is stamped onto everything that load pulled
     # in so a nested include below a handler stays exempt as well.
     private def filter_runtime_loaded(loaded : Array(Task), statement : Task) : Array(Task)
+      # Real builds the include's implicit apply-Block right here, at run
+      # time, so its reserved-tagnames warning (if any) prints per
+      # execution, before the "included:" line - a skipped include never
+      # reaches this point and stays silent (live-verified vs 2.21.6).
+      if apply_tags = statement.include_apply_tags
+        if (origin = statement.include_apply_tags_origin)
+          PlaybookParser.emit_reserved_tagnames(apply_tags, origin[0], {origin[1], origin[2]})
+        end
+      end
+
       if statement.tag_exempt?
         mark_tag_exempt(loaded)
         return loaded

@@ -986,6 +986,10 @@ module Krikri
     # --tags/--skip-tags/never selection of the loaded tasks exactly like
     # an enclosing block's tags would). nil when no apply: was given.
     property include_apply_tags : Array(String)?
+    # The apply mapping's tags VALUE token - real builds the include's
+    # implicit apply-Block only when the include actually runs, so its
+    # reserved-tagnames warning (if any) prints then, not at load.
+    property include_apply_tags_origin : {String, Int32, Int32}? = nil
     # include_role: - only set when module_name == "_include_role". The
     # dynamic counterpart to a roles: list entry: resolved at execution
     # time (role name may be templated), via RoleLoader, same as roles:.
@@ -3647,6 +3651,14 @@ module Krikri
         warn_reserved_vars(import_vars.keys.map(&.to_s), source_file, import_line, immediate: true)
       end
 
+      # The statement's own tags: warning belongs to the import LINE, so
+      # it prints before the imported file's tasks are parsed (real loads
+      # the TaskInclude before expanding the import - live-verified vs
+      # 2.21.6).
+      if import_tags_yaml = hash["tags"]?
+        warn_reserved_tagnames(import_tags_yaml, source_file, source_map, "#{task_source_prefix(source_prefix, source_index)}/tags")
+      end
+
       # Ansible's TaskInclude.check_options runs at PLAYBOOK-LOAD
       # time for import_tasks: (live-verified vs 2.19.11: a bad option, a
       # missing file, or apply: on the import aborts the whole run with
@@ -3843,9 +3855,6 @@ module Krikri
       # list form silently dropped a scalar, so a `tags: never` import ran
       # on an ordinary no-`--tags` invocation where real Ansible skips it.
       import_tags = hash["tags"]?.try { |tags_yaml| flatten_tag_list(tags_yaml) } || [] of String
-      if tags_yaml = hash["tags"]?
-        warn_reserved_tagnames(tags_yaml, source_file, source_map, "#{task_source_prefix(source_prefix, source_index)}/tags")
-      end
       # The import line's ignore_errors: is inherited by every task the
       # import statically inlines, exactly like the when:/tags:/notify:
       # propagation just below - real's FieldAttribute inherit rule
@@ -5890,9 +5899,20 @@ module Krikri
               else
                 safe_yaml_to_string(tags_yaml).split(',').map(&.strip)
               end
-      found = names.uniq.select { |tag| RESERVED_TAG_NAMES.includes?(tag) }
-      return if found.empty?
       pos = source_map.at?(prefix) || return
+      emit_reserved_tagnames(names, sf, pos)
+    end
+
+    # The already-flattened form, for tags whose value was located earlier:
+    # an include-family `apply: {tags:}` mapping is loaded by real only
+    # when the include actually runs (its implicit apply-Block is built at
+    # execution time), so its warning prints then, not at playbook load.
+    def self.emit_reserved_tagnames(tags : Array(String), source_file : String?, pos : {Int32, Int32}?) : Nil
+      return unless sf = source_file
+      return unless pos && File.file?(sf)
+
+      found = tags.uniq.select { |tag| RESERVED_TAG_NAMES.includes?(tag) }
+      return if found.empty?
 
       text = "[WARNING]: Found reserved tagnames in tags: [#{found.map { |tag| "'#{tag}'" }.join(", ")}], we do not recommend doing this as it might give unexpected results\n" \
              "#{ErrorBlock.origin_context(File.expand_path(sf), pos[0], pos[1])}\n\n"
@@ -6263,7 +6283,11 @@ module Krikri
 
       if tags_yaml = task_hash["tags"]?
         task.tags = flatten_tag_list(tags_yaml)
-        warn_reserved_tagnames(tags_yaml, source_file, source_map, "#{task_source_prefix(source_prefix, source_index)}/tags")
+        # Real warns for a Block's tags BEFORE its children load, so
+        # parse_block_task emits that one itself (see there).
+        unless vars_kind == "Block"
+          warn_reserved_tagnames(tags_yaml, source_file, source_map, "#{task_source_prefix(source_prefix, source_index)}/tags")
+        end
       end
 
       # A non-mapping `vars:` (a sequence of single-key mappings is the
@@ -7415,6 +7439,13 @@ module Krikri
 
       task = Task.new(name, "_block")
 
+      # Real's Block.load warns for the block's own tags BEFORE it loads
+      # the block:/rescue:/always: children, so this cannot ride along
+      # with the other keywords at the end of this method.
+      if block_tags_yaml = task_hash["tags"]?
+        warn_reserved_tagnames(block_tags_yaml, source_file, source_map, "#{task_source_prefix(source_prefix, source_index)}/tags")
+      end
+
       # Resolve this block's own become:/become_user: FIRST, then
       # temporarily make them the "ambient" default every child task
       # parsed below falls back to (a task without its OWN become:/
@@ -7925,6 +7956,11 @@ module Krikri
       task.include_apply_when_list = args["when"]?.try { |v| condition_to_list(v) }
       if tags_yaml = args["tags"]?
         task.include_apply_tags = flatten_tag_list(tags_yaml)
+        if source_file && source_map && directive_key
+          if pos = source_map.at?("#{task_source_prefix(source_prefix, source_index)}/#{directive_key}/apply/tags")
+            task.include_apply_tags_origin = {File.expand_path(source_file), pos[0], pos[1]}
+          end
+        end
       end
     end
 

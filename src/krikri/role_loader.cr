@@ -368,8 +368,8 @@ module Krikri
       # A RoleDefinition is Taggable too, so real warns for a reserved
       # tag on a roles:/dependency entry at its own entry - before the
       # role's tasks are loaded (live-verified vs 2.21.6).
-      if tags_yaml = hash["tags"]?
-        PlaybookParser.warn_reserved_tagnames(tags_yaml, origin_file, source_map, "#{path_prefix}/tags") if path_prefix
+      if (entry_tags_yaml = hash["tags"]?) && path_prefix
+        PlaybookParser.warn_reserved_tagnames(entry_tags_yaml, origin_file, source_map, "#{path_prefix}/tags")
       end
 
       # `when:` on a roles: entry or a meta/main.yml dependency is
