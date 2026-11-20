@@ -75,6 +75,7 @@ private DIVERGENCE_CASES = [
   {issue: 1644, slug: "pgkehle-nvm-reserved-tagnames"},
   {issue: 1645, slug: "standardtech-substrate-assert-chain"},
   {issue: 1647, slug: "artem-shestakov-elasticsearch-exporter-consul-check"},
+  {issue: 1648, slug: "hesidoryn-python-coreos-install-python-and-packages"},
   {issue: 1651, slug: "pgkehle-nvm-reserved-tag"},
 ]
 
@@ -368,6 +369,11 @@ describe "divergence corpus" do
 
   it "replays 1647-artem-shestakov-elasticsearch-exporter-consul-check" do
     expected, actual, report = divergence_transcripts(1647, "artem-shestakov-elasticsearch-exporter-consul-check")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1648-hesidoryn-python-coreos-install-python-and-packages" do
+    expected, actual, report = divergence_transcripts(1648, "hesidoryn-python-coreos-install-python-and-packages")
     assert_equal(expected, actual, report)
   end
 

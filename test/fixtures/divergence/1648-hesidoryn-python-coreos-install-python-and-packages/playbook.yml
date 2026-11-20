@@ -1,0 +1,8 @@
+---
+# The role hesidoryn.python-coreos as the round ran it (the round's play also
+# gathered facts and ran the divergent task from its own testhost inventory).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - role: hesidoryn.python-coreos
