@@ -1,4 +1,6 @@
 require "../minitest_helper"
+require "../../src/krikri/playbook_parser"
+require "../../src/krikri/run_options"
 require "../../src/krikri/task_executor/result_display"
 require "../../src/krikri/variable_substitutor"
 require "file_utils"
@@ -179,6 +181,37 @@ describe Krikri::ResultDisplay do
       end
 
       stderr.must_be_empty
+    end
+  end
+
+  # Issue #1631: ansible-core 2.21's callback displays a task result's
+  # warnings before its deprecations (_handle_warnings), whatever order the
+  # module recorded them in. Live-verified vs 2.21.6 + ansible.posix 2.1.0:
+  # firewalld_info's ignored-zone [WARNING] prints ahead of BOTH its
+  # to_native import deprecation and the exit_json `warnings` one, even
+  # though _return_formatted records the exit_json deprecation before it
+  # calls warn(). The `_ansible_core_deprecations` marker is the console
+  # text of those result deprecations, so it has to follow the warnings.
+  describe ".display_result" do
+    it "prints a result's [WARNING] before its core [DEPRECATION WARNING] lines" do
+      zone_note = "capture-test-zone-#{Random::Secure.hex(4)} have been ignored"
+      import_text = "capture-test-import-#{Random::Secure.hex(4)} deprecation"
+      exit_json_text = "capture-test-exit-json-#{Random::Secure.hex(4)} deprecation"
+      result = JSON.parse({
+        "changed"                    => false,
+        "warnings"                   => [zone_note],
+        "_ansible_core_deprecations" => [import_text, exit_json_text],
+      }.to_json)
+
+      _, stderr = capture_stderr_fd do
+        Krikri::ResultDisplay.display_result(Krikri::Host.new("localhost"), result, false)
+      end
+
+      warning_at = stderr.index!("[WARNING]: #{zone_note}")
+      import_at = stderr.index!("[DEPRECATION WARNING]: #{import_text}")
+      exit_json_at = stderr.index!("[DEPRECATION WARNING]: #{exit_json_text}")
+      (warning_at < import_at).must_equal(true)
+      (import_at < exit_json_at).must_equal(true)
     end
   end
 end
