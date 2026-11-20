@@ -881,7 +881,7 @@ module Krikri
       # when:-false handler); only a truthy condition - or no when: at
       # all - counts as genuinely reached for the end-of-run exit-4
       # accounting.
-      if (module_name = handler.unavailable_module) && python_module_source_for(handler).nil?
+      if handler.unavailable_module && python_module_source_for(handler).nil?
         reached = true
         if handler.when_condition
           begin
@@ -906,7 +906,7 @@ module Krikri
         if reached && handler.unavailable_import_playbook? && python_module_source_for(handler).nil?
           return import_playbook_missing_interpreter_failure(handler)
         end
-        reachable_unavailable_modules << module_name if reached
+        register_unavailable_module(handler, vars_context) if reached
         connection_host = host.name
         suffix = (item = vars_context["item"]?) ? " => (item=#{include_item_display_label(handler, item, vars_context, host)}) " : ""
         unless Krikri::Oneline.enabled? && item

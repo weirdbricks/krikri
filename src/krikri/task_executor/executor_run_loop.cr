@@ -1549,7 +1549,7 @@ module Krikri
       # these as ordinary Python; the previous unconditional skip
       # diverged on every role leaning on its own library/, seen
       # repeatedly benchmarking linux-system-roles).
-      if (module_name = task.unavailable_module) && python_module_source_for(task).nil?
+      if task.unavailable_module && python_module_source_for(task).nil?
         if task.when_condition.nil? || evaluate_when_items(task, vars_context, host, shared)
           # Ansible finalizes a task's args AFTER its when: evaluates and
           # BEFORE it ever resolves the module - so a genuinely-reached
@@ -1571,7 +1571,7 @@ module Krikri
           # rc is the task failure's 2). An in-place caller (batch groups,
           # block includes - shapes that never finalize here) still counts
           # at its skip.
-          reachable_unavailable_modules << module_name unless defer_unavailable_module
+          register_unavailable_module(task, vars_context) unless defer_unavailable_module
           return true if defer_unavailable_module
         end
       else
@@ -3321,7 +3321,7 @@ module Krikri
       # module is the 2.19.11-observed exception (module resolved before
       # arg templating) handled by the guard above. Same bookkeeping
       # when_passes? would have performed.
-      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil? && import_gate_source_for(task).nil?
+      if task.unavailable_module && python_module_source_for(task).nil? && import_gate_source_for(task).nil?
         # The exit-4 accounting for an unported module registers HERE,
         # after arg finalization succeeded (and only for a module that will
         # NOT run - a role-private library/ source dispatches below and is
@@ -3334,7 +3334,7 @@ module Krikri
         # undefined, and the registration used to happen back in
         # when_passes?, before this point). The Set dedups the looped
         # path's per-item registrations.
-        reachable_unavailable_modules << unavailable
+        register_unavailable_module(task, vars_context)
         # A LOOPED caller (defer_loop_stats) must not print or book-keep
         # here: its "skipping:" line has to print from finish_looped_task in
         # iteration order (executed items and when:-false skips all display
@@ -3824,14 +3824,14 @@ module Krikri
       # this engine cannot reach either, so the designed
       # unavailable-module skip applies from here - registration
       # included, exactly where the skip above would have done it.
-      if (unavailable = task.unavailable_module) && (gate_source = import_gate_source_for(task))
+      if task.unavailable_module && (gate_source = import_gate_source_for(task))
         result = execute_python_module(task, gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host))
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
         result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
         if result.as_h?.try { |gate_result| gate_result.has_key?("_krikri_k8s_lib_present") || gate_result.has_key?("_krikri_vmware_libs_present") }
-          reachable_unavailable_modules << unavailable
+          register_unavailable_module(task, vars_context)
           # A LOOPED caller (defer_loop_stats) must not print or book-keep
           # here: like the skip above, its "skipping:" line prints from
           # finish_looped_task in iteration order, and the nil sentinel is
@@ -4649,6 +4649,34 @@ module Krikri
       return PythonModuleRunner.k8s_import_gate_source if K8S_IMPORT_GATE_MODULES.includes?(name)
       return PythonModuleRunner.vmware_import_gate_source if name.starts_with?(VMWARE_IMPORT_GATE_PREFIX)
       nil
+    end
+
+    # An unported module whose Ansible implementation declares no check-mode
+    # support (`AnsibleModule(supports_check_mode=False)`). Under --check
+    # basic.py exits skipped before the module body does anything, so real
+    # prints the same plain "skipping:" line this engine's unavailable-module
+    # skip prints and keeps exit 0 - there is no work to report as
+    # unportable, and the exit-4 accounting used to add a "uses unimplemented
+    # plugin" line real never had (issue #1647: artem_shestakov.
+    # elasticsearch_exporter's community.general.consul task on rocky, a
+    # check-mode run where real exited 0). Every other unported module keeps
+    # the accounting: one that DOES support check mode is RUN by real there,
+    # and then the named module is what tells the role tester the divergence
+    # belongs to an untracked community module (issue #1359,
+    # community.general.portage). Both spellings a task can carry are listed
+    # because an unresolvable name keeps exactly what the task wrote.
+    UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE = Set{
+      "consul",
+      "community.general.consul",
+    }
+
+    # Records an unavailable module for the end-of-run exit-4 accounting,
+    # except where real answers the task with a plain check-mode skip and
+    # nothing else (see UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE).
+    private def register_unavailable_module(task : Task, vars_context : Hash(String, JSON::Any)) : Nil
+      name = task.unavailable_module || return
+      return if resolve_task_check_mode(task, vars_context) && UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE.includes?(name)
+      reachable_unavailable_modules << name
     end
 
     # The runtime counterpart of collection_index.local_action_plugin?:
