@@ -1,0 +1,17 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [pgkehle.nvm : Clean artifact path] ***************************************
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Found reserved tagnames in tags: ['all'], we do not recommend doing this as it might give unexpected results
+Origin: <WORK>/roles/pgkehle.nvm/tasks/main.yml:6:9
+
+4     state: absent
+5     path: "{{ remote_base_dir }}/core"
+6   tags: ["all"]
+          ^ column 9
+

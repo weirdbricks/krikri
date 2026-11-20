@@ -1,0 +1,6 @@
+---
+- name: Clean artifact path
+  file:
+    state: absent
+    path: "{{ remote_base_dir }}/core"
+  tags: ["all"]

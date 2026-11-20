@@ -1,0 +1,12 @@
+---
+# The round's site.yml (work/engines/ansible/site.yml) adapted to localhost.
+# gather_facts stays false so the case cannot depend on the machine's facts.
+# remote_base_dir points into the scratch tree (the role's own default is
+# /opt/servers/node) so the one task that runs cannot touch the machine.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    remote_base_dir: "{{ playbook_dir }}/scratch/node"
+  roles:
+    - pgkehle.nvm

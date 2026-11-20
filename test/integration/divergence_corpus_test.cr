@@ -72,6 +72,7 @@ private DIVERGENCE_CASES = [
   {issue: 1640, slug: "cpanm-check-mode-skip"},
   {issue: 1642, slug: "ipr-cnrs-arpwatch-install-recommends"},
   {issue: 1643, slug: "palvarez89-easyrsa3-synchronize-rsync-missing"},
+  {issue: 1644, slug: "pgkehle-nvm-reserved-tagnames"},
   {issue: 1645, slug: "standardtech-substrate-assert-chain"},
   {issue: 1647, slug: "artem-shestakov-elasticsearch-exporter-consul-check"},
   {issue: 1651, slug: "pgkehle-nvm-reserved-tag"},
@@ -352,6 +353,11 @@ describe "divergence corpus" do
 
   it "replays 1643-palvarez89-easyrsa3-synchronize-rsync-missing" do
     expected, actual, report = divergence_transcripts(1643, "palvarez89-easyrsa3-synchronize-rsync-missing")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1644-pgkehle-nvm-reserved-tagnames" do
+    expected, actual, report = divergence_transcripts(1644, "pgkehle-nvm-reserved-tagnames")
     assert_equal(expected, actual, report)
   end
 
