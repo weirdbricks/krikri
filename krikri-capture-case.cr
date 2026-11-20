@@ -126,7 +126,7 @@ begin
   Dir.mkdir_p(work)
   capture_copy_case(case_dir, work)
 
-  env = Krikri::DivergenceCase.env(File.join(work, "home"))
+  env = Krikri::DivergenceCase.env(File.join(work, "home"), work)
   env["PYTHONPATH"] = ansible_site
 
   # Refuse to capture from anything but the pinned parity target: a transcript

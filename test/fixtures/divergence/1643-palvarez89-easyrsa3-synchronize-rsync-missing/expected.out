@@ -1,0 +1,22 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Copy easyrsa files needed to /etc] ***************************************
+[ERROR]: Task failed: Module failed: Failed to find required executable "rsync" in paths: /nonexistent/1643-no-rsync-bin:/sbin:/usr/sbin:/usr/local/sbin
+Origin: <WORK>/playbook.yml:17:7
+
+15     easy_rsa_ca_dir: /etc/easy-rsa
+16   tasks:
+17     - name: Copy easyrsa files needed to /etc
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Failed to find required executable \"rsync\" in paths: /nonexistent/1643-no-rsync-bin:/sbin:/usr/sbin:/usr/local/sbin"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.
+[DEPRECATION WARNING]: The `ansible.module_utils.common._collections_compat` module is deprecated. This feature will be removed from ansible-core version 2.24. Use `collections.abc` from the Python standard library instead.
+[DEPRECATION WARNING]: Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.
+[DEPRECATION WARNING]: Importing 'to_native' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.

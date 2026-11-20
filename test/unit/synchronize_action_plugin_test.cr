@@ -673,3 +673,43 @@ describe "SynchronizeActionPlugin _substitute_controller" do
     json.as_h["msg"].as_s.must_match(/\Aargument '_substitute_controller' is of type str/)
   end
 end
+
+# Issue #1643 (palvarez89.easy_rsa3): where the module runs on this machine
+# the controller-side plugin stands in for it, and the module's own first act
+# is get_bin_path(rsync, required=True). A host with no rsync installed must
+# therefore fail with that get_bin_path msg (the searched directory list
+# included, as real does) instead of this engine's "could not exec" error.
+describe "SynchronizeActionPlugin missing rsync" do
+  serial! # PATH is process-global
+
+  it "fails with get_bin_path's searched-paths message, not a spawn error" do
+    previous_path = ENV["PATH"]?
+    ENV["PATH"] = "/nonexistent/sync-spec-bin"
+    # The availability probes cache per process: a run that resolved them
+    # under the real PATH must not answer for this one.
+    Krikri::SSHManager.sshpass_available_for_spec = nil
+    begin
+      delegate = Krikri::Host.new("localhost")
+      delegate.vars["ansible_connection"] = JSON::Any.new("local")
+      plugin = Krikri::SynchronizeActionPlugin.new({
+        "src"  => "/nonexistent/sync-spec-src",
+        "dest" => "/nonexistent/sync-spec-dest",
+      }, Hash(String, JSON::Any).new, delegate, nil, delegate)
+
+      json = plugin.execute.final_result || raise "expected a final result"
+      json.as_h["failed"].as_bool.must_equal(true)
+      json.as_h["msg"].as_s.must_match(
+        /\AFailed to find required executable "rsync" in paths: \/nonexistent\/sync-spec-bin(:|\z)/)
+      # fail_json(msg=...): the module never built an rsync argv.
+      json.as_h.has_key?("cmd").must_equal(false)
+      json.as_h.has_key?("rc").must_equal(false)
+    ensure
+      Krikri::SSHManager.sshpass_available_for_spec = nil
+      if previous_path
+        ENV["PATH"] = previous_path
+      else
+        ENV.delete("PATH")
+      end
+    end
+  end
+end

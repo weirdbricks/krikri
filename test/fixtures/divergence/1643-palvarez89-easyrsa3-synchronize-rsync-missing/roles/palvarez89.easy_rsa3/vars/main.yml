@@ -1,0 +1,5 @@
+---
+# vars file for easy_rsa
+
+easy_rsa_ca_dir: /etc/easy-rsa
+easy_rsa_key_dir: "{{ easy_rsa_ca_dir }}/keys"

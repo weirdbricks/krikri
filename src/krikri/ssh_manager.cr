@@ -139,14 +139,16 @@ module Krikri
       cached = @@sshpass_available
       return cached unless cached.nil?
 
-      result = Process.run("which", ["sshpass"],
-        output: Process::Redirect::Close,
-        error: Process::Redirect::Close
-      )
-      @@sshpass_available = result.exit_code? == 0
+      # A PATH search, not a spawned `which`: this probe runs from the
+      # synchronize action plugin, and a task whose PATH is minimal (the
+      # role that found issue #1643 ran with no rsync at all) crashed the
+      # whole playbook with File::NotFoundError when `which` itself was
+      # missing. Presence on PATH is all the caller needs, and every
+      # launch site resolves sshpass the same way.
+      @@sshpass_available = !Process.find_executable("sshpass").nil?
     end
 
-    # Spec seam - the availability probe shells out to `which`, so tests
+    # Spec seam - availability is a process-wide PATH answer, so tests
     # that need the "sshpass missing" path (or need it NOT to fire on a
     # machine that happens to lack sshpass) pin the result directly.
     def self.sshpass_available_for_spec=(available : Bool?)

@@ -58,7 +58,15 @@ module Krikri
       dest_port = resolve_dest_port
 
       argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
-      argv[0] = SynchronizeRsync.resolve_bin_path(argv[0])
+      # The module's `if '/' not in rsync: rsync = get_bin_path(rsync,
+      # required=True)` runs before any rsync invocation: a host without
+      # rsync fails the task with get_bin_path's searched-directories msg,
+      # not with this engine's own "could not exec" error (issue #1643).
+      unless rsync_bin = SynchronizeRsync.resolve_bin_path(argv[0])
+        return PluginResult.new(changed: false, failed: true,
+          msg: SynchronizeRsync.missing_executable_error("rsync"))
+      end
+      argv[0] = rsync_bin
       result = SynchronizeRsync.run(argv)
       cmd_str = SynchronizeRsync.cmd_string(argv)
 

@@ -1,0 +1,17 @@
+---
+galaxy_info:
+  author: Pedro Alvarez
+  description: Installs and configures easy_rsa3
+  license: GPL
+  min_ansible_version: 1.9
+  github_branch: master
+  platforms:
+    - name: Debian
+      versions:
+        - stretch
+    - name: Ubuntu
+      versions:
+        - bionic
+  galaxy_tags:
+    - system
+dependencies: []

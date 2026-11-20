@@ -1,0 +1,111 @@
+---
+# tasks file for easy_rsa
+- name: Install git
+  become: yes
+  apt:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+  with_items:
+    - git
+  tags:
+    - easy_rsa
+
+- name: clone latest easy-rsa
+  become: yes
+  git:
+    repo: https://github.com/OpenVPN/easy-rsa
+    version: v3.0.3
+    dest: "{{ easy_rsa_dir }}"
+
+- name: Copy easyrsa files needed to /etc
+  become: yes
+  synchronize:
+    src: "{{ easy_rsa_dir }}/easyrsa3/"
+    dest: "{{ easy_rsa_ca_dir }}"
+    recursive: yes
+  delegate_to: "{{ inventory_hostname }}"
+
+- name: Create CA directory
+  become: yes
+  command: mkdir {{ easy_rsa_ca_dir }}
+  args:
+    creates: "{{ easy_rsa_ca_dir }}"
+  tags:
+    - easy_rsa
+
+- name: Create vars configuration file
+  become: yes
+  template:
+    src: vars.j2
+    dest: "{{ easy_rsa_ca_dir }}/vars"
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - easy_rsa
+
+- name: Prep the keys directory
+  become: yes
+  shell: "./easyrsa init-pki"
+  args:
+    chdir: "{{ easy_rsa_ca_dir }}"
+    creates: "{{ easy_rsa_key_dir }}"
+  tags:
+    - easy_rsa
+
+- name: Create ca.key
+  become: yes
+  shell: "./easyrsa --batch build-ca nopass"
+  args:
+    chdir: "{{ easy_rsa_ca_dir }}"
+    creates: "{{ easy_rsa_key_dir }}/private/ca.key"
+  tags:
+    - easy_rsa
+
+- name: Create server.key
+  become: yes
+  shell: "./easyrsa --batch --req-cn={{ easy_rsa_key_name }} gen-req {{ easy_rsa_key_name }} nopass"
+  args:
+    chdir: "{{ easy_rsa_ca_dir }}"
+    creates: "{{ easy_rsa_key_dir }}/private/{{ easy_rsa_key_name }}.key"
+  tags:
+    - easy_rsa
+
+- name: Sign server key
+  become: yes
+  shell: "./easyrsa --batch sign-req server {{ easy_rsa_key_name }}"
+  args:
+    chdir: "{{ easy_rsa_ca_dir }}"
+    creates: "{{ easy_rsa_key_dir }}/issued/{{ easy_rsa_key_name }}.crt"
+  tags:
+    - easy_rsa
+
+- name: Generate Diffie-Hellman parameters
+  become: yes
+  shell: "openssl dhparam -out dh{{ easy_rsa_key_size }}.pem {{ easy_rsa_key_size }}"
+  args:
+    chdir: "{{ easy_rsa_key_dir }}"
+    creates: "{{ easy_rsa_key_dir }}/dh{{ easy_rsa_key_size }}.pem"
+  tags:
+    - easy_rsa
+
+- name: Generate CRL file
+  become: yes
+  shell: "./easyrsa gen-crl"
+  args:
+    chdir: "{{ easy_rsa_ca_dir }}"
+    creates: "{{ easy_rsa_key_dir }}/crl.pem"
+  tags:
+    - easy_rsa
+
+- name: Generate client certificates and keys
+  become: yes
+  shell: "./easyrsa --batch --req-cn={{ item }} gen-req {{ item }} nopass"
+  args:
+    chdir: "{{ easy_rsa_ca_dir }}"
+    creates: "{{ easy_rsa_key_dir }}/private/{{ item }}.key"
+  with_items:
+    - "{{ easy_rsa_clients }}"
+  tags:
+    - easy_rsa

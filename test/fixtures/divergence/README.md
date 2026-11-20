@@ -18,6 +18,9 @@ trigger than the role hit - which is why closed divergences kept coming back
   roles/           the role (or the trimmed part of it) the YAML came from
   inventory.ini    optional; pins the interpreter on the [local] host
   flags.txt        optional, one CLI flag per line (e.g. --check)
+  env.txt          optional, one NAME=value per line; overrides the harness
+                   environment for a case that depends on the RUNNING
+                   process's own variables (e.g. a PATH with no rsync)
   expected.out     real ansible-playbook's transcript, `<WORK>`-normalized
   NOTES.md         issue URL, role, what diverged and why
 ```
@@ -65,6 +68,14 @@ the normalized transcript to `expected.out`. Capture rules:
   block-buffered when redirected, so real ansible's stderr lands in one block
   after stdout while krikri's stream is line-buffered and interleaves.
 - Normalize the scratch directory to `<WORK>` and nothing else.
+- A case whose trigger lives in the RUNNING process's environment rather than in
+  the play (issue #1643: the synchronize module's `get_bin_path` probe only fails
+  when no rsync is on PATH, and the play's `environment:` keyword reaches only
+  the module process) pins it in `env.txt`, one `NAME=value` per line with `#`
+  comments allowed. Capture and replay both apply it through
+  `Krikri::DivergenceCase.env_overrides`, so the recording and every replay
+  agree. Keep the pin absolute and machine-independent (a nonexistent directory
+  for "not installed"), never a copy of the developer's PATH.
 - A case may not mutate the machine: everything it writes stays inside the
   scratch tree, and `--check`/read-only modules are used wherever the real role
   would touch system state. Cases that genuinely need package/service/crontab/

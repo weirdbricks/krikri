@@ -1,0 +1,19 @@
+---
+# defaults file for easy_rsa
+
+easy_rsa_ca_expire: 3650
+easy_rsa_clients: []
+easy_rsa_key_city: "SanFrancisco"
+easy_rsa_key_country: "US"
+easy_rsa_key_email: "me@myhost.mydomain"
+easy_rsa_key_expire: 3650
+easy_rsa_key_name: "EasyRSA"
+easy_rsa_key_org: "Fort-Funston"
+easy_rsa_key_ou: "MyOrganizationalUnit"
+easy_rsa_key_province: "CA"
+easy_rsa_key_size: 2048
+easy_rsa_dir: "/opt/easy-rsa"
+easy_rsa_crl_days: 1800
+
+easy_rsa_ca_dir: /etc/easy-rsa
+easy_rsa_key_dir: "{{ easy_rsa_ca_dir }}/keys"

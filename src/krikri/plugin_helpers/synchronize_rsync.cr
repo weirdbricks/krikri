@@ -172,21 +172,48 @@ module Krikri
       parts.join(" ")
     end
 
+    # The sbin dirs ansible.module_utils.common.process.get_bin_path appends
+    # to $PATH when they exist and are not already listed: a non-login
+    # shell's PATH routinely lacks them, and modules resolving rsync must
+    # still find a binary living there.
+    SBIN_FALLBACK_DIRS = ["/sbin", "/usr/sbin", "/usr/local/sbin"]
+
+    # The exact directory list get_bin_path searches, in order - $PATH's
+    # entries (empty ones included, like Python's split) followed by the
+    # sbin fallbacks. The list is also what the resolve failure quotes, so
+    # it has to be built once and shared by the lookup and the message.
+    def self.bin_path_search_dirs(path : String? = ENV["PATH"]?) : Array(String)
+      dirs = (path || "").split(':')
+      SBIN_FALLBACK_DIRS.each do |dir|
+        dirs << dir unless dirs.includes?(dir) || !Dir.exists?(dir)
+      end
+      dirs
+    end
+
+    # get_bin_path's ValueError, which the synchronize module turns into its
+    # fail_json msg: `rsync = module.get_bin_path(rsync, required=True)` runs
+    # before any rsync invocation, so a host without rsync fails the task
+    # HERE. An engine that instead spawns the bare name reports its own exec
+    # error, a message real never produces (issue #1643).
+    def self.missing_executable_error(name : String, search_dirs : Array(String) = bin_path_search_dirs) : String
+      %(Failed to find required executable "#{name}" in paths: #{search_dirs.join(':')})
+    end
+
     # Ansible module: `if '/' not in rsync: rsync = get_bin_path(rsync,
     # required=True)` - the reported cmd carries the RESOLVED path
-    # (/usr/bin/rsync), not the bare name. Runs wherever the module
-    # itself runs: controller-side in the action plugin's local-rsync
-    # branches, on the host in the standalone module binary.
-    def self.resolve_bin_path(name : String) : String
+    # (/usr/bin/rsync), not the bare name. nil when the bare name is on no
+    # searched directory: real fails the task rather than exec'ing it. Runs
+    # wherever the module itself runs: controller-side in the action
+    # plugin's local-rsync branches, on the host in the standalone module
+    # binary.
+    def self.resolve_bin_path(name : String, search_dirs : Array(String) = bin_path_search_dirs) : String?
       return name if name.includes?('/')
-      if path = ENV["PATH"]?
-        path.split(':').each do |dir|
-          next if dir.empty?
-          candidate = File.join(dir, name)
-          return candidate if File.file?(candidate) && File::Info.executable?(candidate)
-        end
+      search_dirs.each do |dir|
+        next if dir.empty?
+        candidate = File.join(dir, name)
+        return candidate if File.file?(candidate) && File::Info.executable?(candidate)
       end
-      name
+      nil
     end
 
     def self.run(argv : Array(String), env : Hash(String, String)? = nil) : RsyncResult
