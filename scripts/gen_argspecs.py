@@ -321,7 +321,8 @@ DELEGATES = {
 # spec target is resolved at validation time from the host's own facts.
 FACT_DELEGATES = {
     "ansible.builtin.service": ("ansible_service_mgr", {"systemd": "ansible.builtin.systemd"}),
-    "ansible.builtin.package": ("ansible_pkg_mgr", {"apt": "ansible.builtin.apt"}),
+    "ansible.builtin.package": ("ansible_pkg_mgr", {"apt": "ansible.builtin.apt",
+                                                   "dnf": "ansible.builtin.dnf"}),
 }
 
 # Modules whose failure result carries extra keys real merges into the
@@ -496,9 +497,10 @@ VIRTUAL = {
 
 # Modules Ansible never argspec-validates on this class of host:
 # action-only directives that ignore unknown keys entirely (fetch's typo'd
-# options are silently dropped - probed), and the yum/dnf family whose
-# action plugin fails at the backend-detection stage before any module
-# runs on a non-RPM host.
+# options are silently dropped - probed), and yum, whose action plugin
+# fails at the backend-detection stage before any module runs on a non-RPM
+# host (dnf, which fails the same way HERE yet validates on an RPM host,
+# is NO_VALIDATE_WITH_SPEC below).
 NO_VALIDATE = {
     "ansible.builtin.fetch",
     "ansible.builtin.set_fact",
@@ -506,6 +508,16 @@ NO_VALIDATE = {
     "ansible.builtin.gather_facts",
     "ansible.builtin.reboot",
     "ansible.builtin.yum",
+}
+
+# Modules whose OWN validation stays out of the table (the krikri plugin
+# runs the checks, see plugins/dnf.cr: the printed module name depends on
+# the action plugin's backend resolution, which no static entry can carry),
+# but whose spec the FACT-DELEGATED `package:` path still needs. Ansible's
+# package action plugin forwards the task's args to the backend module it
+# picks from ansible_pkg_mgr, so on an RPM host an unsupported option fails
+# with the dnf module's own argspec wording (issue #1642).
+NO_VALIDATE_WITH_SPEC = {
     "ansible.builtin.dnf",
 }
 
@@ -581,6 +593,8 @@ def main():
         if fqcn in FACT_DELEGATES:
             fact, mapping = FACT_DELEGATES[fqcn]
             data["fact_delegate"] = {"fact": fact, "map": mapping}
+        if fqcn in NO_VALIDATE_WITH_SPEC:
+            data["no_validate"] = True
         table[fqcn] = data
 
     for fqcn, body in VIRTUAL.items():

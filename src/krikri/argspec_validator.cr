@@ -314,28 +314,31 @@ module Krikri
         return SpecOutcome.new(failure, false)
       end
 
-      # package's action plugin consumes `use:` itself (it names the
-      # backend module to delegate to, defaulting to the ansible_pkg_mgr
-      # fact) and deletes it from the args it forwards (package.py:89-91),
-      # so the backend module's spec never sees it - `use` is not in
-      # apt/dnf/yum's argument_spec and a `package: {use: auto}` task
-      # must not fail the backend's Unsupported-parameters check
-      # (live-verified vs 2.19.11: brucellino.docker's
-      # `package: {use: auto}` tasks run through apt fine). The use:
-      # backend-name check above already ran on the unstripped params.
-      if module_name == "ansible.builtin.package"
-        params = params.reject { |key, _| key == "use" }
-      end
-
       # unarchive's action plugin checks that dest is an existing directory
       # (AnsibleActionFail) before the module ever validates its arguments;
       # a dest that is not a directory here defers to the plugin's own failure.
       return SpecOutcome.new(nil, false) if defers_to_unarchive_action?(module_name, params)
 
+      # The backend spec is resolved from these params, so `use:` must
+      # still be here: package's action plugin consumes it itself (it names
+      # the backend module to delegate to, defaulting to the ansible_pkg_mgr
+      # fact) and deletes it from the args it forwards (package.py:89-91),
+      # so only the END of this method may drop it - `use` is not in
+      # apt/dnf/yum's argument_spec and a `package: {use: auto}` task must
+      # not fail the backend's Unsupported-parameters check (live-verified
+      # vs 2.19.11: brucellino.docker's `package: {use: auto}` tasks run
+      # through apt fine). Resolving after the drop made every explicit
+      # `use:` validate against the host fact instead - issue #1642's
+      # `package: {use: dnf, install_recommends: false}` passed on a
+      # Debian controller because the fallback probe found apt-get. The
+      # use: backend-name check above already ran on the unstripped params.
       print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, params, vars_context)
       return SpecOutcome.new(nil, false) unless entry
 
       params = strip_service_unused_params(module_name, spec_owner, params)
+      if module_name == "ansible.builtin.package"
+        params = params.reject { |key, _| key == "use" }
+      end
       SpecOutcome.new(validate_spec_entry_tail(action_name, print_name, entry, spec_owner, params, non_string_natives, non_string_lists), false)
     end
 

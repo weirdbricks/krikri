@@ -1,0 +1,25 @@
+---
+# ipr-cnrs.arpwatch's "Ensure required packages are in there desired state"
+# task from its tasks/main.yml, verbatim apart from the `use:` line: the role
+# lets the package action plugin pick the backend from ansible_pkg_mgr (the
+# round's host was rocky, where that is dnf), which no local run reproduces,
+# and `use: dnf` reaches the very same dnf module with the very same args
+# (live-verified vs 2.21.6: the message is identical either way).
+- name: ipr-cnrs.arpwatch
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    arpwatch__base_packages:
+      - 'arpwatch'
+    arpwatch__enabled: true
+  tasks:
+    - name: Ensure required packages are in there desired state
+      ansible.builtin.package:
+        name: '{{ arpwatch__base_packages | flatten }}'
+        state: 'present'
+        use: dnf
+        install_recommends: False
+      register: pkg_result
+      until: pkg_result is success
+      when: arpwatch__enabled|bool

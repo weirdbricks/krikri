@@ -1,0 +1,20 @@
+
+PLAY [ipr-cnrs.arpwatch] *******************************************************
+
+TASK [Ensure required packages are in there desired state] *********************
+FAILED - RETRYING: [localhost]: Ensure required packages are in there desired state (2 retries left).
+FAILED - RETRYING: [localhost]: Ensure required packages are in there desired state (1 retries left).
+FAILED - RETRYING: [localhost]: Ensure required packages are in there desired state (0 retries left).
+[ERROR]: Task failed: Module failed: Unsupported parameters for (ansible.legacy.dnf) module: install_recommends. Supported parameters include: allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, enablerepo, exclude, install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, use_backend, validate_certs (expire-cache, pkg).
+Origin: <WORK>/playbook.yml:17:7
+
+15     arpwatch__enabled: true
+16   tasks:
+17     - name: Ensure required packages are in there desired state
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"attempts": 3, "changed": false, "msg": "Unsupported parameters for (ansible.legacy.dnf) module: install_recommends. Supported parameters include: allow_downgrade, allowerasing, autoremove, best, bugfix, cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, download_dir, download_only, enable_plugin, enablerepo, exclude, install_weak_deps, installroot, list, lock_timeout, name, nobest, releasever, security, skip_broken, sslverify, state, update_cache, update_only, use_backend, validate_certs (expire-cache, pkg)."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
