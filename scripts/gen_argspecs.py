@@ -242,6 +242,14 @@ def clean_option(spec_entry, collection_version=None):
         out["options"] = {
             name: clean_option(sub or {}) for name, sub in spec_entry["options"].items()
         }
+    if spec_entry.get("no_log"):
+        # AnsibleModule collects every provided no_log=True option's value
+        # and runs remove_values over its fail_json result, so a spec
+        # rejection must not echo the value (the option's own NAME can be
+        # masked too: mysql_user's "password_expire_interval" turns into
+        # "password_expire_********" because the provided password_expire
+        # is "interval"). The validator replays that censoring.
+        out["no_log"] = True
     return out
 
 

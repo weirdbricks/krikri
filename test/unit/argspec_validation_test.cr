@@ -601,6 +601,31 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("dictionary requested, could not parse JSON or key=value")
   end
 
+  # AnsibleModule.fail_json runs remove_values over the module result with
+  # every PROVIDED no_log=True option's value, so a spec rejection never
+  # echoes a secret. Because the swap is a plain substring replace it also
+  # censors a different option's NAME when it contains one: mysql_user's
+  # password_expire: interval turns password_expire_interval into
+  # password_expire_******** (issue #1622). Both messages live-captured
+  # from ansible-playbook 2.21.6.
+  it "censors provided no_log option values in a spec failure message (mysql_user)" do
+    failure = Krikri::ArgspecValidator.validate(
+      "ansible.mysql.mysql_user", "ansible.mysql.mysql_user",
+      {"name" => "ugmgey", "password" => "kpg-pass-1",
+       "password_expire" => "interval", "password_expire_interval" => "bybgql"}, vars)
+    failure.wont_be_nil
+    failure.as(Failure).msg.must_equal(
+      "argument 'password_expire_********' is of type str and we were unable to convert to int: " \
+      "\"'********'\" cannot be converted to an int")
+
+    Krikri::ArgspecValidator.validate(
+      "ansible.mysql.mysql_user", "ansible.mysql.mysql_user",
+      {"name" => "ugmgey", "password_expire_interval" => "bybgql"}, vars
+    ).as(Failure).msg.must_equal(
+      "argument 'password_expire_interval' is of type str and we were unable to convert to int: " \
+      "\"'********'\" cannot be converted to an int")
+  end
+
   # Options with elements=dict but NO suboptions (openssl_csr's
   # subject_ordered) escape the no_log walk and fail later, in the types
   # pass - wrapped as "Elements value for option ..." - which still beats

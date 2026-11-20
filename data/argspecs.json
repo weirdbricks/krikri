@@ -1857,7 +1857,8 @@
     "type": "str"
    },
    "content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "dest": {
     "type": "path",
@@ -2751,7 +2752,8 @@
     "aliases": [
      "password"
     ],
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "force_basic_auth": {
     "type": "bool",
@@ -4342,7 +4344,8 @@
     "type": "str"
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "executable": {
     "type": "path"
@@ -4617,7 +4620,8 @@
     "type": "str"
    },
    "content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "dest": {
     "type": "path",
@@ -4858,7 +4862,8 @@
     "aliases": [
      "password"
     ],
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "force_basic_auth": {
     "type": "bool",
@@ -5044,7 +5049,8 @@
     "type": "path"
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_class": {
     "type": "str"
@@ -5113,7 +5119,8 @@
     "default": "ansible-generated on floridian-goat"
    },
    "ssh_key_passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "update_password": {
     "type": "str",
@@ -5363,7 +5370,8 @@
     "required": true
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "priority": {
     "type": "str"
@@ -5375,7 +5383,8 @@
     "type": "str"
    },
    "proxy_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "proxy_username": {
     "type": "str"
@@ -5509,7 +5518,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -5624,7 +5634,8 @@
    },
    "unsafe_login_password": {
     "type": "bool",
-    "default": false
+    "default": false,
+    "no_log": true
    },
    "restrict_config_file": {
     "type": "bool",
@@ -5663,7 +5674,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -5740,7 +5752,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -5823,7 +5836,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -5871,7 +5885,8 @@
     "required": true
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "encrypted": {
     "type": "bool",
@@ -5964,10 +5979,12 @@
      "never",
      "default",
      "interval"
-    ]
+    ],
+    "no_log": true
    },
    "password_expire_interval": {
-    "type": "int"
+    "type": "int",
+    "no_log": true
    },
    "locked": {
     "type": "bool"
@@ -5986,7 +6003,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -6469,7 +6487,8 @@
     "default": "rsync"
    },
    "_local_rsync_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "_substitute_controller": {
     "type": "bool",
@@ -6737,7 +6756,8 @@
     "default": "partial_idempotence"
    },
    "passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "private_key_format": {
     "type": "str",
@@ -6815,10 +6835,12 @@
     "type": "path"
    },
    "privatekey_content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "privatekey_passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "version": {
     "type": "int",
@@ -7296,20 +7318,23 @@
     "type": "int"
    },
    "passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "path": {
     "type": "path",
     "required": true
    },
    "privatekey_passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "privatekey_path": {
     "type": "path"
    },
    "privatekey_content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "state": {
     "type": "str",
@@ -7428,7 +7453,8 @@
     ]
    },
    "passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "cipher": {
     "type": "str",
@@ -7553,10 +7579,12 @@
     "type": "path"
    },
    "content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "return_private_key_data": {
     "type": "bool",
@@ -7613,7 +7641,8 @@
     "type": "path"
    },
    "privatekey_content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "format": {
     "type": "str",
@@ -7624,7 +7653,8 @@
     "default": "PEM"
    },
    "privatekey_passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "backup": {
     "type": "bool",
@@ -7701,7 +7731,8 @@
     "type": "path"
    },
    "content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "select_crypto_backend": {
     "type": "str",
@@ -7776,10 +7807,12 @@
     "type": "path"
    },
    "privatekey_content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "privatekey_passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "acme_accountkey_path": {
     "type": "path"
@@ -7805,10 +7838,12 @@
     "type": "path"
    },
    "ownca_privatekey_content": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "ownca_privatekey_passphrase": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "ownca_digest": {
     "type": "str",
@@ -9254,7 +9289,8 @@
       "type": "str"
      },
      "value": {
-      "type": "str"
+      "type": "str",
+      "no_log": true
      }
     }
    },
@@ -9377,7 +9413,8 @@
     "type": "str"
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "reauthorize": {
     "aliases": [
@@ -10425,7 +10462,8 @@
     "required": true
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "hash_scheme": {
     "aliases": [
@@ -10628,7 +10666,8 @@
     "type": "path"
    },
    "pkcs12_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "pkcs12_alias": {
     "type": "str"
@@ -10645,7 +10684,8 @@
    },
    "keystore_pass": {
     "type": "str",
-    "required": true
+    "required": true,
+    "no_log": true
    },
    "trust_cacert": {
     "type": "bool",
@@ -10915,7 +10955,8 @@
     "type": "str"
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "host": {
     "type": "str",
@@ -11097,7 +11138,8 @@
     "aliases": [
      "aws_secret_access_key"
     ],
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "headers": {
     "type": "dict"
@@ -11335,7 +11377,8 @@
     "type": "str"
    },
    "key_secret": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "key_algorithm": {
     "type": "str",
@@ -12373,7 +12416,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -12488,7 +12532,8 @@
    },
    "unsafe_login_password": {
     "type": "bool",
-    "default": false
+    "default": false,
+    "no_log": true
    },
    "restrict_config_file": {
     "type": "bool",
@@ -12527,7 +12572,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -12604,7 +12650,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -12688,7 +12735,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -12736,7 +12784,8 @@
     "required": true
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "encrypted": {
     "type": "bool",
@@ -12829,10 +12878,12 @@
      "never",
      "default",
      "interval"
-    ]
+    ],
+    "no_log": true
    },
    "password_expire_interval": {
-    "type": "int"
+    "type": "int",
+    "no_log": true
    },
    "locked": {
     "type": "bool"
@@ -12851,7 +12902,8 @@
     "default": null
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_host": {
     "type": "str",
@@ -12928,7 +12980,8 @@
    },
    "login_password": {
     "type": "str",
-    "default": ""
+    "default": "",
+    "no_log": true
    },
    "login_host": {
     "aliases": [
@@ -13082,7 +13135,8 @@
    },
    "login_password": {
     "type": "str",
-    "default": ""
+    "default": "",
+    "no_log": true
    },
    "login_host": {
     "aliases": [
@@ -13234,7 +13288,8 @@
    },
    "login_password": {
     "type": "str",
-    "default": ""
+    "default": "",
+    "no_log": true
    },
    "login_host": {
     "aliases": [
@@ -13337,7 +13392,8 @@
    },
    "login_password": {
     "type": "str",
-    "default": ""
+    "default": "",
+    "no_log": true
    },
    "login_host": {
     "aliases": [
@@ -13397,7 +13453,8 @@
    },
    "password": {
     "type": "str",
-    "default": null
+    "default": null,
+    "no_log": true
    },
    "state": {
     "type": "str",
@@ -13523,7 +13580,8 @@
    },
    "password": {
     "type": "str",
-    "default": null
+    "default": null,
+    "no_log": true
    },
    "tags": {
     "type": "str",
@@ -13595,10 +13653,12 @@
     "default": "15672"
    },
    "login_user": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "login_password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    }
   },
   "required_by": {},
@@ -13678,7 +13738,8 @@
     "type": "str"
    },
    "password": {
-    "type": "str"
+    "type": "str",
+    "no_log": true
    },
    "ca_cert_dir": {
     "type": "path"
