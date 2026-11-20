@@ -514,7 +514,18 @@ module Krikri
       # Ansible module: `if '/' not in rsync: rsync = get_bin_path(rsync,
       # required=True)` - the reported cmd carries the RESOLVED path
       # (/usr/bin/rsync), not the bare name, on success and failure alike.
-      argv[0] = SynchronizeRsync.resolve_bin_path(argv[0])
+      # A missing rsync is that get_bin_path's fail_json, which the module
+      # raises BEFORE it spawns anything (issue #1643) - so the task fails
+      # with the searched-directories message instead of this engine's own
+      # exec error, and no rc/cmd keys ride along (get_bin_path passes only
+      # msg).
+      unless rsync_bin = SynchronizeRsync.resolve_bin_path(argv[0])
+        return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+          false, true, SynchronizeRsync.missing_executable_error("rsync"),
+          key_order: PARAM_FAILURE_KEY_ORDER
+        ), PARAM_FAILURE_KEY_ORDER))
+      end
+      argv[0] = rsync_bin
       result = SynchronizeRsync.run(argv, env: SSHManager.sshpass_env(conn_password))
       cmd_str = SynchronizeRsync.cmd_string(argv)
 

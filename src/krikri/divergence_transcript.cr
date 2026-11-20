@@ -79,6 +79,7 @@ module Krikri
     PLAYBOOK  = "playbook.yml"
     INVENTORY = "inventory.ini"
     FLAGS     = "flags.txt"
+    ENV_FILE  = "env.txt"
 
     # The case's recorded result, not part of its input. Never copied into a
     # scratch run and never fed back into a capture.
@@ -104,6 +105,26 @@ module Krikri
       else
         ["-i", "localhost,"]
       end
+    end
+
+    # One NAME=value per line. A case whose trigger is the RUNNING process's
+    # own environment - not the play's `environment:` keyword, which only the
+    # module process sees - has to state it here or it would be recorded
+    # against, and replayed on, whatever PATH the capturing shell happened to
+    # have. Issue #1643's synchronize case needs a PATH with no rsync on it.
+    def self.env_overrides(case_dir : String) : Hash(String, String)
+      path = File.join(case_dir, ENV_FILE)
+      return {} of String => String unless File.exists?(path)
+
+      overrides = {} of String => String
+      File.read_lines(path).each do |line|
+        line = line.strip
+        next if line.empty? || line.starts_with?('#')
+        name, separator, value = line.partition('=')
+        next unless separator == "=" && !name.strip.empty?
+        overrides[name.strip] = value.strip
+      end
+      overrides
     end
 
     # The full argument list after the binary name, run from inside the case's
@@ -143,8 +164,10 @@ module Krikri
     # change both the task list and the facts, HOME decides where `~` points
     # (a case may use `~/...`, and must never write into the real home
     # directory), PATH is pinned for the reason above, and the docker daemon
-    # selectors are cleared for the reason in DOCKER_ENV.
-    def self.env(home_dir : String) : Hash(String, String?)
+    # selectors are cleared for the reason in DOCKER_ENV. The case's own
+    # env.txt overrides go on top, so a case may need a different PATH than
+    # the harness default (see DivergenceCase.env_overrides).
+    def self.env(home_dir : String, case_dir : String) : Hash(String, String?)
       env = {
         "ANSIBLE_NOCOLOR"                 => "1",
         "HOME"                            => home_dir,
@@ -154,6 +177,7 @@ module Krikri
         "ANSIBLE_CACHE_PLUGIN_CONNECTION" => nil,
       }
       DOCKER_ENV.each { |name| env[name] = nil }
+      env_overrides(case_dir).each { |name, value| env[name] = value }
       env
     end
   end

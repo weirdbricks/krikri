@@ -111,7 +111,7 @@ describe "divergence case invocation" do
   end
 
   it "pins the environment and clears the fact-gathering variables" do
-    env = Krikri::DivergenceCase.env("/tmp/case/home")
+    env = Krikri::DivergenceCase.env("/tmp/case/home", "/tmp/case")
     env["ANSIBLE_NOCOLOR"].must_equal("1")
     env["HOME"].must_equal("/tmp/case/home")
     # nil removes the variable: this box exports these, and either one changes
@@ -123,7 +123,7 @@ describe "divergence case invocation" do
   end
 
   it "clears the docker daemon selectors a case's recording and replay must share" do
-    env = Krikri::DivergenceCase.env("/tmp/case/home")
+    env = Krikri::DivergenceCase.env("/tmp/case/home", "/tmp/case")
     # DOCKER_HOST alone flips a docker_* case between "unreachable socket" and
     # "rootless podman answers": the same role succeeded in a capture and
     # failed in the replay, and the capture gate called the case's expected.out
@@ -135,11 +135,27 @@ describe "divergence case invocation" do
   end
 
   it "pins PATH so a get_bin_path failure names the same directories every run" do
-    env = Krikri::DivergenceCase.env("/tmp/case/home")
+    env = Krikri::DivergenceCase.env("/tmp/case/home", "/tmp/case")
     # get_bin_path's failure text lists the directories it searched, so an
     # inherited PATH would put this developer shell's own entries (a random
     # AppImage mount point included) into the recording and into every replay.
     env["PATH"].must_equal("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+  end
+
+  it "lets a case's env.txt override the harness environment" do
+    dir = PluginSpecHelper.tmp_path("divergence-case-env-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    # Issue #1643's synchronize case is triggered by the RUNNING process's
+    # PATH, not by the play's environment: keyword, which only the module
+    # process sees - so the case has to be able to move PATH itself.
+    File.write(File.join(dir, "env.txt"), "# no rsync here\nPATH=/nonexistent/case-bin\nKRIKRI_CASE_FLAG=1\n")
+
+    env = Krikri::DivergenceCase.env(File.join(dir, "home"), dir)
+    env["PATH"].must_equal("/nonexistent/case-bin")
+    env["KRIKRI_CASE_FLAG"].must_equal("1")
+    # The rest of the pinned environment is untouched by an override file.
+    env["HOME"].must_equal(File.join(dir, "home"))
+    env["ANSIBLE_GATHERING"]?.must_be_nil
   end
 
   it "treats expected.out and NOTES.md as recorded results, not input" do

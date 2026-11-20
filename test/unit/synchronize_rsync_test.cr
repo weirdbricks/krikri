@@ -220,4 +220,41 @@ describe Krikri::SynchronizeRsync do
       Krikri::SynchronizeRsync.parse_list(nil).must_equal([] of String)
     end
   end
+
+  # Issue #1643: ansible.posix's synchronize resolves rsync with
+  # `if '/' not in rsync: rsync = module.get_bin_path(rsync, required=True)`
+  # before it spawns anything, and get_bin_path's ValueError becomes the
+  # task's fail_json msg - the searched directory list included.
+  describe "rsync resolution" do
+    it "searches $PATH first and appends only the sbin dirs that exist and are not already there" do
+      dirs = Krikri::SynchronizeRsync.bin_path_search_dirs("/a:/sbin:/b")
+
+      dirs.first(3).must_equal(["/a", "/sbin", "/b"])
+      dirs.count("/sbin").must_equal(1)
+      # /usr/sbin and /usr/local/sbin follow in get_bin_path's own order,
+      # each only when this host actually has it.
+      expected_tail = ["/usr/sbin", "/usr/local/sbin"].select { |dir| Dir.exists?(dir) }
+      dirs.last(expected_tail.size).must_equal(expected_tail) unless expected_tail.empty?
+    end
+
+    it "resolves a bare name through the given directories and nil when absent" do
+      binary_dir = PluginSpecHelper.tmp_path("sync-spec-bin")
+      FileUtils.mkdir_p(binary_dir)
+      File.write(File.join(binary_dir, "rsync"), "")
+      File.chmod(File.join(binary_dir, "rsync"), 0o755)
+
+      Krikri::SynchronizeRsync.resolve_bin_path("rsync", [binary_dir])
+        .must_equal(File.join(binary_dir, "rsync"))
+      # A value carrying '/' is used verbatim, never looked up.
+      Krikri::SynchronizeRsync.resolve_bin_path("/usr/bin/rsync", [binary_dir])
+        .must_equal("/usr/bin/rsync")
+      Krikri::SynchronizeRsync.resolve_bin_path("rsync", ["/nonexistent/synchronize-spec-bin"])
+        .must_be_nil
+    end
+
+    it "reports the searched list in get_bin_path's own wording" do
+      Krikri::SynchronizeRsync.missing_executable_error("rsync", ["/a", "/sbin"])
+        .must_equal(%(Failed to find required executable "rsync" in paths: /a:/sbin))
+    end
+  end
 end

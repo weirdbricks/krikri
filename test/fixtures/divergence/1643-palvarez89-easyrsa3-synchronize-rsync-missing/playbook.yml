@@ -1,0 +1,22 @@
+---
+# The task krikri-role-tester extracted from palvarez89.easy_rsa3; only the
+# play is adapted to run it against localhost, and the role's `become: yes` is
+# dropped (a localhost capture cannot sudo, and the rsync probe fails before
+# any privileged work - the same adaptation 1583 uses).
+#
+# The role's defaults are spelled out because the task is run here instead of
+# through the role: the round ran the whole role (apt, git, then this copy),
+# and none of the paths is touched before the rsync probe fails.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    easy_rsa_dir: /opt/easy-rsa
+    easy_rsa_ca_dir: /etc/easy-rsa
+  tasks:
+    - name: Copy easyrsa files needed to /etc
+      synchronize:
+        src: "{{ easy_rsa_dir }}/easyrsa3/"
+        dest: "{{ easy_rsa_ca_dir }}"
+        recursive: yes
+      delegate_to: "{{ inventory_hostname }}"

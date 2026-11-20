@@ -71,6 +71,7 @@ private DIVERGENCE_CASES = [
   {issue: 1640, slug: "cpanm-name-from-path-mutually-exclusive"},
   {issue: 1640, slug: "cpanm-check-mode-skip"},
   {issue: 1642, slug: "ipr-cnrs-arpwatch-install-recommends"},
+  {issue: 1643, slug: "palvarez89-easyrsa3-synchronize-rsync-missing"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -95,14 +96,15 @@ private def replay_divergence_case(issue : Int32, slug : String) : String
   # The invocation and environment are Krikri::DivergenceCase's: the case's
   # optional flags.txt/inventory.ini decide the argv, HOME is the case's own
   # scratch dir (a `~/...` path must never reach the developer's real home),
-  # and the fact-gathering env vars are cleared.
+  # an optional env.txt may move the case's own environment, and the
+  # fact-gathering env vars are cleared.
   Process.run(
     DIVERGENCE_BINARY,
     Krikri::DivergenceCase.run_args(dir),
     output: stdout,
     error: stderr,
     chdir: dir,
-    env: Krikri::DivergenceCase.env(File.join(dir, "home")),
+    env: Krikri::DivergenceCase.env(File.join(dir, "home"), dir),
   )
 
   # stdout then stderr, normalized to <WORK>: the same combine the capture tool
@@ -339,8 +341,14 @@ describe "divergence corpus" do
     expected, actual, report = divergence_transcripts(1640, "cpanm-check-mode-skip")
     assert_equal(expected, actual, report)
   end
+
   it "replays 1642-ipr-cnrs-arpwatch-install-recommends" do
     expected, actual, report = divergence_transcripts(1642, "ipr-cnrs-arpwatch-install-recommends")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1643-palvarez89-easyrsa3-synchronize-rsync-missing" do
+    expected, actual, report = divergence_transcripts(1643, "palvarez89-easyrsa3-synchronize-rsync-missing")
     assert_equal(expected, actual, report)
   end
 end

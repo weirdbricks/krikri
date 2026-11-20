@@ -152,6 +152,29 @@ describe "synchronize plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("synchronize requires both src and dest parameters are set")
   end
+
+  # Issue #1643 (palvarez89.easy_rsa3): the module resolves rsync through
+  # get_bin_path(rsync, required=True) BEFORE it runs anything, so a host
+  # without rsync installed fails with the searched-directories list (the
+  # role's own round printed exactly that from ansible-playbook) - this
+  # engine used to exec the bare name instead and die with its own
+  # "Plugin execution failed: ... No such file or directory".
+  it "fails with get_bin_path's searched-paths message when rsync is missing" do
+    result = PluginSpecHelper.run("synchronize", {
+      "src"  => "/nonexistent/synchronize-spec-src-path",
+      "dest" => "/nonexistent/synchronize-spec-dest-path",
+    }, env: {"PATH" => "/nonexistent/synchronize-spec-bin"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_match(
+      /\AFailed to find required executable "rsync" in paths: \/nonexistent\/synchronize-spec-bin(:|\z)/)
+    result["msg"].as_s.wont_include("Error executing process")
+    result["msg"].as_s.wont_include("Plugin execution failed")
+    # fail_json(msg=...) carries no rc/cmd - the module never spawned rsync.
+    result.as_h.has_key?("rc").must_equal(false)
+    result.as_h.has_key?("cmd").must_equal(false)
+  end
 end
 
 # The module half of `_substitute_controller` (issue #1629). This binary is
