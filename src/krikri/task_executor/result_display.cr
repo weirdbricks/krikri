@@ -1001,32 +1001,6 @@ module Krikri
       # native result as-is.
       msg = result["msg"]?.try { |raw| raw.as_s? || ResultDisplay.python_repr(raw) } || ""
 
-      # Core-emitted deprecations (a module's result carrying the
-      # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's
-      # `warnings`-in-exit_json deprecation) print on stderr AFTER the
-      # module-warnings block: ansible-core 2.21's callback
-      # (_handle_warnings) displays a result's warnings first and only then
-      # its deprecations, whatever order the module recorded them in
-      # (live-verified vs 2.21.6 + ansible.posix 2.1.0: firewalld_info's
-      # ignored-zone [WARNING] precedes both its to_native import
-      # deprecation and the exit_json one). The formatted
-      # [DEPRECATION WARNING] line dedups like every Display message, and
-      # the "Deprecation warnings can be disabled" hint prints once per run
-      # before the first deprecation - both live-verified against 2.19.11
-      # with two mount tasks back to back (second one silent). The marker
-      # itself is engine-internal (stripped below, like the `_ansible_*`
-      # register strip) - the result's real `deprecations` list stays
-      # untouched for register. An uncaught module exception's result is
-      # the one shape that shows nothing: Ansible's crash wrapper rebuilds
-      # the result without the collected deprecations (see
-      # module_crash_result?).
-      unless module_crash_result?(result)
-        result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
-          text = deprecation.as_s? || deprecation.to_s
-          emit_core_deprecation(text)
-        end
-      end
-
       # Real's callback displays a task's captured deprecations after every
       # warning the result carries (_handle_warnings prints warnings first,
       # then deprecations): flush the task-execution capture window here so
@@ -1034,6 +1008,32 @@ module Krikri
       # INJECT_FACTS_AS_VARS block read while the args templated - lands
       # after the module's own [WARNING] lines, where real puts it.
       flush_task_deprecation_capture_for_display
+
+      # Core-emitted deprecations (a module's result carrying the
+      # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's
+      # `warnings`-in-exit_json deprecation) print on stderr AFTER the
+      # module-warnings block and behind any held controller-side block:
+      # real's callback (_handle_warnings) walks the result's `warnings`
+      # list first and its `deprecations` list second, and the controller's
+      # own templating reads sit at the head of that second list because
+      # they were raised before the module ran (live-verified against
+      # 2.21.6: a firewalld_info task whose ignored-zone note and its
+      # `_text`/exit_json-kwarg deprecations all ride one result prints the
+      # note first - issue #1627). The formatted [DEPRECATION WARNING] line
+      # dedups like every Display message, and the "Deprecation warnings
+      # can be disabled" hint prints once per run before the first
+      # deprecation. The marker itself is engine-internal (stripped below,
+      # like the `_ansible_*` register strip) - the result's real
+      # `deprecations` list stays untouched for register. An uncaught
+      # module exception's result is the one shape that shows nothing:
+      # Ansible's crash wrapper rebuilds the result without the collected
+      # deprecations (see module_crash_result?).
+      unless module_crash_result?(result)
+        result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
+          text = deprecation.as_s? || deprecation.to_s
+          emit_core_deprecation(text)
+        end
+      end
 
       # Console lines a controller-side action plugin produced ITSELF
       # rather than through the result (pause's "Pausing for N seconds"
