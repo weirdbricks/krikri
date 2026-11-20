@@ -10,6 +10,7 @@
 1511	kpg rpm_key (happy path)	imports into the RPM database: needs a rpm/dnf host and writes its trusted-key store
 1540	kpg dnf (chaos: skip_broken)	real dnf transaction (and the serial-token crash shape needs dnf installed)
 1543	ansible.cfg ssh_args	needs a real sshd plus two dials through one ControlMaster: no in-process substitute for the ssh connection plugin's master reuse
+1659	ansible.cfg ssh_args	needs a real sshd warmed by a first run: the second run's broken ssh_args only lose ssh's own error text once the persisted plugin-state cache (md5s are per-build) skips the upload-verification round trip, so neither a single in-process run nor a shipped cache can express it
 1564	ctorgalson.docksal	runs `fin`, which needs root netlink (RTNETLINK answers: Operation not permitted) and a Docker daemon
 1626	kpg firewalld (happy path)	needs a running firewalld daemon (D-Bus): an undefined icmp_block is only rejected at the transaction's add, after Ansible has appended its context msg
 1631	kpg multi-seboolean-happy (firewalld_info warning order)	needs a running firewalld daemon (D-Bus): the ignored-zones warning exists only once the module reaches the daemon, and its position relative to the module's import/exit_json deprecations is what diverged
