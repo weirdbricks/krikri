@@ -67,6 +67,7 @@ private DIVERGENCE_CASES = [
   {issue: 1634, slug: "openssl-publickey-malformed-key"},
   {issue: 1633, slug: "openssl-publickey-check-mode"},
   {issue: 1635, slug: "docker-image-api-version-vs-host"},
+  {issue: 1637, slug: "docker-network-info-tls-config-vs-api-version"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -318,6 +319,11 @@ describe "divergence corpus" do
 
   it "replays 1635-docker-image-api-version-vs-host" do
     expected, actual, report = divergence_transcripts(1635, "docker-image-api-version-vs-host")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1637-docker-network-info-tls-config-vs-api-version" do
+    expected, actual, report = divergence_transcripts(1637, "docker-network-info-tls-config-vs-api-version")
     assert_equal(expected, actual, report)
   end
 end

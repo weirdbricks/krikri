@@ -95,6 +95,13 @@ module Krikri
       # _util.py's DOCKER_REQUIRED_TOGETHER - shared by every API module.
       COMMON_REQUIRED_TOGETHER = %w[client_cert client_key]
 
+      # _api/errors.py's TLSParameterError appends this to every TLS setup
+      # failure, and _common_api.py's fail_function prefixes the message
+      # with "TLS config error: " on top of that.
+      TLS_PARAMETER_SUFFIX = ". TLS configurations should map the Docker CLI " \
+                             "client configurations. See https://docs.docker.com/engine/articles/https/ " \
+                             "for API details."
+
       # Raised for a docker_host: the SDK's parse_host() rejects before it
       # can build a transport. Real's Client.__init__ lets the SDK's
       # DockerException escape and AnsibleDockerClientBase wraps it in
@@ -254,8 +261,37 @@ module Krikri
           env_overlay(params)["DOCKER_API_VERSION"]? || ENV["DOCKER_API_VERSION"]? || "auto"
       end
 
+      # _common_api.py's get_connect_params() builds the vendored TLSConfig
+      # before AnsibleDockerClientBase constructs its client at all. TLSConfig
+      # refuses a client cert/key pair whose files do not both exist, and,
+      # when verifying, a CA file that does not exist, so a task carrying
+      # unusable cert paths fails here rather than on anything the client
+      # constructor would have complained about - issue #1637's
+      # docker_network_info task pairs a nonexistent client_cert/client_key
+      # with a bogus api_version, and real reports the cert paths.
+      def self.validate_tls_params!(params : Hash(String, String)) : Nil
+        validate = tls_verify?(params)
+        return unless validate || tls_requested?(params, resolved_docker_host(params), env_overlay(params))
+
+        cacert_path, cert_path, key_path = cert_paths(params)
+        # get_connect_params only forwards a client_cert tuple when BOTH
+        # paths are set; one alone is AnsibleModule's required_together
+        # failure, which has already fired before client construction.
+        if cert_path && key_path && !(File.file?(cert_path) && File.file?(key_path))
+          raise DockerClientConfigError.new("TLS config error: Path to a certificate and key files must be provided through the client_cert param#{TLS_PARAMETER_SUFFIX}")
+        end
+        # ca_cert is only handed to TLSConfig on the verify path.
+        if validate && cacert_path && !File.file?(cacert_path)
+          raise DockerClientConfigError.new("TLS config error: Invalid CA certificate provided for `ca_cert`.#{TLS_PARAMETER_SUFFIX}")
+        end
+      end
+
       def self.build(params : Hash(String, String)) : {Docr::Client, String}
         docker_host = resolved_docker_host(params)
+        # Real's TLS parameter validation happens before the client is
+        # constructed, so it also comes before the SDK import gate and the
+        # docker_host parse below.
+        validate_tls_params!(params)
         # The SDK's fail_on_missing_imports() runs at the top of
         # Client.__init__, BEFORE parse_host() - so a target missing
         # `requests` fails with the missing-library wording even when
@@ -491,7 +527,7 @@ module Krikri
       private def self.build_tls_context(params : Hash(String, String), docker_host : String?) : OpenSSL::SSL::Context::Client?
         overlay = env_overlay(params)
         return nil unless tls_requested?(params, docker_host, overlay)
-        validate = flag?(params["validate_certs"]? || params["tls_verify"]? || overlay["DOCKER_TLS_VERIFY"]? || ENV["DOCKER_TLS_VERIFY"]?)
+        validate = tls_verify?(params)
 
         cacert_path, cert_path, key_path = cert_paths(params)
         context = OpenSSL::SSL::Context::Client.new
@@ -510,23 +546,49 @@ module Krikri
         return true if docker_host.try(&.starts_with?("https://"))
         return true if flag?(params["tls"]? || overlay["DOCKER_TLS"]? || ENV["DOCKER_TLS"]?)
 
-        flag?(params["validate_certs"]? || params["tls_verify"]? || overlay["DOCKER_TLS_VERIFY"]? || ENV["DOCKER_TLS_VERIFY"]?)
+        tls_verify?(params)
+      end
+
+      # validate_certs: (alias tls_verify:), or the DOCKER_TLS_VERIFY fallback
+      # from the task environment / the plugin's own environment - real's
+      # auth_params resolves it param first, then env, then its default.
+      private def self.tls_verify?(params : Hash(String, String)) : Bool
+        flag?(params["validate_certs"]? || params["tls_verify"]? ||
+              env_overlay(params)["DOCKER_TLS_VERIFY"]? || ENV["DOCKER_TLS_VERIFY"]?)
       end
 
       # Explicit cacert_path:/cert_path:/key_path: params win outright;
       # only when *none* of the three is given does DOCKER_CERT_PATH's
       # own ca.pem/cert.pem/key.pem convention kick in, matching
       # Ansible's own documented behavior (verified against its source).
+      # AnsibleModule hands the module canonical names, so a task using
+      # client_cert:/client_key:/ca_path: must be read under those too -
+      # real's auth_params keys them cert_path/key_path/cacert_path.
       private def self.cert_paths(params : Hash(String, String)) : {String?, String?, String?}
-        cacert_path = params["cacert_path"]?
-        cert_path = params["cert_path"]?
-        key_path = params["key_path"]?
+        cacert_path = first_param(params, "ca_path", "cacert_path", "ca_cert", "tls_ca_cert")
+        cert_path = first_param(params, "client_cert", "cert_path", "tls_client_cert")
+        key_path = first_param(params, "client_key", "key_path", "tls_client_key")
         return {cacert_path, cert_path, key_path} if cacert_path || cert_path || key_path
 
-        cert_dir = env_overlay(params)["DOCKER_CERT_PATH"]? || ENV["DOCKER_CERT_PATH"]?
-        return {nil, nil, nil} unless cert_dir
-
+        return {nil, nil, nil} unless cert_dir = docker_cert_path(params)
         {File.join(cert_dir, "ca.pem"), File.join(cert_dir, "cert.pem"), File.join(cert_dir, "key.pem")}
+      end
+
+      # The value a task carries under a param's canonical name or one of
+      # its aliases - AnsibleModule validates the merged spec but keeps
+      # whichever spelling the task itself used.
+      private def self.first_param(params : Hash(String, String), *names : String) : String?
+        names.each do |name|
+          value = params[name]?
+          return value if value
+        end
+        nil
+      end
+
+      # DOCKER_CERT_PATH's ca.pem/cert.pem/key.pem directory, task
+      # environment overlay first.
+      private def self.docker_cert_path(params : Hash(String, String)) : String?
+        env_overlay(params)["DOCKER_CERT_PATH"]? || ENV["DOCKER_CERT_PATH"]?
       end
 
       private def self.flag?(value : String?) : Bool

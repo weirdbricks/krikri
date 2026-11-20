@@ -54,6 +54,44 @@ describe "docker api_version client validation" do
     error.message.must_equal("Error connecting: invalid version number 'tkmfuf'")
   end
 
+  it "validates the TLS cert paths before the api_version parse" do
+    skip "requests not importable under this host's python3" unless docker_gate_ready?
+
+    # Real's AnsibleDockerClientBase.__init__ builds the vendored TLSConfig
+    # (get_connect_params) BEFORE it constructs the client whose
+    # StrictVersion parse reports a bad api_version. TLSConfig refuses a
+    # client cert/key pair whose files are not both regular files, so a
+    # task pairing unusable paths with a bogus api_version reports the
+    # paths (issue #1637, kpg 000008-multi-docker_network_info-chaos).
+    error = assert_raises(Krikri::DockerClientConfigError) do
+      Krikri::PluginHelpers::DockerClient.build({
+        "api_version" => "wwudbt",
+        "client_cert" => PluginSpecHelper.tmp_path("nope-cert.pem"),
+        "client_key"  => PluginSpecHelper.tmp_path("nope-key.pem"),
+        "tls"         => "true",
+      })
+    end
+    error.message.must_equal("TLS config error: Path to a certificate and key files must be provided through the client_cert param. " \
+                             "TLS configurations should map the Docker CLI client configurations. " \
+                             "See https://docs.docker.com/engine/articles/https/ for API details.")
+
+    # ...and an existing pair lets the api_version parse be the failure,
+    # so the check does not reject usable TLS setups.
+    cert = PluginSpecHelper.tmp_path("cert.pem")
+    key = PluginSpecHelper.tmp_path("key.pem")
+    File.write(cert, "")
+    File.write(key, "")
+    error = assert_raises(Krikri::DockerClientConfigError) do
+      Krikri::PluginHelpers::DockerClient.build({
+        "api_version" => "wwudbt",
+        "client_cert" => cert,
+        "client_key"  => key,
+        "tls"         => "true",
+      })
+    end
+    error.message.must_equal("Error connecting: invalid version number 'wwudbt'")
+  end
+
   it "validates the docker_api_version alias too" do
     skip "requests not importable under this host's python3" unless docker_gate_ready?
 

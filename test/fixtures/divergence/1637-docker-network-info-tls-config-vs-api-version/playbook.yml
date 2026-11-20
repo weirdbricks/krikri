@@ -1,0 +1,22 @@
+---
+# kpg 000008-multi-docker_network_info-chaos #8.0, the Docker_network_info
+# task verbatim; the generator's /tmp/kpg-work paths move under
+# playbook_dir (the corpus may only read inside its own scratch tree) and
+# the task drops its `delegate_to: target2` so it runs on the local host.
+# Nothing here executes: the client's TLS parameter validation fails before
+# any daemon I/O.
+- name: 'Krikri-playbook-generator: multi-task #8.0'
+  hosts: kpg_targets
+  gather_facts: false
+  tasks:
+    - name: 'Docker_network_info #8.0'
+      community.docker.docker_network_info:
+        api_version: wwudbt
+        client_cert: '{{ playbook_dir }}/sub'
+        client_key: 41
+        debug: false
+        name: dqppcv
+        tls: true
+        tls_hostname: jbwvam
+      register: kpg_task_0
+      ignore_errors: true
