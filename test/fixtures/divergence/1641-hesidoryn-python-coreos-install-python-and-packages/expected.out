@@ -1,0 +1,23 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Recreate the round's dangling interpreter symlink] ***********************
+changed: [localhost]
+
+TASK [Install python and packages] *********************************************
+[ERROR]: Task failed: Action failed: non-zero return code
+Origin: <WORK>/playbook.yml:16:7
+
+14       script: make_gate.sh
+15
+16     - name: Install python and packages
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": true, "msg": "non-zero return code", "rc": 1, "stderr": "bootstrap: the ActivePython 2.7.8.10 tarball is gone; nothing installed\n", "stderr_lines": ["bootstrap: the ActivePython 2.7.8.10 tarball is gone; nothing installed"], "stdout": "", "stdout_lines": []}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

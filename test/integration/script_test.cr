@@ -115,6 +115,30 @@ describe "script plugin" do
     File.delete(path) if path && File.exists?(path)
   end
 
+  # The warm half of hesidoryn.python-coreos (#1641): the cold bootstrap
+  # left /opt/bin/python as a dangling symlink and its script still exits
+  # non-zero (the ActivePython download 404s), so Ansible re-runs the
+  # script and reports the task FAILED - the play exits 2. A gate that
+  # matched the link itself answered "exists", skipped the task and let
+  # the play exit 0, which is the exit-code half of that divergence.
+  it "runs a creates: dangling-symlink gate whose script exits non-zero" do
+    path = sc_path("script_creates_dangling_failing.sh")
+    File.write(path, "#!/bin/sh\necho bootstrap-failed >&2\nexit 1\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_creates_dangling_failing_gate")
+    File.delete?(gate)
+    File.symlink("/nonexistent-activepython", gate)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "creates" => gate})
+
+    falsey?(result["skipped"]?).must_equal(true)
+    result["failed"].as_bool.must_equal(true)
+    result["rc"].as_i.must_equal(1)
+  ensure
+    File.delete(gate) if gate && File.symlink?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
   # `test -e` is a literal-path check - unlike command:'s glob.glob gate,
   # a creates: value carrying glob metacharacters is never expanded, so a
   # file matching the pattern does NOT hold the gate.
