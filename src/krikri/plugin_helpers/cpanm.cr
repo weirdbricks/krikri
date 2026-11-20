@@ -37,6 +37,22 @@ module Krikri
       def self.changed?(rc : Int32, stdout : String, stderr : String) : Bool
         rc == 0 && !stdout.includes?("is up to date") && !stderr.includes?("is up to date")
       end
+
+      # The two argument combinations cpanm.py's __init_module__ rejects
+      # before it resolves the executable or runs cpanm at all, so a task
+      # carrying them fails with no cmd/rc in the result (kpg
+      # 000016-multi-cpanm-happy: name together with from_path must fail
+      # rather than install from from_path). Ansible's argument-spec
+      # validation (required_one_of, unsupported parameters) runs first
+      # and wins over both.
+      def self.setup_error(name : String?, from_path : String?, mode : String, name_check : String?) : String?
+        if mode == "compatibility"
+          return "Parameter name_check can only be used with mode=new" if name_check
+        elsif name && from_path
+          return "Parameters 'name' and 'from_path' are mutually exclusive when 'mode=new'"
+        end
+        nil
+      end
     end
   end
 end
