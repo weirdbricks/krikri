@@ -170,7 +170,7 @@ module Krikri
         if state == "present"
           if (op = parsed_size.try(&.operator)) &&
              (op == "-" || !["VG", "PVS", "FREE", "ORIGIN", nil].includes?(parsed_size.try(&.whole)))
-            return failed("Bad size specification of '#{op}#{parsed_size.not_nil!.value}' for creating LV")
+            return failed("Bad size specification of '#{op}#{parsed_size.not_nil!.stripped}' for creating LV")
           end
           unless parsed_size
             # Ansible module: size required when creating, except a snapshot
