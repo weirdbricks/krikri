@@ -2903,7 +2903,19 @@ module Krikri
           # its own catch, before its fatal line); the msg is already
           # decorated with the failing item's own origin, so the chain
           # re-uses it verbatim.
-          if failed && (fail_msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(fail_msg)
+          #
+          # The result's own marker decides, not the msg's wording: an
+          # ACTION's conditional-shaped failure (assert:'s `that:` syntax
+          # error) carries the same wording but was never a when:
+          # evaluation, and real prints only the action's own chain for
+          # it (issue #1645, standardtech_bot.substrate_deployer). That
+          # second block went unnoticed while the task had no `when:` of
+          # its own - both texts then pinned the same Origin and
+          # Display's dedup dropped the repeat - and printed as a bogus
+          # duplicate under any `when:`, the role's import_tasks: line
+          # included.
+          if failed && result["_ansible_when_error_emitted"]?.try(&.as_bool?) == true &&
+             (fail_msg = result["msg"]?.try(&.as_s?))
             ResultDisplay.flush_task_deprecation_capture_for_display
             emit_when_error_chain(task, fail_msg, host, loop_item: item, loop_index: idx,
               cause_text: result["_ansible_conditional_cause"]?.try(&.as_s?))

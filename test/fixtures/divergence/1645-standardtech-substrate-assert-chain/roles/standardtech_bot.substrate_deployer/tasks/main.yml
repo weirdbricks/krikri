@@ -1,0 +1,4 @@
+---
+- name: Substrate Main | Preflight tasks
+  import_tasks: preflight.yml
+  when: substrate_node_preflight | bool
