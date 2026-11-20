@@ -2268,7 +2268,176 @@
   "unsupported_kind": "module"
  },
  "ansible.builtin.dnf": {
-  "no_validate": true
+  "mutually_exclusive": [
+   [
+    "name",
+    "list"
+   ],
+   [
+    "best",
+    "nobest"
+   ]
+  ],
+  "no_validate": true,
+  "options": {
+   "allow_downgrade": {
+    "type": "bool",
+    "default": false
+   },
+   "allowerasing": {
+    "type": "bool",
+    "default": false
+   },
+   "autoremove": {
+    "type": "bool",
+    "default": false
+   },
+   "best": {
+    "type": "bool"
+   },
+   "bugfix": {
+    "type": "bool",
+    "default": false
+   },
+   "cacheonly": {
+    "type": "bool",
+    "default": false
+   },
+   "conf_file": {
+    "type": "str"
+   },
+   "disable_excludes": {
+    "type": "str",
+    "default": null
+   },
+   "disable_gpg_check": {
+    "type": "bool",
+    "default": false
+   },
+   "disable_plugin": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "disablerepo": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "download_only": {
+    "type": "bool",
+    "default": false
+   },
+   "download_dir": {
+    "type": "str",
+    "default": null
+   },
+   "enable_plugin": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "enablerepo": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "exclude": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "installroot": {
+    "type": "str",
+    "default": "/"
+   },
+   "install_weak_deps": {
+    "type": "bool",
+    "default": true
+   },
+   "list": {
+    "type": "str"
+   },
+   "name": {
+    "aliases": [
+     "pkg"
+    ],
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "nobest": {
+    "type": "bool"
+   },
+   "releasever": {
+    "type": "str",
+    "default": null
+   },
+   "security": {
+    "type": "bool",
+    "default": false
+   },
+   "skip_broken": {
+    "type": "bool",
+    "default": false
+   },
+   "state": {
+    "type": "str",
+    "choices": [
+     "absent",
+     "installed",
+     "latest",
+     "present",
+     "removed"
+    ],
+    "default": null
+   },
+   "update_cache": {
+    "aliases": [
+     "expire-cache"
+    ],
+    "type": "bool",
+    "default": false
+   },
+   "update_only": {
+    "type": "bool",
+    "default": "no"
+   },
+   "validate_certs": {
+    "type": "bool",
+    "default": true
+   },
+   "sslverify": {
+    "type": "bool",
+    "default": true
+   },
+   "lock_timeout": {
+    "type": "int",
+    "default": 30
+   },
+   "use_backend": {
+    "type": "str",
+    "choices": [
+     "auto",
+     "dnf",
+     "yum",
+     "yum4",
+     "dnf4",
+     "dnf5"
+    ],
+    "default": "auto"
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [
+   [
+    "name",
+    "list",
+    "update_cache"
+   ]
+  ],
+  "required_together": []
  },
  "ansible.builtin.dnf5": {
   "mutually_exclusive": [
@@ -3766,7 +3935,8 @@
   "fact_delegate": {
    "fact": "ansible_pkg_mgr",
    "map": {
-    "apt": "ansible.builtin.apt"
+    "apt": "ansible.builtin.apt",
+    "dnf": "ansible.builtin.dnf"
    }
   }
  },

@@ -338,6 +338,42 @@ describe Krikri::ArgspecValidator do
       %(Could not find a matching action for the "no-such-mgr" package manager.))
   end
 
+  it "validates an RPM host's package args against the delegated dnf spec" do
+    # ipr-cnrs.arpwatch's `package: {name: ..., install_recommends: false}`
+    # on rocky: ansible's package action forwards that option to the dnf
+    # module ansible_pkg_mgr names, whose argspec rejects it - live-verified
+    # vs 2.21.6 (`package: {use: dnf, install_recommends: false}` prints the
+    # same message on any host). krikri ran the install instead and failed
+    # with dnf's own "Failed to install some of the specified packages"
+    # (issue #1642).
+    failure = Krikri::ArgspecValidator.validate(
+      "package", "ansible.builtin.package",
+      {"name" => "arpwatch", "state" => "present", "install_recommends" => "false"},
+      vars({"ansible_pkg_mgr" => JSON::Any.new("dnf")}))
+    failure.as(Failure).msg.must_equal(
+      "Unsupported parameters for (ansible.legacy.dnf) module: install_recommends. " \
+      "Supported parameters include: allow_downgrade, allowerasing, autoremove, best, bugfix, " \
+      "cacheonly, conf_file, disable_excludes, disable_gpg_check, disable_plugin, disablerepo, " \
+      "download_dir, download_only, enable_plugin, enablerepo, exclude, install_weak_deps, " \
+      "installroot, list, lock_timeout, name, nobest, releasever, security, skip_broken, " \
+      "sslverify, state, update_cache, update_only, use_backend, validate_certs (expire-cache, pkg).")
+  end
+
+  it "picks the backend from an explicit package use: even when the fact disagrees" do
+    # package.py resolves `use:` BEFORE the ansible_pkg_mgr fact, and the
+    # fact only stands in for an unset/auto use. Validating the backend
+    # after dropping `use` therefore reported the fact's spec instead:
+    # issue #1642's `package: {use: dnf, install_recommends: false}` passed
+    # on a Debian controller (the empty-fact fallback found apt-get) while
+    # real ansible printed the dnf rejection.
+    failure = Krikri::ArgspecValidator.validate(
+      "package", "ansible.builtin.package",
+      {"name" => "arpwatch", "state" => "present", "use" => "dnf", "install_recommends" => "false"},
+      vars({"ansible_pkg_mgr" => JSON::Any.new("apt")}))
+    failure.as(Failure).msg.starts_with?(
+      "Unsupported parameters for (ansible.legacy.dnf) module: install_recommends.").must_equal(true)
+  end
+
   it "validates action-only directives with Ansible's action-level wording" do
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug", {"zz" => "1"}, vars)

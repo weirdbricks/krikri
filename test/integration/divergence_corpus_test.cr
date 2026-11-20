@@ -70,6 +70,7 @@ private DIVERGENCE_CASES = [
   {issue: 1637, slug: "docker-network-info-tls-config-vs-api-version"},
   {issue: 1640, slug: "cpanm-name-from-path-mutually-exclusive"},
   {issue: 1640, slug: "cpanm-check-mode-skip"},
+  {issue: 1642, slug: "ipr-cnrs-arpwatch-install-recommends"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -336,6 +337,10 @@ describe "divergence corpus" do
 
   it "replays 1640-cpanm-check-mode-skip" do
     expected, actual, report = divergence_transcripts(1640, "cpanm-check-mode-skip")
+    assert_equal(expected, actual, report)
+  end
+  it "replays 1642-ipr-cnrs-arpwatch-install-recommends" do
+    expected, actual, report = divergence_transcripts(1642, "ipr-cnrs-arpwatch-install-recommends")
     assert_equal(expected, actual, report)
   end
 end
