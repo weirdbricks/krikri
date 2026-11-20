@@ -89,13 +89,12 @@ module Krikri
       # Real select_backend + the backend constructors' own checks: the
       # opensshbin backend rejects any private_key_format other than
       # "auto"; the cryptography backend rejects rsa1.
-      if backend_err = resolve_backend(type)
-        return backend_err
-      end
+      backend = resolve_backend(type)
+      return backend if backend.is_a?(PluginResult)
 
       return remove(path, pub_path, check_mode) if state == "absent"
 
-      ensure_present(path, pub_path, type, size, check_mode)
+      ensure_present(path, pub_path, type, size, backend, check_mode)
     end
 
     # AnsibleModule validation order (ArgumentSpecValidator.validate):
@@ -133,15 +132,22 @@ module Krikri
       nil
     end
 
-    private def ensure_present(path : String, pub_path : String, type : String, size : Int32, check_mode : Bool) : PluginResult
+    private def ensure_present(path : String, pub_path : String, type : String, size : Int32, backend : String, check_mode : Bool) : PluginResult
       force = true?(@params["force"]?)
       regenerate = force ? "always" : (@params["regenerate"]? || "partial_idempotence")
       comment = @params["comment"]?
       passphrase = @params["passphrase"]? || ""
 
-      info = File.exists?(path) ? key_info(path) : nil
-      return unreadable_key_error(path) if regenerate == "never" && File.exists?(path) && info.nil?
+      exists = File.exists?(path)
+      # KeypairBackend._validate_key_load: an existing private key that the
+      # backend cannot load aborts every regenerate mode except the two that
+      # explicitly allow replacing a broken key.
+      if exists && UNREADABLE_KEY_REGENERATE_MODES.includes?(regenerate) &&
+         !private_key_loadable?(path, backend, passphrase)
+        return unreadable_key_error(path)
+      end
 
+      info = exists ? key_info(path) : nil
       return generate_or_preview(path, pub_path, type, size, comment, passphrase, check_mode) if should_generate?(info, size, type, regenerate)
 
       changed = maybe_update_comment(path, pub_path, comment, passphrase, check_mode)
@@ -155,7 +161,42 @@ module Krikri
     end
 
     private def unreadable_key_error(path : String) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "Unable to read the key. The key is protected with a passphrase or broken. Will not proceed. To force regeneration, call the module with `regenerate` set to `full_idempotence` or `always`, or with `force=true`.")
+      PluginResult.new(changed: false, failed: true, msg: "Unable to read the key. The key is protected with a passphrase or broken. Will not proceed. To force regeneration, call the module with `generate` set to `full_idempotence` or `always`, or with `force=true`.")
+    end
+
+    # The regenerate modes whose existing-key validation refuses an
+    # unloadable key instead of replacing it.
+    UNREADABLE_KEY_REGENERATE_MODES = %w[never fail partial_idempotence]
+
+    # The opensshbin backend's _private_key_readable: `ssh-keygen -P '' -y`
+    # fails either with rc 255 or with one of these messages when the key is
+    # encrypted, broken, or readable by more than its owner (ssh-keygen
+    # itself refuses such a key).
+    UNREADABLE_KEY_STDERR = ["is not a public key file", "incorrect passphrase", "load failed"]
+
+    # Whether the selected backend can load the existing key. opensshbin
+    # derives the public key without any passphrase; the cryptography
+    # backend loads the private key with the passphrase and treats a key it
+    # can also load without one as unreadable (community.crypto's own check,
+    # since cryptography >= 3.0 no longer rejects a passphrase for an
+    # unencrypted key).
+    private def private_key_loadable?(path : String, backend : String, passphrase : String) : Bool
+      if backend == "opensshbin"
+        return false if key_info(path).nil?
+        err = IO::Memory.new
+        status = Process.run("ssh-keygen", ["-P", "", "-y", "-f", path],
+          output: Process::Redirect::Close, error: err)
+        return false if status.exit_code == 255
+        return UNREADABLE_KEY_STDERR.none? { |marker| err.to_s.includes?(marker) }
+      end
+
+      return false unless ssh_keygen_opens?(path, passphrase)
+      passphrase.empty? || !ssh_keygen_opens?(path, "")
+    end
+
+    private def ssh_keygen_opens?(path : String, passphrase : String) : Bool
+      Process.run("ssh-keygen", ["-P", passphrase, "-y", "-f", path],
+        output: Process::Redirect::Close, error: Process::Redirect::Close).success?
     end
 
     COLLECTION_MINIMUM_CRYPTOGRAPHY_VERSION = "3.3"
@@ -165,7 +206,7 @@ module Krikri
     # ssh-keygen binary exists and no passphrase was given, then falls
     # back to the cryptography library; explicit backends fail with
     # their own availability messages.
-    private def resolve_backend(type : String) : PluginResult?
+    private def resolve_backend(type : String) : String | PluginResult
       backend = @params["backend"]? || "auto"
       passphrase = @params["passphrase"]?
       can_use_opensshbin = !!Process.find_executable("ssh-keygen")
@@ -189,7 +230,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "'auto' is the only valid option for 'private_key_format' when 'backend' is not 'cryptography'")
         end
-        return nil
+        return backend
       end
 
       unless can_use_cryptography
@@ -200,7 +241,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "RSA1 keys are not supported by the cryptography backend")
       end
-      nil
+      backend
     end
 
     # The cryptography library's availability, probed through the
