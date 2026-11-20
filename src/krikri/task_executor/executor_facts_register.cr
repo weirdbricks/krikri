@@ -293,9 +293,29 @@ module Krikri
     # libxml2.so.2, and only manual SSH reproduced the loader error.
     # Surface the plugin's own stderr so the cause is visible at the
     # point of failure.
-    private def facts_failure_message(result : JSON::Any) : String
+    #
+    # An UNREACHABLE result is reported differently: ansible composes
+    # that msg from the ssh transport's own error (report_unreachable
+    # wraps the detail this returns), and the transport-unreachable wire
+    # shape already carries it in stderr. A warm plugin-state cache
+    # skips the upload-verification round trip, so a broken connection
+    # first surfaces as interpret_remote_result's generic msg while
+    # ssh's "Connection closed by ..." line sits in stderr - reporting
+    # the generic msg verbatim hides the cause ansible shows (issue
+    # #1659). Public as a spec seam.
+    def self.facts_failure_message(result : JSON::Any) : String
+      stderr = result["stderr"]?.try(&.as_s?)
+      unreachable = result["unreachable"]?.try(&.as_bool?) == true
+      if unreachable
+        detail = stderr.try(&.strip)
+        return detail unless detail.nil? || detail.empty?
+      end
       msg = result["msg"]?.try(&.as_s) || "Unknown error"
-      if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty?
+      # The transport-unreachable shape carries the ssh stderr inside its
+      # msg already (ansible's [ERROR] block shows just the Task failed
+      # line there, no stderr section - issue #887's rejected-user
+      # gather), so only module-level failures get the stderr dump.
+      if stderr && !stderr.empty? && !unreachable
         msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
       end
       msg
@@ -544,21 +564,7 @@ module Krikri
       # while the play carries on (issue #887 - a role default
       # ansible_ssh_user the host rejects).
       if Krikri.result_failed_flag(result) || result["unreachable"]?.try(&.as_bool?) == true
-        msg = result["msg"]?.try(&.as_s) || "Unknown error"
-        # "Plugin execution failed on remote" alone hides WHY the plugin
-        # died - the kata round of 2026-09-10 (36/36 roles) failed facts
-        # with a bare exit 127 because the guest image lacked
-        # libxml2.so.2, and only manual SSH reproduced the loader error.
-        # Surface the plugin's own stderr so the cause is visible at the
-        # point of failure.
-        # The transport-unreachable shape carries the ssh stderr inside its
-        # msg already (ansible's [ERROR] block shows just the Task failed
-        # line there, no stderr section - issue #887's rejected-user
-        # gather), so only module-level failures get the stderr dump.
-        if (stderr = result["stderr"]?.try(&.as_s?)) && !stderr.empty? &&
-           result["unreachable"]?.try(&.as_bool?) != true
-          msg += "\n  stderr: #{stderr.strip.lines[0, 10].join("\n  stderr: ")}"
-        end
+        msg = TaskExecutor.facts_failure_message(result)
         # The gatherer marks an rc-127 interpreter-not-found failure with
         # the configured path itself - remember it (and whether this ran
         # over SSH, which decides which shell-error form ansible shows,
