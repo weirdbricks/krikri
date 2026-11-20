@@ -3399,6 +3399,14 @@ module Krikri
       close_pad = "    " * depth
       case raw = value.raw
       when Hash
+        # json.dumps({}, indent=4) keeps an empty container on one line.
+        # alternatives' diff starts from `before=dict()` on a fresh host,
+        # so rendering that as "{\n\n}" produced a `@@ -1,3 ...` hunk
+        # header where Ansible printed `@@ -1 ...`.
+        if raw.empty?
+          io << "{}"
+          return
+        end
         io << "{\n"
         raw.keys.sort.each_with_index do |key, idx|
           io << pad << key.to_json << ": "
@@ -3407,6 +3415,10 @@ module Krikri
         end
         io << "\n" << close_pad << "}"
       when Array
+        if raw.empty?
+          io << "[]"
+          return
+        end
         io << "[\n"
         raw.each_with_index do |item, idx|
           io << pad
