@@ -73,28 +73,52 @@ module Krikri
         "#{binary} --zone=#{Shell.quote_if_needed(zone)} --query-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end
 
-      # Ansible's ServiceTransaction asks the daemon for the ZONE'S WHOLE
-      # service list and tests membership (`service in
-      # self.fw.getServices(self.zone)`) - it never asks "is this one
-      # service enabled". That is observable: `--query-service=<name>`
-      # rejects a name that is not a defined service outright ("Error:
-      # INVALID_SERVICE: <name>", with no zone context), so using it as
-      # the idempotency probe made krikri fail EARLY - before Ansible's
-      # transaction appends its context msg and before the permanent leg
-      # reports the daemon's own zone-context error (round996006
-      # firewalld_fail). `--zone=<zone> --list-services` is what
-      # firewall-cmd itself documents as "List services added" for that
-      # zone (firewalld's own daemon comment on getServices: "because
-      # is called by firewall-cmd --zone --list-services"). It prints the
-      # names SPACE-SEPARATED on ONE line (`dhcpv6-client http ssh`), live
-      # on Rocky 9 - the first version of #service_list assumed one per
-      # line and so never saw an enabled service, reporting `changed`
-      # on every idempotent re-enable (round 997006).
-      def self.zone_service_list_command(zone : String, binary : String = "firewall-cmd") : String
-        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --list-services"
+      # The things whose Ansible transaction asks the daemon for the
+      # ZONE'S WHOLE list and tests membership (`name in
+      # self.fw.getServices(self.zone)`, and the identical shape in
+      # IcmpBlock/Protocol/InterfaceTransaction) - it never asks "is this
+      # one value enabled". That distinction is observable:
+      # `--query-service=<name>` rejects a name that is not a defined
+      # service outright ("Error: INVALID_SERVICE: <name>", with no zone
+      # context), so using it as the idempotency probe made krikri fail
+      # EARLY - before Ansible's transaction appends its context msg and
+      # before the permanent leg reports the daemon's own zone-context
+      # error (round996006 firewalld_fail). The same held for icmp_block
+      # (kpg 000022-multi-firewalld-happy: `icmp_block: ffttre` failed
+      # the `--query-icmp-block` probe with "INVALID_ICMPTYPE: ffttre"
+      # while Ansible's list probe simply read "not enabled", so its
+      # failure came from the add with " Non-permanent operation"
+      # appended - and in check mode Ansible reported `changed` where
+      # krikri failed) and for protocol, whose query flag validates the
+      # value the same way.
+      #
+      # `source` deliberately stays on the query path: firewalld
+      # normalizes a MAC source to upper case when it stores it, and
+      # `--query-source` normalizes the probe value the same way, so a
+      # lowercase MAC reads as already-present - while a plain list
+      # membership test (which is what Ansible itself does, hence its
+      # lower-case-MAC non-idempotency) would report `changed` and then
+      # fail the add with ZONE_ALREADY_SET.
+      #
+      # `--zone=<zone> --list-services` is what firewall-cmd itself
+      # documents as "List services added" for that zone (firewalld's own
+      # daemon comment on getServices: "because is called by firewall-cmd
+      # --zone --list-services"). Every list flag prints its values
+      # SPACE-SEPARATED on ONE line (`dhcpv6-client http ssh`), live on
+      # Rocky 9 - the first version assumed one per line and so never saw
+      # an enabled service, reporting `changed` on every idempotent
+      # re-enable (round 997006).
+      LISTED_THINGS = %w[service icmp_block protocol interface]
+
+      def self.listed_thing?(thing : String) : Bool
+        LISTED_THINGS.includes?(thing)
       end
 
-      def self.service_list(stdout : String) : Array(String)
+      def self.list_command(zone : String, thing : String, binary : String = "firewall-cmd") : String
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --list-#{flag_name(thing)}s"
+      end
+
+      def self.thing_list(stdout : String) : Array(String)
         stdout.split.reject(&.empty?)
       end
 

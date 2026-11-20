@@ -470,16 +470,17 @@ module Krikri
       permanent_plan : NamedTuple(content: String, element: String, attrs: Hash(String, String), present: Bool)? = nil
 
       if @do_runtime
-        if key == "service"
-          # Ansible's ServiceTransaction.get_enabled_immediate reads the
-          # zone's whole service LIST and tests membership, so a name
-          # that is not a defined service simply reads as "not
-          # enabled" here - the failure comes from the later add, with
-          # the daemon's own zone context. See
-          # FirewalldCommand.zone_service_list_command's comment.
-          query = remote_exec(PluginHelpers::FirewalldCommand.zone_service_list_command(zone, "firewall-cmd"))
+        if PluginHelpers::FirewalldCommand.listed_thing?(key)
+          # Ansible's Service/IcmpBlock/Protocol/InterfaceTransaction
+          # get_enabled_immediate reads the zone's whole LIST and tests
+          # membership, so a value the daemon does not accept (an
+          # undefined icmptype, an unknown protocol) simply reads as "not
+          # enabled" here - the failure comes from the later add, after
+          # the transaction has appended its context msg. See
+          # FirewalldCommand.list_command's comment.
+          query = remote_exec(PluginHelpers::FirewalldCommand.list_command(zone, key, "firewall-cmd"))
           return command_failure_result(query) unless query[:exit_code] == 0
-          runtime_present = PluginHelpers::FirewalldCommand.service_list(query[:stdout]).includes?(value)
+          runtime_present = PluginHelpers::FirewalldCommand.thing_list(query[:stdout]).includes?(value)
         else
           query = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, "firewall-cmd"))
           # firewall-cmd's query flags exit 0 ("yes")/1 ("no"); anything
