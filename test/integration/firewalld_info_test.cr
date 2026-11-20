@@ -36,6 +36,48 @@ rescue
   false
 end
 
+# A python-dbus/python-firewall stand-in so the ignored-zones path runs
+# without a firewalld daemon: two real zones exist, everything else the
+# probe reads is empty.
+private def firewalld_zone_stub : String
+  stub = PluginSpecHelper.tmp_path("firewalld-stub")
+  Dir.mkdir_p(File.join(stub, "dbus"))
+  Dir.mkdir_p(File.join(stub, "firewall"))
+  File.write(File.join(stub, "dbus", "__init__.py"), [
+    "class exceptions:",
+    "    class DBusException(Exception):",
+    "        pass",
+    "",
+  ].join("\n"))
+  File.write(File.join(stub, "firewall", "__init__.py"), "")
+  File.write(File.join(stub, "firewall", "config.py"), "VERSION = \"2.4.4\"\n")
+  File.write(File.join(stub, "firewall", "client.py"), [
+    "class _Settings:",
+    "    def getTarget(self): return \"default\"",
+    "    def getIcmpBlockInversion(self): return False",
+    "    def getInterfaces(self): return []",
+    "    def getSources(self): return []",
+    "    def getServices(self): return []",
+    "    def getPorts(self): return []",
+    "    def getProtocols(self): return []",
+    "    def getMasquerade(self): return False",
+    "    def getForwardPorts(self): return []",
+    "    def getSourcePorts(self): return []",
+    "    def getIcmpBlocks(self): return []",
+    "    def getRichRules(self): return []",
+    "    def getForward(self): return False",
+    "",
+    "",
+    "class FirewallClient:",
+    "    def getDefaultZone(self): return \"public\"",
+    "    def getZones(self): return [\"public\", \"trusted\"]",
+    "    def getActiveZones(self): return {\"public\": []}",
+    "    def getZoneSettings(self, zone): return _Settings()",
+    "",
+  ].join("\n"))
+  stub
+end
+
 describe "firewalld_info plugin" do
   it "fails with Ansible's python-dbus missing_required_lib message when the python stack is absent" do
     result = PluginSpecHelper.run("firewalld_info", {"zones" => %(["public"])})
@@ -117,41 +159,7 @@ describe "firewalld_info plugin" do
     python = Process.find_executable("python3") || Process.find_executable("python")
     skip "no python interpreter on this host" unless python
 
-    stub = PluginSpecHelper.tmp_path("firewalld-stub")
-    Dir.mkdir_p(File.join(stub, "dbus"))
-    Dir.mkdir_p(File.join(stub, "firewall"))
-    File.write(File.join(stub, "dbus", "__init__.py"), [
-      "class exceptions:",
-      "    class DBusException(Exception):",
-      "        pass",
-      "",
-    ].join("\n"))
-    File.write(File.join(stub, "firewall", "__init__.py"), "")
-    File.write(File.join(stub, "firewall", "config.py"), "VERSION = \"2.4.4\"\n")
-    File.write(File.join(stub, "firewall", "client.py"), [
-      "class _Settings:",
-      "    def getTarget(self): return \"default\"",
-      "    def getIcmpBlockInversion(self): return False",
-      "    def getInterfaces(self): return []",
-      "    def getSources(self): return []",
-      "    def getServices(self): return []",
-      "    def getPorts(self): return []",
-      "    def getProtocols(self): return []",
-      "    def getMasquerade(self): return False",
-      "    def getForwardPorts(self): return []",
-      "    def getSourcePorts(self): return []",
-      "    def getIcmpBlocks(self): return []",
-      "    def getRichRules(self): return []",
-      "    def getForward(self): return False",
-      "",
-      "",
-      "class FirewallClient:",
-      "    def getDefaultZone(self): return \"public\"",
-      "    def getZones(self): return [\"public\", \"trusted\"]",
-      "    def getActiveZones(self): return {\"public\": []}",
-      "    def getZoneSettings(self, zone): return _Settings()",
-      "",
-    ].join("\n"))
+    stub = firewalld_zone_stub
 
     zones = %(["krikri-spec-undefined-a", "krikri-spec-undefined-b", "krikri-spec-undefined-c"])
     expected = %w[krikri-spec-undefined-a krikri-spec-undefined-b krikri-spec-undefined-c]
@@ -167,6 +175,23 @@ describe "firewalld_info plugin" do
     modern["undefined_zones"].as_a.map(&.as_s).must_equal(expected)
     modern_note = modern["warnings"].as_a[0].as_s
     modern_note.match!(/zone:\((.*)\) have been ignored/)[1].split(", ").must_equal(expected)
+  end
+
+  # Issue #1628's kpg case: real builds the ignored list as
+  # list(set(specified) - set(collected)), so string-hash randomization
+  # flips the order per module process (five real runs in one container
+  # alternated between both orders). The declared order is one of real's
+  # possible orders; sorting would be no better, so it is pinned here to
+  # keep a later "parity fix" from sorting it.
+  it "keeps the declared order of several ignored zones" do
+    stub = firewalld_zone_stub
+
+    result = PluginSpecHelper.run("firewalld_info", {"zones" => %(["wmnfiv", "lecefn"])},
+      env: {"PYTHONPATH" => stub}, collection_version: "2.1.0")
+
+    result["undefined_zones"].as_a.map(&.as_s).must_equal(%w[wmnfiv lecefn])
+    result["warnings"].as_a[0].as_s.must_equal(
+      "Please note: zone:(wmnfiv,lecefn) have been ignored in the gathering process.")
   end
 
   # Same release split, but over the host's own firewalld stack rather than
