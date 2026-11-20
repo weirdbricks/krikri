@@ -5697,6 +5697,9 @@ module Krikri
     ACTION_DEPRECATION_MUTEX = Mutex.new
 
     private def self.warn_action_mapping_deprecation(source_file : String?, source_map : YamlSourceMap?, prefix : String, directive_key : String) : Nil
+      # DEPRECATION_WARNINGS off silences load-time deprecations too
+      # (Display.deprecated drives every one of them).
+      return unless Krikri::DeprecationHint.enabled?
       text = String.build do |io|
         io << "[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n"
         pos = source_map.try(&.at?("#{prefix}/#{directive_key}"))
@@ -5787,6 +5790,9 @@ module Krikri
       # wins, one key in the set) before the sorted repr join.
       kv_args = keys.uniq.sort!.map { |key| "'#{key}'" }.join(", ")
 
+      # DEPRECATION_WARNINGS off silences load-time deprecations too
+      # (Display.deprecated drives every one of them).
+      return unless Krikri::DeprecationHint.enabled?
       text = String.build do |io|
         io << "[DEPRECATION WARNING]: Merging legacy k=v args (" << kv_args << ") into task args. This feature will be removed from ansible-core version 2.23.\n"
         pos = source_map.try(&.at?(prefix))
@@ -6151,6 +6157,7 @@ module Krikri
     @@strategy_plugin_deprecation_printed = false
 
     private def self.warn_third_party_strategy_deprecation : Nil
+      return unless Krikri::DeprecationHint.enabled?
       STRATEGY_PLUGIN_DEPRECATION_MUTEX.synchronize do
         next if @@strategy_plugin_deprecation_printed
         @@strategy_plugin_deprecation_printed = true

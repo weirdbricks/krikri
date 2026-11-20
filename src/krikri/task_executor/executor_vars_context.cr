@@ -6511,6 +6511,9 @@ module Krikri
       return unless value
       return if value.as_s?
 
+      # DEPRECATION_WARNINGS off silences this block; the constant-template
+      # [WARNING] above is a warning, not a deprecation, and stays.
+      return unless DeprecationHint.enabled?
       text = conditional_deprecation_text(task, key, raw, that_index,
         footer: DELIMITERS_DEPRECATION_FOOTER)
       return if text.empty?

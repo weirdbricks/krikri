@@ -214,4 +214,64 @@ describe Krikri::ResultDisplay do
       (import_at < exit_json_at).must_equal(true)
     end
   end
+
+  # Issue #1660: ansible's Display.deprecated returns before printing
+  # anything - the one-time "can be disabled" hint included - while
+  # DEPRECATION_WARNINGS is false, but the deprecated feature still runs and
+  # its entry still rides the task result. So the gate sits on the console
+  # write only: a held-back block keeps carrying its result entry.
+  #
+  # exclusive!: the env var is process-wide, and a concurrent test that
+  # spawns krikri-playbook would inherit it and lose its own deprecations.
+  describe ".deprecation_warnings_enabled?" do
+    exclusive!
+
+    private def with_deprecation_warnings(value : String, &)
+      saved = ENV["ANSIBLE_DEPRECATION_WARNINGS"]?
+      begin
+        ENV["ANSIBLE_DEPRECATION_WARNINGS"] = value
+        yield
+      ensure
+        if saved
+          ENV["ANSIBLE_DEPRECATION_WARNINGS"] = saved
+        else
+          ENV.delete("ANSIBLE_DEPRECATION_WARNINGS")
+        end
+      end
+    end
+
+    it "prints no deprecation block and no hint while the setting is false" do
+      with_deprecation_warnings("False") do
+        _, stderr = capture_stderr_fd do
+          Krikri::ResultDisplay.emit_core_deprecation("capture-test-suppressed-#{Random::Secure.hex(4)}")
+          Krikri::DeprecationHint.print_hint_once
+        end
+        stderr.must_be_empty
+      end
+    end
+
+    it "still holds a captured block and its result entry while the setting is false" do
+      with_deprecation_warnings("False") do
+        origin = "Origin: capture-test-disabled-#{Random::Secure.hex(4)}.j2"
+        held = Krikri::ResultDisplay.capture_stderr do
+          Krikri::ResultDisplay.emit_top_level_fact_deprecation(origin)
+        end
+
+        held.pending_deprecations.size.must_equal(1)
+        held.pending_deprecations.first.entry.wont_be_nil
+        _, stderr = capture_stderr_fd { held.emit }
+        stderr.must_be_empty
+      end
+    end
+
+    it "prints the block again once the setting is true" do
+      with_deprecation_warnings("True") do
+        text = "capture-test-visible-#{Random::Secure.hex(4)}"
+        _, stderr = capture_stderr_fd do
+          Krikri::ResultDisplay.emit_core_deprecation(text)
+        end
+        stderr.must_include("[DEPRECATION WARNING]: #{text}")
+      end
+    end
+  end
 end

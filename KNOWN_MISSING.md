@@ -237,26 +237,32 @@ logging/decorating the linear run, altering worker affinity, ordering beyond lin
 that behavior onto the tasks. Decided 2026-11-20.
 
 
-### `ansible.cfg` is read for five settings only; the rest still comes from `ANSIBLE_*` vars and play vars
+### `ansible.cfg` is read for six settings only; the rest still comes from `ANSIBLE_*` vars and play vars
 
 - krikri locates `ansible.cfg` the way Ansible does (`$ANSIBLE_CONFIG`, `./ansible.cfg`,
   `~/.ansible.cfg`, `/etc/ansible/ansible.cfg`) and reads exactly the settings whose absence
   changes a run's outcome rather than its decoration: `[defaults] inventory`, `roles_path`,
-  `library`, `remote_user` and `[ssh_connection] ssh_args`, plus their env forms
-  (`ANSIBLE_INVENTORY`, `ANSIBLE_ROLES_PATH`, `ANSIBLE_LIBRARY`, `ANSIBLE_REMOTE_USER`,
-  `ANSIBLE_SSH_ARGS`), which outrank the file. Env var > ini > default, and a relative ini path
-  resolves against the config file's own directory, as Ansible's `ConfigManager` does.
+  `library`, `remote_user`, `deprecation_warnings` and `[ssh_connection] ssh_args`, plus their
+  env forms (`ANSIBLE_INVENTORY`, `ANSIBLE_ROLES_PATH`, `ANSIBLE_LIBRARY`, `ANSIBLE_REMOTE_USER`,
+  `ANSIBLE_DEPRECATION_WARNINGS`, `ANSIBLE_SSH_ARGS`), which outrank the file. Env var > ini >
+  default, and a relative ini path resolves against the config file's own directory, as Ansible's
+  `ConfigManager` does.
+- `deprecation_warnings` is the one read for its decoration: it is the switch ansible's own
+  "Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg"
+  hint names, so leaving it unread meant a project could not silence that output at all
+  (issue #1660). It suppresses deprecation blocks and the hint, never a `[WARNING]`, and the
+  result's `deprecations` list is untouched.
 - Every OTHER ini key is still ignored. Seen in practice: `[defaults] inject_invocation = True`
   (2.21's default is off; real then echoes `invocation`, krikri does not - the #909/#910 repro
-  shape), `stdout_callback`, `callbacks_enabled`, the `profile_tasks` knobs and
-  `deprecation_warnings`.
+  shape), `stdout_callback`, `callbacks_enabled` and the `profile_tasks` knobs.
 - The same switches do work through their environment variable (`ANSIBLE_INJECT_INVOCATION`,
   `ANSIBLE_STDOUT_CALLBACK`, `ANSIBLE_CALLBACKS_ENABLED`, ...) or a play var where Ansible has one
   (`ansible_inject_invocation`); those are what krikri reads.
 - No general INI parser is planned: the file's key/merge semantics are a large surface for settings
-  that mostly have an env-var equivalent. The five above were added because dropping them made a
+  that mostly have an env-var equivalent. The six above were added because dropping them made a
   playbook target the wrong inventory, lose its roles/modules or open ssh as the wrong user
-  (issue #1478). Decided 2026-11-07, amended 2026-11-17.
+  (issue #1478), or printed output a project had explicitly turned off (issue #1660).
+  Decided 2026-11-07, amended 2026-11-17 and 2026-11-20.
 
 
 ### Output-parity tiers: the cosmetic warning tier is best-effort, not a divergence to fix

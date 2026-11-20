@@ -6,14 +6,16 @@ module Krikri
   # Reader for ansible.cfg (the INI config ansible-playbook loads at
   # startup).
   #
-  # WHY: every setting below has an ansible.cfg spelling and no
-  # playbook-visible substitute, so krikri silently ran with different
-  # data whenever a project kept it in the file instead of an env var
-  # (issue #1478): `[defaults] inventory` was ignored so `hosts: all`
-  # matched nothing, `roles_path`/`library` turned installed roles and
-  # custom modules into "not found", and `remote_user`/`ssh_args` dialed
-  # ssh as the local user over the default transport. The rest of the
-  # file stays unread (KNOWN_MISSING.md's deliberate limit).
+  # WHY: each setting below is one ansible.cfg krikri silently ignored, so
+  # a run used different data whenever a project kept it in the file
+  # instead of an env var (issue #1478): `[defaults] inventory` was ignored
+  # so `hosts: all` matched nothing, `roles_path`/`library` turned installed
+  # roles and custom modules into "not found", and `remote_user`/`ssh_args`
+  # dialed ssh as the local user over the default transport.
+  # `deprecation_warnings` is the one whose absence changed only the
+  # output: a project could not silence the deprecation blocks ansible's own
+  # "can be disabled" hint names (issue #1660). The rest of the file stays
+  # unread (KNOWN_MISSING.md's deliberate limit).
   #
   # Semantics mirror ansible-core 2.21's ConfigManager:
   #   - first readable file wins: $ANSIBLE_CONFIG, ./ansible.cfg,
@@ -267,6 +269,34 @@ module Krikri
         return unquote(from_ini)
       end
       nil
+    end
+
+    # DEPRECATION_WARNINGS: [defaults] deprecation_warnings /
+    # ANSIBLE_DEPRECATION_WARNINGS - the setting ansible-playbook's own
+    # "Deprecation warnings can be disabled by setting
+    # `deprecation_warnings=False` in ansible.cfg" hint names. krikri
+    # printed every deprecation unconditionally, so a project that had
+    # turned them off still saw them (issue #1660).
+    #
+    # The env var is consulted whenever it is PRESENT, empty included: only
+    # an unset variable falls through to the ini, and the `boolean` coercion
+    # is non-strict, so `ANSIBLE_DEPRECATION_WARNINGS=` and
+    # `deprecation_warnings = nope` both disable the warnings instead of
+    # erroring (live-verified vs 2.21.6).
+    def self.deprecation_warnings_enabled? : Bool
+      if from_env = ENV["ANSIBLE_DEPRECATION_WARNINGS"]?
+        return boolean(from_env)
+      end
+      if from_ini = get("defaults", "deprecation_warnings")
+        return boolean(from_ini)
+      end
+      true
+    end
+
+    # ansible's module_utils.parsing.convert_bool.boolean(strict=False):
+    # its true set only, everything else False.
+    private def self.boolean(raw : String) : Bool
+      %w(y yes on 1 true t).includes?(raw.strip.downcase)
     end
 
     # DEFAULT_FORKS: ANSIBLE_FORKS (`integer`) or [defaults] forks.
