@@ -18,7 +18,10 @@
 #     mutually_exclusive=[['_raw_params', 'cmd']] - giving neither fails
 #     with "one of the following is required: _raw_params, cmd", giving
 #     both with "parameters are mutually exclusive: _raw_params|cmd".
-#   creates/removes (optional): idempotency guards, same as command:
+#   creates/removes (optional): idempotency guards. Unlike command:/shell:
+#     (which glob the path in the module) real script.py asks the target
+#     shell `test -e <path>`: the symlink is followed and the path is
+#     taken literally - see skip_reason.
 #   chdir (optional): directory to run from
 #   executable (optional): interpreter to invoke the script with
 #     (e.g. "/usr/bin/python3") instead of executing it directly

@@ -1,0 +1,17 @@
+---
+# The task krikri-role-tester extracted from hesidoryn.python-coreos; only the play is adapted
+# to run it against localhost (the round ran it against its testhost inventory). The first
+# task is the scaffold the replay needs: the round's cold phase left /opt/bin/python a
+# dangling symlink, and a symlink cannot be committed to the corpus, so the play recreates
+# one (gate-dangling in its scratch directory) before the divergent task runs. bootstrap.sh
+# is the role's script with its sudo wget/tar/pip body replaced by a fixed failure - the
+# divergence turns on the script RUNNING and exiting non-zero, not on how it failed.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Recreate the round's dangling interpreter symlink
+      script: make_gate.sh
+
+    - name: Install python and packages
+      script: bootstrap.sh creates=gate-dangling
