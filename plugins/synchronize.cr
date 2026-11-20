@@ -36,6 +36,22 @@ module Krikri
           msg: "synchronize requires both src and dest parameters are set")
       end
 
+      # AnsibleModule setup is done, so the module's next act is its
+      # _substitute_controller block: substitute_controller() on both paths,
+      # failing outright when neither SSH_CLIENT nor SSH_CONNECTION is
+      # exported - before it looks at either path, so the flag alone fails
+      # an ordinary absolute-path task (issue #1629). This binary runs where
+      # real's module runs, so its own environment is the faithful one.
+      if true?(@params["_substitute_controller"]?)
+        if addr = SynchronizeRsync.controller_addr
+          src = SynchronizeRsync.substitute_controller(src, addr)
+          dest = SynchronizeRsync.substitute_controller(dest, addr)
+        else
+          return PluginResult.new(changed: false, failed: true,
+            msg: SynchronizeRsync::CONTROLLER_HOSTNAME_FAILURE)
+        end
+      end
+
       # Same key ladder as the action plugin's own rsync rsh lookup
       # (both spellings, then ANSIBLE_PRIVATE_KEY_FILE - issue #1067).
       private_key = @params["private_key"]? || get_identity_file

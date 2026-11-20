@@ -539,3 +539,118 @@ describe "SynchronizeActionPlugin non-string literal src/dest" do
     json.as_h["msg"].as_s.must_equal("synchronize requires both src and dest parameters are set")
   end
 end
+
+# With the SSH environment pinned per test: substitute_controller() reads
+# the module process's SSH_CLIENT/SSH_CONNECTION, so the failure path only
+# reproduces when BOTH are absent (as they are for a local connection whose
+# controller was not started from an ssh session).
+private def with_ssh_env(client : String?, connection : String?, &) : Nil
+  saved = {"SSH_CLIENT", "SSH_CONNECTION"}.map { |name| {name, ENV[name]?} }
+  client ? (ENV["SSH_CLIENT"] = client) : ENV.delete("SSH_CLIENT")
+  connection ? (ENV["SSH_CONNECTION"] = connection) : ENV.delete("SSH_CONNECTION")
+  yield
+ensure
+  saved.try &.each do |name, value|
+    value ? (ENV[name] = value) : ENV.delete(name)
+  end
+end
+
+# ansible.posix.synchronize's module-side `_substitute_controller` block
+# (issue #1629): the module runs substitute_controller() on BOTH paths and
+# fails outright without a controller address, before it looks at either
+# path. Live-verified against ansible-core 2.21.6 + ansible.posix.
+describe "SynchronizeActionPlugin _substitute_controller" do
+  serial! # SSH_CLIENT/SSH_CONNECTION are process-global
+
+  it "fails the task when neither SSH_CLIENT nor SSH_CONNECTION is set, even for plain paths" do
+    with_ssh_env(nil, nil) do
+      result = run_delegate_sync("unresolvable-sync-spec-host", {
+        "src"                    => "/tmp/sync-spec-src/",
+        "dest"                   => "/tmp/sync-spec-dest/",
+        "_substitute_controller" => "true",
+      })
+
+      json = result.final_result || raise "expected a final result"
+      json.as_h["failed"].as_bool.must_equal(true)
+      json.as_h["changed"].as_bool.must_equal(false)
+      json.as_h["msg"].as_s.must_equal("Could not determine controller hostname for rsync to send to")
+      json.as_h.has_key?("cmd").must_equal(false)
+      json.as_h.keys.first(3).must_equal(["failed", "msg", "changed"])
+    end
+  end
+
+  it "rewrites a localhost: path prefix to SSH_CLIENT's address after munging" do
+    with_ssh_env("127.0.0.1 12345 22", nil) do
+      result = run_delegate_sync("unresolvable-sync-spec-host", {
+        "src"                    => "/tmp/sync-spec-src/",
+        "dest"                   => "localhost:/tmp/sync-spec-dest/",
+        "_substitute_controller" => "true",
+      })
+
+      json = result.final_result || raise "expected a final result"
+      json.as_h["cmd"].as_s.must_include("127.0.0.1:/tmp/sync-spec-dest/")
+      json.as_h["cmd"].as_s.wont_include("localhost:")
+    end
+  end
+
+  it "falls back to SSH_CONNECTION when SSH_CLIENT is unset" do
+    with_ssh_env(nil, "127.0.0.2 2222 22") do
+      result = run_delegate_sync("unresolvable-sync-spec-host", {
+        "src"                    => "/tmp/sync-spec-src/",
+        "dest"                   => "localhost:/tmp/sync-spec-dest/",
+        "_substitute_controller" => "true",
+      })
+
+      json = result.final_result || raise "expected a final result"
+      json.as_h["cmd"].as_s.must_include("127.0.0.2:/tmp/sync-spec-dest/")
+    end
+  end
+
+  # Real qualifies the remote end in the ACTION plugin first, then the
+  # module's startswith('localhost:') runs - so a user@localhost: target is
+  # already prefixed and stays untouched (live-verified).
+  it "leaves a user-qualified localhost: target alone" do
+    with_ssh_env("127.0.0.1 12345 22", nil) do
+      vars = {"ansible_user" => JSON::Any.new("syncuser")}
+      result = run_delegate_sync("unresolvable-sync-spec-host", {
+        "src"                    => "/tmp/sync-spec-src/",
+        "dest"                   => "localhost:/tmp/sync-spec-dest/",
+        "_substitute_controller" => "true",
+      }, vars)
+
+      json = result.final_result || raise "expected a final result"
+      json.as_h["cmd"].as_s.must_include("syncuser@localhost:/tmp/sync-spec-dest/")
+      json.as_h["cmd"].as_s.wont_include("127.0.0.1")
+    end
+  end
+
+  # A remote delegate runs the real module on that host, so its ssh-derived
+  # SSH_CLIENT/SSH_CONNECTION - not this process's environment - decides;
+  # the action plugin must hand the params over untouched.
+  it "does not consult the controller env when the module runs on a remote delegate" do
+    with_ssh_env(nil, nil) do
+      result = run_remote_delegate_sync({
+        "src"                    => "/tmp/sync-spec-src/",
+        "dest"                   => "/tmp/sync-spec-dest/",
+        "_substitute_controller" => "true",
+      })
+
+      result.final_result.must_be_nil
+      result.modified_params.try(&.["_substitute_controller"]).must_equal("true")
+    end
+  end
+
+  # AnsibleModule converts _substitute_controller like every other argspec
+  # bool before the module body sees it.
+  it "fails a non-boolean _substitute_controller in module setup" do
+    result = run_delegate_sync("localhost", {
+      "src"                    => "/tmp/sync-spec-src/",
+      "dest"                   => "/tmp/sync-spec-dest/",
+      "_substitute_controller" => "ylazyy",
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["msg"].as_s.must_match(/\Aargument '_substitute_controller' is of type str/)
+  end
+end

@@ -153,3 +153,46 @@ describe "synchronize plugin" do
     result["msg"].as_s.must_equal("synchronize requires both src and dest parameters are set")
   end
 end
+
+# The module half of `_substitute_controller` (issue #1629). This binary is
+# what real ansible runs where the module actually executes, so its own
+# SSH_CLIENT/SSH_CONNECTION decides: without either the module fails before
+# running rsync, and with one it rewrites a localhost: prefix to that
+# address's first token.
+describe "synchronize plugin _substitute_controller" do
+  serial! # SSH_CLIENT/SSH_CONNECTION are process-global
+
+  it "fails before rsync when no controller hostname is known" do
+    saved = {"SSH_CLIENT", "SSH_CONNECTION"}.map { |name| {name, ENV[name]?} }
+    ENV.delete("SSH_CLIENT")
+    ENV.delete("SSH_CONNECTION")
+    begin
+      result = PluginSpecHelper.run("synchronize", {
+        "src"                    => "/nonexistent/synchronize-spec-src-path",
+        "dest"                   => "/nonexistent/synchronize-spec-dest-path",
+        "_substitute_controller" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Could not determine controller hostname for rsync to send to")
+      result["cmd"]?.must_be_nil
+    ensure
+      saved.try &.each do |name, value|
+        value ? (ENV[name] = value) : ENV.delete(name)
+      end
+    end
+  end
+
+  it "rewrites the src localhost: prefix to SSH_CLIENT's address" do
+    result = PluginSpecHelper.run("synchronize", {
+      "src"                    => "localhost:/nonexistent/synchronize-spec-src-path",
+      "dest"                   => "/nonexistent/synchronize-spec-dest-path",
+      "_substitute_controller" => "true",
+    }, env: {"SSH_CLIENT" => "127.0.0.1 12345 22"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["cmd"].as_s.must_include("127.0.0.1:/nonexistent/synchronize-spec-src-path")
+    result["cmd"].as_s.wont_include("localhost:")
+  end
+end
