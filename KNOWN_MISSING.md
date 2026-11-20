@@ -537,26 +537,26 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   building a bespoke API surface with no other use, for an extension point most Galaxy roles never
   ship. Decision: krikri reports the plugin name as an unimplemented module rather than skipping.
 
-### Python connection plugins are resolved but not executed
+### Python connection plugins are resolved but not executed (their tasks fail)
 
 - A custom connection plugin (`ANSIBLE_CONNECTION_PLUGINS`, the playbook-adjacent or a loaded role's
-  `connection_plugins/`, or `ansible.legacy.<name>`) is found on Ansible's own loader paths and is no
-  longer refused with "the connection plugin 'X' was not found" (issue #1457). Its connection
-  lifecycle (`_connect`/`exec_command`/`put_file`/`fetch_file`) is the whole transport layer this
-  engine replaces with SSH or local execution, so the plugin's own code never runs: krikri reads the
-  plugin class under the controller's ansible-capable python3 and runs the task with the transport
-  that class derives from - a subclass of `ansible.plugins.connection.local.Connection` executes on
-  the controller (live-verified against ansible-core 2.21.6: the issue's `mylocal` wrapper runs
-  `ok=1`), every other plugin keeps the SSH approximation a resolvable-but-unported collection
-  connection plugin (`containers.podman.podman`) already had. Without an ansible-capable controller
-  python the probe cannot run and every custom plugin takes that SSH approximation. The plugin's own
-  options, credentials and any tunnelling it performs are therefore never applied, so each such
-  plugin name gets one `[WARNING]: Connection plugin 'X' cannot be executed by krikri-playbook and is
-  ignored; tasks run over the <transport> connection instead.` line on stderr (issue #1541) - the
-  alternative is the silent substitution that made an SSM-style plugin ssh to its instance id and
-  report UNREACHABLE with nothing saying the plugin was never used. Running the plugin itself means
-  reimplementing Ansible's whole connection lifecycle, which is the transport layer this engine
-  replaces.
+  `connection_plugins/`, a collection's `plugins/connection/`, or `ansible.legacy.<name>`) is found on
+  Ansible's own loader paths and is not refused with "the connection plugin 'X' was not found" (issue
+  #1457). Its connection lifecycle (`_connect`/`exec_command`/`put_file`/`fetch_file`) is the whole
+  transport layer this engine replaces with SSH or local execution, so the plugin's own code never runs
+  - and no transport substitution can stand in for it. Every task (and the implicit gathering of facts,
+  and handlers) whose effective `ansible_connection` names such a plugin therefore fails, naming the
+  plugin:
+
+  `Task failed: the connection plugin 'X' cannot be executed by krikri-playbook (Python connection
+  plugins are not supported)`
+
+  This replaced the warning-and-substitute behaviour of issues #1541/#1658: running the task over an
+  approximated transport is what made an SSM-style plugin (`ansible_host=<instance id>`) ssh to the
+  instance id and report UNREACHABLE, and it silently ignored whatever the plugin really did. Failing
+  is the deliberate choice until running the plugin itself is implemented, which means reimplementing
+  Ansible's whole connection lifecycle. `containers.podman.podman` and other resolvable collection
+  connection plugins take the same failure (they too are Python plugins this engine cannot execute).
 
 ### Unimplemented community.general filter long tail (usage-audited, watchlist not backlog)
 

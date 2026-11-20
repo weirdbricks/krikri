@@ -837,13 +837,23 @@ module Krikri
       # Same connection-plugin resolution a regular task gets (see
       # execute_task_once's own check): a fired handler whose connection
       # type resolves to nothing fails the handler, not a silent SSH
-      # fallback.
+      # fallback. A resolved Python connection plugin this engine cannot
+      # execute fails it too - the handler must not run over a transport
+      # the plugin never chose (issues #1541, #1658).
       if (conn_type = dispatch_vars["ansible_connection"]?.try(&.as_s?)) &&
          PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(dispatch_vars))
         return JSON.parse({
           "changed" => false,
           "failed"  => true,
           "msg"     => "Task failed: the connection plugin '#{conn_type}' was not found",
+        }.to_json)
+      end
+      if (conn_type = dispatch_vars["ansible_connection"]?.try(&.as_s?)) &&
+         PluginManager.connection_plugin_unsupported?(conn_type, PluginManager.playbook_dir_from(dispatch_vars))
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => PluginManager.connection_plugin_execution_failure(conn_type),
         }.to_json)
       end
 

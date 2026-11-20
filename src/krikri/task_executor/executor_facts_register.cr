@@ -197,7 +197,7 @@ module Krikri
             ErrorBlock.emit(ErrorBlock::Node.new("Task failed.")
               .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(PluginManager::BECOME_METHOD_EMPTY)))
             puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: #{PluginManager::BECOME_METHOD_EMPTY}\"}".colorize(:red)
-          elsif error_message && connection_not_found_gather_message?(error_message)
+          elsif error_message && connection_resolution_gather_message?(error_message)
             # Ansible's gather-time connection-resolution failure is a
             # plain one-line [ERROR] with no Origin and no cause chain,
             # then the standard fatal line (live-verified vs 2.19.11 for
@@ -235,23 +235,36 @@ module Krikri
     # The failure message for a host whose effective ansible_connection
     # (the host's own var, a play's leaked role defaults, or the play's
     # `connection:` keyword - the same merged context the implicit gather
-    # runs under) names no connection plugin (see
-    # PluginManager.connection_plugin_not_found?), or nil when the
-    # connection resolves (including "unset", which the executor's own
-    # local/ssh default covers).
-    private def unresolvable_connection_message(host : Host, vars_context : Hash(String, JSON::Any)) : String?
+    # runs under) resolves to no connection plugin (see
+    # PluginManager.connection_plugin_not_found?) or to a Python plugin
+    # this engine cannot execute (connection_plugin_unsupported?), or nil
+    # when the connection is one of this engine's own transports -
+    # including "unset", which the executor's local/ssh default covers.
+    private def connection_resolution_failure_message(host : Host, vars_context : Hash(String, JSON::Any)) : String?
       conn_type = vars_context["ansible_connection"]?.try(&.as_s?)
-      return nil unless conn_type &&
-                        PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(vars_context))
+      return nil unless conn_type
+      # The gather's own vars_context is the host's vars plus the play's
+      # role layers, so it carries no `playbook_dir` magic var the way a
+      # task's does: without the fallback the playbook-adjacent
+      # `connection_plugins/` is never searched here and a plugin Ansible
+      # resolves reads as "was not found" (issue #1658: a plugin in the
+      # playbook's own connection_plugins/ must fail as unexecutable, not
+      # as missing, before the first task ever runs).
+      dir = PluginManager.playbook_dir_from(vars_context)
+      dir = @playbook_dir if dir.nil? && @playbook_dir != "."
+      return PluginManager.connection_plugin_execution_failure(conn_type) if PluginManager.connection_plugin_unsupported?(conn_type, dir)
+      return nil unless PluginManager.connection_plugin_not_found?(conn_type, dir)
 
       "Task failed: the connection plugin '#{conn_type}' was not found"
     end
 
-    # Whether *message* is the gather failure unresolvable_connection_message
-    # produced - its exact shape is
-    # "Task failed: the connection plugin 'X' was not found".
-    private def connection_not_found_gather_message?(message : String) : Bool
-      message.starts_with?("Task failed: the connection plugin '") && message.ends_with?(" was not found")
+    # Whether *message* is the gather failure
+    # connection_resolution_failure_message produced - either "Task failed:
+    # the connection plugin 'X' was not found" or its cannot-be-executed
+    # sibling. Both print in the one-line [ERROR] shape (no Origin, no
+    # cause chain) Ansible's own gather-time resolution failure uses.
+    private def connection_resolution_gather_message?(message : String) : Bool
+      message.starts_with?("Task failed: the connection plugin '")
     end
 
     # The effective ansible_python_interpreter for the implicit setup
@@ -444,7 +457,7 @@ module Krikri
       # Facts with "the connection plugin 'X' was not found" instead of
       # attempting SSH (the silent fallback below reported a bogus
       # UNREACHABLE for what Ansible reports as a plain failure).
-      if (conn_msg = unresolvable_connection_message(host, vars_context))
+      if (conn_msg = connection_resolution_failure_message(host, vars_context))
         return {false, conn_msg, false}
       end
 

@@ -1971,9 +1971,12 @@ module Krikri
       return {false, nil} if PluginManager.local_connection?(exec_host, vars_context)
       # An unresolvable connection type must take the solo path, where
       # execute_task_once's own check fails the task like Ansible -
-      # the batch script would silently SSH instead.
+      # the batch script would silently SSH instead. A resolvable plugin
+      # this engine cannot execute does too: its task must fail, not run
+      # over the batch script's SSH transport.
       return {false, nil} if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
-                             PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(vars_context))
+                             (PluginManager.connection_plugin_not_found?(conn_type, PluginManager.playbook_dir_from(vars_context)) ||
+                             PluginManager.connection_plugin_unsupported?(conn_type, PluginManager.playbook_dir_from(vars_context)))
       # A templated action:/local_action: resolves its Ansible module only
       # inside execute_task_once; the batch script path has no such
       # resolution (and breaks_run? below only keeps the task out of
@@ -3226,6 +3229,22 @@ module Krikri
           "changed" => false,
           "failed"  => true,
           "msg"     => "Task failed: the connection plugin '#{conn_type}' was not found",
+        }.to_json), vars_context, host)
+      end
+
+      # A name Ansible WOULD resolve to a Python connection plugin is not a
+      # not-found case, but this engine still cannot run the plugin's
+      # transport. Fail the task instead of quietly running it over SSH or
+      # local: that substitution is what made an SSM-style plugin ssh to
+      # its `ansible_host=<instance id>` and report a bogus UNREACHABLE
+      # (issue #1541), and it is never what the plugin's author wrote
+      # (issue #1658).
+      if (conn_type = dispatch_vars["ansible_connection"]?.try(&.as_s?)) &&
+         PluginManager.connection_plugin_unsupported?(conn_type, PluginManager.playbook_dir_from(dispatch_vars))
+        return apply_changed_failed_when(task, JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => PluginManager.connection_plugin_execution_failure(conn_type),
         }.to_json), vars_context, host)
       end
 

@@ -10,12 +10,14 @@ module Krikri
   # A Python connection plugin cannot be executed here (its connection
   # lifecycle - _connect/exec_command/put_file/fetch_file - is the whole
   # transport layer this engine replaces with SSH or local execution), so
-  # a plugin found on an Ansible loader path is resolved and then run with
-  # the closest transport: a plugin whose class derives from Ansible's
-  # own `local` connection executes on the controller like that base
-  # class, every other plugin keeps the long-standing SSH approximation
-  # that a resolvable-but-unported collection plugin
-  # (containers.podman.podman) has always had. Without this, a plugin Ansible
+  # a task whose connection names one is failed with the plugin named as
+  # unexecutable (PluginManager.connection_plugin_unsupported?). The
+  # class-implied transport below still matters for the decisions taken
+  # BEFORE that failure point - whether the eager plugin upload can skip
+  # the host, whether a delegated task is local - so this engine never
+  # reaches some other host on the plugin's behalf: a plugin whose class
+  # derives from Ansible's own `local` connection is local like that base
+  # class, every other plugin is remote. Without this, a plugin Ansible
   # happily loads made every host fail with the false "the connection
   # plugin 'X' was not found" (issue #1457).
   #
@@ -84,7 +86,9 @@ module Krikri
     # Whether the plugin at *source* is a subclass of Ansible's `local`
     # connection. Anything else (and any probe that cannot run - no
     # ansible-capable controller python, a plugin the probe cannot import)
-    # keeps the SSH approximation.
+    # counts as remote, which only ever decides a skip or a delegation
+    # layout now: the task itself fails either way
+    # (PluginManager.connection_plugin_unsupported?).
     def local_source?(source : String) : Bool
       path = File.expand_path(source)
       @@cache_mutex.synchronize do
