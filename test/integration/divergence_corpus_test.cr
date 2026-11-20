@@ -63,6 +63,7 @@ private DIVERGENCE_CASES = [
   {issue: 1606, slug: "dorancemc-nagioscore-nested-defaults"},
   {issue: 1611, slug: "lexa-uw-mailserver-create-volumes-for-mail-data"},
   {issue: 1624, slug: "authorized-key-diff"},
+  {issue: 1630, slug: "synchronize-delegate-nonstring-dest"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -294,6 +295,11 @@ describe "divergence corpus" do
 
   it "replays 1624-authorized-key-diff" do
     expected, actual, report = divergence_transcripts(1624, "authorized-key-diff")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1630-synchronize-delegate-nonstring-dest" do
+    expected, actual, report = divergence_transcripts(1630, "synchronize-delegate-nonstring-dest")
     assert_equal(expected, actual, report)
   end
 end

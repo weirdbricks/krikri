@@ -1,0 +1,41 @@
+---
+# kpg 000015-multi-synchronize-chaos block #15.0, the Synchronize task
+# verbatim; inventory only (hosts target/target2 are the generator's local
+# aliases of one machine).
+- name: 'Krikri-playbook-generator: multi-task #15'
+  hosts: kpg_targets
+  gather_facts: false
+  vars:
+    kpg_delegate: target2
+  tasks:
+    - name: 'Synchronize #15.0'
+      ansible.posix.synchronize:
+        _local_rsync_path: 7
+        archive: false
+        checksum: false
+        delete: false
+        dest: 10
+        dest_port: 20
+        dirs: true
+        links: false
+        rsync_timeout: 73
+        src: '{{ item }}'
+        use_ssh_args: false
+      register: kpg_task_0
+      ignore_errors: true
+      loop:
+        - /opt/kpg-fixtures/src.txt
+        - /opt/kpg-fixtures/src2.txt
+        - /opt/kpg-fixtures/template.j2
+        - /opt/kpg-fixtures/script.sh
+        - /opt/kpg-fixtures/dir/inner.txt
+        - /opt/kpg-fixtures/binary.bin
+        - /opt/kpg-fixtures/no-newline.txt
+        - /opt/kpg-fixtures/rich.j2
+      notify: Kpg handler
+      delegate_to: '{{ kpg_delegate }}'
+  handlers:
+    - name: Kpg handler
+      ansible.builtin.debug:
+        msg: kpg-delegated-handler
+      delegate_to: target2
