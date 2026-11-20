@@ -1324,11 +1324,11 @@ module Krikri
       end
 
       # Same interpreter-missing gate as execute_task_once's dispatch
-      # site (see its comment there): a handler's module dispatched
-      # under a `connection: local` override with an interpreter that
-      # only exists on the remote host fails in real before any module
-      # code runs.
-      if failure = local_interpreter_missing_result(handler, host, exec_host, vars_context, substitutor)
+      # site (see its comment there): real runs every module payload
+      # under the handler's resolved interpreter before any module code
+      # executes, so a path missing from the machine doing the work
+      # fails the handler instead of running it.
+      if failure = interpreter_missing_result(handler, host, exec_host, vars_context, substitutor)
         return apply_changed_failed_when(handler, failure, vars_context, host)
       end
 

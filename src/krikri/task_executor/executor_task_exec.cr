@@ -7,6 +7,7 @@ require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
 require "../plugin_helpers/ansible_splitlines"
 require "../plugin_helpers/script_remote_staging"
+require "../plugin_helpers/interpreter_probe"
 
 module Krikri
   class TaskExecutor
@@ -3262,6 +3263,40 @@ module Krikri
     private def script_remote_tmp_base(vars_context : Hash(String, JSON::Any)) : String
       configured = vars_context["ansible_remote_tmp"]?.try(&.as_s?)
       configured && !configured.empty? && configured != Krikri::NONE_SENTINEL ? configured : "~/.ansible/tmp"
+    end
+
+    # Whether *interpreter* is absent on *host*, plus whether the host's
+    # /bin/sh words the miss the way dash does. One ssh round trip per
+    # (host, interpreter) for the whole play: a play may pin the
+    # interpreter once and run hundreds of module tasks against it.
+    # Anything other than a clean transcript - an unreachable host, a
+    # command the shell refused - reads as PRESENT, so a failed probe can
+    # never invent real's interpreter-not-found failure (see
+    # PluginHelpers::InterpreterProbe).
+    private def remote_interpreter_probe(host : Host, vars_context : Hash(String, JSON::Any), interpreter : String) : {Bool, Bool}
+      key = "#{host.name}\u0000#{interpreter}"
+      if cached = @interpreter_probe_cache[key]?
+        return cached
+      end
+
+      verdict = {false, true}
+      begin
+        conn = ConnectionSettings.resolve(host, vars_context)
+        result = SSHManager.exec_script(
+          conn.conn_host,
+          conn.user,
+          PluginHelpers::InterpreterProbe.script(interpreter),
+          conn.port,
+          identity_file: conn.identity_file,
+          extra_args: conn.ssh_extra_options,
+          ssh_executable: conn.ssh_executable
+        )
+        verdict = PluginHelpers::InterpreterProbe.parse(result[:stdout]) if result[:exit_code] == 0
+      rescue
+        verdict = {false, true}
+      end
+      @interpreter_probe_cache[key] = verdict
+      verdict
     end
 
     # Runs PluginHelpers::ScriptRemoteStaging.mkdir_script over ssh

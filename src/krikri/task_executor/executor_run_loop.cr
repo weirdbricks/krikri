@@ -3005,32 +3005,49 @@ module Krikri
       end
     end
 
-    # Modules real executes WITHOUT its python interpreter machinery:
-    # raw/command/shell/script hand their payload straight to the
+    # Modules real executes WITHOUT its python interpreter machinery: the
+    # raw and script action plugins hand their payload straight to the
     # connection's shell, so no interpreter is resolved for them and a
-    # missing interpreter cannot fail them (every other module reaching
-    # the local dispatch is a python-module run as far as the
-    # interpreter question goes).
+    # missing interpreter cannot fail them. command and shell look like
+    # they belong here but do NOT: their action plugins are thin
+    # wrappers around _execute_module('ansible.legacy.command'/'shell'),
+    # so the payload really is python and a missing interpreter fails
+    # both of them (live-verified vs 2.21.6 on a `connection: local`
+    # task and over ssh: identical interpreter-not-found block as any
+    # other module). Every other module reaching this dispatch is a
+    # python-module run as far as the interpreter question goes.
+    #
+    # Matched against `action_name || module_name`: a raw: task's
+    # module_name is its alias-resolution target (ansible.builtin.shell),
+    # so only the as-written action name identifies it.
     NO_INTERPRETER_MODULES = Set{
       "raw", "ansible.builtin.raw", "ansible.legacy.raw",
-      "command", "ansible.builtin.command", "ansible.legacy.command",
-      "shell", "ansible.builtin.shell", "ansible.legacy.shell",
       "script", "ansible.builtin.script", "ansible.legacy.script",
     }
 
-    # The synthesized result for a local-dispatch module whose resolved
-    # interpreter is missing on the controller, or nil when the task
+    # The synthesized result for a module task whose resolved interpreter
+    # is missing on the machine that would run it, or nil when the task
     # would have run (real included). Resolution follows module_common's
     # _get_shebang: the ansible_python_interpreter var wins when defined
     # (an "auto*" value re-enters discovery, i.e. consults the gathered
     # discovered_interpreter_python fact next), otherwise that fact,
-    # otherwise real would run discovery through the local connection
-    # and succeed - so no interpreter means no failure here. Delegated
-    # tasks return nil (see the dispatch-site comment).
-    private def local_interpreter_missing_result(task : Task, host : Host, exec_host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : JSON::Any?
+    # otherwise real would run discovery through the connection and
+    # succeed - so no interpreter means no failure here. Delegated tasks
+    # return nil (see the dispatch-site comment).
+    #
+    # krikri's own modules are compiled binaries that never run python,
+    # so without this check a task whose interpreter path is absent ran
+    # fine where real died with rc 127 and a non-JSON stdout, which its
+    # action layer reports as the module-interpreter-not-found action
+    # failure (issue #374 for a `connection: local` task, issue #1646's
+    # t_woerner.ipareplica for the same shape over ssh). The local case
+    # checks this machine's filesystem; the remote case asks the target
+    # over one cached ssh round trip, since an explicitly configured
+    # path is exactly the case where the interpreter can be absent from
+    # the host doing the work.
+    private def interpreter_missing_result(task : Task, host : Host, exec_host : Host, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : JSON::Any?
       return nil unless exec_host == host
-      return nil if NO_INTERPRETER_MODULES.includes?(task.module_name)
-      return nil if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
+      return nil if NO_INTERPRETER_MODULES.includes?(task.action_name || task.module_name)
       return nil if PluginManager.controller_only?(task.module_name)
 
       configured = nil
@@ -3045,13 +3062,26 @@ module Krikri
         end
       end
 
-      interpreter = if configured && !configured.empty? && !configured.starts_with?("auto")
-                      configured
-                    else
-                      vars_context["discovered_interpreter_python"]?.try(&.as_s?)
-                    end
+      # A YAML null (or an omit-rendered value, both carried as the
+      # sentinel) is not an interpreter real would run anything under:
+      # _get_shebang's falsy value re-enters discovery, so the task runs.
+      explicit = configured
+      explicit = nil if explicit.try { |value| value.empty? || value == Krikri::NONE_SENTINEL || value.starts_with?("auto") }
+      interpreter = explicit || vars_context["discovered_interpreter_python"]?.try(&.as_s?)
       return nil unless interpreter && !interpreter.empty?
-      return nil unless FactsGatherer.interpreter_missing?(interpreter)
+
+      if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
+        # The discovered fact came from a probe that ran ON the target,
+        # so only a configured path can name an interpreter that is not
+        # there.
+        return nil unless explicit
+        missing, dash_shell = remote_interpreter_probe(exec_host, vars_context, interpreter)
+        return nil unless missing
+        module_stderr, module_stdout = interpreter_missing_capture(interpreter, exec_host.connection_host, dash_shell)
+      else
+        return nil unless FactsGatherer.interpreter_missing?(interpreter)
+        module_stderr, module_stdout = interpreter_missing_capture(interpreter, nil, false)
+      end
 
       # Real's action raises the deserialization AnsibleError when the
       # interpreter's output is not module JSON - the fatal payload
@@ -3061,8 +3091,8 @@ module Krikri
       result = JSON.parse({
         "changed"                      => false,
         "failed"                       => true,
-        "module_stderr"                => "/bin/sh: 1: #{interpreter}: not found\n",
-        "module_stdout"                => "",
+        "module_stderr"                => module_stderr,
+        "module_stdout"                => module_stdout,
         "msg"                          => "The module interpreter '#{interpreter}' was not found.",
         "rc"                           => 127,
         "_ansible_action_level"        => true,
@@ -3071,6 +3101,24 @@ module Krikri
       }.to_json)
       Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
       result
+    end
+
+    # The module capture real's interpreter-not-found payload carries, as
+    # {module_stderr, module_stdout}. Over ssh the module run is a
+    # non-pipelined session, so its `-tt` pty carries the shell's own
+    # not-found line on stdout and leaves only the client's close notice
+    # on stderr (live-verified vs 2.21.6 - the shape issue #1646's round
+    # captured from t_woerner.ipareplica), worded by the target's own
+    # /bin/sh: dash says "1: X: not found" while bash says
+    # "line 1: X: No such file or directory". A controller-side run has
+    # no ssh session to close, so the shell's line is the stderr and
+    # stdout stays empty.
+    private def interpreter_missing_capture(interpreter : String, remote_addr : String?, dash_shell : Bool) : {String, String}
+      unless remote_addr
+        return {"/bin/sh: 1: #{interpreter}: not found\n", ""}
+      end
+      {"Shared connection to #{remote_addr} closed.\r\n",
+       dash_shell ? "/bin/sh: 1: #{interpreter}: not found\r\n" : "/bin/sh: line 1: #{interpreter}: No such file or directory\r\n"}
     end
 
     private def execute_task_once(
@@ -3748,19 +3796,23 @@ module Krikri
       # _get_shebang consults task_vars regardless of the connection):
       # the ansible_python_interpreter var, or the interpreter the
       # host's own fact gathering discovered
-      # (discovered_interpreter_python), is executed by the
-      # controller's /bin/sh, and a path that only exists on the remote
-      # host dies with rc 127 and an empty module stdout, which real
-      # reports as the module-interpreter-not-found action failure
+      # (discovered_interpreter_python), is what the module payload runs
+      # under, and a path that exists only on the other machine dies with
+      # rc 127 and a non-JSON stdout, which real reports as the
+      # module-interpreter-not-found action failure
       # (2kloc.trellis-monit's `find:` task, issue #374: the controller
       # has no /usr/bin/python3.10; the Ubuntu 22.04 target discovered
       # it at gather time). Krikri's plugins are native binaries that
       # would run happily through this exact setup, so the case is
       # detected here and shaped like real's deserialization failure.
+      # The same rule covers a module run on the played host itself: real
+      # executes the payload under the resolved interpreter there too, so
+      # a configured path missing from the TARGET fails the task
+      # (t_woerner.ipareplica's ipaclient_test, issue #1646).
       # Delegated tasks stay out of scope: the interpreter then comes
       # from the DELEGATE host's vars, which this dispatch context does
       # not carry faithfully.
-      if failure = local_interpreter_missing_result(task, host, exec_host, vars_context, substitutor)
+      if failure = interpreter_missing_result(task, host, exec_host, vars_context, substitutor)
         return apply_changed_failed_when(task, failure, vars_context, host)
       end
 

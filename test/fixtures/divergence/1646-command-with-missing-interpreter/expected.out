@@ -1,0 +1,23 @@
+
+PLAY [local] *******************************************************************
+
+TASK [Command with the configured interpreter missing] *************************
+[ERROR]: Task failed: Action failed: The module interpreter '/usr/bin/krikri-issue-1646-missing-python3' was not found.
+
+Task failed: Action failed.
+Origin: <WORK>/playbook.yml:12:7
+
+10   gather_facts: false
+11   tasks:
+12     - name: Command with the configured interpreter missing
+         ^ column 7
+
+<<< caused by >>>
+
+The module interpreter '/usr/bin/krikri-issue-1646-missing-python3' was not found. Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output.
+
+fatal: [localhost]: FAILED! => {"changed": false, "module_stderr": "/bin/sh: 1: /usr/bin/krikri-issue-1646-missing-python3: not found\n", "module_stdout": "", "msg": "The module interpreter '/usr/bin/krikri-issue-1646-missing-python3' was not found.", "rc": 127}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

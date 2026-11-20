@@ -77,6 +77,7 @@ private DIVERGENCE_CASES = [
   {issue: 1647, slug: "artem-shestakov-elasticsearch-exporter-consul-check"},
   {issue: 1648, slug: "hesidoryn-python-coreos-install-python-and-packages"},
   {issue: 1651, slug: "pgkehle-nvm-reserved-tag"},
+  {issue: 1646, slug: "command-with-missing-interpreter"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -379,6 +380,11 @@ describe "divergence corpus" do
 
   it "replays 1651-pgkehle-nvm-reserved-tag" do
     expected, actual, report = divergence_transcripts(1651, "pgkehle-nvm-reserved-tag")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1646-command-with-missing-interpreter" do
+    expected, actual, report = divergence_transcripts(1646, "command-with-missing-interpreter")
     assert_equal(expected, actual, report)
   end
 end
