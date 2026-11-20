@@ -443,8 +443,11 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
     playbook at load (rc=4, zero tasks) for a module name it cannot resolve on the controller it
     runs on; krikri no longer does that. An unresolvable name takes the executor's
     unavailable-module flow instead: a `when:`-gated task skips cleanly and a genuinely reached one
-    is reported with a `uses unimplemented plugin` line and the run exits 4 at the end. So a
-    playbook using a collection nobody has installed, or a name real cannot resolve either, runs
+    is reported with a `uses unimplemented plugin` line and the run exits 4 at the end (except under
+    `--check` for the unported modules real itself skips there - the ones whose Ansible module
+    declares `supports_check_mode=False`: real does no work either, so krikri reports nothing and
+    keeps real's exit 0, issue #1647). So a playbook using a collection nobody has installed, or a
+    name real cannot resolve either, runs
     (and usually skips) under krikri where real refuses it at load. This also means the
     `ansible.mariadb.mariadb_db`-style aliases are unconditional (real resolves those only where
     the collection is installed, issue #499).
