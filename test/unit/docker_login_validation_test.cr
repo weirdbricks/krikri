@@ -96,18 +96,22 @@ describe "docker_login plugin argument validation" do
 
   # docker_login.py's main() constructs its AnsibleDockerClient before
   # LoginManager.run() branches on state:, so state=absent still resolves
-  # docker_host: (the SDK's parse_host, in the client's __init__) and
-  # still makes the client's first GET /version round trip. Both failures
-  # are real's "Error connecting: ..." wording.
-  it "state=absent still builds the client, so an unparsable docker_host fails" do
+  # docker_host: (the vendored client's parse_host, in the client's
+  # __init__) and still makes the client's first GET /version round trip.
+  # Both failures are real's "Error connecting: ..." wording.
+  it "state=absent still builds the client, so an unresolvable docker_host fails at the version round trip" do
     skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
     result = PluginSpecHelper.run("docker_login", {
       "state"       => "absent",
       "docker_host" => "spcyng",
     })
 
+    # A portless host is NOT a parse error for the collection's vendored
+    # client - it becomes http://spcyng:2376, whose DNS lookup is what
+    # fails. urllib3 quotes the live connection object's address, so the
+    # pointer is compared by shape only.
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Error connecting: Invalid bind address format: port is required: spcyng")
+    result["msg"].as_s.must_match(/\AError connecting: Error while fetching server API version: HTTPConnectionPool\(host='spcyng', port=2376\): Max retries exceeded with url: \/version \(Caused by NameResolutionError\("<urllib3\.connection\.HTTPConnection object at 0x[0-9a-f]+>: Failed to resolve 'spcyng' \(\[Errno -2\] Name or service not known\)"\)\)\z/)
   end
 
   it "state=absent still pings the daemon, so an unreachable one fails" do

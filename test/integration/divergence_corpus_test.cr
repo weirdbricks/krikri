@@ -66,6 +66,7 @@ private DIVERGENCE_CASES = [
   {issue: 1630, slug: "synchronize-delegate-nonstring-dest"},
   {issue: 1634, slug: "openssl-publickey-malformed-key"},
   {issue: 1633, slug: "openssl-publickey-check-mode"},
+  {issue: 1635, slug: "docker-image-api-version-vs-host"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -312,6 +313,11 @@ describe "divergence corpus" do
 
   it "replays 1633-openssl-publickey-check-mode" do
     expected, actual, report = divergence_transcripts(1633, "openssl-publickey-check-mode")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1635-docker-image-api-version-vs-host" do
+    expected, actual, report = divergence_transcripts(1635, "docker-image-api-version-vs-host")
     assert_equal(expected, actual, report)
   end
 end

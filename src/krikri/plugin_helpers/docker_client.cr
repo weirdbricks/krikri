@@ -261,7 +261,7 @@ module Krikri
         # `requests` fails with the missing-library wording even when
         # docker_host: is unparsable.
         sdk_import_gate
-        parsed = parse_host(docker_host)
+        parsed = parse_host(docker_host, tls_enabled?(params))
 
         if (host = parsed.host) && (port = parsed.port)
           build_tcp(params, docker_host, host, port)
@@ -297,30 +297,34 @@ module Krikri
         tls_requested?(params, resolved_docker_host(params) || "", env_overlay(params))
       end
 
-      # The SDK's parse_host() (module_utils/_api/utils/utils.py), the
-      # first thing Client.__init__ runs on the resolved docker_host:
-      # urlparse() the value, rewrite http/https and http+unix onto
-      # tcp/unix, and reject what docker cannot represent. Every failure
-      # text here is the SDK's own DockerException wording, which real
-      # reports as "Error connecting: <text>".
+      # The collection's parse_host() (module_utils/_api/utils/utils.py),
+      # the first thing its vendored Client.__init__ runs on the resolved
+      # docker_host: urlparse() the value, rewrite http/https and
+      # http+unix onto tcp/unix, and reject what docker cannot represent.
+      # Every failure text here is the client's own DockerException
+      # wording, which real reports as "Error connecting: <text>".
       #
       # A scheme-less value is a TCP endpoint (urlparse's "//addr" retry),
-      # not a socket path: "docker_host: spcyng" is host spcyng with no
-      # port, which the SDK rejects outright - port 2375/2376 is no
-      # longer defaulted (docker-py 7.x).
-      def self.parse_host(docker_host : String?) : ParsedHost
+      # not a socket path: "docker_host: spcyng" is http://spcyng:2376,
+      # NOT an error. The port a tcp/ssh endpoint omits gets defaulted
+      # here (ssh 22, otherwise 2375 under TLS and 2376 without it - the
+      # vendored copy's own inverted pair), so a portless docker_host
+      # reaches the connection attempt where real does; issue #1635's
+      # docker_image task only got as far as its bogus api_version
+      # because real never rejected the host at all.
+      def self.parse_host(docker_host : String?, tls : Bool = false) : ParsedHost
         return ParsedHost.new(nil, nil, nil) if docker_host.nil?
         addr = docker_host.strip
         # "" and "unix://" both mean the SDK's default socket.
         return ParsedHost.new(nil, nil, nil) if addr.empty? || addr == "unix://"
 
-        proto, rest = parse_scheme(addr)
+        proto, rest, tls = parse_scheme(addr, tls)
         authority, path = split_authority(rest)
         validate_authority!(addr, proto, rest, authority, path)
 
         case proto
         when "tcp", "ssh"
-          tcp_endpoint(addr, proto, authority)
+          tcp_endpoint(proto, authority, tls)
         else
           # unix, plus npipe - docr has no Windows transport, so that one
           # keeps the raw value as a socket path rather than inventing a
@@ -330,8 +334,12 @@ module Krikri
       end
 
       # urlparse()'s scheme detection followed by the SDK's own rewrites
-      # (http/https onto tcp, http+unix onto unix).
-      private def self.parse_scheme(addr : String) : {String, String}
+      # (http/https onto tcp, http+unix onto unix). Returns the effective
+      # TLS state too: the http/https branch RESETS it to "https implies
+      # tls", overriding the caller's flag exactly like the vendored
+      # parse_host does (its `tls = proto == 'https'` line), which is why
+      # an explicit tls: on an http:// host still defaults to port 2376.
+      private def self.parse_scheme(addr : String, tls : Bool) : {String, String, Bool}
         proto, rest = split_scheme(addr)
         # urlparse() finds no scheme when none is followed by ':', or when
         # the scheme has characters docker does not accept (the SDK keeps
@@ -342,13 +350,16 @@ module Krikri
           rest = "//#{addr}"
         end
 
-        proto = "tcp" if proto == "http" || proto == "https"
+        if proto == "http" || proto == "https"
+          tls = proto == "https"
+          proto = "tcp"
+        end
         proto = "unix" if proto == "http+unix"
 
         unless %w[tcp unix npipe ssh].includes?(proto)
           raise InvalidDockerHostError.new("Invalid bind address protocol: #{addr}")
         end
-        {proto, rest}
+        {proto, rest, tls}
       end
 
       # The shapes parse_host() refuses even though urlparse() can carry
@@ -370,12 +381,14 @@ module Krikri
         end
       end
 
-      private def self.tcp_endpoint(addr : String, proto : String, authority : String) : ParsedHost
+      # The vendored parse_host defaults the port a tcp/ssh endpoint
+      # leaves out - ssh's 22, and the 2375/2376 pair (TLS takes the
+      # LOWER one, the reverse of the Docker CLI's convention). A daemon
+      # is then never "invalid" for omitting a port, it is simply
+      # unreachable at that default, which is what real reports.
+      private def self.tcp_endpoint(proto : String, authority : String, tls : Bool) : ParsedHost
         hostname, port = authority_host_port(authority)
-        port = 22 if proto == "ssh" && port.nil?
-        if port.nil?
-          raise InvalidDockerHostError.new("Invalid bind address format: port is required: #{addr}")
-        end
+        port ||= (proto == "ssh" ? 22 : (tls ? 2375 : 2376))
         ParsedHost.new(nil, hostname.empty? ? "127.0.0.1" : hostname, port)
       end
 

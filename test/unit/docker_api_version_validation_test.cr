@@ -38,6 +38,22 @@ describe "docker api_version client validation" do
     error.message.must_equal("Error connecting: invalid version number 'atoobk'")
   end
 
+  it "parses the api_version before an unusable docker_host decides anything" do
+    skip "requests not importable under this host's python3" unless docker_gate_ready?
+
+    # Real (community.docker 4.7.0/5.2.1, both driving the collection's
+    # own _api client) accepts a portless docker_host - "tkvwva" becomes
+    # http://tkvwva:2376 - so the pinned api_version's parse is what
+    # fails, and its message is the one the task reports. Modelling the
+    # installed docker SDK 7.x instead rejected the host first and
+    # reported "Invalid bind address format: port is required: tkvwva"
+    # (issue #1635, kpg 000011-multi-docker_image-chaos).
+    error = assert_raises(Krikri::DockerClientConfigError) do
+      Krikri::PluginHelpers::DockerClient.build({"api_version" => "tkmfuf", "docker_host" => "tkvwva"})
+    end
+    error.message.must_equal("Error connecting: invalid version number 'tkmfuf'")
+  end
+
   it "validates the docker_api_version alias too" do
     skip "requests not importable under this host's python3" unless docker_gate_ready?
 
