@@ -950,48 +950,6 @@ module Krikri
         display_diff(result["diff"])
       end
 
-      # A validation-passed removed-param deprecation waits for this
-      # result to learn whether Ansible's module run would have shown it
-      # (normal/fail_json return) or dropped it (uncaught crash, skip,
-      # unreachable) - emit it before anything else this result prints.
-      consume_pending_module_deprecations(result, module_name)
-
-      # delegate_to: renders the host line as Ansible does:
-      # `ok: [source -> target]` - the task ran against the delegate
-      # target even though it reports under the play host.
-      host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-      # as_s? (not as_s): the debug action plugin keeps a whole-span
-      # container msg natively (a real dict/list - see its own re-parse),
-      # so a naive as_s cast crashes the whole display fiber on it.
-      # A NON-STRING msg (fail's action puts the raw task arg in
-      # result['msg'] - `fail: {msg: 50}` carries the int 50;
-      # live-verified vs 2.19.11) renders through Python repr for the
-      # [ERROR] block: the block is TEXT, the fatal dump below uses the
-      # native result as-is.
-      msg = result["msg"]?.try { |raw| raw.as_s? || ResultDisplay.python_repr(raw) } || ""
-
-      # Core-emitted deprecations (a module's result carrying the
-      # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's
-      # `warnings`-in-exit_json deprecation) print on stderr BEFORE the
-      # module-warnings block: Ansible emits the deprecation inside the
-      # module's own _return_formatted, before any self.warn() calls it
-      # makes afterwards. The formatted [DEPRECATION WARNING] line dedups
-      # like every Display message, and the "Deprecation warnings can be
-      # disabled" hint prints once per run before the first deprecation -
-      # both live-verified against 2.19.11 with two mount tasks back to
-      # back (second one silent). The marker itself is engine-internal
-      # (stripped below, like the `_ansible_*` register strip) - the
-      # result's real `deprecations` list stays untouched for register.
-      # An uncaught module exception's result is the one shape that shows
-      # nothing: Ansible's crash wrapper rebuilds the result without the
-      # collected deprecations (see module_crash_result?).
-      unless module_crash_result?(result)
-        result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
-          text = deprecation.as_s? || deprecation.to_s
-          emit_core_deprecation(text)
-        end
-      end
-
       # Module warnings (result["warnings"]) print as `[WARNING]: <text>` on
       # stderr BEFORE the status line, each distinct text once per run -
       # ansible's Display.warning dedups on the message (live-verified vs
@@ -1021,6 +979,53 @@ module Krikri
         result = JSON::Any.new(top.reject("_ansible_discovery_warning"))
       end
       emit_debug_template_error_warning(source_task, result, loop_item)
+
+      # A validation-passed removed-param deprecation waits for this
+      # result to learn whether Ansible's module run would have shown it
+      # (normal/fail_json return) or dropped it (uncaught crash, skip,
+      # unreachable) - emit it once the result's warnings are out, with the
+      # rest of its deprecations.
+      consume_pending_module_deprecations(result, module_name)
+
+      # delegate_to: renders the host line as Ansible does:
+      # `ok: [source -> target]` - the task ran against the delegate
+      # target even though it reports under the play host.
+      host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+      # as_s? (not as_s): the debug action plugin keeps a whole-span
+      # container msg natively (a real dict/list - see its own re-parse),
+      # so a naive as_s cast crashes the whole display fiber on it.
+      # A NON-STRING msg (fail's action puts the raw task arg in
+      # result['msg'] - `fail: {msg: 50}` carries the int 50;
+      # live-verified vs 2.19.11) renders through Python repr for the
+      # [ERROR] block: the block is TEXT, the fatal dump below uses the
+      # native result as-is.
+      msg = result["msg"]?.try { |raw| raw.as_s? || ResultDisplay.python_repr(raw) } || ""
+
+      # Core-emitted deprecations (a module's result carrying the
+      # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's
+      # `warnings`-in-exit_json deprecation) print on stderr AFTER the
+      # module-warnings block: ansible-core 2.21's callback
+      # (_handle_warnings) displays a result's warnings first and only then
+      # its deprecations, whatever order the module recorded them in
+      # (live-verified vs 2.21.6 + ansible.posix 2.1.0: firewalld_info's
+      # ignored-zone [WARNING] precedes both its to_native import
+      # deprecation and the exit_json one). The formatted
+      # [DEPRECATION WARNING] line dedups like every Display message, and
+      # the "Deprecation warnings can be disabled" hint prints once per run
+      # before the first deprecation - both live-verified against 2.19.11
+      # with two mount tasks back to back (second one silent). The marker
+      # itself is engine-internal (stripped below, like the `_ansible_*`
+      # register strip) - the result's real `deprecations` list stays
+      # untouched for register. An uncaught module exception's result is
+      # the one shape that shows nothing: Ansible's crash wrapper rebuilds
+      # the result without the collected deprecations (see
+      # module_crash_result?).
+      unless module_crash_result?(result)
+        result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
+          text = deprecation.as_s? || deprecation.to_s
+          emit_core_deprecation(text)
+        end
+      end
 
       # Real's callback displays a task's captured deprecations after every
       # warning the result carries (_handle_warnings prints warnings first,
