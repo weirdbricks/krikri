@@ -78,4 +78,22 @@ describe Krikri::PluginHelpers::KernelBlacklistFile do
       Krikri::PluginHelpers::KernelBlacklistFile.blacklisted?(["blacklist nouveau$"], "nouveau").must_equal(false)
     end
   end
+
+  describe ".diff_payload" do
+    it "is absent outside diff mode, like the module's VarDict diff" do
+      Krikri::PluginHelpers::KernelBlacklistFile.diff_payload(
+        [] of String, ["blacklist nouveau"], false).must_be_nil
+    end
+
+    it "reports the lines before/after under diff mode" do
+      Krikri::PluginHelpers::KernelBlacklistFile.diff_payload(
+        ["# x"], ["# x", "blacklist nouveau"], true).must_equal(
+        JSON.parse(%({"before": {"lines": ["# x"]}, "after": {"lines": ["# x", "blacklist nouveau"]}})))
+    end
+
+    it "is an empty dict when the lines did not change" do
+      Krikri::PluginHelpers::KernelBlacklistFile.diff_payload(
+        ["blacklist nouveau"], ["blacklist nouveau"], true).must_equal(JSON.parse("{}"))
+    end
+  end
 end

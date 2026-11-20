@@ -104,4 +104,57 @@ describe "kernel_blacklist plugin" do
     result["msg"].as_s.must_equal("Module failed with exception: [Errno 2] No such file or directory: '#{file}'")
     File.exists?(file).must_equal(false)
   end
+
+  # kpg issue #1654: the module's only diff-flagged variable is `lines`,
+  # so --diff pins the file content before/after. Verified against real
+  # ansible-core 2.21.6 + community.general 13.2.0:
+  #   changed:   {"before": {"lines": []}, "after": {"lines": ["blacklist stxgie"]}}
+  #   unchanged: {}
+  #   no --diff: no diff key at all.
+  it "reports the lines VarDict diff under --diff" do
+    file = PluginSpecHelper.tmp_path("kernel-blacklist-diff-new.conf")
+    File.delete(file) if File.exists?(file)
+
+    result = PluginSpecHelper.run("kernel_blacklist",
+      {"name" => "stxgie", "blacklist_file" => file, "_ansible_diff" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["diff"]["before"]["lines"].as_a.must_be_empty
+    result["diff"]["after"]["lines"].as_a.map(&.as_s).must_equal(["blacklist stxgie"])
+  end
+
+  it "reports an empty diff dict on an unchanged --diff rerun" do
+    file = PluginSpecHelper.tmp_path("kernel-blacklist-diff-unchanged.conf")
+    File.write(file, "blacklist stxgie\n")
+
+    result = PluginSpecHelper.run("kernel_blacklist",
+      {"name" => "stxgie", "blacklist_file" => file, "_ansible_diff" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["diff"].as_h.must_be_empty
+  end
+
+  it "emits no diff key at all without --diff" do
+    file = PluginSpecHelper.tmp_path("kernel-blacklist-no-diff.conf")
+    File.delete(file) if File.exists?(file)
+
+    result = PluginSpecHelper.run("kernel_blacklist", {"name" => "stxgie", "blacklist_file" => file})
+
+    result.as_h.has_key?("diff").must_equal(false)
+  end
+
+  it "carries the empty diff dict in output but not vars on an --diff failure" do
+    parent = PluginSpecHelper.tmp_path("kernel-blacklist-diff-missing-parent")
+    Dir.delete(parent) if Dir.exists?(parent)
+    file = File.join(parent, "blacklist.conf")
+
+    result = PluginSpecHelper.run("kernel_blacklist",
+      {"name" => "stxgie", "blacklist_file" => file, "_ansible_diff" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["diff"].as_h.must_be_empty
+    result["output"].as_h.has_key?("diff").must_equal(true)
+    result["output"]["diff"].as_h.must_be_empty
+    result["vars"].as_h.has_key?("diff").must_equal(false)
+  end
 end

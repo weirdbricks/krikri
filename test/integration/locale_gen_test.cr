@@ -30,4 +30,39 @@ describe "locale_gen plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("Is the package")
   end
+
+  # kpg issue #1654: locale_gen flags no VarDict variable diff=True, so
+  # module_helper's --diff merge is always the empty dict. Real
+  # ansible-core 2.21.6 + community.general 13.2.0 registers
+  # `"diff": {}` at the top level and inside `output` (never inside
+  # `vars`) on both the success and the do_raise failure paths, and no
+  # diff key at all without --diff.
+  it "carries the empty diff dict in output but not vars on an --diff failure" do
+    result = PluginSpecHelper.run("locale_gen",
+      {"name" => ["krikri_nonexistent_1", "krikri_nonexistent_2"].to_json, "_ansible_diff" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["diff"].as_h.must_be_empty
+    result["output"].as_h.has_key?("diff").must_equal(true)
+    result["output"]["diff"].as_h.must_be_empty
+    result["vars"].as_h.has_key?("diff").must_equal(false)
+  end
+
+  it "carries an empty diff dict on an --diff success" do
+    skip "host has no locale mechanism installed" unless File.exists?("/etc/locale.gen") || File.exists?("/var/lib/locales/supported.d")
+
+    result = PluginSpecHelper.run("locale_gen", {"name" => "[]", "_ansible_diff" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["diff"].as_h.must_be_empty
+  end
+
+  it "emits no diff key at all without --diff" do
+    result = PluginSpecHelper.run("locale_gen",
+      {"name" => ["krikri_nonexistent_1"].to_json})
+
+    result["failed"].as_bool.must_equal(true)
+    result.as_h.has_key?("diff").must_equal(false)
+    result["output"].as_h.has_key?("diff").must_equal(false)
+  end
 end
