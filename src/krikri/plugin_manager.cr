@@ -647,10 +647,15 @@ module Krikri
           # defaults set ansible_connection: network_cli) had its eager
           # upload ssh out as the controller's own user (no askpass
           # helper) and pre-mark the host unreachable before the gather
-          # could fail with the connection-resolution error.
+          # could fail with the connection-resolution error. A plugin this
+          # engine CANNOT execute (a Python connection plugin, see
+          # connection_plugin_unsupported?) takes the same skip: the eager
+          # upload would reach the host over SSH - the transport the
+          # failing task must not use - and could pre-mark it UNREACHABLE
+          # before the per-task check reported the real failure.
           next if [host.vars["ansible_connection"]?.try(&.as_s?),
                    role_default_conn,
-                   play.connection].compact.any? { |conn_type| connection_plugin_not_found?(conn_type, playbook_dir) }
+                   play.connection].compact.any? { |conn_type| connection_plugin_not_found?(conn_type, playbook_dir) || connection_plugin_unsupported?(conn_type, playbook_dir) }
 
           # Deduplicate by connection details - the PLAY's effective
           # spec (play vars win over inventory host vars for the
@@ -3221,10 +3226,10 @@ module Krikri
     # Ansible's own loader consults (the playbook's and each role's
     # `connection_plugins/`, ANSIBLE_CONNECTION_PLUGINS, a collection's
     # `plugins/connection/` - see ConnectionPluginLoader): a plugin that
-    # EXISTS there keeps the engine's long-standing transport
-    # approximation - this engine can't run a Python plugin's connection
-    # lifecycle, but that's an approximation, not a resolution failure -
-    # while a plugin that exists NOWHERE is the not-found verdict.
+    # EXISTS there is a resolution success Ansible would then execute (see
+    # connection_plugin_unsupported? for the separate "resolved but not
+    # executable here" verdict), while a plugin that exists NOWHERE is the
+    # not-found verdict.
     def self.connection_plugin_not_found?(raw : String, playbook_dir : String? = nil) : Bool
       connection_plugin_transport(raw, playbook_dir).nil?
     end
@@ -3232,7 +3237,10 @@ module Krikri
     # This engine's transport for *raw*: "local" or "ssh", or nil when
     # Ansible's loader would not resolve the name either. A built-in name
     # keeps its fixed transport; any other resolvable plugin resolves to
-    # the transport its own class implies (ConnectionPluginLoader).
+    # the transport its own class implies (ConnectionPluginLoader), so the
+    # local-vs-remote decisions around it (eager upload, delegation) never
+    # reach some other host. Such a plugin is not runnable here though -
+    # see connection_plugin_unsupported?.
     def self.connection_plugin_transport(raw : String, playbook_dir : String? = nil) : String?
       return "local" if LOCAL_CONNECTION_TYPES.includes?(raw)
       return "ssh" if SSH_CONNECTION_TYPES.includes?(raw)
@@ -3241,29 +3249,37 @@ module Krikri
       source = ConnectionPluginLoader.find_source(raw, playbook_dir)
       return nil unless source
 
-      transport = ConnectionPluginLoader.local_source?(source) ? "local" : "ssh"
-      warn_unexecuted_connection_plugin(raw, transport)
-      transport
+      ConnectionPluginLoader.local_source?(source) ? "local" : "ssh"
     end
 
-    # Ansible loads the plugin FILE and then runs its connection
-    # lifecycle; this engine substitutes the transport that class implies
-    # and never calls exec_command/put_file/fetch_file. Doing that
-    # silently is what issue #1541 reported: an SSM-style plugin with
-    # `ansible_host=<instance id>` made krikri ssh to the instance id and
-    # report UNREACHABLE, with nothing saying the plugin was never used.
-    # One line per plugin name, like the strategy and callback plugin
-    # warnings - resolution runs per host and per task, so without the
-    # dedupe this would repeat dozens of times per play.
-    CONNECTION_PLUGIN_NOT_EXECUTED_MUTEX = Mutex.new
-    @@connection_plugins_not_executed = Set(String).new
+    # Whether *raw* names a connection plugin Ansible itself WOULD load
+    # and execute but this engine cannot: a Python connection plugin
+    # found on one of Ansible's loader paths. Its connection lifecycle
+    # (_connect/exec_command/put_file/fetch_file) is the whole transport
+    # layer SSH or local execution replaces here, so no transport
+    # substitution can stand in for it. Tasks using one are failed
+    # outright (connection_plugin_execution_failure) rather than run over
+    # a different transport: that substitution is what made an SSM-style
+    # plugin ssh to its `ansible_host=<instance id>` instead of reaching
+    # the host (issues #1541, #1658).
+    def self.connection_plugin_unsupported?(raw : String, playbook_dir : String? = nil) : Bool
+      return false if builtin_connection_type?(raw)
+      !ConnectionPluginLoader.find_source(raw, playbook_dir).nil?
+    end
 
-    private def self.warn_unexecuted_connection_plugin(name : String, transport : String) : Nil
-      CONNECTION_PLUGIN_NOT_EXECUTED_MUTEX.synchronize do
-        next if @@connection_plugins_not_executed.includes?(name)
-        @@connection_plugins_not_executed << name
-        STDERR.puts "[WARNING]: Connection plugin '#{name}' cannot be executed by krikri-playbook and is ignored; tasks run over the #{transport} connection instead."
-      end
+    private def self.builtin_connection_type?(raw : String) : Bool
+      LOCAL_CONNECTION_TYPES.includes?(raw) ||
+        SSH_CONNECTION_TYPES.includes?(raw) ||
+        RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES.includes?(raw)
+    end
+
+    # The task failure a plugin Ansible would run gets here. The prefix is
+    # the same one the not-found failure uses, so a gather-time failure of
+    # either kind prints in Ansible's one-line [ERROR] shape (see
+    # connection_resolution_gather_message? in the facts path).
+    def self.connection_plugin_execution_failure(raw : String) : String
+      "Task failed: the connection plugin '#{raw}' cannot be executed by krikri-playbook " \
+      "(Python connection plugins are not supported)"
     end
 
     # The playbook directory the executor's vars_context carries as the
