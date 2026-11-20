@@ -61,4 +61,40 @@ describe "locale_gen plugin result variables" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("missing required arguments: name")
   end
+
+  # ModuleHelper#output appends an empty `diff` while the module runs under
+  # --diff, and fail_json splats that same dict - so the failure carries it
+  # both nested in `output` and at the top level, but not in `vars`
+  # (live-verified with ansible-playbook 2.21.6, registered `{{ r | to_json }}`).
+  it "adds an empty diff to a diff-mode failure, top level and in output only" do
+    names = ["krikri_nonexistent_1"]
+
+    result = PluginSpecHelper.run("locale_gen", {"name" => names.to_json, "_ansible_diff" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["diff"].as_h.must_be_empty
+    result["output"].as_h["diff"].as_h.must_be_empty
+    result["vars"].as_h.has_key?("diff").must_equal(false)
+
+    plain = PluginSpecHelper.run("locale_gen", {"name" => names.to_json})
+
+    plain["diff"]?.must_be_nil
+    plain["output"].as_h.has_key?("diff").must_equal(false)
+  end
+
+  it "adds an empty diff to a diff-mode unchanged success" do
+    mech = mechanism
+    skip "host has no locale mechanism installed" unless mech
+
+    result = PluginSpecHelper.run("locale_gen", {"name" => "[]", "_ansible_diff" => "true"})
+
+    result["diff"].as_h.must_be_empty
+    # The success path never carries the VarDict output/vars copies.
+    result["output"]?.must_be_nil
+    result["vars"]?.must_be_nil
+
+    plain = PluginSpecHelper.run("locale_gen", {"name" => "[]"})
+
+    plain["diff"]?.must_be_nil
+  end
 end
