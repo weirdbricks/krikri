@@ -163,7 +163,19 @@ module Krikri
         # commands=commands, messages=messages, diff=diff) - no msg on
         # the success path (diff is {} outside --diff mode; live-verified
         # against Ansible 2.19.11 in the podman container).
-        PluginResult.new(changed: changed, failed: false,
+        #
+        # Under --diff the module stores the two diversion dicts as
+        # diff.before/after and the callback prints them as a
+        # --- before / +++ after block AHEAD of the task's status line,
+        # in check mode too - where `after` is the wanted diversion,
+        # since the module only re-reads the real one outside check mode
+        # (kpg 000016-multi-cpanm-happy's check run showed Ansible
+        # printing the block per dpkg_divert loop item while krikri
+        # printed the changed line alone).
+        diff = if @diff_mode
+                 JSON.parse(%({"before": #{diversion_before.to_json}, "after": #{diversion_after.to_json}}))
+               end
+        PluginResult.new(changed: changed, failed: false, diff: diff,
           diversion: diversion_after, commands: [main_command], messages: messages,
           key_order: ["changed", "diversion", "commands", "messages", "diff"])
       else

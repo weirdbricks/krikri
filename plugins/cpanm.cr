@@ -16,10 +16,10 @@ module Krikri
     def execute : PluginResult
       name = @params["name"]?.presence
       from_path = @params["from_path"]?.presence
-      unless name || from_path
-        return PluginResult.new(changed: false, failed: true,
-          msg: "one of the following is required: name, from_path")
+      if preflight = argument_check(name, from_path)
+        return preflight
       end
+
       locallib = @params["locallib"]?.presence
       executable = @params["executable"]?.presence || "cpanm"
 
@@ -55,6 +55,58 @@ module Krikri
 
       PluginResult.new(changed: PluginHelpers::Cpanm.changed?(result[:exit_code], result[:stdout], result[:stderr]),
         failed: false)
+    end
+
+    # Ansible's failure ordering, reproduced in the order it happens:
+    # basic.py's argument-spec validation (required_one_of) runs first,
+    # then the check-mode gate, then the module's own __init_module__
+    # raises.
+    private def argument_check(name : String?, from_path : String?) : PluginResult?
+      unless name || from_path
+        return PluginResult.new(changed: false, failed: true,
+          msg: "one of the following is required: name, from_path")
+      end
+
+      # cpanm.py passes no supports_check_mode to its AnsibleModule, so
+      # basic.py's gate skips the task under --check before the module
+      # body (and its own mode checks) runs. The registered result
+      # carries an explicit failed: false (Ansible's controller-side
+      # _return_formatted backfill), so `kpg_task_0.failed` is defined.
+      if true?(@params["_ansible_check_mode"]?)
+        invoked = @params["_module_name"]? || "community.general.cpanm"
+        return PluginResult.new(changed: false, failed: false,
+          msg: "remote module (#{invoked}) does not support check mode", skipped: true,
+          failed_flag: true)
+      end
+
+      mode = @params["mode"]?.presence || "new"
+      if setup_error = PluginHelpers::Cpanm.setup_error(name, from_path, mode, @params["name_check"]?.presence)
+        return setup_failure(setup_error)
+      end
+      nil
+    end
+
+    # ModuleHelper's fail_json shape for a raise inside __init_module__:
+    # the output_params (name, version) ride along under both `output` and
+    # `vars` AND are repeated at the top level, and --diff adds an empty
+    # `diff` dict to the result and to `output` (live-captured: ansible-core
+    # 2.21.6 with community.general 12.5.0, the pair kpg round fixtures run).
+    private def setup_failure(msg : String) : PluginResult
+      name = @params["name"]?.presence
+      version = @params["version"]?.presence
+      empty_diff = JSON::Any.new({} of String => JSON::Any)
+      output = Hash(String, JSON::Any).new
+      output["name"] = JSON::Any.new(name)
+      output["version"] = JSON::Any.new(version)
+      output["diff"] = empty_diff if @diff_mode
+      vars = Hash(String, JSON::Any).new
+      vars["name"] = JSON::Any.new(name)
+      vars["version"] = JSON::Any.new(version)
+      PluginResult.new(changed: false, failed: true, msg: msg,
+        diff: @diff_mode ? empty_diff : nil,
+        name: name, version: version,
+        output: JSON::Any.new(output), vars: JSON::Any.new(vars),
+        key_order: ["changed", "failed", "exception", "msg", "diff", "output", "vars", "name", "version"])
     end
   end
 end

@@ -102,4 +102,29 @@ describe "dpkg_divert plugin" do
     result["diversion"].as_h["state"].as_s.must_equal("absent")
     result["diversion"].as_h["path"].as_s.must_equal(src)
   end
+
+  # Under --diff real dpkg_divert.py attaches {before, after} diversion
+  # dicts and ansible's callback prints them as a before/after block ahead
+  # of the task's status line - in check mode too, where `after` is the
+  # wanted diversion because the module only re-reads the real one
+  # outside check mode (kpg 000016-multi-cpanm-happy: Ansible printed the
+  # block for every dpkg_divert loop item while krikri printed the
+  # changed line alone).
+  it "reports the before/after diversion pair under --diff in check mode" do
+    skip "no dpkg-divert on this machine" unless File.exists?("/usr/bin/dpkg-divert") || File.exists?("/usr/sbin/dpkg-divert")
+
+    path = PluginSpecHelper.tmp_path("kpg1639-divert.txt")
+    result = PluginSpecHelper.run("dpkg_divert", {
+      "path"                => path,
+      "state"               => "present",
+      "_ansible_check_mode" => "true",
+      "_ansible_diff"       => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["diff"]["before"]["state"].as_s.must_equal("absent")
+    result["diff"]["before"]["divert"].raw.must_be_nil
+    result["diff"]["after"]["state"].as_s.must_equal("present")
+    result["diff"]["after"]["divert"].as_s.must_equal("#{path}.distrib")
+  end
 end
