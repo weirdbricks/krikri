@@ -97,10 +97,20 @@ module Krikri
       # live-verified against Ansible 2.19.11 via registered {{ r | to_json }}
       # dumps in the podman container (changed/unchanged/check all
       # identical).
+      # Under --diff module_helper merges the VarDict's diff into the
+      # output after every variable; locale_gen flags none of its
+      # variables diff=True, so that diff is always the empty dict (real
+      # 2.21.6 registers `"diff": {}` on every --diff run, changed or
+      # not). Outside --diff no diff key exists at all.
       PluginResult.new(changed: changed, failed: false,
         name: names, mechanism: mech,
         ubuntu_mode: mech != "glibc",
-        key_order: ["changed", "name", "ubuntu_mode", "mechanism"])
+        diff: empty_diff,
+        key_order: ["changed", "name", "ubuntu_mode", "mechanism", "diff"])
+    end
+
+    private def empty_diff : JSON::Any?
+      diff_mode? ? JSON::Any.new({} of String => JSON::Any) : nil
     end
 
     private def parse_names : Array(String)
@@ -135,16 +145,27 @@ module Krikri
     # 2.19.11 through the generator sweep's missing-locales case).
     private def raise_result(msg : String, names : Array(String), mechanism : String?) : PluginResult
       name_json = JSON::Any.new(names.map { |name| JSON::Any.new(name) })
-      extras = {"name" => name_json}
+      vars = {"name" => name_json}
       if mechanism
-        extras["ubuntu_mode"] = JSON::Any.new(mechanism != "glibc")
-        extras["mechanism"] = JSON::Any.new(mechanism)
+        vars["ubuntu_mode"] = JSON::Any.new(mechanism != "glibc")
+        vars["mechanism"] = JSON::Any.new(mechanism)
+      end
+      extras = vars.dup
+      # module_helper's --diff merge lands in the output dict only (the
+      # `vars` copy keeps the bare VarDict), and the fail_json decorator
+      # spreads the output dict at the top level too.
+      if diff = empty_diff
+        extras["diff"] = diff
+      end
+      if mechanism
         PluginResult.new(changed: false, failed: true, msg: msg,
           name: names, ubuntu_mode: mechanism != "glibc", mechanism: mechanism,
-          output: extras, vars: extras.dup)
+          output: JSON::Any.new(extras), vars: JSON::Any.new(vars), diff: empty_diff,
+          key_order: ["failed", "msg", "diff", "output", "vars", "name", "ubuntu_mode", "mechanism"])
       else
         PluginResult.new(changed: false, failed: true, msg: msg,
-          name: names, output: extras, vars: extras.dup)
+          name: names, output: JSON::Any.new(extras), vars: JSON::Any.new(vars), diff: empty_diff,
+          key_order: ["failed", "msg", "diff", "output", "vars", "name"])
       end
     end
 

@@ -93,6 +93,7 @@ module Krikri
       end
       lines = file_existed ? File.read_lines(file).map(&.rstrip) : nil
 
+      initial_lines = lines || [] of String
       new_lines, changed = PluginHelpers::KernelBlacklistFile.apply(lines, name, state)
 
       if changed && !check_mode
@@ -103,6 +104,8 @@ module Krikri
       # in the podman container; check mode, changed and unchanged runs
       # and state=absent all identical):
       # changed, name, state, filename, lines, is_blacklisted.
+      # --diff appends the VarDict diff for `lines` (the module's only
+      # diff-flagged variable) after every output variable.
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -111,7 +114,8 @@ module Krikri
         filename: file,
         lines: new_lines,
         is_blacklisted: PluginHelpers::KernelBlacklistFile.blacklisted?(new_lines, name),
-        key_order: ["changed", "name", "state", "filename", "lines", "is_blacklisted"],
+        diff: PluginHelpers::KernelBlacklistFile.diff_payload(initial_lines, new_lines, diff_mode?),
+        key_order: ["changed", "name", "state", "filename", "lines", "is_blacklisted", "diff"],
       )
     end
 
@@ -122,10 +126,27 @@ module Krikri
     # ansible-playbook 2.19.11 in a container where /etc/modprobe.d
     # doesn't exist yet.
     private def failed_result(name : String, state : String, file : String, msg : String) : PluginResult
-      output = JSON.parse(%({"filename": #{file.to_json}, "name": #{name.to_json}, "state": #{state.to_json}}))
+      vars = {
+        "name"     => JSON::Any.new(name),
+        "state"    => JSON::Any.new(state),
+        "filename" => JSON::Any.new(file),
+      }
+      output = vars.dup
+      # module_helper merges the VarDict's diff into the output dict under
+      # --diff - empty here, because the OSError raise happens before
+      # __init_module__ sets any diff-flagged variable - and the
+      # module_fails_on_exception decorator spreads that same dict at the
+      # top level. `vars` stays diff-free (real 2.21.6 register dump).
+      empty_diff = JSON::Any.new({} of String => JSON::Any)
+      output["diff"] = empty_diff if diff_mode?
       PluginResult.new(changed: false, failed: true, msg: msg,
         filename: file, name: name, state: state,
-        output: output, vars: output)
+        output: JSON::Any.new(output), vars: JSON::Any.new(vars),
+        diff: diff_mode? ? empty_diff : nil,
+        # Real 2.21.6 register order: fail_json's own kwargs (msg, output,
+        # vars) first, then the output dict it spreads (name, state,
+        # filename), with the 2.21 task-result leading keys moved ahead.
+        key_order: ["failed", "msg", "diff", "output", "vars", "name", "state", "filename"])
     end
   end
 end
