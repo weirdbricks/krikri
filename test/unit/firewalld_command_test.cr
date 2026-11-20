@@ -304,14 +304,40 @@ describe Krikri::PluginHelpers::FirewalldCommand do
     end
   end
 
-  describe "service_list (firewall-cmd --list-services output)" do
+  describe "list_command/thing_list (firewall-cmd --list-* output)" do
+    it "builds the --list-<flag>s probe Ansible's list-membership transactions use" do
+      Krikri::PluginHelpers::FirewalldCommand.list_command("public", "service")
+        .must_equal("firewall-cmd --zone=public --list-services")
+      Krikri::PluginHelpers::FirewalldCommand.list_command("public", "icmp_block")
+        .must_equal("firewall-cmd --zone=public --list-icmp-blocks")
+      Krikri::PluginHelpers::FirewalldCommand.list_command("public", "protocol")
+        .must_equal("firewall-cmd --zone=public --list-protocols")
+      Krikri::PluginHelpers::FirewalldCommand.list_command("public", "source")
+        .must_equal("firewall-cmd --zone=public --list-sources")
+      Krikri::PluginHelpers::FirewalldCommand.list_command("public", "interface")
+        .must_equal("firewall-cmd --zone=public --list-interfaces")
+    end
+
     it "splits the space-separated one-line output real firewall-cmd prints" do
-      Krikri::PluginHelpers::FirewalldCommand.service_list("dhcpv6-client http ssh\n")
+      Krikri::PluginHelpers::FirewalldCommand.thing_list("dhcpv6-client http ssh\n")
         .must_equal(["dhcpv6-client", "http", "ssh"])
     end
 
-    it "treats empty output as no services" do
-      Krikri::PluginHelpers::FirewalldCommand.service_list("\n").must_equal([] of String)
+    it "treats empty output as no entries" do
+      Krikri::PluginHelpers::FirewalldCommand.thing_list("\n").must_equal([] of String)
+    end
+
+    it "marks exactly the transactions whose Ansible probe is a list membership" do
+      %w[service icmp_block protocol interface].each do |thing|
+        Krikri::PluginHelpers::FirewalldCommand.listed_thing?(thing).must_equal(true)
+      end
+      # port/forward_port/rich_rule/masquerade/forward/icmp_block_inversion
+      # are probed by Ansible with a real query flag instead, and source
+      # stays on the query path because --query-source normalizes a MAC
+      # the way firewalld stores it.
+      %w[port forward_port rich_rule masquerade forward icmp_block_inversion source].each do |thing|
+        Krikri::PluginHelpers::FirewalldCommand.listed_thing?(thing).must_equal(false)
+      end
     end
   end
 end
