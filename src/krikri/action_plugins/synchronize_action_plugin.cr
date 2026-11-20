@@ -55,25 +55,31 @@ module Krikri
   # rsync's own ssh from the delegate; (2) become: is not rewritten into
   # `rsync_path: sudo rsync` (unmodeled for every shape, delegate or not)
   # and the delegate-side module is dispatched with the task's own become
-  # setting where real clears it; (3) `_substitute_controller` (a
-  # localhost inventory host with a remote delegate) is unimplemented.
+  # setting where real clears it; (3) the `_substitute_controller` flag
+  # real's action plugin raises BY ITSELF for a localhost inventory host
+  # with a remote delegate is still not raised here (an explicitly
+  # requested one is honored - see #substitute_controller_paths).
   class SynchronizeActionPlugin < ActionPlugin
     # synchronize's `type: bool` options (ansible.posix.synchronize spec,
-    # declaration order minus the engine-internal _substitute_controller).
-    # AnsibleModule converts every provided bool param at module setup -
-    # declaration order, first violation wins - and synchronize's module
-    # body never runs on a conversion failure. Found by the kpg43 fuzz
-    # round: a chaos-mutated `dirs: ylazyy` ran the whole rsync on this
-    # engine while real ansible failed the task in module setup.
+    # declaration order). AnsibleModule converts every provided bool param
+    # at module setup - declaration order, first violation wins - and
+    # synchronize's module body never runs on a conversion failure. Found
+    # by the kpg43 fuzz round: a chaos-mutated `dirs: ylazyy` ran the whole
+    # rsync on this engine while real ansible failed the task in module
+    # setup.
     # use_ssh_args is deliberately absent: real's action plugin pops it out
     # of the task args before invoking the module (see
     # #consume_use_ssh_args!), so the module's argspec never validates it.
+    # _substitute_controller IS included: the action plugin may set it, but
+    # an explicit task value reaches the module unchanged and is
+    # type-converted there like any other argspec bool.
     include PluginHelpers::StrictBoolValidation
 
     protected def bool_params : Array(String)
-      %w[delete archive checksum compress existing_only dirs recursive links
-        copy_links perms times owner group set_remote_user
-        ssh_connection_multiplexing partial verify_host delay_updates]
+      %w[delete _substitute_controller archive checksum compress
+        existing_only dirs recursive links copy_links perms times owner group
+        set_remote_user ssh_connection_multiplexing partial verify_host
+        delay_updates]
     end
 
     # Ansible module success shape: exit_json(changed=, msg=, rc=, cmd=,
@@ -252,6 +258,16 @@ module Krikri
         return invalid
       end
 
+      # AnsibleModule setup is done, so real's module now runs the
+      # _substitute_controller block - before rsync resolution and argv
+      # building. The module process is this one only when the exec host
+      # has a local connection; a remote delegate/task host runs
+      # plugins/synchronize.cr there, whose own environment is the
+      # faithful one (see SynchronizeRsync.controller_addr).
+      if failure = substitute_controller_env_failure
+        return failure
+      end
+
       raw_mode = @params["mode"]?
       mode = (raw_mode || "push").downcase
       src = src_param.to_s
@@ -339,12 +355,52 @@ module Krikri
           else
             dest = SynchronizeRsync.format_rsh_target(task_host.connection_host, dest, user)
           end
+          src, dest = substitute_controller_paths(src, dest)
           dest_port = resolve_dest_port(task_host)
           argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port, conn_password, wrap_rsh_sshpass: SSHManager.sshpass_available?)
           return finish(argv, conn_password)
         end
       end
       nil
+    end
+
+    private def substitute_controller? : Bool
+      SynchronizeRsync.bool(@params["_substitute_controller"]?)
+    end
+
+    # Whether real's module process is on THIS machine, i.e. its environment
+    # is this process's. A remote delegate (Ansible's use_delegate shape) or
+    # a remote task host runs the module there instead.
+    private def module_runs_locally? : Bool
+      return false if remote_delegate_host
+      local_connection?
+    end
+
+    # Real's module, `if module.params['_substitute_controller']:`, rewrites
+    # both paths through substitute_controller() and fail_json's when
+    # neither SSH_CLIENT nor SSH_CONNECTION is exported - before it looks
+    # at either path, so the flag alone fails an ordinary absolute-path
+    # task (kpg 000009-multi-mount-happy, issue #1629). Only a local
+    # module process shares this process's environment; a remote delegate
+    # or task host runs plugins/synchronize.cr, which checks its own.
+    private def substitute_controller_env_failure : ActionResult?
+      return nil unless substitute_controller? && module_runs_locally?
+      return nil if SynchronizeRsync.controller_addr
+      ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+        false, true, SynchronizeRsync::CONTROLLER_HOSTNAME_FAILURE,
+        key_order: PARAM_FAILURE_KEY_ORDER
+      ), PARAM_FAILURE_KEY_ORDER))
+    end
+
+    # The module's rewrite, applied to the MUNGED paths: real qualifies the
+    # remote end in the action plugin first, so its startswith('localhost:')
+    # test sees the qualified string (a user@localhost:path target is
+    # therefore left untouched).
+    private def substitute_controller_paths(src : String, dest : String) : {String, String}
+      return {src, dest} unless substitute_controller? && module_runs_locally?
+      addr = SynchronizeRsync.controller_addr || return {src, dest}
+      {SynchronizeRsync.substitute_controller(src, addr),
+       SynchronizeRsync.substitute_controller(dest, addr)}
     end
 
     # Ansible's use_delegate case (see execute): the TASK host when it is a
@@ -362,12 +418,13 @@ module Krikri
     # the mode-dependent REMOTE end gets the user@host: prefix and rsync
     # dials out over its own ssh.
     private def endpoint_paths(src : String, dest : String, mode : String) : {String, String}
-      return {src, dest} if local_connection?
+      return substitute_controller_paths(src, dest) if local_connection?
       if mode == "pull"
-        {SynchronizeRsync.format_rsh_target(connection_host, src, remote_user), dest}
+        src = SynchronizeRsync.format_rsh_target(connection_host, src, remote_user)
       else
-        {src, SynchronizeRsync.format_rsh_target(connection_host, dest, remote_user)}
+        dest = SynchronizeRsync.format_rsh_target(connection_host, dest, remote_user)
       end
+      substitute_controller_paths(src, dest)
     end
 
     # The munged params for the run-on-the-delegate case, handed back to

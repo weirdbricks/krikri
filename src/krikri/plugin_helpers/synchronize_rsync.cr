@@ -258,6 +258,37 @@ module Krikri
       path
     end
 
+    # The Ansible module's `_substitute_controller` failure text. The
+    # module runs substitute_controller() on BOTH paths before it looks at
+    # either one, so the flag alone fails a task whose paths contain no
+    # `localhost:` at all (issue #1629).
+    CONTROLLER_HOSTNAME_FAILURE = "Could not determine controller hostname for rsync to send to"
+
+    # substitute_controller()'s client_addr: the first whitespace-separated
+    # token of SSH_CLIENT, falling back to SSH_CONNECTION. Real unpacks
+    # `env.split(None, 1)` into exactly two names, so a variable that is set
+    # but carries fewer than two tokens raises ValueError (the same
+    # fail_json) and does NOT fall through to the next variable - mirror
+    # that ordering instead of retrying a malformed value.
+    def self.controller_addr : String?
+      {"SSH_CLIENT", "SSH_CONNECTION"}.each do |name|
+        raw = ENV[name]? || next
+        fields = raw.split(/\s+/).reject(&.empty?)
+        return nil if fields.size < 2
+        return fields.first
+      end
+      nil
+    end
+
+    # substitute_controller()'s rewrite: only a path that STARTS with
+    # `localhost:` is touched (the action plugin's user@host: qualification
+    # runs first, so an already-qualified `user@localhost:path` is left
+    # alone - live-verified).
+    def self.substitute_controller(path : String, client_addr : String) : String
+      return path unless path.starts_with?("localhost:")
+      "#{client_addr}:#{path["localhost:".size..]}"
+    end
+
     def self.bool(value : String?, default : Bool = false) : Bool
       return default unless value
       normalized = value.strip.downcase
