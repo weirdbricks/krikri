@@ -115,8 +115,7 @@ module Krikri
     private def munging_literal_type_failure : ActionResult?
       src_native = Krikri.non_string_scalar(@params["src"]?)
       dest_native = Krikri.non_string_scalar(@params["dest"]?)
-      dest_is_local = local_connection? ||
-                      ((task_host = @task_host) && !local_connection? && task_host.name == @host.name)
+      dest_is_local = dest_is_local_for_munging?
       # Real's munging reads the RAW mode (`get('mode', 'push') == 'pull'`,
       # case-sensitive) before the module's choices validation ever runs.
       mode = @params["mode"]? || "push"
@@ -127,6 +126,21 @@ module Krikri
         return literal_munging_crash(dest_native, remote_qualified: !dest_is_local && mode != "pull")
       end
       nil
+    end
+
+    # Real's dest_is_local, which decides whether the munging calls
+    # _get_absolute_path (both ends local) or _format_rsync_rsh_target
+    # (the mode-dependent end is remote-qualified). With delegate_to: set
+    # real only asks whether the delegate IS the task's own host
+    # (`delegate_to in dest_host_ids` - its inventory_hostname/ansible_host);
+    # the delegate's connection transport is irrelevant, so a local-transport
+    # delegate naming a DIFFERENT host keeps dest remote. Collapsing that to
+    # local_connection? made a non-string dest crash with the TypeError
+    # instead of the AttributeError real raises (issue #1630, kpg).
+    # Without delegate_to: it is real's `remote_transport is False`.
+    private def dest_is_local_for_munging? : Bool
+      task_host = @task_host || return local_connection?
+      @host.name == task_host.name || @host.name == task_host.connection_host
     end
 
     private def literal_munging_crash(native : JSON::Any, remote_qualified : Bool) : ActionResult

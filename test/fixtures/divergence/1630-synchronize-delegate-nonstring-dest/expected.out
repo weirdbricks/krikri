@@ -1,0 +1,28 @@
+
+PLAY [Krikri-playbook-generator: multi-task #15] *******************************
+
+TASK [Synchronize #15.0] *******************************************************
+[ERROR]: Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'
+Origin: <WORK>/playbook.yml:11:7
+
+ 9     kpg_delegate: target2
+10   tasks:
+11     - name: 'Synchronize #15.0'
+         ^ column 7
+
+failed: [target -> target2] (item=/opt/kpg-fixtures/src.txt) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/src.txt", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+failed: [target -> target2] (item=/opt/kpg-fixtures/src2.txt) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/src2.txt", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+failed: [target -> target2] (item=/opt/kpg-fixtures/template.j2) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/template.j2", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+failed: [target -> target2] (item=/opt/kpg-fixtures/script.sh) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/script.sh", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+failed: [target -> target2] (item=/opt/kpg-fixtures/dir/inner.txt) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/dir/inner.txt", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+failed: [target -> target2] (item=/opt/kpg-fixtures/binary.bin) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/binary.bin", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+failed: [target -> target2] (item=/opt/kpg-fixtures/no-newline.txt) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/no-newline.txt", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+failed: [target -> target2] (item=/opt/kpg-fixtures/rich.j2) => {"ansible_loop_var": "item", "changed": false, "item": "/opt/kpg-fixtures/rich.j2", "msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'startswith'"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.
+[DEPRECATION WARNING]: The `ansible.module_utils.common._collections_compat` module is deprecated. This feature will be removed from ansible-core version 2.24. Use `collections.abc` from the Python standard library instead.

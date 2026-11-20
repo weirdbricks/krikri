@@ -502,6 +502,25 @@ describe "SynchronizeActionPlugin non-string literal src/dest" do
     result.error_detail?.must_equal("'_AnsibleTaggedInt' object has no attribute 'startswith'")
   end
 
+  # Real's dest_is_local on a delegate_to task is only `delegate_to in
+  # dest_host_ids`: a local-transport delegate naming a DIFFERENT host
+  # still syncs to a remote dest, so the non-string crash there is the
+  # startswith AttributeError, not the controller-local TypeError. The
+  # kpg podman inventory (N local aliases of one machine) hit exactly
+  # this: target's own ansible_connection=local used to decide the munging.
+  it "keeps dest remote-qualified when a local-transport delegate is a different host" do
+    delegate = Krikri::Host.new("target2")
+    delegate.vars["ansible_connection"] = JSON::Any.new("local")
+    task_host = Krikri::Host.new("target")
+    task_host.vars["ansible_connection"] = JSON::Any.new("local")
+    result = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "#{Krikri::NON_STRING_PARAM_PREFIX}10",
+    }, {"ansible_connection" => JSON::Any.new("local")}, delegate, nil, task_host).execute
+
+    result.error_detail?.must_equal("'_AnsibleTaggedInt' object has no attribute 'startswith'")
+  end
+
   it "keeps pull's dest controller-local, so a literal dest crashes with the TypeError there" do
     result = Krikri::SynchronizeActionPlugin.new({
       "src"  => "/tmp/sync-spec-src/",
