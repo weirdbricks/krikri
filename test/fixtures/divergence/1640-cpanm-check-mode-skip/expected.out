@@ -1,0 +1,9 @@
+
+PLAY [Krikri-playbook-generator: multi-task #16] *******************************
+
+TASK [Cpanm #16.0] *************************************************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+

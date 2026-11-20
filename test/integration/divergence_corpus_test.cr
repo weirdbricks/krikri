@@ -68,6 +68,8 @@ private DIVERGENCE_CASES = [
   {issue: 1633, slug: "openssl-publickey-check-mode"},
   {issue: 1635, slug: "docker-image-api-version-vs-host"},
   {issue: 1637, slug: "docker-network-info-tls-config-vs-api-version"},
+  {issue: 1640, slug: "cpanm-name-from-path-mutually-exclusive"},
+  {issue: 1640, slug: "cpanm-check-mode-skip"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -324,6 +326,16 @@ describe "divergence corpus" do
 
   it "replays 1637-docker-network-info-tls-config-vs-api-version" do
     expected, actual, report = divergence_transcripts(1637, "docker-network-info-tls-config-vs-api-version")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1640-cpanm-name-from-path-mutually-exclusive" do
+    expected, actual, report = divergence_transcripts(1640, "cpanm-name-from-path-mutually-exclusive")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1640-cpanm-check-mode-skip" do
+    expected, actual, report = divergence_transcripts(1640, "cpanm-check-mode-skip")
     assert_equal(expected, actual, report)
   end
 end

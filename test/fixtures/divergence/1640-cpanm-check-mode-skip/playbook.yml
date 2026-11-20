@@ -1,0 +1,19 @@
+---
+# kpg 000016-multi-cpanm-happy #16.0, the Cpanm task verbatim (the same
+# task the real-mode case replays) - under --check.
+# community.general.cpanm declares `check_mode: support: none`, so real
+# ansible never runs it: AnsibleModule skips it after argument-spec
+# validation but BEFORE the module's own __init_module__ check that
+# rejects name+from_path in mode=new. The skip is the one observable
+# thing here, so it pins the order of those two checks too.
+- name: 'Krikri-playbook-generator: multi-task #16'
+  hosts: kpg_targets
+  gather_facts: false
+  tasks:
+    - name: 'Cpanm #16.0'
+      community.general.cpanm:
+        from_path: '{{ playbook_dir }}/kpg-work/readonly/dest.txt'
+        install_recommendations: true
+        name: nsreaz
+      register: kpg_task_0
+      ignore_errors: true
