@@ -79,6 +79,7 @@ private DIVERGENCE_CASES = [
   {issue: 1651, slug: "pgkehle-nvm-reserved-tag"},
   {issue: 1646, slug: "command-with-missing-interpreter"},
   {issue: 1641, slug: "hesidoryn-python-coreos-install-python-and-packages"},
+  {issue: 1657, slug: "strategy-plugin-retry-fallback"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -391,6 +392,11 @@ describe "divergence corpus" do
 
   it "replays 1641-hesidoryn-python-coreos-install-python-and-packages" do
     expected, actual, report = divergence_transcripts(1641, "hesidoryn-python-coreos-install-python-and-packages")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1657-strategy-plugin-retry-fallback" do
+    expected, actual, report = divergence_transcripts(1657, "strategy-plugin-retry-fallback")
     assert_equal(expected, actual, report)
   end
 end

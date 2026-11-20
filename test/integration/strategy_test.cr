@@ -21,7 +21,8 @@ private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env 
   # A strategy plugin dir is either the playbook-adjacent one Ansible's
   # loader searches first or an explicit ANSIBLE_STRATEGY_PLUGINS entry.
   # The content never matters here: this engine resolves the plugin's
-  # NAME but cannot execute Python strategy code (issue #1439).
+  # NAME and then refuses the play, since it cannot execute Python
+  # strategy code (issue #1657).
   plugin_dir = plugin_env ? File.join(dir, "plugin_env") : File.join(dir, "strategy_plugins")
   if plugin_name = plugin
     Dir.mkdir_p(plugin_dir)
@@ -44,7 +45,13 @@ private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env 
   stdout_io = IO::Memory.new
   # Pin ANSIBLE_STRATEGY as unset unless a test supplies it, so a
   # developer's own exported value cannot change these expectations.
-  child_env = {"ANSIBLE_STRATEGY" => nil}.merge(env)
+  # The retry fallback is the opt-in for a third-party strategy plugin,
+  # so its settings are pinned the same way.
+  child_env = {
+    "ANSIBLE_STRATEGY"            => nil,
+    "KRIKRI_STRATEGY_RETRIES"     => nil,
+    "KRIKRI_STRATEGY_RETRY_DELAY" => nil,
+  }.merge(env)
   if plugin_env
     child_env["ANSIBLE_STRATEGY_PLUGINS"] = relative_plugin_env ? "./plugin_env" : plugin_dir
   end
@@ -120,21 +127,26 @@ describe "strategy:" do
     (lines.index!("TASK [second]") > lines.index!("changed:h1")).must_equal(true)
   end
 
-  # A strategy plugin beside the playbook is accepted (Ansible's loader
-  # searches `strategy_plugins/` first) and runs as linear, since this
-  # engine cannot execute Python strategy code (issue #1439).
-  it "accepts a playbook-local strategy plugin" do
-    code, lines, _ = run_strategy("custom_demo", plugin: "custom_demo")
-    code.must_equal(0)
-    lines.count(&.starts_with?("TASK [slow")).must_equal(1)
+  # A strategy plugin beside the playbook is found by Ansible's loader
+  # (`strategy_plugins/` is searched first) and LOADED AND RUN by real.
+  # This engine cannot execute that Python control-plane code, so the
+  # play is refused at startup instead of being run as linear with
+  # results the plugin never produced (issue #1657).
+  it "refuses a playbook-local strategy plugin at startup" do
+    code, _, output = run_strategy("custom_demo", plugin: "custom_demo")
+    code.must_equal(1)
+    output.must_include("Strategy plugin 'custom_demo'")
+    output.must_include("KRIKRI_STRATEGY_RETRIES")
+    output.wont_include("PLAY [")
   end
 
   # Same through ANSIBLE_STRATEGY_PLUGINS, the path the issue's repro
   # uses. Passed as a child env so no process-wide ENV is touched.
-  it "accepts a strategy plugin from ANSIBLE_STRATEGY_PLUGINS" do
-    code, lines, _ = run_strategy("custom_demo", plugin: "custom_demo", plugin_env: true)
-    code.must_equal(0)
-    lines.count(&.starts_with?("TASK [slow")).must_equal(1)
+  it "refuses a strategy plugin found via ANSIBLE_STRATEGY_PLUGINS" do
+    code, _, output = run_strategy("custom_demo", plugin: "custom_demo", plugin_env: true)
+    code.must_equal(1)
+    output.must_include("Strategy plugin 'custom_demo'")
+    output.wont_include("PLAY [")
   end
 
   # A RELATIVE ANSIBLE_STRATEGY_PLUGINS entry is resolved against the
@@ -143,29 +155,37 @@ describe "strategy:" do
   # startup, so a playbook in a subdirectory must still find the plugin
   # named relative to the invocation cwd, exactly as ansible does.
   it "resolves a relative ANSIBLE_STRATEGY_PLUGINS from the invocation directory" do
-    code, lines, _ = run_strategy("custom_demo", plugin: "custom_demo", plugin_env: true,
+    code, _, output = run_strategy("custom_demo", plugin: "custom_demo", plugin_env: true,
       playbook_subdir: "sub", relative_plugin_env: true)
-    code.must_equal(0)
-    lines.count(&.starts_with?("TASK [slow")).must_equal(1)
+    code.must_equal(1)
+    # Resolving the plugin is what produces the refusal; a name no
+    # loader path carries still gets ansible's "Invalid play strategy
+    # specified" instead.
+    output.must_include("Strategy plugin 'custom_demo' (")
+    output.wont_include("Invalid play strategy specified")
   end
 
-  # Accepting the name is only half of it: the plugin's own `run()` never
-  # executes here, so the run has to say so. Real prints whatever the
-  # plugin itself does (issue #1456's retry_demo warns "retry_demo
-  # strategy is active" and retries failed tasks), while a krikri run
-  # that stayed silent is exactly what the issue reported.
-  it "warns that a third-party strategy plugin is ignored" do
-    warning = "[WARNING]: Strategy plugin 'custom_demo' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy (a task's own retries:/delay:/until: still retry, and KRIKRI_STRATEGY_RETRIES/KRIKRI_STRATEGY_RETRY_DELAY retry failed tasks in the plugin's place)."
+  # The retry fallback's env setting is the explicit opt-in to the
+  # degraded linear run (issue #1542). An opted-in run prints exactly
+  # the deprecation pair real prints for a non-builtin strategy - no
+  # line of krikri's own - which is what keeps the run's transcript
+  # comparable to real's (issue #1657's corpus case pins it).
+  it "runs an opted-in third-party strategy plugin as linear, like real's warnings" do
+    deprecation = "[DEPRECATION WARNING]: Use of strategy plugins not included in ansible.builtin are deprecated and do not carry any backwards compatibility guarantees."
+    opt_in = {"KRIKRI_STRATEGY_RETRIES" => "1"} of String => String?
 
-    code, _, output = run_strategy("custom_demo", plugin: "custom_demo")
+    code, lines, output = run_strategy("custom_demo", plugin: "custom_demo", env: opt_in)
     code.must_equal(0)
-    output.scan(warning).size.must_equal(1)
+    lines.count(&.starts_with?("TASK [slow")).must_equal(1)
+    output.must_include(deprecation)
+    output.wont_include("Strategy plugin 'custom_demo' cannot be executed")
 
-    # ANSIBLE_STRATEGY resolves the same plugin and warns the same way.
+    # ANSIBLE_STRATEGY resolves the same plugin and behaves the same way.
     code, _, output = run_strategy(nil, plugin: "custom_demo", plugin_env: true,
-      env: {"ANSIBLE_STRATEGY" => "custom_demo"})
+      env: opt_in.merge({"ANSIBLE_STRATEGY" => "custom_demo"}))
     code.must_equal(0)
-    output.scan(warning).size.must_equal(1)
+    output.must_include(deprecation)
+    output.wont_include("Strategy plugin 'custom_demo' cannot be executed")
   end
 
   # ANSIBLE_STRATEGY supplies the default strategy for a play that does
@@ -193,13 +213,13 @@ describe "strategy:" do
   end
 
   # The env var goes through the same plugin resolution as the keyword,
-  # so a plugin name it carries is accepted (running as linear) rather
-  # than refused.
-  it "resolves a strategy plugin named by ANSIBLE_STRATEGY" do
-    code, lines, _ = run_strategy(nil, plugin: "custom_demo", plugin_env: true,
+  # so the plugin it carries is refused the same way at startup.
+  it "refuses a strategy plugin named by ANSIBLE_STRATEGY" do
+    code, _, output = run_strategy(nil, plugin: "custom_demo", plugin_env: true,
       env: {"ANSIBLE_STRATEGY" => "custom_demo"})
-    code.must_equal(0)
-    lines.count(&.starts_with?("TASK [slow")).must_equal(1)
+    code.must_equal(1)
+    output.must_include("Strategy plugin 'custom_demo'")
+    output.wont_include("PLAY [")
   end
 
   # An invalid ANSIBLE_STRATEGY must stop the run with ansible's own
@@ -329,13 +349,15 @@ describe "strategy:" do
   end
 
   # A strategy plugin that wraps linear and retries failed tasks is the
-  # common case (issue #1542): its Python cannot run here, so without a
-  # stand-in a transient failure fails the host on the first attempt. The
-  # krikri-side settings supply the plugin's attempt count and gap for a
-  # task that wrote no retries: of its own - ansible's task_executor then
-  # retries on `not utr.failed` - so the plugin-less run keeps the same
-  # pass/fail outcome and the same FAILED - RETRYING lines.
-  it "retries failed tasks in place of an ignored strategy plugin" do
+  # common case (issue #1542): its Python cannot run here, so a linear
+  # run without a stand-in fails the host on the first attempt. The play
+  # is therefore refused at startup unless the operator opts into the
+  # degraded linear run with the krikri-side settings, which supply the
+  # plugin's attempt count and gap for a task that wrote neither
+  # `retries:` nor `until:` - ansible's task_executor then retries on
+  # `not utr.failed` - so that run keeps the same pass/fail outcome and
+  # the same FAILED - RETRYING lines (issue #1657).
+  it "refuses an ignored strategy plugin unless the retry fallback is opted in" do
     dir = File.tempname("strategy-retry-fallback")
     counter = File.join(dir, "count")
     begin
@@ -358,16 +380,23 @@ describe "strategy:" do
         output = IO::Memory.new
         status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
           output: output, error: output, chdir: dir,
-          env: {"ANSIBLE_STRATEGY" => nil, "ANSIBLE_STRATEGY_PLUGINS" => nil}.merge(env))
+          env: {
+            "ANSIBLE_STRATEGY"            => nil,
+            "ANSIBLE_STRATEGY_PLUGINS"    => nil,
+            "KRIKRI_STRATEGY_RETRIES"     => nil,
+            "KRIKRI_STRATEGY_RETRY_DELAY" => nil,
+          }.merge(env))
         {status.exit_code, output.to_s}
       end
 
-      # Without the fallback this is exactly issue #1542: one attempt,
-      # failed=1.
+      # Without the opt-in nothing runs: exactly the failure mode issue
+      # #1657 reported, where a first-attempt linear failure (failed=1)
+      # replaced the plugin's passing third attempt.
       File.delete(counter) if File.exists?(counter)
-      code, _ = run_it.call({} of String => String?)
-      code.must_equal(2)
-      File.read(counter).strip.must_equal("1")
+      code, output = run_it.call({} of String => String?)
+      code.must_equal(1)
+      output.must_include("Strategy plugin 'retry_demo'")
+      File.exists?(counter).must_equal(false)
 
       File.delete(counter) if File.exists?(counter)
       fallback_env = {"KRIKRI_STRATEGY_RETRIES" => "2", "KRIKRI_STRATEGY_RETRY_DELAY" => "0"} of String => String?
@@ -378,6 +407,60 @@ describe "strategy:" do
       output.scan("FAILED - RETRYING: [localhost]: flaky (0 retries left).").size.must_equal(1)
       output.must_include("ok: [localhost]")
       output.must_include("ok=1")
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
+
+  # The issue's own repro: a plugin whose __init__ writes a marker file.
+  # Real imports and instantiates it, so the marker appears;
+  # krikri-playbook cannot execute it, and must not let the play run as
+  # if it had - refusing at startup leaves no marker and no task output,
+  # whether or not the linear fallback was opted into.
+  it "never executes a third-party strategy plugin's code" do
+    dir = File.tempname("strategy-marker")
+    marker = File.join(dir, "marker")
+    begin
+      Dir.mkdir_p(File.join(dir, "strategy_plugins"))
+      File.write(File.join(dir, "strategy_plugins", "marker_strategy.py"), <<-PY)
+        from ansible.plugins.strategy.linear import StrategyModule as Linear
+
+        DOCUMENTATION = "name: marker_strategy\\nshort_description: marker\\n"
+
+
+        class StrategyModule(Linear):
+            def __init__(self, tqm):
+                open("#{marker}", "w").write("x")
+                super().__init__(tqm)
+        PY
+      File.write(File.join(dir, "inv.ini"), "[g]\nlocalhost ansible_connection=local\n")
+      File.write(File.join(dir, "pb.yml"), <<-YAML)
+        - hosts: all
+          gather_facts: false
+          strategy: marker_strategy
+          tasks:
+            - name: ping
+              ansible.builtin.ping:
+        YAML
+
+      {nil, "1"}.each do |fallback|
+        File.delete(marker) if File.exists?(marker)
+        output = IO::Memory.new
+        status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+          output: output, error: output, chdir: dir,
+          env: {
+            "ANSIBLE_STRATEGY"            => nil,
+            "ANSIBLE_STRATEGY_PLUGINS"    => nil,
+            "KRIKRI_STRATEGY_RETRIES"     => fallback,
+            "KRIKRI_STRATEGY_RETRY_DELAY" => nil,
+          })
+        # With the opt-in the play runs linearly, without it the run
+        # stops before any task - either way the plugin's own code never
+        # ran.
+        status.exit_code.must_equal(fallback ? 0 : 1)
+        File.exists?(marker).must_equal(false)
+        output.to_s.wont_include("TASK [ping]") unless fallback
+      end
     ensure
       FileUtils.rm_rf(dir) if Dir.exists?(dir)
     end

@@ -895,6 +895,13 @@ rescue ex : Krikri::InvalidStrategyError
   # Ansible reports an unknown strategy and exits 1.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
+rescue ex : Krikri::UnexecutableStrategyPluginError
+  # No ansible-playbook counterpart to match here: real loads and runs
+  # the plugin. Refusing is the only outcome that keeps a play from
+  # finishing with results the plugin never produced (issue #1657), so
+  # exit 1 rather than the parser-error code.
+  STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 1
 rescue ex : Krikri::StaticImportRoleUndefinedError
   # Ansible reports an unresolvable import_role: NAME as a plain
   # undefined-variable error with exit code 1 - not the parser-error 4

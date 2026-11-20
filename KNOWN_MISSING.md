@@ -204,36 +204,37 @@ single aggregate (the per-iteration results never reach this engine as one aggre
 Decided 2026-10-10.
 
 
-### Third-party strategy plugins are accepted but always run as linear
+### Third-party strategy plugins are refused at startup
 
 `strategy:` resolves `linear`/`free`/`host_pinned`/`debug`, and for any other name looks for a
 `<name>.py` on Ansible's strategy loader paths: the playbook-adjacent `strategy_plugins/` first, then
-`ANSIBLE_STRATEGY_PLUGINS` (replacing the defaults) or the configured `plugins/strategy/` roots. A
-plugin found there is accepted and the play runs as linear, with Ansible's two-line deprecation
-warning for a non-`ansible.builtin` strategy reproduced, followed by krikri's own
-`[WARNING]: Strategy plugin '<name>' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy (a task's own retries:/delay:/until: still retry, and KRIKRI_STRATEGY_RETRIES/KRIKRI_STRATEGY_RETRY_DELAY retry failed tasks in the plugin's place).`
-line so the plugin's dropped behavior is never silent (issue #1456). A fully qualified collection
-strategy name (`namespace.collection.name`) is not resolved and still errors. A strategy plugin is
-Python control-plane code driving Ansible's own iterator, which this engine has no seam for; refusing
-the play outright (krikri's behavior before issue #1439) makes such a play unrunnable, and a linear
-run is the closest available behavior. `debug` is Ansible's linear strategy plus an interactive stdin
-prompt on a failed task: the linear half runs, the prompt does not. A name on none of those paths
-still fails with Ansible's own `[ERROR]: Invalid play strategy specified: <name>` (rc 1), except
-that real also prints the deprecation warning and the PLAY banner before that error while krikri
-refuses at parse time. Decided 2026-11-16.
+`ANSIBLE_STRATEGY_PLUGINS` (replacing the defaults) or the configured `plugins/strategy/` roots.
+Real loads and runs such a plugin: Ansible's loader deprecates a non-`ansible.builtin` strategy with
+two stderr lines, then `StrategyModule#run` drives Ansible's whole iterator. That is Python
+control-plane code this engine has no seam for, so a play naming a plugin found on those paths stops
+at startup with `[ERROR]: Strategy plugin '<name>' (<path>) cannot be executed by
+krikri-playbook; ...` and rc 1. Warning and running as linear instead (krikri's behavior for issues
+#1439/#1456) let a play finish with results the plugin never produced - a retry plugin turns a
+first-attempt failure into a passing third attempt, so `failed=1` against real's `ok=1` (issue
+#1657). A name on none of those paths still fails with Ansible's own `[ERROR]: Invalid play
+strategy specified: <name>` (rc 1); a fully qualified collection strategy name
+(`namespace.collection.name`) is not resolved and errors the same way. `debug` is Ansible's linear
+strategy plus an interactive stdin prompt on a failed task: the linear half runs, the prompt does
+not. Decided 2026-11-20.
 
-The one behavior such a plugin changes in practice is retrying a failed task, and that part has a
-built-in stand-in (issue #1542). A task carrying `until:`/`retries:` always retries on its own
-keywords - `retries:` alone included, since Ansible's attempt-loop condition then defaults to
-`not utr.failed` - so the portable migration is to move the plugin's retries onto the tasks. For an
-unmodified playbook, `KRIKRI_STRATEGY_RETRIES=<n>` with `KRIKRI_STRATEGY_RETRY_DELAY=<seconds>`
-(default 5) gives every task of an ignored-strategy play that wrote neither keyword the plugin's
-attempt count and gap, reproducing Ansible's pass/fail outcome (`ok=1` with the counter at the
-attempt count, instead of a first-attempt `failed=1`). The settings are read ONLY for a play whose
-strategy plugin was ignored, so an inherited environment never reshapes a run krikri does implement,
-and an unparseable value stops the run. Anything else a plugin does - logging/decorating the linear
-run, altering worker affinity, ordering beyond linear - is still dropped with that warning.
-Decided 2026-11-18.
+The retry fallback (issue #1542) is the explicit opt-in to a degraded linear run: with
+`KRIKRI_STRATEGY_RETRIES=<n>` (and `KRIKRI_STRATEGY_RETRY_DELAY=<seconds>`, default 5) set, a play
+whose strategy plugin was found runs as linear instead of being refused, with Ansible's own
+deprecation pair (no line of krikri's own, so the transcript stays comparable to real's) and every
+task that wrote neither `until:` nor `retries:` retried on failure the way ansible's task_executor
+does once `retries` is set (its condition defaults to `not utr.failed`) - reproducing the plugin's
+pass/fail outcome (`ok=1` with the counter at the attempt count instead of a first-attempt
+`failed=1`; see the `1657-strategy-plugin-retry-fallback` corpus case). The env var is the
+operator's acknowledgement that the plugin's own code is not running. The settings are read ONLY for
+such a play, so an inherited environment never reshapes a run krikri does implement, and an
+unparseable value stops the run. The portable migration for anything else a plugin does -
+logging/decorating the linear run, altering worker affinity, ordering beyond linear - is to move
+that behavior onto the tasks. Decided 2026-11-20.
 
 
 ### `ansible.cfg` is read for five settings only; the rest still comes from `ANSIBLE_*` vars and play vars

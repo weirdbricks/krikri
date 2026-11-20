@@ -1,19 +1,16 @@
 module Krikri
   # A third-party strategy plugin is Python control-plane code this engine
   # cannot execute (see PlaybookParser.strategy_plugin_source), so a play
-  # that names one runs as linear. That is harmless for a plugin that only
-  # decorates the linear run, but the common case is a plugin that wraps
-  # linear and RETRIES a failed task - and replacing it with plain linear
-  # turns a transient failure into a first-attempt host failure, i.e. it
-  # changes pass/fail (issue #1542).
-  #
-  # These settings are the built-in stand-in for that case: when a play's
-  # strategy plugin had to be ignored, every task that wrote neither
-  # `until:` nor `retries:` is retried on failure, the way ansible's
-  # task_executor does once `retries` is set (its condition defaults to
-  # `not utr.failed`). The attempt count and gap come from the retrying
-  # plugin itself, which this engine cannot read, so the operator supplies
-  # them once on the command line.
+  # that names one is refused at startup rather than allowed to finish
+  # with results the plugin never produced (issue #1657). The common case
+  # for such a plugin is one that wraps linear and RETRIES a failed task
+  # (issue #1542), and these settings are the built-in stand-in for it:
+  # setting RETRIES_ENV is what opts that play into a linear run, where
+  # every task that wrote neither `until:` nor `retries:` is retried on
+  # failure, the way ansible's task_executor does once `retries` is set
+  # (its condition defaults to `not utr.failed`). The attempt count and
+  # gap come from the retrying plugin itself, which this engine cannot
+  # read, so the operator supplies them once on the command line.
   #
   # Read ONLY for such a play, so an inherited environment can never
   # reshape a run whose strategy this engine does implement - and ansible
