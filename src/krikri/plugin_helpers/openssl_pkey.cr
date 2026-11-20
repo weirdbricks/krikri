@@ -215,65 +215,70 @@ module Krikri
       end
 
       # The failure message the Ansible module's load_privatekey produces for
-      # an unparsable key: Python's `cryptography` raises ValueError whose
-      # str() is the "(message, [OpenSSLError...])" tuple repr, and the
-      # module prefixes it. The message itself is `cryptography`'s fixed
-      # text; the OpenSSLError entries come from libcrypto's error queue
-      # (same codes Ansible reports, since both link the target's libcrypto).
+      # an unparsable key: `support.py` prefixes whatever `cryptography`
+      # raised. cryptography 50 - what the pinned ansible-core 2.21.6
+      # reference hosts install - parses the PEM framing in Rust before
+      # OpenSSL sees any bytes, so its ValueError text is no longer the old
+      # "(message, [OpenSSLError...])" tuple repr. Private keys that do reach
+      # OpenSSL keep that older text (#unparsable_message).
       #
       #   *passphrase_problem* is the module's TypeError branch instead -
       # "Wrong or empty passphrase provided for private key" - used when
       # the password/password-less attempt mismatch is the failure itself.
       record LoadFailure, passphrase_problem : Bool, message : String
 
+      # A PEM section; *pem* is its raw text so libcrypto can parse just that
+      # block (cryptography hands it the decoded block contents, never the
+      # surrounding file).
+      private record PemSection, tag : String, headers : String, pem : String
+
+      private PRIVATE_KEY_TAGS = ["PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "DSA PRIVATE KEY"]
+
+      # cryptography 50's `From<pem::PemError>` wrapper: the Rust `pem`
+      # crate's error Debug repr is appended to this fixed text.
+      private UNABLE_TO_LOAD_PEM = "Unable to load PEM file. See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file for more details."
+
+      # `x509::find_in_pem`'s no-match message: the PEM parses but holds no
+      # block with a private-key tag.
+      private NO_PRIVATE_KEY_DELIMITERS = "Valid PEM but no BEGIN/END delimiters for a private key found. Are you sure this is a private key?"
+
+      private INCORRECT_PASSWORD = "Incorrect password, could not decrypt key"
+
       private COULD_NOT_DESERIALIZE = "Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters)."
 
       # cryptography-semantics private-key load: on failure the returned
       # LoadFailure.message is byte-for-byte what the Ansible module puts in
-      # fail_json (verified against community.crypto 3.1.1 + the libcrypto
-      # the target ships). On success the caller owns the returned
-      # EVP_PKEY (free_pkey).
+      # fail_json (verified against community.crypto 3.1.1 + cryptography 50
+      # on the ansible-core 2.21.6 reference hosts). On success the caller
+      # owns the returned EVP_PKEY (free_pkey).
       def load_checked(data : Bytes | String, passphrase : String?) : {Void*?, LoadFailure?}
-        # The encryption-marker check comes FIRST (as `cryptography`'s
-        # PEM handling does): a nil-password PEM_read_bio_PrivateKey on
-        # encrypted material would fall into libcrypto's interactive
-        # passphrase prompt instead of failing cleanly.
-        if passphrase
+        text = data.is_a?(String) ? data : String.new(data, invalid: :skip)
+        sections, scan_error = pem_sections(text)
+        return {nil, unparsable_key_failure("#{UNABLE_TO_LOAD_PEM} #{scan_error}")} if scan_error
+        return {nil, unparsable_key_failure("#{UNABLE_TO_LOAD_PEM} MalformedFraming")} if sections.empty?
+
+        section = sections.find { |candidate| PRIVATE_KEY_TAGS.includes?(candidate.tag) }
+        return {nil, unparsable_key_failure(NO_PRIVATE_KEY_DELIMITERS)} unless section
+
+        # Deciding encryption from the framing (not by trying libcrypto both
+        # ways) is what cryptography does: a password on an unencrypted key,
+        # or no password on an encrypted one, is its TypeError branch before
+        # any decryption is attempted.
+        encrypted = section.tag == "ENCRYPTED PRIVATE KEY" || legacy_encrypted?(section)
+        if encrypted
+          return {nil, wrong_passphrase_failure} unless passphrase && !passphrase.empty?
+
           LibCryptoPkey.err_clear_error
-          pkey = read(data, passphrase)
-          encrypted = encrypted_marker?(data)
-          unless pkey.null?
-            # Loaded WITH a password: an unencrypted key loads without one
-            # too, and that mismatch is the Ansible module's TypeError branch
-            # ("Password was given but private key is not encrypted.").
-            return {pkey, nil} if encrypted
-            LibCryptoPkey.err_clear_error
-            plain = read(data, nil)
-            unless plain.null?
-              free_pkey(plain)
-              return {nil, LoadFailure.new(true, "Wrong or empty passphrase provided for private key")}
-            end
-            return {pkey, nil}
-          end
-          failures = drain_error_queue
-
-          unless encrypted
-            LibCryptoPkey.err_clear_error
-            plain = read(data, nil)
-            unless plain.null?
-              free_pkey(plain)
-              return {nil, LoadFailure.new(true, "Wrong or empty passphrase provided for private key")}
-            end
-          end
-          return {nil, LoadFailure.new(false, unparsable_message(failures))}
+          pkey = read(section.pem, passphrase)
+          return {pkey, nil} unless pkey.null?
+          drain_error_queue
+          return {nil, unparsable_key_failure(INCORRECT_PASSWORD)}
         end
 
-        if encrypted_marker?(data)
-          return {nil, LoadFailure.new(true, "Wrong or empty passphrase provided for private key")}
-        end
+        return {nil, wrong_passphrase_failure} if passphrase
 
         LibCryptoPkey.err_clear_error
-        pkey = read(data, nil)
+        pkey = read(section.pem, nil)
         return {pkey, nil} unless pkey.null?
         failures = drain_error_queue
         {nil, LoadFailure.new(false, unparsable_message(failures))}
@@ -299,6 +304,14 @@ module Krikri
         "('#{COULD_NOT_DESERIALIZE}', [#{failures.join(", ")}])"
       end
 
+      private def unparsable_key_failure(error : String) : LoadFailure
+        LoadFailure.new(false, "Wrong passphrase provided for private key, or private key cannot be parsed: #{error}")
+      end
+
+      private def wrong_passphrase_failure : LoadFailure
+        LoadFailure.new(true, "Wrong or empty passphrase provided for private key")
+      end
+
       # The queue entries as `cryptography`'s OpenSSLError reprs. lib and
       # reason use OpenSSL 3's ERR_GET_LIB/ERR_GET_REASON masks.
       private def drain_error_queue : Array(String)
@@ -315,10 +328,70 @@ module Krikri
         entries
       end
 
-      private def encrypted_marker?(data : Bytes | String) : Bool
-        text = data.is_a?(String) ? data : String.new(data, invalid: :skip)
-        text.includes?("ENCRYPTED PRIVATE KEY") || text.includes?("DEK-Info:") ||
-          text.includes?("Proc-Type: 4,ENCRYPTED")
+      # Legacy PEM encryption (`openssl rsa -aes256` style) is identified by
+      # the Proc-Type header, which is what cryptography's decrypt_pem reads.
+      private def legacy_encrypted?(section : PemSection) : Bool
+        section.headers.includes?("Proc-Type: 4,ENCRYPTED")
+      end
+
+      # PEM sections as the Rust `pem` crate 4.0.0 (linked by cryptography 50)
+      # parses them: `-----BEGIN <tag>-----`, optional headers, data,
+      # `-----END <tag>-----`. Returns the sections read so far plus the first
+      # PemError Debug repr; like `parse_many`, one bad section aborts the scan.
+      private def pem_sections(text : String) : {Array(PemSection), String?}
+        sections = [] of PemSection
+        offset = 0
+        loop do
+          begin_at = text.byte_index("-----BEGIN ", offset)
+          break unless begin_at
+          tag_start = begin_at + "-----BEGIN ".bytesize
+          tag_end = text.byte_index("-----", tag_start)
+          break unless tag_end
+          tag = text.byte_slice(tag_start, tag_end - tag_start)
+          payload_start = skip_pem_whitespace(text, tag_end + "-----".bytesize)
+          end_marker = text.byte_index("-----END ", payload_start)
+          break unless end_marker
+          end_start = end_marker + "-----END ".bytesize
+          end_tag_end = text.byte_index("-----", end_start)
+          break unless end_tag_end
+          end_tag = text.byte_slice(end_start, end_tag_end - end_start)
+
+          return {sections, "MissingBeginTag"} if tag.empty?
+          return {sections, "MissingEndTag"} if end_tag.empty?
+          if tag != end_tag
+            return {sections, "MismatchedTags(#{tag.inspect}, #{end_tag.inspect})"}
+          end
+
+          headers = pem_header_block(text.byte_slice(payload_start, end_marker - payload_start))
+          pem = text.byte_slice(begin_at, end_tag_end + "-----".bytesize - begin_at)
+          sections << PemSection.new(tag, headers, pem)
+          offset = end_tag_end + "-----".bytesize
+        end
+        {sections, nil}
+      end
+
+      private def skip_pem_whitespace(text : String, offset : Int32) : Int32
+        while offset < text.bytesize
+          case text.byte_at(offset)
+          when 0x20, 0x09, 0x0a, 0x0d
+            offset += 1
+          else
+            return offset
+          end
+        end
+        offset
+      end
+
+      # Headers are everything before the first blank line; the crate tries
+      # the LF pair before the CRLF one.
+      private def pem_header_block(payload : String) : String
+        if index = payload.byte_index("\n\n")
+          payload.byte_slice(0, index)
+        elsif index = payload.byte_index("\r\n\r\n")
+          payload.byte_slice(0, index)
+        else
+          ""
+        end
       end
 
       # SubjectPublicKeyInfo PEM of *pkey*'s public half - the bytes the

@@ -110,8 +110,7 @@ describe "openssl_publickey plugin" do
     result["changed"].as_bool.must_equal(false)
     result["msg"].as_s.must_equal(
       "Wrong passphrase provided for private key, or private key cannot be parsed: " \
-      "('Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters).', " \
-      "[<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>])")
+      "Unable to load PEM file. See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file for more details. MalformedFraming")
   end
 
   it "fails unparsable privatekey_content without a passphrase with the same message" do
@@ -122,7 +121,7 @@ describe "openssl_publickey plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.starts_with?("Wrong passphrase provided for private key, or private key cannot be parsed:").must_equal(true)
-    result["msg"].as_s.must_include("<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>")
+    result["msg"].as_s.must_include("MalformedFraming")
   end
 
   it "fails a passphrase on an unencrypted key with the mismatch message" do
@@ -156,6 +155,26 @@ describe "openssl_publickey plugin" do
     result["failed"]?.must_be_nil
     result["changed"].as_bool.must_equal(true)
     File.exists?(pub).must_equal(false)
+  end
+
+  # #1634: the real module's check() returns False (a plain change) as soon
+  # as the existing file is not a parsable public key, before it ever loads
+  # the private key - so an unparsable private key must not fail check mode.
+  it "reports a change in check mode when the current public key is unparsable" do
+    key = PluginSpecHelper.tmp_path("broken.key")
+    pub = PluginSpecHelper.tmp_path("broken.pub")
+    File.write(key, "not a private key\n")
+    File.write(pub, "kpg locked dest\nsecond line\n")
+
+    result = PluginSpecHelper.run("openssl_publickey", {
+      "path"                  => pub,
+      "privatekey_path"       => key,
+      "privatekey_passphrase" => "vfhpng",
+      "_ansible_check_mode"   => "true",
+    })
+
+    result["failed"]?.must_be_nil
+    result["changed"].as_bool.must_equal(true)
   end
 
   it "compares against the public key that is already there in check mode" do
