@@ -299,6 +299,13 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 - `community.general.filesystem`'s `value of fstype must be one of: ...` is built by real from a
   Python set of strings, so **Python string-hash randomization** reorders it per process -
   unmatchable by design; the generator masks it (`FSTYPE-SET-ORDER` in masks.cr).
+- `ansible.posix.firewalld_info`'s `Please note: zone:(...) have been ignored in the gathering
+  process.` note lists the ignored zones from `list(set(specified_zones) - set(collected_zones))`
+  (firewalld_info.py), so **Python string-hash randomization** reorders them per module process:
+  five real `ansible-playbook` runs of issue #1628's task in one container alternated between
+  `zone:(wmnfiv,lecefn)` and `zone:(lecefn,wmnfiv)`. krikri keeps the declared order (which is one
+  of real's possible orders; sorting would match no better) - unmatchable by design, still to be
+  masked in the generator like `FSTYPE-SET-ORDER`.
 - `unarchive`'s "Failed to find handler for ..." message joins the per-handler failure reasons
   (`Command ... could not handle archive`, `Unable to find required ... binary`) from a Python set
   of strings, so **string-hash randomization** reorders them per process (every sample differs,
