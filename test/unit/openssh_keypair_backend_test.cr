@@ -80,4 +80,43 @@ describe "openssh_keypair backend selection" do
     result["comment"].as_s.must_equal("Created by ansible")
     result["public_key"].as_s.split(' ').size.must_equal(2)
   end
+
+  it "fails an existing file that is not a private key for the default regenerate mode" do
+    work = PluginSpecHelper.tmp_path("keypair-unreadable-file")
+    Dir.mkdir_p(work)
+    # The kpg corpus seeds /tmp/kpg-work/dest-0400.txt with plain text, and
+    # community.crypto's KeypairBackend._validate_key_load aborts (rather
+    # than regenerating) for every regenerate mode but the two that allow
+    # replacing a broken key.
+    path = File.join(work, "id_test")
+    File.write(path, "kpg locked dest\nsecond line\n")
+    File.chmod(path, 0o400)
+
+    result = PluginSpecHelper.run("openssh_keypair", {
+      "path"                => path,
+      "_ansible_check_mode" => "true",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal(
+      "Unable to read the key. The key is protected with a passphrase or broken. " \
+      "Will not proceed. To force regeneration, call the module with `generate` set to " \
+      "`full_idempotence` or `always`, or with `force=true`.")
+  end
+
+  it "regenerates an unreadable existing key when regenerate allows it" do
+    work = PluginSpecHelper.tmp_path("keypair-regenerate-broken")
+    Dir.mkdir_p(work)
+    path = File.join(work, "id_test")
+    File.write(path, "not a key\n")
+
+    result = PluginSpecHelper.run("openssh_keypair", {
+      "path"                => path,
+      "regenerate"          => "full_idempotence",
+      "_ansible_check_mode" => "true",
+    })
+    (result["failed"]?.try(&.as_bool) || false).must_equal(false)
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Would generate SSH keypair at #{path} (check mode)")
+  end
 end
