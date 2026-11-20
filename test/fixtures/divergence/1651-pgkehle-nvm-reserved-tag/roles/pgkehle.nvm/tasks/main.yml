@@ -1,0 +1,9 @@
+---
+# pgkehle.nvm v3.0.0 tasks/main.yml:176-180, verbatim except that the
+# play supplies remote_base_dir (the role's own default points at a
+# system path this case must not touch).
+- name: Clean artifact path
+  file:
+    state: absent
+    path: "{{ remote_base_dir }}/core"
+  tags: ["all"]

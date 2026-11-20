@@ -365,6 +365,12 @@ module Krikri
       # role's whole task tree RAN where real Ansible skips it entirely -
       # without even skip banners (tag-excluded tasks print nothing).
       tags = hash["tags"]?.try { |tags_yaml| PlaybookParser.flatten_tag_list(tags_yaml) } || [] of String
+      # A RoleDefinition is Taggable too, so real warns for a reserved
+      # tag on a roles:/dependency entry at its own entry - before the
+      # role's tasks are loaded (live-verified vs 2.21.6).
+      if tags_yaml = hash["tags"]?
+        PlaybookParser.warn_reserved_tagnames(tags_yaml, origin_file, source_map, "#{path_prefix}/tags") if path_prefix
+      end
 
       # `when:` on a roles: entry or a meta/main.yml dependency is
       # Ansible's own RoleRequirement field - it does NOT gate the role

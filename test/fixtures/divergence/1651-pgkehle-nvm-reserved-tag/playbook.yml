@@ -1,0 +1,7 @@
+---
+- hosts: local
+  gather_facts: false
+  vars:
+    remote_base_dir: "{{ playbook_dir }}/nvm"
+  roles:
+    - pgkehle.nvm
