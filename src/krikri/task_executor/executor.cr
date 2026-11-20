@@ -127,6 +127,11 @@ module Krikri
     # ansible's interpreter-not-found fatal block for such hosts instead
     # of the generic two-line failure.
     @facts_interpreter_missing = {} of String => {String, Bool, Bool}
+    # Per-(host, interpreter) answers from remote_interpreter_probe: whether
+    # an explicitly configured interpreter is absent from that target, and
+    # whether its /bin/sh words the miss the way dash does. One ssh round
+    # trip per pair for the play.
+    @interpreter_probe_cache = {} of String => {Bool, Bool}
     # Per-host connection-keyword failures caught for the implicit
     # Gathering Facts task (a PlayContext post-validation error, see
     # gather_connection_password_failure): the report prints ansible's

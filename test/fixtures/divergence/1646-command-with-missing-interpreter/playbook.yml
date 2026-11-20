@@ -1,0 +1,13 @@
+---
+# Issue #1646's rule, replayed in-process: real resolves a module
+# interpreter for every python-module task and dies before any module
+# code runs when that path is absent from the machine doing the work.
+# The round hit it over ssh (module_stderr then carries the ssh close
+# notice); under `-c local` the same failure is expressible here - the
+# shell's own not-found line is the module stderr, module stdout stays
+# empty, and the -tt pty shape is not involved at all.
+- hosts: local
+  gather_facts: false
+  tasks:
+    - name: Command with the configured interpreter missing
+      ansible.builtin.command: echo hi

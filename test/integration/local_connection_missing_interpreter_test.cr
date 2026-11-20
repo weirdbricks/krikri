@@ -75,7 +75,11 @@ BODY
     FileUtils.rm_rf(root) if root
   end
 
-  it "does not touch a command: task - real runs it without any interpreter" do
+  # command: looks interpreter-free but is not: its action plugin is a
+  # thin wrapper around _execute_module('ansible.legacy.command'), so the
+  # payload is python and real fails it exactly like find: (live-verified
+  # vs 2.21.6, `connection: local` with a missing interpreter path).
+  it "fails a command: task like any other module (issue #1646)" do
     root = File.tempname("local-conn-missing-interpreter-command")
     Dir.mkdir_p(root)
     inventory = write_playbook(root, <<-BODY
@@ -91,10 +95,34 @@ BODY
 
     status, output = run_playbook(root, inventory)
 
+    status.success?.must_equal(false, output)
+    output.must_include("[ERROR]: Task failed: Action failed: The module interpreter '#{MISSING_INTERPRETER}' was not found.", output)
+    output.must_include(%({"changed": false, "module_stderr": "/bin/sh: 1: #{MISSING_INTERPRETER}: not found\\n", "module_stdout": "", "msg": "The module interpreter '#{MISSING_INTERPRETER}' was not found.", "rc": 127}), output)
+    output.must_include("failed=1", output)
+    output.wont_include("TASK [after]", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
+  # raw: is the one that really is interpreter-free: its action plugin
+  # hands the text to the connection's shell (live-verified vs 2.21.6:
+  # real reports changed/ok=1 with no interpreter error at all).
+  it "leaves a raw: task alone - real never resolves an interpreter for it" do
+    root = File.tempname("local-conn-missing-interpreter-raw")
+    Dir.mkdir_p(root)
+    inventory = write_playbook(root, <<-BODY
+    - name: run without python
+      ansible.builtin.raw: echo hi
+      connection: local
+BODY
+    )
+
+    status, output = run_playbook(root, inventory)
+
     status.success?.must_equal(true, output)
     output.must_include("changed: [localh]", output)
     output.wont_include("was not found", output)
-    output.must_include("failed=0", output)
+    output.must_include("ok=1", output)
   ensure
     FileUtils.rm_rf(root) if root
   end
