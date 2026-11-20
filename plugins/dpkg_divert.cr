@@ -172,11 +172,9 @@ module Krikri
         # (kpg 000016-multi-cpanm-happy's check run showed Ansible
         # printing the block per dpkg_divert loop item while krikri
         # printed the changed line alone).
-        diff = if @diff_mode
-                 JSON.parse(%({"before": #{diversion_before.to_json}, "after": #{diversion_after.to_json}}))
-               end
-        PluginResult.new(changed: changed, failed: false, diff: diff,
+        PluginResult.new(changed: changed, failed: false,
           diversion: diversion_after, commands: [main_command], messages: messages,
+          diff: PluginHelpers::DpkgDivertCommand.diff_payload(diversion_before, diversion_after, diff_mode?),
           key_order: ["changed", "diversion", "commands", "messages", "diff"])
       else
         command_failure("Unexpected error: see stdout and stderr for details.",

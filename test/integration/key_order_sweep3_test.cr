@@ -186,13 +186,13 @@ describe "kernel_blacklist plugin result key order" do
 end
 
 describe "dpkg_divert plugin result key order" do
-  it "serializes an unmodified absence as changed-diversion-commands-messages (real: changed, diversion, commands, messages, diff)" do
+  it "serializes an unmodified absence as changed-diversion-commands-messages-diff (real: changed, diversion, commands, messages, diff)" do
     skip "no dpkg-divert on this machine" unless File.exists?("/usr/bin/dpkg-divert") || File.exists?("/usr/sbin/dpkg-divert")
 
     result = PluginSpecHelper.run("dpkg_divert", {"path" => "/etc/hostname", "state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["changed", "diversion", "commands", "messages"])
+    result.as_h.keys.must_equal(["changed", "diversion", "commands", "messages", "diff"])
   end
 end
 

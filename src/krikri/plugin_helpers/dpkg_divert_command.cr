@@ -83,6 +83,23 @@ module Krikri
         "#{dpkg_divert} --truename #{Krikri::Shell.quote_arg(path)}"
       end
 
+      # module.exit_json(..., diff=diff): the module ALWAYS passes a diff
+      # kwarg, but fills before/after only under --diff. The callback pops
+      # the top-level key from every dump below -vvv, so it only ever
+      # surfaces as the before/after block of a diff-mode run.
+      def self.diff_payload(before : Hash(String, String?), after : Hash(String, String?),
+                            diff_mode : Bool) : JSON::Any
+        return JSON::Any.new({} of String => JSON::Any) unless diff_mode
+        JSON::Any.new({
+          "before" => diversion_json(before),
+          "after"  => diversion_json(after),
+        })
+      end
+
+      private def self.diversion_json(diversion : Hash(String, String?)) : JSON::Any
+        JSON::Any.new(diversion.transform_values { |value| JSON::Any.new(value) })
+      end
+
       private def self.single_quote(s : String) : String
         "'" + s.gsub("'", "'\\''") + "'"
       end

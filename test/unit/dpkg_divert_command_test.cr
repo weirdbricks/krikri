@@ -76,4 +76,25 @@ describe Krikri::PluginHelpers::DpkgDivertCommand do
         .must_equal("/usr/bin/dpkg-divert --truename '/tmp/a b'")
     end
   end
+
+  describe ".diff_payload" do
+    # The module always passes diff= to exit_json, filling it only under
+    # --diff; without it the registered result carries an empty dict and
+    # nothing renders.
+    it "is an empty dict outside --diff mode" do
+      before = {"path" => "/etc/x", "state" => "absent", "divert" => nil, "holder" => nil}
+      Krikri::PluginHelpers::DpkgDivertCommand.diff_payload(before, before, false)
+        .must_equal(JSON.parse("{}"))
+    end
+
+    it "carries the before/after diversion state under --diff" do
+      before = {"path" => "/etc/x", "state" => "absent", "divert" => nil, "holder" => nil}
+      after = {"path" => "/etc/x", "state" => "present", "divert" => "/etc/x.distrib", "holder" => "LOCAL"}
+      payload = Krikri::PluginHelpers::DpkgDivertCommand.diff_payload(before, after, true)
+      payload["after"]["holder"].as_s.must_equal("LOCAL")
+      payload["after"]["divert"].as_s.must_equal("/etc/x.distrib")
+      payload["before"]["divert"].raw.must_be_nil
+      payload["before"]["state"].as_s.must_equal("absent")
+    end
+  end
 end

@@ -1,0 +1,18 @@
+---
+# kpg 000016-multi-cpanm-happy #16.0, the Cpanm task verbatim; the
+# generator's /tmp/kpg-work paths move under playbook_dir (the corpus may
+# only read inside its own scratch tree) and the task drops its
+# `delegate_to: target2` so it runs on the local host.
+# Nothing here reads dest.txt: community.general.cpanm rejects the
+# name+from_path pair before it looks up cpanm or touches the path.
+- name: 'Krikri-playbook-generator: multi-task #16'
+  hosts: kpg_targets
+  gather_facts: false
+  tasks:
+    - name: 'Cpanm #16.0'
+      community.general.cpanm:
+        from_path: '{{ playbook_dir }}/kpg-work/readonly/dest.txt'
+        install_recommendations: true
+        name: nsreaz
+      register: kpg_task_0
+      ignore_errors: true
