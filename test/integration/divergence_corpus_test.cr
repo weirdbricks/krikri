@@ -72,6 +72,7 @@ private DIVERGENCE_CASES = [
   {issue: 1640, slug: "cpanm-check-mode-skip"},
   {issue: 1642, slug: "ipr-cnrs-arpwatch-install-recommends"},
   {issue: 1643, slug: "palvarez89-easyrsa3-synchronize-rsync-missing"},
+  {issue: 1645, slug: "standardtech-substrate-assert-chain"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -349,6 +350,11 @@ describe "divergence corpus" do
 
   it "replays 1643-palvarez89-easyrsa3-synchronize-rsync-missing" do
     expected, actual, report = divergence_transcripts(1643, "palvarez89-easyrsa3-synchronize-rsync-missing")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1645-standardtech-substrate-assert-chain" do
+    expected, actual, report = divergence_transcripts(1645, "standardtech-substrate-assert-chain")
     assert_equal(expected, actual, report)
   end
 end

@@ -1,0 +1,8 @@
+---
+# The role's first preflight task fails, so no later task can run and nothing
+# on the machine is touched.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - standardtech_bot.substrate_deployer

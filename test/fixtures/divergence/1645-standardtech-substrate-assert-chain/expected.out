@@ -1,0 +1,37 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [standardtech_bot.substrate_deployer : Substrate Prelim | Check these vars are defined] ***
+[ERROR]: Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'
+
+Task failed.
+Origin: <WORK>/roles/standardtech_bot.substrate_deployer/tasks/preflight.yml:2:3
+
+1 ---
+2 - name: Substrate Prelim | Check these vars are defined
+    ^ column 3
+
+<<< caused by >>>
+
+Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'
+Origin: <WORK>/roles/standardtech_bot.substrate_deployer/tasks/preflight.yml:5:11
+
+3   assert:
+4     quiet: true
+5     that: "{{ item }} is defined"
+            ^ column 11
+
+failed: [localhost] (item=substrate_node_role) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_role", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_friendly_name) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_friendly_name", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_source) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_source", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_user) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_user", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_group) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_group", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_bin_name) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_bin_name", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_bin_dir) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_bin_dir", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_logging) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_logging", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_data_dir) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_data_dir", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+failed: [localhost] (item=substrate_node_p2p_port) => {"ansible_loop_var": "item", "changed": false, "item": "substrate_node_p2p_port", "msg": "Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

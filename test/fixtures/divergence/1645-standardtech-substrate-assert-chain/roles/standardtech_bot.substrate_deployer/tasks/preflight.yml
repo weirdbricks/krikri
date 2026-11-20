@@ -1,0 +1,18 @@
+---
+- name: Substrate Prelim | Check these vars are defined
+  assert:
+    quiet: true
+    that: "{{ item }} is defined"
+    fail_msg: "Required variable {{ item }} is not defined"
+    success_msg: Variable set
+  loop:
+    - substrate_node_role
+    - substrate_node_friendly_name
+    - substrate_node_source
+    - substrate_node_user
+    - substrate_node_group
+    - substrate_node_bin_name
+    - substrate_node_bin_dir
+    - substrate_node_logging
+    - substrate_node_data_dir
+    - substrate_node_p2p_port

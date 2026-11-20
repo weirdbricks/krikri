@@ -45,4 +45,41 @@ describe "assert that: conditional error block" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # A looped assert:'s failing that: is the ACTION's failure, not a
+  # conditional-evaluation one, so real prints that chain once even when the
+  # task carries a `when:` (issue #1645: standardtech_bot.substrate_deployer's
+  # imported `when:` made a second, differently-Origin'd chain appear). The
+  # loop's per-item chain emitter used to decide on the msg's wording, which
+  # the action's failure shares, and printed a bogus block pinned at the
+  # when: token as well.
+  it "prints one chain for a looped that: syntax error under a when:" do
+    playbook = PluginSpecHelper.tmp_path("playbook.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: looped that syntax error
+            ansible.builtin.assert:
+              quiet: true
+              that: "{{ item }} is defined"
+            when: true
+            loop:
+              - one
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.exit_code.must_equal(2)
+    text = output.to_s
+    location = File.expand_path(playbook)
+    text.scan("[ERROR]: ").size.must_equal(1)
+    text.must_include("Origin: #{location}:5:7")
+    text.must_include("Origin: #{location}:8:15")
+    text.wont_include("Origin: #{location}:9:13")
+
+    File.delete(playbook) if File.exists?(playbook)
+  end
 end
