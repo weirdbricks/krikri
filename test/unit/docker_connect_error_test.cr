@@ -117,6 +117,16 @@ module Krikri
           DockerSdkError.transport_error_text(ex, nil)
             .must_equal("('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))")
         end
+
+        it "reads a scheme-less docker_host as TCP and uses the vendored defaults" do
+          # Live-verified against community.docker 5.2.1: docker_host:
+          # spcyng reports port=2376 (plain) and an https:// one 2375.
+          ex = Socket::ConnectError.from_os_error("connect", Errno::EINPROGRESS).as(Socket::ConnectError)
+          DockerSdkError.transport_error_text(ex, "spcyng")
+            .must_include("HTTPConnectionPool(host='spcyng', port=2376)")
+          DockerSdkError.transport_error_text(ex, "https://spcyng")
+            .must_include("HTTPSConnectionPool(host='spcyng', port=2375)")
+        end
       end
     end
 
@@ -137,16 +147,23 @@ module Krikri
       end
     end
 
-    # The SDK's parse_host() runs inside Client.__init__ (before any
-    # request), and real reports its DockerException as
-    # "Error connecting: <text>" - byte-verified against docker-py 7.x,
-    # the SDK the reference environments' community.docker drives.
+    # The collection's parse_host() runs inside the vendored Client's
+    # __init__ (before any request), and real reports its DockerException
+    # as "Error connecting: <text>" - byte-verified against community.docker
+    # 5.2.1, whose _api copy real drives (NOT the installed docker SDK
+    # 7.x: that one raises "port is required" for a portless host, which
+    # is why issue #1635's docker_image task failed here on the host
+    # instead of on its bogus api_version).
     describe "DockerClient.parse_host" do
-      it "rejects a scheme-less host with no port (docker-py 7.x no longer defaults one)" do
-        assert_raises_message(DockerClient::InvalidDockerHostError,
-          "Invalid bind address format: port is required: spcyng") do
-          DockerClient.parse_host("spcyng")
-        end
+      it "defaults the port of a scheme-less host instead of rejecting it" do
+        # Live-verified against community.docker 5.2.1: docker_host:
+        # spcyng is http://spcyng:2376 (the vendored copy takes the LOWER
+        # port for TLS, so this pair is reversed relative to the CLI).
+        parsed = DockerClient.parse_host("spcyng")
+        parsed.tcp?.must_equal(true)
+        parsed.host.must_equal("spcyng")
+        parsed.port.must_equal(2376)
+        DockerClient.parse_host("spcyng", tls: true).port.must_equal(2375)
       end
 
       it "reads a scheme-less value as a TCP endpoint, port included" do
@@ -196,11 +213,11 @@ module Krikri
         DockerClient.parse_host("unix://").socket_path.must_be_nil
       end
 
-      it "requires a port for tcp:// too, and defaults ssh:// to 22" do
-        assert_raises_message(DockerClient::InvalidDockerHostError,
-          "Invalid bind address format: port is required: tcp://h") do
-          DockerClient.parse_host("tcp://h")
-        end
+      it "defaults tcp:// to 2376 (2375 with TLS) and ssh:// to 22" do
+        DockerClient.parse_host("tcp://h").port.must_equal(2376)
+        DockerClient.parse_host("tcp://h", tls: true).port.must_equal(2375)
+        # https:// implies TLS on its own, so it gets the LOWER default.
+        DockerClient.parse_host("https://h").port.must_equal(2375)
         DockerClient.parse_host("ssh://u@h").port.must_equal(22)
       end
     end

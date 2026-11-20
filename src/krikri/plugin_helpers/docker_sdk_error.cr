@@ -143,8 +143,7 @@ module Krikri
         # its unit test): param, then the task environment: overlay's
         # DOCKER_HOST, then the plugin process's own DOCKER_HOST.
         docker_host = params["docker_host"]? || env_fallback(params, "DOCKER_HOST") || ENV["DOCKER_HOST"]?
-        tcp = docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
-        return "http+docker://localhost" unless tcp
+        return "http+docker://localhost" unless tcp_docker_host?(docker_host)
 
         "#{client.tls? ? "https" : "http"}://#{client.host}:#{client.port}"
       end
@@ -250,18 +249,42 @@ module Krikri
       def self.transport_error_text(ex : Exception, docker_host : String?, tls : Bool = false) : String
         return unix_transport_error_text(ex) unless tcp_docker_host?(docker_host)
 
-        uri = URI.parse(docker_host || "")
-        https = tls || docker_host.try(&.starts_with?("https://")) || false
+        # A scheme-less value is a TCP endpoint (the vendored parse_host's
+        # urlparse("//addr") retry), so it needs that "//" here too or
+        # urlparse would read the whole value as a path.
+        addr = docker_host || ""
+        uri = URI.parse(addr.includes?("://") ? addr : "//#{addr}")
+        # The same reset parse_host applies to an explicit http/https
+        # scheme: https forces TLS, http forces it off, and only a value
+        # naming neither transport takes the caller's state.
+        https = if addr.starts_with?("https://")
+                  true
+                elsif addr.starts_with?("http://")
+                  false
+                else
+                  tls
+                end
         tcp_transport_error_text(ex, uri, https)
       end
 
+      # TCP unless the value names another transport. A scheme-less value
+      # is TCP: real's parse_host falls back to it, so "docker_host:
+      # spcyng" fails with urllib3's pool prose for spcyng:2376, not the
+      # UNIX-socket tuple.
       private def self.tcp_docker_host?(docker_host : String?) : Bool
-        docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
+        return false unless host = docker_host.try(&.strip)
+        return false if host.empty?
+        return true if {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) }
+
+        !{"unix://", "npipe://", "ssh://", "fd://"}.any? { |scheme| host.starts_with?(scheme) } && !host.starts_with?('/')
       end
 
       private def self.tcp_transport_error_text(ex : Exception, uri : URI, https : Bool) : String
         host = uri.host || ""
-        port = uri.port || (https ? 2376 : 2375)
+        # The vendored parse_host's own pair: TLS takes 2375, plain 2376
+        # (verified live against community.docker 5.2.1 - "tcp://h" and a
+        # scheme-less host both report port=2376, tls:/https report 2375).
+        port = uri.port || (https ? 2375 : 2376)
         pool = "#{https ? "HTTPS" : "HTTP"}ConnectionPool(host='#{host}', port=#{port})"
         # urllib3 renders the failed connection attempt's own object
         # address in the cause ("...HTTPConnection object at 0x7fa5..."),

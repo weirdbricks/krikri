@@ -1,0 +1,26 @@
+---
+# kpg 000011-multi-docker_image-chaos #11.0, the Docker_image task
+# verbatim; the generator's /tmp/kpg-work paths move under playbook_dir
+# (the corpus may only write inside its own scratch tree) and the task
+# drops its `delegate_to: target2` so it runs on the local host. Nothing
+# here executes: the client construction fails before any daemon I/O.
+- name: 'Krikri-playbook-generator: multi-task #11.0'
+  hosts: kpg_targets
+  gather_facts: false
+  tasks:
+    - name: 'Docker_image #11.0'
+      community.docker.docker_image:
+        api_version: tkmfuf
+        archive_path: '{{ playbook_dir }}/dest-0440.txt'
+        build:
+          path: '{{ playbook_dir }}/path-0'
+        client_cert: '{{ playbook_dir }}/out3.cfg'
+        client_key: '{{ playbook_dir }}/out3.cfg'
+        docker_host: tkvwva
+        name: busybox:latest
+        source: pull
+        tag: tnawck
+        timeout: 1
+        validate_certs: false
+      register: kpg_task_0
+      ignore_errors: true
