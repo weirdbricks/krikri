@@ -1,0 +1,5 @@
+---
+# tasks file for python-coreos
+
+- name: Install python and packages
+  script: bootstrap.sh creates=/opt/bin/python

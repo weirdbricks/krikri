@@ -1,0 +1,5 @@
+---
+- hosts: localhost
+  remote_user: root
+  roles:
+    - {role: "python-coreos", coreos_pkg_home: "/opt"}

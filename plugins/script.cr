@@ -281,7 +281,7 @@ module Krikri
     # gate reports, so both paths share this one method.
     private def skip_reason : PluginResult?
       if creates = @params["creates"]?
-        if path_or_glob_exists?(expand_tilde(creates))
+        if gate_exists?(creates)
           # Ansible 2.19.11 (live-verified): the script ACTION plugin's
           # short-circuit skip registers skipped, msg, changed - no failed
           # key (unlike a module-side skip, which the executor backfills).
@@ -290,12 +290,28 @@ module Krikri
       end
 
       if removes = @params["removes"]?
-        unless path_or_glob_exists?(expand_tilde(removes))
+        unless gate_exists?(removes)
           return PluginResult.new(changed: false, failed: false, msg: "#{removes} does not exist, matching removes option", skipped: true, key_order: %w[skipped msg changed])
         end
       end
 
       nil
+    end
+
+    # Ansible's script ACTION tests its creates:/removes: gate with the
+    # remote shell's `test -e` on the literal path (action/script.py ->
+    # _remote_file_exists -> shell.exists), NOT with command:'s
+    # glob.glob - so a dangling symlink is "does not exist" here (test -e
+    # / File.exists? follow the link), a path carrying glob
+    # metacharacters is never expanded, and a `~`-relative value is not
+    # expanduser'd either (unlike command:'s own path-type args, the
+    # script action never runs its gates through AnsibleModule). Found by
+    # hesidoryn.python-coreos (issue #1648): its bootstrap links
+    # /opt/bin/python to a never-installed ActivePython, leaving a
+    # dangling symlink, and krikri's glob-based gate then skipped the
+    # task Ansible re-ran.
+    private def gate_exists?(path : String) : Bool
+      File.exists?(path)
     end
 
     private def shell_quote(str : String) : String

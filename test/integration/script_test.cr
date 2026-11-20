@@ -59,6 +59,97 @@ describe "script plugin" do
     File.delete(marker)
   end
 
+  # Ansible's script ACTION gates on the shell's `test -e` / File.exists?
+  # semantics: it follows symlinks, so a DANGLING one does not satisfy a
+  # creates: gate (found via hesidoryn.python-coreos, issue #1648 - the
+  # role's failing bootstrap links /opt/bin/python to a never-installed
+  # ActivePython and krikri's glob-based gate skipped the re-run).
+  it "runs a creates: gate pointing at a dangling symlink" do
+    path = sc_path("script_creates_dangling.sh")
+    File.write(path, "#!/bin/sh\necho ran-with-dangling-gate\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_creates_dangling_gate")
+    File.delete?(gate)
+    File.symlink("/nonexistent-activepython", gate)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "creates" => gate})
+
+    result["changed"].as_bool.must_equal(true)
+    result["stdout"].as_s.must_equal("ran-with-dangling-gate\n")
+  ensure
+    File.delete(gate) if gate && File.symlink?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "under check mode reports changed for a creates: gate that is a dangling symlink" do
+    path = sc_path("script_cm_creates_dangling.sh")
+    File.write(path, "#!/bin/sh\nexit 0\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_cm_creates_dangling_gate")
+    File.delete?(gate)
+    File.symlink("/nonexistent-activepython", gate)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "creates" => gate, "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    falsey?(result["skipped"]?.try(&.as_bool)).must_equal(true)
+  ensure
+    File.delete(gate) if gate && File.symlink?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "skips a removes: gate pointing at a dangling symlink" do
+    path = sc_path("script_removes_dangling.sh")
+    File.write(path, "#!/bin/sh\necho should-not-run\n")
+    File.chmod(path, 0o755)
+    gate = sc_path("script_removes_dangling_gate")
+    File.delete?(gate)
+    File.symlink("/nonexistent-activepython", gate)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "removes" => gate})
+
+    result["skipped"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("#{gate} does not exist, matching removes option")
+  ensure
+    File.delete(gate) if gate && File.symlink?(gate)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  # `test -e` is a literal-path check - unlike command:'s glob.glob gate,
+  # a creates: value carrying glob metacharacters is never expanded, so a
+  # file matching the pattern does NOT hold the gate.
+  it "does not glob a creates: gate pattern" do
+    path = sc_path("script_creates_glob.sh")
+    File.write(path, "#!/bin/sh\necho ran-despite-matching-file\n")
+    File.chmod(path, 0o755)
+    File.write(sc_path("script_creates_glob_marker.conf"), "matches the pattern")
+    gate = sc_path("script_creates_glob_*.conf")
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "creates" => gate})
+
+    result["changed"].as_bool.must_equal(true)
+    result["stdout"].as_s.must_equal("ran-despite-matching-file\n")
+  ensure
+    File.delete(path) if path && File.exists?(path)
+    File.delete(sc_path("script_creates_glob_marker.conf")) if File.exists?(sc_path("script_creates_glob_marker.conf"))
+  end
+
+  # `~` is not expanduser'd for these gates: Ansible's script action
+  # never routes them through AnsibleModule, so `test -e '~'` is false
+  # and the script runs even though the home directory exists.
+  it "does not expand ~ in a creates: gate" do
+    path = sc_path("script_creates_tilde.sh")
+    File.write(path, "#!/bin/sh\necho ran-despite-tilde\n")
+    File.chmod(path, 0o755)
+
+    result = PluginSpecHelper.run("script", {"cmd" => path, "creates" => "~"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["stdout"].as_s.must_equal("ran-despite-tilde\n")
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
   it "runs with executable: as an explicit interpreter" do
     path = sc_path("script_interp.py")
     File.write(path, "print('via-interpreter')\n")
