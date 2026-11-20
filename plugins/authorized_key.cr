@@ -43,7 +43,12 @@ module Krikri
       AK_PARAM_DEFAULT_ORDER.each do |key|
         order << key unless given.includes?(key)
       end
-      order << "keyfile" << "changed"
+      # enforce_state assigns params['keyfile'] at its first (no-write)
+      # keyfile() call, then params['diff'] inside the do_write branch,
+      # then params['changed'] - so a diffing run registers the diff
+      # between keyfile and changed (live-verified vs ansible.posix 2.2.2
+      # / ansible-core 2.21.6).
+      order << "keyfile" << "diff" << "changed"
       order
     end
 
@@ -145,6 +150,8 @@ module Krikri
       original_content = File.exists?(path) ? File.read(path) : ""
       new_content, changed = PluginHelpers::AuthorizedKeysFile.ensure_keys(original_content, key_lines, state == "present", exclusive)
 
+      diff = keyfile_diff(path, original_content, new_content, changed)
+
       if error = apply_write(new_content, path, changed, check_mode, manage_dir)
         return error
       end
@@ -168,7 +175,7 @@ module Krikri
       # BEFORE changed: that probe registers [..., keyfile, failed,
       # changed] - reproduced by omitting `changed` from the wire result
       # here (the executor's backfill order is failed-then-changed).
-      result = PluginResult.new(changed: changed, failed: false, key_order: result_key_order,
+      result = PluginResult.new(changed: changed, failed: false, diff: diff, key_order: result_key_order,
         omit_changed: !changed)
       result.extra["user"] = json_string(@params["user"]?)
       result.extra["key"] = JSON::Any.new(key.as(String))
@@ -190,6 +197,22 @@ module Krikri
       add_path_info(result, path) if @params["path"]?
 
       result
+    end
+
+    # enforce_state's do_write branch builds this dict whenever the module
+    # runs in diff mode - the resolved keyfile for both headers and the
+    # raw file contents around the change - which is what --diff prints as
+    # "--- before: <keyfile>" (live-verified vs ansible.posix 2.2.2 /
+    # ansible-core 2.21.6).
+    private def keyfile_diff(path : String, before : String, after : String, changed : Bool) : JSON::Any?
+      return unless changed && @diff_mode
+
+      JSON::Any.new({
+        "before_header" => JSON::Any.new(path),
+        "after_header"  => JSON::Any.new(path),
+        "before"        => JSON::Any.new(before),
+        "after"         => JSON::Any.new(after),
+      })
     end
 
     private def json_string(value : String?) : JSON::Any
