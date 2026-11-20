@@ -1273,8 +1273,8 @@ module Krikri
   # so it runs as linear here; a play whose tasks all succeed prints the
   # same output either way (live-verified vs ansible-core 2.21.6, issue
   # #1439). Anything else is a third-party strategy plugin, resolved by
-  # PlaybookParser.strategy_plugin_source and also run as linear, with a
-  # warning that the plugin itself is ignored (issue #1456).
+  # PlaybookParser.strategy_plugin_source and refused at startup unless
+  # the operator opted into the linear retry fallback (issue #1657).
   VALID_STRATEGIES = ["linear", "free", "host_pinned", "debug"]
 
   class Play
@@ -1405,10 +1405,12 @@ module Krikri
     # list independently.
     property strategy : String? = nil
     # A third-party strategy plugin this play named and this engine cannot
-    # execute (see PlaybookParser.strategy_plugin_source): the play runs as
-    # linear, so the executor falls back to StrategyRetryFallback's retry
-    # settings for a task that wrote neither `until:` nor `retries:`
-    # (issue #1542).
+    # execute (see PlaybookParser.strategy_plugin_source). Only set when
+    # the operator opted into the linear run via StrategyRetryFallback's
+    # env setting - otherwise the play is refused at startup (issue
+    # #1657). The executor then falls back to StrategyRetryFallback's
+    # retry settings for a task that wrote neither `until:` nor
+    # `retries:` (issue #1542).
     property? ignored_strategy_plugin : Bool = false
     # `gather_subset:` - which fact families the implicit fact gathering
     # collects (all, min, network, hardware, mounts, and !negations).
@@ -1715,6 +1717,23 @@ module Krikri
   # An unknown `strategy:`. Ansible reports it and exits 1, not the
   # parser-error 4 it uses for a malformed playbook.
   class InvalidStrategyError < Exception
+  end
+
+  # A third-party strategy plugin that Ansible's loader would find but
+  # this engine cannot execute (see PlaybookParser.strategy_plugin_source):
+  # Python control-plane code driving Ansible's own iterator. Running the
+  # play as linear instead changes its results whenever the plugin does
+  # anything - a retry plugin turns a first-attempt failure into a
+  # passing third attempt (issue #1657) - so the run stops at startup
+  # rather than printing a warning nobody can act on. The message names
+  # the retry fallback, whose env setting is the only opt-in to the
+  # linear run.
+  class UnexecutableStrategyPluginError < Exception
+    def initialize(name : String, source : String)
+      super("Strategy plugin '#{name}' (#{source}) cannot be executed by krikri-playbook; " \
+            "set #{StrategyRetryFallback::RETRIES_ENV}=<n> to run this play as linear with each failed task retried <n> times, " \
+            "or move the plugin's retries onto the tasks and use `strategy: linear`.")
+    end
   end
 
   # `meta: end_role` written outside any role. Ansible rejects it
@@ -2701,6 +2720,12 @@ module Krikri
           # Same bypass: Ansible refuses the whole run for an
           # unknown strategy rather than degrading this one play.
           raise ex
+        rescue ex : UnexecutableStrategyPluginError
+          # Same bypass: a play whose third-party strategy plugin this
+          # engine cannot execute must stop the run, not degrade this
+          # one play into a linear run that reports results the plugin
+          # never produced (issue #1657).
+          raise ex
         rescue ex : StaticImportRoleUndefinedError
           raise ex
         rescue ex : StaticImportUndefinedError
@@ -3044,19 +3069,26 @@ module Krikri
       # Ansible REFUSES a strategy it cannot resolve - "[ERROR]: Invalid
       # play strategy specified: nonsense", exit 1 - rather than falling
       # back to linear (verified against ansible-core 2.19.4). A
-      # third-party strategy plugin IS resolvable there, and 2.21.6
-      # deprecates it with two stderr lines before the PLAY banner
-      # (issue #1439). Real then loads and runs that plugin; this engine
-      # cannot, so the deprecation is followed by krikri's own line
-      # saying the plugin is ignored (issue #1456), and the play is
-      # marked so its tasks can pick up the retry fallback setting
-      # (issue #1542).
+      # third-party strategy plugin IS resolvable there: 2.21.6
+      # deprecates it with two stderr lines (issue #1439) and then loads
+      # and runs it. This engine has no seam for that Python
+      # control-plane code, and a linear run still changes the play's
+      # outcome whenever the plugin does anything - a retry plugin turns
+      # a first-attempt failure into a passing third attempt (issue
+      # #1657) - so such a play is refused here instead.
+      # StrategyRetryFallback's env setting is the explicit opt-in to
+      # the degraded linear run (issue #1542): an operator who set it has
+      # asked for the stand-in, so the run prints exactly the deprecation
+      # pair real prints and nothing of krikri's own.
       if strategy = play.strategy
         unless strategy.empty? || VALID_STRATEGIES.includes?(strategy)
-          if strategy_plugin_source(strategy, playbook_dir)
-            warn_third_party_strategy_deprecation
-            warn_unexecuted_strategy_plugin(strategy)
-            play.ignored_strategy_plugin = true
+          if source = strategy_plugin_source(strategy, playbook_dir)
+            if Krikri::StrategyRetryFallback.settings
+              warn_third_party_strategy_deprecation
+              play.ignored_strategy_plugin = true
+            else
+              raise UnexecutableStrategyPluginError.new(strategy, source)
+            end
           else
             raise InvalidStrategyError.new("Invalid play strategy specified: #{strategy}")
           end
@@ -6087,10 +6119,11 @@ module Krikri
     # REPLACES the configured defaults) or ANSIBLE_HOME's and the
     # system-wide `plugins/strategy/`. A Python strategy plugin is
     # control-plane code driving Ansible's own iterator, which this
-    # engine cannot execute, so such a play runs as linear rather than
-    # being refused outright - the playbook-adjacent `plugins/strategy/`
-    # directory is NOT a loader path (live-verified path order vs
-    # ansible-core 2.21.6, issue #1439).
+    # engine cannot execute, so finding one is what makes the play stop
+    # at startup unless the retry fallback was opted into (issue #1657);
+    # the playbook-adjacent `plugins/strategy/` directory is NOT a
+    # loader path (live-verified path order vs ansible-core 2.21.6,
+    # issue #1439).
     private def self.strategy_plugin_source(name : String, playbook_dir : String) : String?
       roots = [File.join(playbook_dir, "strategy_plugins")]
       roots.concat(PythonFilterRunner.configured_roots("strategy", "ANSIBLE_STRATEGY_PLUGINS"))
@@ -6105,6 +6138,15 @@ module Krikri
     # not ansible.builtin: Display._deprecated's one-time "can be
     # disabled" hint first, then the warning, both on stderr before the
     # PLAY banner (live-verified vs ansible-core 2.21.6, issue #1439).
+    # Real then LOADS and RUNS that plugin - StrategyModule#run drives
+    # Ansible's whole iterator, which this engine has no seam for - so
+    # such a play is refused at startup (UnexecutableStrategyPluginError)
+    # unless the operator opted into the degraded linear run through
+    # StrategyRetryFallback's env setting (issue #1657). An opted-in run
+    # adds no line of krikri's own either - only this deprecation pair,
+    # exactly like real - so its transcript stays comparable, and the env
+    # var itself is the operator's acknowledgement that the plugin's code
+    # is not running (issues #1456/#1542).
     STRATEGY_PLUGIN_DEPRECATION_MUTEX = Mutex.new
     @@strategy_plugin_deprecation_printed = false
 
@@ -6114,27 +6156,6 @@ module Krikri
         @@strategy_plugin_deprecation_printed = true
         DeprecationHint.print_hint_once
         STDERR.puts "[DEPRECATION WARNING]: Use of strategy plugins not included in ansible.builtin are deprecated and do not carry any backwards compatibility guarantees. No alternative for third party strategy plugins is currently planned. This feature will be removed from ansible-core in a future release."
-      end
-    end
-
-    # Real LOADS and RUNS the plugin named by `strategy:` (or
-    # ANSIBLE_STRATEGY): its StrategyModule#run drives Ansible's whole
-    # iterator, which this engine has no seam for, so the play silently
-    # falls back to linear. Accepting the name without saying so is what
-    # issue #1456 reported - a retry plugin's retries vanish and the run
-    # looks normal - so each plugin name gets one krikri-specific line on
-    # stderr, right after Ansible's own deprecation pair, saying it is
-    # ignored. The line also names the retry fallback (issue #1542): the
-    # common case for such a plugin is exactly "wrap linear and retry a
-    # failed task", and those settings restore that pass/fail outcome.
-    STRATEGY_PLUGIN_NOT_EXECUTED_MUTEX = Mutex.new
-    @@strategy_plugins_not_executed = Set(String).new
-
-    private def self.warn_unexecuted_strategy_plugin(name : String) : Nil
-      STRATEGY_PLUGIN_NOT_EXECUTED_MUTEX.synchronize do
-        next if @@strategy_plugins_not_executed.includes?(name)
-        @@strategy_plugins_not_executed << name
-        STDERR.puts "[WARNING]: Strategy plugin '#{name}' cannot be executed by krikri-playbook and is ignored; the play runs with the linear strategy (a task's own retries:/delay:/until: still retry, and #{Krikri::StrategyRetryFallback::RETRIES_ENV}/#{Krikri::StrategyRetryFallback::DELAY_ENV} retry failed tasks in the plugin's place)."
       end
     end
 

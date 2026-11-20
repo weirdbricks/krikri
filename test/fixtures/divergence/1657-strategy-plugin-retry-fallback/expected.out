@@ -1,0 +1,13 @@
+
+PLAY [all] *********************************************************************
+
+TASK [flaky] *******************************************************************
+FAILED - RETRYING: [localhost]: flaky (1 retries left).
+FAILED - RETRYING: [localhost]: flaky (0 retries left).
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: Use of strategy plugins not included in ansible.builtin are deprecated and do not carry any backwards compatibility guarantees. No alternative for third party strategy plugins is currently planned. This feature will be removed from ansible-core in a future release.

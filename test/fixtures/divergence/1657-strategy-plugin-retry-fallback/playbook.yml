@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  strategy: retry_demo
+  tasks:
+    - name: flaky
+      shell: |
+        f={{ playbook_dir }}/count; n=$(cat $f 2>/dev/null || echo 0); n=$((n+1)); echo $n > $f
+        [ $n -ge 3 ]
+      changed_when: false
