@@ -20,13 +20,25 @@ module Krikri
     # findall yields "" for a group that never participated - and a real
     # family name on RHEL - the module compares it verbatim against
     # `family:`).
-    alias Alternative = NamedTuple(priority: Int32, family: String?)
+    alias Subcommand = NamedTuple(name: String, path: String, link: String?)
+
+    alias Alternative = NamedTuple(priority: Int32, family: String?, subcommands: Array(Subcommand))
 
     # Ansible's `module.get_bin_path("update-alternatives", True)`, resolved
     # through the UPDATE_ALTERNATIVES property - lazily, so the first
     # call is parse()'s `--display`. The absolute path it resolves to is
     # also what the `cmd` of any run_command failure reads back.
     @update_alternatives : String? = nil
+
+    # community.general.alternatives builds its result as
+    # `dict(changed=False, diff=dict(before=dict(), after=dict()))` before
+    # run() and only fills the two sides in when `module._diff` is set, so
+    # a run without --diff still reports the empty pair (`--diff` is how
+    # krikri-playbook-generator spotted the divergence: Ansible printed a
+    # `--- before` / `+++ after` block on every changed loop item, krikri
+    # printed none).
+    @diff_before = {} of String => JSON::Any
+    @diff_after = {} of String => JSON::Any
 
     def execute : PluginResult
       name = @params["name"]?
@@ -58,7 +70,7 @@ module Krikri
           msg: missing_executable_message("update-alternatives"))
       end
 
-      current_mode, current_path, current_link, current_alternatives = parse_display(bin, name)
+      current_mode, current_path, current_link, current_alternatives = parse_display(bin, name, path, subcommands)
 
       mode_present = ["present", "selected", "auto"].includes?(state)
       messages = [] of String
@@ -79,7 +91,11 @@ module Krikri
       # diff=...) then msg appended (alternatives.py:165,231) - live-verified
       # against Ansible 2.19.11 via a registered {{ r | to_json }} dump in the
       # podman container (check mode, changed and unchanged runs identical).
-      PluginResult.new(changed: !messages.empty?, failed: false, msg: messages.join(' '), key_order: ["changed", "diff", "msg"])
+      PluginResult.new(changed: !messages.empty?, failed: false, msg: messages.join(' '), key_order: ["changed", "diff", "msg"],
+        diff: JSON::Any.new({
+          "before" => JSON::Any.new(@diff_before),
+          "after"  => JSON::Any.new(@diff_after),
+        }))
     end
 
     # Install the alternative for path when it's missing or its priority
@@ -118,6 +134,7 @@ module Krikri
       # where real's cold run marked the go/gofmt installs changed and
       # krikri answered ok on the identical fresh host).
       messages << "Install alternative '#{path}' for '#{name}'."
+      install_after_diff(path, family, priority, effective_link, subcommands, current)
       return run_check_rc(argv) unless check_mode
       nil
     end
@@ -141,16 +158,24 @@ module Krikri
         arg = path || family
         argv = [bin, "--set", name, arg.to_s]
         messages << "Set alternative '#{arg}' for '#{name}'."
+        set_after_state("selected")
         return run_check_rc(argv) unless check_mode
       end
 
       if state == "auto" && current_mode == "manual"
         argv = [bin, "--auto", name]
         messages << "Set alternative to auto for '#{name}'."
+        set_after_state("present")
         return run_check_rc(argv) unless check_mode
       end
 
       nil
+    end
+
+    # Real's set()/auto() each touch only the state key, so a run with no
+    # install() before it leaves the rest of `after` empty.
+    private def set_after_state(state : String) : Nil
+      @diff_after["state"] = JSON::Any.new(state) if diff_mode?
     end
 
     # state: absent - remove the alternative for path when it exists
@@ -159,8 +184,41 @@ module Krikri
 
       argv = [bin, "--remove", name, path]
       messages << "Remove alternative '#{path}' from '#{name}'."
+      @diff_after = {"state" => JSON::Any.new("absent")} if diff_mode?
       return run_check_rc(argv) unless check_mode
       nil
+    end
+
+    # Real install() replaces the after side wholesale and adds
+    # `subcommands` only when its own property is truthy - the task's
+    # `subcommands:` when given, otherwise the ones the already-registered
+    # path carries (a priority-only reinstall keeps them).
+    private def install_after_diff(path : String, family : String?, priority : Int32, link : String?, subcommands : Array(JSON::Any)?, current : Alternative?) : Nil
+      return unless diff_mode?
+      @diff_after = {
+        "state"    => JSON::Any.new("present"),
+        "path"     => JSON::Any.new(path),
+        "family"   => json_or_null(family),
+        "priority" => JSON::Any.new(priority),
+        "link"     => json_or_null(link),
+      }
+      effective = subcommands
+      if effective.nil? && (alt = current) && !alt[:subcommands].empty?
+        effective = alt[:subcommands].map { |sub| subcommand_json(sub) }
+      end
+      @diff_after["subcommands"] = JSON::Any.new(effective) if effective && !effective.empty?
+    end
+
+    private def subcommand_json(sub : Subcommand) : JSON::Any
+      JSON::Any.new({
+        "link" => json_or_null(sub[:link]),
+        "name" => JSON::Any.new(sub[:name]),
+        "path" => JSON::Any.new(sub[:path]),
+      })
+    end
+
+    private def json_or_null(value : String?) : JSON::Any
+      value ? JSON::Any.new(value) : JSON::Any.new(nil)
     end
 
     # The update-alternatives absolute path (get_bin_path), resolved once
@@ -189,9 +247,13 @@ module Krikri
         stderr: result[:stderr], stderr_lines: result[:stderr].lines.map(&.chomp))
     end
 
-    private def parse_display(bin : String, name : String) : {String?, String?, String?, Hash(String, Alternative)}
+    private def parse_display(bin : String, name : String, path : String?, subcommands : Array(JSON::Any)?) : {String?, String?, String?, Hash(String, Alternative)}
       result = remote_exec("#{shell_quote(bin)} --display #{shell_quote(name)}")
       current_alternatives = {} of String => Alternative
+      # Real's parse() returns before it gets to the diff section when
+      # `--display` exits non-zero (a name with no registered alternative
+      # yet), so `before` stays the empty dict in that case - that is the
+      # `{}` Ansible prints for the first install on a fresh host.
       return {nil, nil, nil, current_alternatives} unless result[:exit_code] == 0
 
       output = result[:stdout]
@@ -210,7 +272,18 @@ module Krikri
         current_link = m[1].strip
       end
 
-      output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)/m) do |am_blk|
+      subcmd_path_map = {} of String => String?
+      output.scan(/^\s*(?:slave|follower) (\S+) is ([^\n]*)$/m) do |sub_blk|
+        subcmd_path_map[sub_blk[1]] = sub_blk[2]
+      end
+      if subcmd_path_map.empty? && subcommands
+        subcommands.each do |sub|
+          name_value = sub["name"]?.try(&.as_s?)
+          subcmd_path_map[name_value] = sub["link"].as_s? if name_value
+        end
+      end
+
+      output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)((?:\s+(?:slave|follower)[^\n]*)*)/m) do |am_blk|
         # Real stores Python's findall group verbatim: on Debian the
         # optional family group never participates, findall yields "" -
         # NOT None. That distinction is load-bearing: is_same_family
@@ -223,10 +296,39 @@ module Krikri
         # do1jlr.base's own "vim is our editor" task and
         # chusiang.vim-and-vi-mode's "switch default editor to vim",
         # rounds 1500247/1500533).
-        current_alternatives[am_blk[1]] = {priority: am_blk[3].to_i, family: am_blk[2]? || ""}
+        parsed_subcommands = [] of Subcommand
+        am_blk[4].scan(/^\s+(?:slave|follower) ([^\n]*): ([^\n]*)$/m) do |sub_blk|
+          next if sub_blk[2] == "(null)"
+          parsed_subcommands << {name: sub_blk[1], path: sub_blk[2], link: subcmd_path_map[sub_blk[1]]?}
+        end
+        current_alternatives[am_blk[1]] = {priority: am_blk[3].to_i, family: am_blk[2]? || "", subcommands: parsed_subcommands}
       end
 
+      populate_before_diff(path, current_mode, current_path, current_link, current_alternatives)
       {current_mode, current_path, current_link, current_alternatives}
+    end
+
+    # Real's parse() ends with the before side: the requested path's
+    # current priority/link (plus its subcommands, and state=selected when
+    # manual mode has another path selected), or state=absent when the path
+    # is not registered - `None in dict` is False in Python, so a
+    # family-only task records state=absent too.
+    private def populate_before_diff(path : String?, current_mode : String?, current_path : String?, current_link : String?, current_alternatives : Hash(String, Alternative)) : Nil
+      return unless diff_mode? && current_mode
+      if path && (current = current_alternatives[path]?)
+        @diff_before["state"] = JSON::Any.new("present")
+        @diff_before["path"] = JSON::Any.new(path)
+        @diff_before["priority"] = JSON::Any.new(current[:priority])
+        @diff_before["link"] = json_or_null(current_link)
+        unless current[:subcommands].empty?
+          @diff_before["subcommands"] = JSON::Any.new(current[:subcommands].map { |sub| subcommand_json(sub) })
+        end
+        if current_mode == "manual" && current_path != path
+          @diff_before["state"] = JSON::Any.new("selected")
+        end
+      else
+        @diff_before["state"] = JSON::Any.new("absent")
+      end
     end
 
     private def shell_quote(s : String) : String

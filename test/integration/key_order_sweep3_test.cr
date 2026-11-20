@@ -315,7 +315,7 @@ describe "acl plugin result key order" do
 end
 
 describe "alternatives plugin result key order" do
-  it "serializes a check-mode install claim as changed-msg (real: changed, diff, msg)" do
+  it "serializes a check-mode install claim as changed-diff-msg like real" do
     dir = unique_tmp("alternatives-order")
     FileUtils.mkdir_p(dir)
     link = File.join(dir, "kqalt")
@@ -328,7 +328,11 @@ describe "alternatives plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(true)
-    result.as_h.keys.must_equal(["changed", "msg"])
+    # Real always exits with the diff pair present - empty on a run that
+    # is not in diff mode (issue #1638).
+    result.as_h.keys.must_equal(["changed", "diff", "msg"])
+    result["diff"]["before"].as_h.must_be_empty
+    result["diff"]["after"].as_h.must_be_empty
   ensure
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
