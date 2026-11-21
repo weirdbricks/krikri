@@ -403,7 +403,7 @@ if ask_pass
   hosts.each { |host| host.vars["ansible_password"] = JSON::Any.new(password) }
 end
 if ask_become_pass
-  password = Krikri::VaultCli.prompt_password("BECOME password: ")
+  password = Krikri::VaultCli.prompt_password(Krikri::VaultCli.become_prompt(ask_pass))
   hosts.each { |host| host.vars["ansible_become_password"] = JSON::Any.new(password) }
 end
 
