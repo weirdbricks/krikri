@@ -1,0 +1,25 @@
+---
+# provides rspamd and fangfrisch
+- name: Install repository home:chkpnt:mailserver
+  community.general.zypper_repository:
+    name: home_chkpnt_mailserver
+    repo: https://download.opensuse.org/repositories/home:/chkpnt:/mailserver/15.6/
+    state: present
+    auto_import_keys: true
+
+- name: Install packages for mailserver
+  community.general.zypper:
+    name:
+      - postfix
+      - mailx
+      #- postgrey
+      - dovecot # openSUSE Leap 42.3: 2.2, openSUSE Leap 15.1: 2.3
+      #- amavisd-new
+      #- spamassassin
+      - rspamd
+      - redis7
+      - unbound # using a local resolver is highly recommended for RBLs
+      - clamav
+      - python311-fangfrisch
+      - acl
+    state: present

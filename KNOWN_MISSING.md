@@ -944,8 +944,8 @@ because anyone intends to fix them.
 - More of the same "genuinely unimplemented plugin, referenced only in a task this platform never
   actually reaches" class - same root cause each time (this engine's eager parse-time module check
   counts a reference regardless of a gating `when:`, matching real, but the local comparison side has
-  the collection installed and never hits the check): `zypper` (`weareinteractive.docker` - SUSE-only)
-  and `community.general.clustering.consul.consul_acl` (`mrlesmithjr.consul` - also showing the "WHICH
+  the collection installed and never hits the check):
+  `community.general.clustering.consul.consul_acl` (`mrlesmithjr.consul` - also showing the "WHICH
   TASKS RUN differs" side: Ansible refuses at parse time with zero tasks run, this engine runs the whole
   play first before the same rc=4 - covered by the role-private-custom-modules entry above).
 - The legacy free-form `action: "<templated module name> key=val ..."` syntax is implemented (free-form
@@ -989,6 +989,22 @@ because anyone intends to fix them.
   answers a plain ok there, so on a FreeBSD host krikri reports ok where real reports the real
   work's changed/ok - out of scope with apt/dnf/yum backends, this engine targets Ubuntu and
   RHEL-family hosts.
+- `community.general.zypper` / `community.general.zypper_repository` (issue #1677) - ported
+  surface: the AnsibleModule argument validation (community.general 12.x setup_module specs, with
+  `priority` checked in its declaration position) and the `get_bin_path("zypper", required=True)`
+  probe both modules run before any package/repository work, plus `zypper_repository.py`'s
+  `supports_check_mode=False` basic.py skip (so under `--check` it prints real's
+  `skipping:` line and nothing else, while `zypper.py`'s `supports_check_mode=True` lets the probe
+  fatal there exactly like real). A host without zypper therefore fails both tasks with real's
+  `Failed to find required executable "zypper" in paths: ...` (chkpnt.mailserver on Ubuntu used to
+  get the graceful skip + engine-limit exit 4 on both, then report a later task's failure).
+  Everything AFTER a successful probe is deliberately unported: the package/repository work behind
+  `package_present()`/`package_absent()`/`addrepo`/`removerepo`/`refresh` (real drives zypper
+  against a real openSUSE database), and real's own pre-probe argument guards (dist-upgrade with
+  specific packages, absent-prefix/URL/patch removal, `state=present` without repo, .repo fetches).
+  The plugins answer a plain ok after a successful probe, so on an openSUSE host krikri reports ok
+  where real reports the real work's changed/ok - out of scope with the apt/dnf/yum backends, this
+  engine targets Ubuntu and RHEL-family hosts.
 - `meta:` - every action in Ansible's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,
   `reset_connection`), each matched to Ansible's observed behavior. Non-obvious ones: `end_play` and
@@ -1018,8 +1034,6 @@ because anyone intends to fix them.
   `vdo_devices`.
 - `gluster.gluster.gluster_volume` - unimplemented; causes a cosmetic parse-time task-drop vs. Ansible's
   "skipping" recap line, not a runtime crash.
-- `community.general.zypper_repository` - unimplemented; same cosmetic parse-time-drop class, no
-  zypper/openSUSE host ever tested.
 - `community.general.homebrew`/`homebrew_tap` - unimplemented; reachable in practice via the
   linuxbrew roles (`ctorgalson.linuxbrew`, `markosamuli.linuxbrew`), which then diverge by design:
   krikri skips those tasks, ansible runs them (and the Linux brew path fails on this hardware

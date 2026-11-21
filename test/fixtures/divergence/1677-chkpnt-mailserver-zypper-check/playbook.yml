@@ -1,0 +1,10 @@
+---
+# The play krikri-role-tester runs for the role; only the inventory differs
+# (a localhost capture cannot ssh to a testhost). The role's own tasks/ is
+# copied verbatim - real stops at install.yml's zypper task, so nothing
+# below it is ever reached.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - chkpnt.mailserver

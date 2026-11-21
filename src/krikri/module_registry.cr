@@ -100,6 +100,18 @@ module Krikri
       # play ran on past the point real stopped (see plugins/pkgng.cr
       # for the ported surface).
       "community.general.pkgng",
+      # zypper/zypper_repository (issue #1677): chkpnt.mailserver writes
+      # both FQCNs on an Ubuntu host. zypper.py declares
+      # supports_check_mode=True, so real RUNS it under --check and
+      # fatals on the get_bin_path("zypper", required=True) probe inside
+      # get_cmd(); zypper_repository.py declares
+      # supports_check_mode=False, so real answers --check with basic.py's
+      # own skip. Without entries both were graceful unavailable-module
+      # skips that also kept the engine-limit exit 4, so the play ran on
+      # to a later task's failure with a transcript of its own (see
+      # plugins/zypper.cr and plugins/zypper_repository.cr).
+      "community.general.zypper",
+      "community.general.zypper_repository",
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",
@@ -691,6 +703,16 @@ module Krikri
       # community.general.pkgng and real runs the module (issue #1679).
       "ansible.builtin.pkgng" => "community.general.pkgng",
       "ansible.legacy.pkgng"  => "community.general.pkgng",
+      # zypper/zypper_repository also lived in ansible-core before the
+      # collection split; its builtin runtime still redirects the
+      # ansible.builtin./ansible.legacy. spellings onto community.general
+      # and real runs the module (issue #1677). The bare spellings need
+      # no entries - community.general is already in
+      # MODULE_SEARCH_COLLECTIONS.
+      "ansible.builtin.zypper"            => "community.general.zypper",
+      "ansible.legacy.zypper"             => "community.general.zypper",
+      "ansible.builtin.zypper_repository" => "community.general.zypper_repository",
+      "ansible.legacy.zypper_repository"  => "community.general.zypper_repository",
       # community.general shipped the docker_* modules before they moved
       # to community.docker, and its own meta/runtime.yml still redirects
       # every one of those pre-2.0 FQCNs to the new collection (only

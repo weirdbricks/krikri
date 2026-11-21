@@ -96,6 +96,7 @@ private DIVERGENCE_CASES = [
   {issue: 1675, slug: "kami911-wildfly-configure-include-removed-check"},
   {issue: 1668, slug: "cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh"},
   {issue: 1671, slug: "islander-alacritty-empty-first"},
+  {issue: 1677, slug: "chkpnt-mailserver-zypper-check"},
   {issue: 1679, slug: "onelove-roles-freebsd-consul-template-pkgng-check"},
 ]
 
@@ -494,6 +495,11 @@ describe "divergence corpus" do
 
   it "replays 1671-islander-alacritty-empty-first" do
     expected, actual, report = divergence_transcripts(1671, "islander-alacritty-empty-first")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1677-chkpnt-mailserver-zypper-check" do
+    expected, actual, report = divergence_transcripts(1677, "chkpnt-mailserver-zypper-check")
     assert_equal(expected, actual, report)
   end
 

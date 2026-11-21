@@ -1,0 +1,19 @@
+---
+- name: Is AppArmor active?
+  block:
+    - ansible.builtin.shell: systemctl is-enabled apparmor.service # noqa: name[missing] command-instead-of-shell command-instead-of-module
+      register: systemstatus_apparmor
+      changed_when: false
+    - ansible.builtin.set_fact: # noqa: name[missing]
+        apparmor_active: "{{ systemstatus_apparmor.stdout == 'enabled' }}"
+
+- name: Configure AppArmor for dovecot
+  ansible.builtin.copy:
+    src: etc/apparmor.d/
+    dest: /etc/apparmor.d/
+    owner: root
+    group: root
+    mode: "0644"
+  when: apparmor_active
+  notify:
+    - restart apparmor
