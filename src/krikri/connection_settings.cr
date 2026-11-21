@@ -68,6 +68,13 @@ module Krikri
     getter connection_type : String?
     # Non-nil only when connection_type is one of the SSM aliases.
     getter ssm : SsmSettings?
+    # ssh.py's host_key_checking option, vars layer: the resolved
+    # ansible_host_key_checking/ansible_ssh_host_key_checking value for
+    # this connection, nil when no variable set it anywhere (env,
+    # ansible.cfg and the True default then decide - resolved in
+    # SSHManager, which also registers this value per connection spec so
+    # its connection-less later calls reuse it; issue #1682).
+    getter host_key_checking : Bool?
 
     # Every variable name that can change the actual SSH connection (or
     # its escalation) for a task. TaskBatcher solos any task whose own
@@ -82,6 +89,7 @@ module Krikri
       "ansible_ssh_private_key_file", "ansible_private_key_file",
       "ansible_ssh_common_args", "ansible_ssh_extra_args",
       "ansible_ssh_executable",
+      "ansible_host_key_checking", "ansible_ssh_host_key_checking",
       "ansible_become", "ansible_become_user",
       "ansible_become_password", "ansible_become_pass", "ansible_sudo_pass",
       "ansible_connection",
@@ -119,7 +127,8 @@ module Krikri
                    @identity_file : String?, @password : String?,
                    @common_args : Array(String), @extra_args : Array(String),
                    @ssh_executable : String? = nil, @host_name : String = "",
-                   @connection_type : String? = nil, @ssm : SsmSettings? = nil)
+                   @connection_type : String? = nil, @ssm : SsmSettings? = nil,
+                   @host_key_checking : Bool? = nil)
     end
 
     def self.resolve(host : Host, vars : Hash(String, JSON::Any)?) : ConnectionSettings
@@ -157,9 +166,20 @@ module Krikri
       common_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_common_args"))
       extra_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_extra_args"))
       connection_type = ConnectionTypes.resolved_name(host, vars)
+      host_key_checking = resolved_host_key_checking_var(vars, host)
       new(conn_host, user, port, identity_file, password, common_args, extra_args,
         executable_setting(vars, host), host.name, connection_type,
-        ssm_settings_for(host, vars, connection_type))
+        ssm_settings_for(host, vars, connection_type), host_key_checking)
+    end
+
+    # The vars-layer host_key_checking of one connection: the deprecated
+    # ansible_ssh_ spelling first (see #host_key_checking_var for why),
+    # the canonical name only when the alias left it unset. Spelled with
+    # explicit nil checks - a Bool? result is falsy for `false` itself,
+    # so a plain `||` would skip a deliberate `false`.
+    private def self.resolved_host_key_checking_var(vars : Hash(String, JSON::Any)?, host : Host) : Bool?
+      alias_value = host_key_checking_var(vars, host, "ansible_ssh_host_key_checking")
+      alias_value.nil? ? host_key_checking_var(vars, host, "ansible_host_key_checking") : alias_value
     end
 
     private def self.ssm_settings_for(host : Host, vars : Hash(String, JSON::Any)?,
@@ -308,6 +328,28 @@ module Krikri
     # walk every agent identity instead of honoring IdentitiesOnly=yes.
     def ssh_extra_options : Array(String)
       common_args + extra_args
+    end
+
+    # Boolean-typed read for ssh.py's host_key_checking option, vars
+    # layer. Within one name the task's rendered vars context outranks the
+    # host's raw inventory vars (tiered_var's two-tier order); across the
+    # two names the caller tries the deprecated ansible_ssh_ spelling
+    # first because ssh.py's vars list is [ansible_host_key_checking,
+    # ansible_ssh_host_key_checking] and ConfigManager._loop_entries keeps
+    # the LAST entry found - the same rule as the identity file above.
+    # The value may arrive as a real JSON boolean, an integer or a string
+    # coerced by ansible's convert_bool non-strict boolean (its true set
+    # only). An unrendered template or an unparseable string reads as
+    # unset, deferring to env/ini/default downstream instead of silently
+    # flipping the setting (issue #1682).
+    private def self.host_key_checking_var(vars : Hash(String, JSON::Any)?, host : Host, key : String) : Bool?
+      value = vars.try(&.[key]?) || host.vars[key]?
+      return nil unless value
+      case raw = value.raw
+      when Bool   then raw
+      when Int64  then raw != 0
+      when String then AnsibleConfig.boolean(raw) unless raw.empty? || raw.includes?("{{") || raw.includes?("{%")
+      end
     end
 
     private def self.string_var(vars : Hash(String, JSON::Any)?, key : String) : String?

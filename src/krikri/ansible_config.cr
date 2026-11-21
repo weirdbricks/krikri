@@ -295,8 +295,22 @@ module Krikri
 
     # ansible's module_utils.parsing.convert_bool.boolean(strict=False):
     # its true set only, everything else False.
-    private def self.boolean(raw : String) : Bool
+    def self.boolean(raw : String) : Bool
       %w(y yes on 1 true t).includes?(raw.strip.downcase)
+    end
+
+    # ssh.py's host_key_checking connection option, ini layer: its two
+    # entries are [defaults] and [ssh_connection] `host_key_checking`, and
+    # ConfigManager._loop_entries keeps the LAST listed entry found, so an
+    # [ssh_connection] value outranks [defaults] when both are present.
+    # nil = unset in both - the option's own True default then applies.
+    # Consumed by SSHManager's StrictHostKeyChecking resolution, below
+    # ANSIBLE_SSH_HOST_KEY_CHECKING/ANSIBLE_HOST_KEY_CHECKING and the
+    # per-host variables (issue #1682).
+    def self.host_key_checking : Bool?
+      raw = get("ssh_connection", "host_key_checking") ||
+            get("defaults", "host_key_checking")
+      raw ? boolean(raw) : nil
     end
 
     # DEFAULT_FORKS: ANSIBLE_FORKS (`integer`) or [defaults] forks.
