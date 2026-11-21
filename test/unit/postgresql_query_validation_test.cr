@@ -92,7 +92,7 @@ describe "postgresql_query plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include(
-      "argument 'autocommit' is of type <class 'str'> and we were unable to convert to bool: " \
+      "argument 'autocommit' is of type str and we were unable to convert to bool: " \
       "The value 'notabool' is not a valid boolean. Valid booleans include: ")
   end
 
@@ -104,7 +104,7 @@ describe "postgresql_query plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include(
-      "argument 'trust_input' is of type <class 'str'> and we were unable to convert to bool: " \
+      "argument 'trust_input' is of type str and we were unable to convert to bool: " \
       "The value 'notabool' is not a valid boolean. Valid booleans include: ")
   end
 

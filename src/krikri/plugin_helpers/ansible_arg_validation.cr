@@ -45,9 +45,13 @@ module Krikri
         overlap.size == 1 ? overlap.first : nil
       end
 
+      # parameters.py renders this sentence with native_type_name(value),
+      # the Python class's bare __name__, not a class repr - ansible-core
+      # 2.21.6 says "is of type str" (live-verified via
+      # community.general.pacman's remove_nosave: wwxxse).
       def bool_type_error(param : String, raw : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
-          msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to bool: " \
+          msg: "argument '#{param}' is of type str and we were unable to convert to bool: " \
                "The value '#{raw}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
       end
 

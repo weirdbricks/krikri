@@ -10,15 +10,24 @@
 # orderings or failure reports.
 module Krikri
   module DivergenceTranscript
-    # What a case's scratch directory is rewritten to. ONLY this path is
-    # normalized; everything else in a transcript has to match byte for byte.
+    # What a case's scratch directory is rewritten to. The scratch path and
+    # the randomized BOOLEANS enumeration below are the only normalized
+    # things; everything else in a transcript has to match byte for byte.
     WORK = "<WORK>"
+
+    # convert_bool's "Valid booleans include:" enumeration is built from a
+    # Python SET, so its order is randomized per interpreter PROCESS (string
+    # hash randomization): two consecutive real ansible runs of the same play
+    # already disagree byte for byte. Only that list is masked; its
+    # membership and every surrounding word still have to match.
+    BOOLEAN_ENUMERATION = Regex.new("(Valid booleans include: )[^\"\\n]*")
 
     # Rewrite *work_dir* (and everything under it) to `<WORK>`. A transcript
     # can name the case directory dozens of times (Origin blocks, `included:`
     # lines, every copied role path) and each run happens in a fresh directory,
     # so the path is the one thing that cannot be pinned verbatim.
     def self.normalize(text : String, work_dir : String) : String
+      text = text.gsub(BOOLEAN_ENUMERATION, "\\1<BOOLEAN-SET-ORDER>")
       return text if work_dir.empty?
       # Only rewrite *work_dir* when it is a whole path, not a prefix of a
       # longer one: a lookalike sibling like `<work_dir>-lookalike` or

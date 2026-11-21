@@ -83,6 +83,21 @@ describe "pacman plugin argument validation" do
       "Failed to find required executable \"krikri-no-such-pacman-binary\" in paths: ").must_equal(true)
   end
 
+  it "fails an unconvertible bool with the bare class name (issue #1661)" do
+    # ansible-core 2.21.6's parameters.py renders the "is of type" slot
+    # with native_type_name(value), the class's __name__ - not the
+    # "<class 'str'>" repr it printed in earlier releases.
+    result = PluginSpecHelper.run("pacman", {
+      "remove_nosave" => "wwxxse",
+      "update_cache"  => "pklpcv",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include(
+      "argument 'remove_nosave' is of type str and we were unable to convert to bool: " \
+      "The value 'wwxxse' is not a valid boolean. Valid booleans include: ")
+  end
+
   it "accepts the role's own task shape (state present through the package alias)" do
     # jpedrodelacerda.yay passes name + state present; the alias and the
     # bool params must all clear validation so the probe (which real runs

@@ -81,6 +81,7 @@ private DIVERGENCE_CASES = [
   {issue: 1641, slug: "hesidoryn-python-coreos-install-python-and-packages"},
   {issue: 1657, slug: "strategy-plugin-retry-fallback"},
   {issue: 1660, slug: "deprecation-warnings-disabled"},
+  {issue: 1661, slug: "pacman-bool-type-name"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -403,6 +404,11 @@ describe "divergence corpus" do
 
   it "replays 1660-deprecation-warnings-disabled" do
     expected, actual, report = divergence_transcripts(1660, "deprecation-warnings-disabled")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1661-pacman-bool-type-name" do
+    expected, actual, report = divergence_transcripts(1661, "pacman-bool-type-name")
     assert_equal(expected, actual, report)
   end
 end
