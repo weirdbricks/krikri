@@ -83,3 +83,57 @@ describe "an unreachable host discovered mid-run" do
     recap.must_include("skipped=0")
   end
 end
+
+# Issue #1681: a task delegated to a host whose transport fails is the
+# origin host's UNREACHABLE, and its msg names the ADDRESS ansible dialled -
+# the delegate's connection host, never the origin's inventory name.
+private def run_delegated_unreachable_repro : {Int32, String}
+  dir = File.tempname("delegated-unreachable-repro")
+  Dir.mkdir_p(dir)
+
+  File.write(File.join(dir, "inv.ini"), <<-INI)
+    good ansible_connection=local
+    dead ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=1 ansible_user=root
+    INI
+  File.write(File.join(dir, "pb.yml"), <<-YAML)
+    - hosts: good
+      gather_facts: false
+      tasks:
+        - command: echo hi
+          delegate_to: dead
+    YAML
+
+  stdout_io = IO::Memory.new
+  status = Process.run(BINARY, ["-i", "inv.ini", "pb.yml"],
+    output: stdout_io, error: stdout_io, chdir: dir,
+    env: {
+      "ANSIBLE_PIPELINING"              => "True",
+      "ANSIBLE_GATHERING"               => nil,
+      "ANSIBLE_CACHE_PLUGIN"            => nil,
+      "ANSIBLE_CACHE_PLUGIN_CONNECTION" => nil,
+    })
+  {status.exit_code, stdout_io.to_s}
+ensure
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+end
+
+describe "a task delegated to an unreachable host" do
+  it "books UNREACHABLE on the origin and names the delegate's connection host" do
+    code, output = run_delegated_unreachable_repro
+    code.must_equal(4)
+
+    output.must_include(%(fatal: [good -> dead]: UNREACHABLE!))
+    # The pipelined lead embeds the dialled address; the origin's name must
+    # not appear there (issue #1681's live divergence).
+    output.must_include("Data could not be sent to remote host \"127.0.0.1\"")
+    output.wont_include("Data could not be sent to remote host \"good\"")
+
+    recap = output.lines.find(&.starts_with?("good"))
+    if recap.nil?
+      raise "no recap line for good in:\n#{output}"
+    end
+    recap.must_include("ok=0")
+    recap.must_include("unreachable=1")
+    recap.must_include("failed=0")
+  end
+end

@@ -89,6 +89,7 @@ private DIVERGENCE_CASES = [
   {issue: 1680, slug: "ignore-unreachable-stays-in-play"},
   {issue: 1680, slug: "play-ignore-unreachable-gather-facts"},
   {issue: 1690, slug: "become-password-not-a-var"},
+  {issue: 1681, slug: "delegated-unreachable-msg-host"},
   {issue: 1665, slug: "civicactions-ec2-ami-find"},
 ]
 
@@ -177,6 +178,11 @@ describe "divergence corpus" do
 
   it "replays 1680-play-ignore-unreachable-gather-facts" do
     expected, actual, report = divergence_transcripts(1680, "play-ignore-unreachable-gather-facts")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1681-delegated-unreachable-msg-host" do
+    expected, actual, report = divergence_transcripts(1681, "delegated-unreachable-msg-host")
     assert_equal(expected, actual, report)
   end
 

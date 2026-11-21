@@ -24,9 +24,15 @@ module Krikri
     # flush_pending_unreachable): run_task_batch books unreachable hosts
     # BEFORE its abort/halt decisions but must print the report under
     # the task banner, which is decided afterwards.
-    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true, delegate_target : String? = nil, ignore : Bool = false) : Nil
+    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true, delegate_target : String? = nil, delegate_host : Host? = nil, ignore : Bool = false) : Nil
       ignored = ignore || task.try(&.ignore_unreachable?) == true
-      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      # A delegated task's transport failure is reported against the host
+      # ansible actually dialled: its msg embeds the DELEGATE's connection
+      # host (the pipelined "Data could not be sent to remote host" lead
+      # names it verbatim), never the origin's inventory name
+      # (live-verified vs 2.21.6, issue #1681).
+      msg_host = delegate_host || host
+      connection_host = msg_host.vars["ansible_host"]?.try(&.as_s?) || msg_host.name
       # Ansible embeds the transport's own error text in the msg
       # ("Task failed: Failed to connect to the host via ssh: ssh:
       # connect to host ...: Connection refused", live-verified vs
@@ -45,7 +51,7 @@ module Krikri
       # plugin only reaches the "Data could not be sent" wrap when the
       # failing exec carried pipelined module data. Only the host's own var
       # layer is consulted here - this path has no task vars context.
-      inner = SSHUnreachableMsg.unreachable_msg(detail, host.vars, host)
+      inner = SSHUnreachableMsg.unreachable_msg(detail, msg_host.vars, msg_host)
       msg = "Task failed: #{inner}"
       msg = "" if no_log
       report = String.build do |io|
@@ -55,7 +61,7 @@ module Krikri
           # The delegated label rides the host slot the same way the
           # default callback's fatal line carries it.
           host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-          detail_msg = no_log ? "" : SSHUnreachableMsg.unreachable_msg(detail, host.vars, host)
+          detail_msg = no_log ? "" : SSHUnreachableMsg.unreachable_msg(detail, msg_host.vars, msg_host)
           io << "#{host_label} | UNREACHABLE!: #{detail_msg}".colorize(:red)
           io << "\n"
         else

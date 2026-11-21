@@ -3068,7 +3068,8 @@ module Krikri
             # censorship keep the single-task unreachable report; the
             # custom closure below would echo what no_log exists to hide.
             delegate_target = delegate_display_target(task, host, base_vars_context)
-            report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target)
+            delegate_host = delegate_hosts.try(&.find { |delegate| delegate.name != host.name })
+            report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target, delegate_host: delegate_host)
           else
             # Real closes a looped unreachable task with the loop
             # aggregate's own fatal: the label carries the RAW
@@ -3834,8 +3835,8 @@ module Krikri
       # recapped unreachable=1 failed=0 and exited 4).
       if unreachable_task_result?(result)
         ResultDisplay.flush_task_deprecation_capture_for_display
-        delegate_target = exec_host.name != host.name ? exec_host.name : nil
-        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context), delegate_target: delegate_target)
+        delegate_host = exec_host.name != host.name ? exec_host : nil
+        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context), delegate_target: delegate_host.try(&.name), delegate_host: delegate_host)
         @unreachable_hosts << host.name unless task.ignore_unreachable?
         return
       end

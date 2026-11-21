@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "ssh: connect to host 127.0.0.1 port 1: Connection refused" >&2
+exit 255

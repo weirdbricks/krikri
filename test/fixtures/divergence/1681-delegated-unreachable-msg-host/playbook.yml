@@ -1,0 +1,6 @@
+# Issue #1681's repro verbatim: a task delegated to an unreachable host.
+- hosts: good
+  gather_facts: false
+  tasks:
+    - command: echo hi
+      delegate_to: dead
