@@ -1,0 +1,48 @@
+- name: Check if there is already an encrypted AMI with growpart disabled
+  ec2_ami_find:
+    owner: self
+    name: "{{ image }}-{{ root }}gb-encrypted-nogrowpart"
+  register: encrypted_amis
+  delegate_to: localhost
+- name: Extract the AMI ID
+  set_fact:
+    encrypted_ami: "{{ encrypted_amis.results[0].ami_id }}"  
+  delegate_to: localhost
+  when: encrypted_amis.results|length > 0
+- name: Create encrypted AMI from unencrypted AMI (if needed)
+  include: encrypt-ami.yml
+  when: encrypted_ami is not defined
+
+- name: Check if there is already an instance deployed
+  ec2_remote_facts:
+    filters:
+      instance-state-name: running
+      "tag:Name": "{{ inventory_hostname }}"
+  register: ec2
+  delegate_to: localhost
+- name: Extract the instance if it exists
+  set_fact:
+    running_count: "{{ ec2.instances|length }}"  
+- name: Deploy instance from encrypted AMI (if needed)
+  include: deploy.yml
+  when: running_count == '0'
+
+- name: Fetch instance details
+  ec2_remote_facts:
+    filters:
+      instance-state-name: running
+      "tag:Name": "{{ inventory_hostname }}"
+  register: ec2
+  delegate_to: localhost
+- fail: msg="Instance failed to deploy successfully."
+  when: ec2.instances|length != 1
+- name: Update host record with IP from actual instance
+  add_host:
+    hostname: "{{ item }}"
+    ansible_host: "{{ hostvars[item]['ec2'].instances[0].public_ip_address }}"
+    ansible_connection: ssh
+    ansible_become: true
+  when: hostvars[item]['ec2'].instances[0] is defined
+  with_items: "{{ ansible_play_hosts }}"
+- name: Update facts
+  setup:

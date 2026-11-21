@@ -1,0 +1,6 @@
+[ERROR]: couldn't resolve module/action 'ec2_ami_find'. This often indicates a misspelling, missing collection, or incorrect module path.
+Origin: <WORK>/roles/CivicActions.ec2-800-53-deploy/tasks/main.yml:1:3
+
+1 - name: Check if there is already an encrypted AMI with growpart disabled
+    ^ column 3
+

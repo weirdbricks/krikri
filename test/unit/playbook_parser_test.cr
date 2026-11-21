@@ -747,6 +747,29 @@ describe Krikri::PlaybookParser do
       end
     end
 
+    it "hard-stops at the first unresolvable module, not a later removed include: action (CivicActions.ec2-800-53)" do
+      # issue #1665: real refuses the role at its first task, bare
+      # ec2_ami_find (removed from ansible-core in 2.9, never migrated into
+      # any collection), with rc=4 and the generic couldn't-resolve
+      # wording. While the name was not tombstoned this engine ran past it
+      # and aborted on the role's later `include:` instead - a different
+      # message, Origin and exit code (1 vs real's 4).
+      error = assert_raises(Krikri::UnresolvedModuleError) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: Check if there is already an encrypted AMI with growpart disabled
+                ec2_ami_find:
+                  owner: self
+                  name: "{{ image }}-{{ root }}gb-encrypted-nogrowpart"
+              - name: Create encrypted AMI from unencrypted AMI (if needed)
+                include: encrypt-ami.yml
+          YAML
+        )
+      end
+      assert_includes(error.message.to_s, "'ec2_ami_find'")
+    end
+
     it "hard-stops at the FIRST unresolvable module in task order, not a later tombstoned one (Aplyca.deployab)" do
       # issue #1592: real refuses the role at its "Get ELB facts"
       # ec2_elb_facts task (line 13). While only the later

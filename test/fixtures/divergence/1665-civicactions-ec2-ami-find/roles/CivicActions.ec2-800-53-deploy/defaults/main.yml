@@ -1,0 +1,6 @@
+---
+home: 32
+var: 32
+varlog: 16
+varlogaudit: 8
+tmp: 8

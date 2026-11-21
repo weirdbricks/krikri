@@ -86,6 +86,7 @@ private DIVERGENCE_CASES = [
   {issue: 1685, slug: "set-then-for-iterable"},
   {issue: 1686, slug: "block-tag-native-typing"},
   {issue: 1688, slug: "delegated-loop-unreachable-msg-host"},
+  {issue: 1665, slug: "civicactions-ec2-ami-find"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -433,6 +434,11 @@ describe "divergence corpus" do
 
   it "replays 1686-block-tag-native-typing" do
     expected, actual, report = divergence_transcripts(1686, "block-tag-native-typing")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1665-civicactions-ec2-ami-find" do
+    expected, actual, report = divergence_transcripts(1665, "civicactions-ec2-ami-find")
     assert_equal(expected, actual, report)
   end
 end

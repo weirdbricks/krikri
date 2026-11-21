@@ -956,6 +956,18 @@ module Krikri
       "ansible.builtin.ec2_remote_facts" => nil,
       "ansible.legacy.ec2_remote_facts"  => nil,
       "amazon.aws.ec2_remote_facts"      => nil,
+      # ec2_ami_find was removed from ansible-core in 2.9 (renamed to
+      # ec2_ami_info) and NEVER migrated into amazon.aws or community.aws,
+      # and no collection's runtime routing names it - so every current
+      # controller refuses the whole playbook at load with the generic
+      # couldn't-resolve wording, rc=4. CivicActions.ec2-800-53-deploy
+      # (round 29920530, issue #1665) lists it as the role's FIRST task,
+      # ahead of a bare `include:`; while it was not tombstoned this engine
+      # ran past it and stopped on the later removed action instead,
+      # reporting a different message, Origin and exit code (1 vs real's 4).
+      "ec2_ami_find"                 => nil,
+      "ansible.builtin.ec2_ami_find" => nil,
+      "ansible.legacy.ec2_ami_find"  => nil,
       # community.aws deprecated ec2_elb_facts in 2.0.0 with
       # removal_version 3.0.0 and ships no module or routing entry for
       # it since, while ansible_builtin_runtime.yml still redirects the
