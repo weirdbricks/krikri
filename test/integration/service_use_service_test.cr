@@ -19,9 +19,31 @@ require "file_utils"
 # generic module's own result, with NO status dict, NO msg, and none of
 # the systemd module's `Ignoring "X" as it is not used in "systemd"`
 # warnings (the generic module really consumes pattern/sleep/arguments).
+private SYSTEMD_CANARY = "/run/systemd/system"
+
 private def with_use_service_shims(active_state : String, load_state : String = "loaded", &)
   dir = File.join(Dir.tempdir, "krikri-service-use-service-#{Random.rand(1_000_000)}")
   log = File.join(dir, "calls.log")
+  # The generic service module's systemd branch is gated on systemd's own
+  # sd_booted canaries (/run/systemd/system et al), and CI's job container
+  # has none of them and nothing named systemd as PID 1, so without this
+  # the SysV chain would answer and every "on a systemd host" expectation
+  # below would see the sysvinit result instead. Create the canary for the
+  # window and remove it again only when this helper created it - a real
+  # systemd host (every dev box) already has it, so the rmdir only ever
+  # hits the empty dir we made. The describe declares exclusive! because
+  # the window is host-visible to concurrently running tests.
+  canary_created = false
+  unless Dir.exists?(SYSTEMD_CANARY)
+    begin
+      Dir.mkdir_p(SYSTEMD_CANARY)
+      canary_created = true
+    rescue e : File::Error
+      # skip is a test-instance method; this helper runs top-level, so the
+      # same Minitest::Skip is raised directly.
+      raise Minitest::Skip.new("cannot create the #{SYSTEMD_CANARY} canary (#{e.message}): not root on a non-systemd host?")
+    end
+  end
   FileUtils.mkdir_p(dir)
 
   File.write(File.join(dir, "systemctl"), <<-'SHIM')
@@ -59,6 +81,12 @@ private def with_use_service_shims(active_state : String, load_state : String = 
   }.to_json
   yield env, log
 ensure
+  if canary_created
+    begin
+      FileUtils.rmdir(SYSTEMD_CANARY)
+    rescue File::Error
+    end
+  end
   FileUtils.rm_rf(dir) if dir
 end
 
@@ -67,6 +95,11 @@ private def read_use_service_calls(log : String) : Array(String)
 end
 
 describe "service plugin - use: service on a systemd host" do
+  # with_use_service_shims creates /run/systemd/system for the window on a
+  # host that lacks it (CI's job container); other tests probe the same
+  # canaries, so the whole describe must run with the process quiesced.
+  exclusive!
+
   # krikri-fake-svc has no /etc/init.d script on any test host, so the
   # old SysV mapping failed here before ever probing systemd - exactly
   # the shape of the reported failure.

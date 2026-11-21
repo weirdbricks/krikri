@@ -1,0 +1,23 @@
+---
+# mullholland.swap's "Enabling swap" gate (issue #1027), the task whose
+# `when:` list is what flunked in CI's job container (issue #1662): the
+# container's gathered ansible_virtualization_type IS "docker", so the
+# role's own literals false item 1 and real short-circuits the list there
+# (2.21's conditional loop returns on the first falsy item), leaving one
+# deprecation block where a dev box prints three. The case keeps the
+# task's shape - three when: items reading the SAME fact - but compares
+# against values no host's virtualization fact can take, so every item
+# stays truthy (hence every item templated, one INJECT_FACTS_AS_VARS
+# block per item) and the replay is identical on a dev box and in a
+# container.
+- name: swap when-list deprecation blocks
+  hosts: swap_target
+  gather_facts: true
+  tasks:
+    - name: Enabling swap
+      ansible.builtin.command: /bin/true
+      changed_when: false
+      when:
+        - ansible_virtualization_type != "notdocker"
+        - ansible_virtualization_type != "notcontainerd"
+        - ansible_virtualization_type != "notcontainer"

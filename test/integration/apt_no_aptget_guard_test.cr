@@ -31,6 +31,19 @@ private GUARD_WARNING = "[WARNING]: Updating cache and auto-installing missing d
 private GUARD_ERROR   = "[ERROR]: Task failed: Module failed: Error executing command: [Errno 2] No such file or directory: b'update'"
 private GUARD_FATAL   = %({"changed": false, "cmd": "update", "msg": "Error executing command.", "rc": 2, "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []})
 
+# The #1172 shape's stderr wording is GNU coreutils' install (what the
+# captured Rocky host and the dev box run). A host whose install is
+# rust-coreutils words the same unknown-option abort differently ("error:
+# unexpected argument '-y' found"), and that wording is exactly what this
+# spec pins, so it can only run where the binary matches the capture.
+private def gnu_coreutils_install? : Bool
+  version = IO::Memory.new
+  Process.run("install", ["--version"], output: version, error: version)
+  version.to_s.includes?("GNU coreutils")
+rescue
+  false
+end
+
 describe "apt: no-apt-get guard shape" do
   # Issue #1035 (akoeb.common, round29903254): what `--check` must report
   # for the role's own "Run apt dist upgrade" shape (`apt: upgrade=dist
@@ -167,6 +180,7 @@ describe "apt: no-apt-get guard shape" do
   # deterministic (invalid option aborts before any operand work), so no
   # host mutation.
   it "matches ansible's update_cache=no auto-install failure shape (issue #1172)" do
+    skip "the host's install is not GNU coreutils (different invalid-option wording)" unless gnu_coreutils_install?
     result = PluginSpecHelper.run("apt", {
       "name"           => "aptitude",
       "state"          => "present",
