@@ -41,7 +41,7 @@ describe "docker_login plugin argument validation" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("argument 'timeout' is of type <class 'str'> and we were unable to convert to int: <class 'str'> cannot be converted to an int")
+    result["msg"].as_s.must_equal("argument 'timeout' is of type str and we were unable to convert to int: \"'banana'\" cannot be converted to an int")
   end
 
   it "fails a non-boolean reauthorize with parameters.py wording" do

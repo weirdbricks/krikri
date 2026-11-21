@@ -56,8 +56,8 @@ describe "podman_container plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal(
-      "argument 'retry' is of type <class 'str'> and we were unable to convert to int: " \
-      "<class 'str'> cannot be converted to an int")
+      "argument 'retry' is of type str and we were unable to convert to int: " \
+      "\"'banana'\" cannot be converted to an int")
   end
 
   it "fails no_hosts + etc_hosts (mutually exclusive)" do

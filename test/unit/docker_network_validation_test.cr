@@ -46,7 +46,7 @@ describe "docker_network plugin argument validation" do
     result = PluginSpecHelper.run("docker_network", {"name" => "krikri-net", "timeout" => "banana"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("argument 'timeout' is of type <class 'str'> and we were unable to convert to int: <class 'str'> cannot be converted to an int")
+    result["msg"].as_s.must_equal("argument 'timeout' is of type str and we were unable to convert to int: \"'banana'\" cannot be converted to an int")
   end
 
   it "fails a non-dict labels with the wrapped parameters.py wording" do
@@ -96,7 +96,7 @@ describe "docker_network_info plugin argument validation" do
     result = PluginSpecHelper.run("docker_network_info", {"name" => "krikri-net", "timeout" => "banana"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("argument 'timeout' is of type <class 'str'> and we were unable to convert to int: <class 'str'> cannot be converted to an int")
+    result["msg"].as_s.must_equal("argument 'timeout' is of type str and we were unable to convert to int: \"'banana'\" cannot be converted to an int")
   end
 
   it "fails client_cert without client_key (required_together)" do

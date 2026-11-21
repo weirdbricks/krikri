@@ -11,23 +11,30 @@
 module Krikri
   module DivergenceTranscript
     # What a case's scratch directory is rewritten to. The scratch path and
-    # the randomized BOOLEANS enumeration below are the only normalized
-    # things; everything else in a transcript has to match byte for byte.
+    # the order of convert_bool's boolean enumeration below are the only
+    # normalized things; everything else in a transcript has to match byte
+    # for byte.
     WORK = "<WORK>"
 
-    # convert_bool's "Valid booleans include:" enumeration is built from a
-    # Python SET, so its order is randomized per interpreter PROCESS (string
-    # hash randomization): two consecutive real ansible runs of the same play
-    # already disagree byte for byte. Only that list is masked; its
-    # membership and every surrounding word still have to match.
-    BOOLEAN_ENUMERATION = Regex.new("(Valid booleans include: )[^\"\\n]*")
+    # convert_bool builds "Valid booleans include:" by iterating a Python
+    # frozenset, so its order is randomized per module process (string hash
+    # randomization): two consecutive real ansible runs of the same play
+    # already disagree byte for byte. Only the ORDER is noise - membership is
+    # part of the message - so the members are sorted into one deterministic
+    # order for the recording and every replay. Only the repr'd members are
+    # captured: a JSON fatal line continues after the list, and its closing
+    # `"}` must stay outside the sort.
+    BOOLEAN_ENUMERATION = /(Valid booleans include: )((?:'[^']*'|True|False|\d+(?:\.\d+)?)(?:, (?:'[^']*'|True|False|\d+(?:\.\d+)?))*)(?=\n|"|\z)/
 
-    # Rewrite *work_dir* (and everything under it) to `<WORK>`. A transcript
-    # can name the case directory dozens of times (Origin blocks, `included:`
-    # lines, every copied role path) and each run happens in a fresh directory,
-    # so the path is the one thing that cannot be pinned verbatim.
+    # Rewrite *work_dir* (and everything under it) to `<WORK>`, and sort the
+    # boolean enumeration. A transcript can name the case directory dozens of
+    # times (Origin blocks, `included:` lines, every copied role path) and each
+    # run happens in a fresh directory, so the path is the one path that cannot
+    # be pinned verbatim.
     def self.normalize(text : String, work_dir : String) : String
-      text = text.gsub(BOOLEAN_ENUMERATION, "\\1<BOOLEAN-SET-ORDER>")
+      text = text.gsub(BOOLEAN_ENUMERATION) do |_match, captures|
+        "#{captures[1]}#{captures[2].to_s.split(", ").sort!.join(", ")}"
+      end
       return text if work_dir.empty?
       # Only rewrite *work_dir* when it is a whole path, not a prefix of a
       # longer one: a lookalike sibling like `<work_dir>-lookalike` or

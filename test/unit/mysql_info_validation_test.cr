@@ -32,8 +32,8 @@ describe "mysql_info plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal(
-      "argument 'login_port' is of type <class 'str'> and we were unable to convert to int: " \
-      "<class 'str'> cannot be converted to an int")
+      "argument 'login_port' is of type str and we were unable to convert to int: " \
+      "\"'notaport'\" cannot be converted to an int")
   end
 
   it "fails a non-integer connect_timeout" do
@@ -45,8 +45,8 @@ describe "mysql_info plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal(
-      "argument 'connect_timeout' is of type <class 'str'> and we were unable to convert to int: " \
-      "<class 'str'> cannot be converted to an int")
+      "argument 'connect_timeout' is of type str and we were unable to convert to int: " \
+      "\"'xyz'\" cannot be converted to an int")
   end
 
   it "fails a non-boolean return_empty_dbs" do
