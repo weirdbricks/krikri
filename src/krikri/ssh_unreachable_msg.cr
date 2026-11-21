@@ -19,12 +19,18 @@ module Krikri
     # discovery fails there first and keeps the plain lead). This engine's
     # upload-then-exec dispatch stands in for the module exec, so the
     # caller's pipelining setting picks the lead.
+    #
+    # Trailing whitespace is trimmed off the composed msg the way
+    # ansible does it: the task error carries `str(value).rstrip()`
+    # (_internal/_task.py), and with no ssh detail to embed - a silent 255
+    # death - ansible-playbook's msg ends `... can be reached over ssh:`
+    # with no trailing space (live-verified vs 2.21.6).
     def self.unreachable_msg(detail : String, pipelining : Bool, connection_host : String) : String
       if pipelining
         %(Data could not be sent to remote host "#{connection_host}". Make sure this host can be reached over ssh: #{detail})
       else
         "Failed to connect to the host via ssh: #{detail}"
-      end
+      end.rstrip
     end
 
     # Convenience form for the sites that hold the host and a vars context:

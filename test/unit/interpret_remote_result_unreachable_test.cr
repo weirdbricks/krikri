@@ -38,6 +38,33 @@ describe "Krikri::PluginManager (interpret_remote_result_unreachable_test.cr)" d
       result["unreachable"].as_bool.must_equal(true)
     end
 
+    it "stamps unreachable on a 255 wording outside the old pattern list (issue #1663)" do
+      # The classification is the exit code, not ssh's words: any 255 ssh
+      # gives is ansible's AnsibleConnectionFailure (see
+      # SSHManager.connection_level_failure?). The third report of this
+      # family came from macOS ssh wording this engine had never seen,
+      # which reached users as a raw `fatal: FAILED!` payload with
+      # failed=1 and exit 2.
+      result = Krikri::PluginManager.interpret_remote_result(
+        255, "",
+        "Connection to 127.0.0.1 closed by remote host."
+      )
+      result["failed"].as_bool.must_equal(true)
+      result["_connection_failure"].as_bool.must_equal(true)
+      result["unreachable"].as_bool.must_equal(true)
+    end
+
+    it "keeps a 255 exit another program explains a plain failure" do
+      # ansible's b_NOT_SSH_ERRORS: a remote-side traceback means the 255
+      # came from the module, not from ssh.
+      result = Krikri::PluginManager.interpret_remote_result(
+        255, "", "Traceback (most recent call last):\n  File \"/tmp/x.py\", line 1\nNameError"
+      )
+      result["failed"].as_bool.must_equal(true)
+      result["_connection_failure"].as_bool.must_equal(true)
+      result["unreachable"]?.must_be_nil
+    end
+
     it "keeps a silent nonzero remote plugin exit a plain failure" do
       result = Krikri::PluginManager.interpret_remote_result(137, "", "")
       result["failed"].as_bool.must_equal(true)

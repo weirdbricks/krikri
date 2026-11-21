@@ -2885,10 +2885,8 @@ module Krikri
             # array keeps it).
             display_dump = JSON::Any.new(dump.as_h.reject("exception"))
             puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(display_dump)}".colorize(:red)
-            result_hash = result.as_h.dup
-            result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
-            append_loop_item_bindings(task, result_hash, item, idx)
-            results << JSON::Any.new(result_hash)
+            result_hash = unreachable_loop_entry(dump)
+            results << result_hash
             next
           end
 
@@ -3288,6 +3286,21 @@ module Krikri
       end
     end
 
+    # The loop `results` entry ansible records for an item whose host went
+    # unreachable: its strategy converts the raised
+    # AnsibleConnectionFailure into exactly {changed, msg, unreachable}
+    # plus the loop bindings and an exception placeholder, so none of this
+    # engine's raw dispatch keys (`failed`, `stdout`, `stderr`,
+    # `_connection_failure`) may ride along - the aggregate's `results`
+    # array is dumped verbatim (issue #1663's loop shape, live-verified
+    # vs 2.21.6). *dump* is the per-item result already carrying its loop
+    # bindings.
+    private def unreachable_loop_entry(dump : JSON::Any) : JSON::Any
+      entry = dump.as_h.dup
+      entry["exception"] = JSON::Any.new("(traceback unavailable)")
+      JSON::Any.new(entry)
+    end
+
     # Render a loop item for display purposes (Ansible shows `(item=...)`).
     # loop_control.extended - Ansible's `ansible_loop` dict for the
     # current iteration. Keys and semantics verified against ansible-core
@@ -3568,7 +3581,17 @@ module Krikri
           # 2.21.6 with a module printing non-JSON), hence the dedicated
           # raise marker.
           raise_escape = result_hash["_ansible_raise_escape"]?.try(&.as_bool?) == true
-          if Krikri.result_failed_flag(result) && (action_level || finalization || when_error || raise_escape)
+          # An SSH transport failure is the fifth escape shape, for the
+          # same reason: real's attempt loop only ever sees RETURNED
+          # results, while the connection plugin RAISES
+          # AnsibleConnectionFailure - so no further attempt runs, no
+          # FAILED - RETRYING line prints, and the result carries no
+          # attempts key. Without this a host that died under an
+          # until:/retries: task printed retry lines ansible never does
+          # (issue #1663: three attempts against the dead transport, then
+          # the UNREACHABLE report).
+          unreachable = result_hash["unreachable"]?.try(&.as_bool?) == true
+          if Krikri.result_failed_flag(result) && (action_level || finalization || when_error || raise_escape || unreachable)
             if register_name && !register_name.empty?
               register_result(host, register_name, result)
               vars_context[register_name] = @registered_vars[host.name][register_name]
@@ -3681,9 +3704,10 @@ module Krikri
       # changed,failed,msg,attempts,ansible_loop_var,item with no
       # exception), so the exhausted branch only marks failed now. A
       # single-run until task (retries: 0) gets NEITHER key (Ansible never
-      # engages the loop machinery). The action-level and finalization
-      # escapes above keep the loop from ever engaging, so they skip the
-      # key the same way a single-run task does.
+      # engages the loop machinery). The escape shapes above (action-level,
+      # finalization, when:, raise-marked become/connection, and a raised
+      # SSH transport failure) keep the loop from ever engaging, so they
+      # skip the key the same way a single-run task does.
       if result && total_runs > 1 && !exception_escape
         result_hash = result.as_h.dup
         result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
@@ -3786,6 +3810,23 @@ module Krikri
         ResultDisplay.flush_task_deprecation_capture_for_display
         puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_result_suffix(result)).colorize(:cyan)
         @results[host.name]["skipped"] += 1
+        return
+      end
+
+      # An SSH-transport failure inside an attempt loop is still
+      # Ansible's UNREACHABLE, never a failed task: ansible's raised
+      # AnsibleConnectionFailure escapes the until:/retries: loop
+      # outright, so the host is booked unreachable and halted instead
+      # of counted failed=. Without this branch the loop fell straight
+      # through to the fatal display, dumping the raw
+      # `_connection_failure` payload as `fatal: ... FAILED!` and
+      # booking failed= (issue #1663's shape, where ansible-playbook
+      # recapped unreachable=1 failed=0 and exited 4).
+      if unreachable_task_result?(result)
+        ResultDisplay.flush_task_deprecation_capture_for_display
+        delegate_target = exec_host.name != host.name ? exec_host.name : nil
+        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context), delegate_target: delegate_target)
+        @unreachable_hosts << host.name unless task.ignore_unreachable?
         return
       end
 

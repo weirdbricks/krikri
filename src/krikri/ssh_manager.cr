@@ -369,11 +369,21 @@ module Krikri
       end
     end
 
+    # Signatures that mean one of ansible's own NOT_SSH_ERRORS: some
+    # other program - not ssh(1) - produced the 255 exit, so the
+    # transport itself was fine (plugins/connection/ssh.py's
+    # b_NOT_SSH_ERRORS, scanned in BOTH streams).
+    private NOT_SSH_ERROR_SIGNATURES = [
+      "Traceback (most recent call last):", # Python 2.6 failing while invoking a script via -m
+      "PHP Parse error:",                   # PHP always exits with an error
+      "chmod: invalid mode",                # chmod, mostly on AIX
+      "chmod: A flag or octal number is not correct.",
+    ]
+
     # stderr shapes only ssh(1) itself (or this class's own rescue/
-    # timeout paths) ever produce - the transport-level failure evidence
-    # that separates "no command ever ran on the remote" from "the
-    # remote plugin crashed after a successful connection". Deliberately
-    # narrow, conservative in BOTH directions:
+    # timeout paths) ever produce. These only matter for a NON-255 exit
+    # (which ssh never uses for its own failures, but this class's
+    # synthesized timeout/rescue results and sshpass wrappers can):
     #   - A remote module crash's stderr comes from the remote bash/
     #     plugin process (a loader error like "error while loading
     #     shared libraries", a traceback, a plain "Permission denied"
@@ -387,38 +397,6 @@ module Krikri
     #     phrases like that are NOT matched here - the connect-failure
     #     shape is only recognized with ssh's own "ssh: connect to host"
     #     prefix attached.
-    # ssh(1) exits 255 for every one of these, hence the exit-code gate.
-    #
-    # One shape needs no text at all: when the server side VANISHES
-    # mid-execution with a clean TCP close (a container/VM dying is the
-    # common case - the kernel FIN-closes every socket), ssh exits 255
-    # and prints NOTHING - no "Connection closed by" line, no reset
-    # notice (live-verified 2026-10-07 against a throwaway podman sshd
-    # killed mid-`sleep`, both while the session idles reading and
-    # while ssh is still writing stdin: exit 255, empty stderr apart
-    # from ssh's own first-contact "Warning: Permanently added" line).
-    # That silence is itself the evidence, and it is structurally
-    # narrow: a remote plugin that ran and failed arrives with its own
-    # stdout/stderr and a remote-side exit status (a signal death comes
-    # back as 128+N through sshd, never bare 255), so bare-255 with
-    # nothing in either stream (ignoring ssh's own "Warning: " lines,
-    # which a first-contact key acceptance prints) only ever means the
-    # transport died. Without this rule such a death books a generic
-    # FAILED task (or, on the batch path, silently SKIPS the whole
-    # batch) where ansible-playbook books UNREACHABLE and halts the
-    # host - live-verified divergence, fixed 2026-10-07.
-    #
-    # A sibling shape DOES have text: when the drop surfaces as ssh's
-    # own "Connection closed by <host> port <n>" / "Connection reset by
-    # ..." line (server accepts TCP then drops mid-session - live
-    # verified against a podman socket that accepts and closes), the
-    # line is transport-only evidence too, but it stays OUT of the bare
-    # pattern list below because a remote command's own stderr can
-    # carry the same words. The guarded tier in
-    # #connection_level_failure? matches it only with empty plugin
-    # stdout and ssh's own 255 exit - a remote command's text reaches
-    # this classifier through the plugin's JSON result (ssh exit 0) or
-    # with the plugin's stdout attached, so the guard is one-sided.
     private CONNECTION_FAILURE_PATTERNS = [
       "ssh: connect to host",         # connect refused/timed out/no route/network unreachable
       "Could not resolve hostname",   # ssh: Could not resolve hostname X ...
@@ -433,43 +411,35 @@ module Krikri
       "SSH script execution failed",      # exec_script's rescue path
     ]
 
-    # True when *exit_code*/*stderr* look like the SSH transport itself
-    # failing - ssh never reached or never authenticated to the host -
-    # as opposed to a remote plugin crashing after a successful
-    # connection. *stdout* (optional, empty by default for the
-    # message-only exception counterpart) feeds the silent-death rule:
-    # bare 255 with nothing in either stream is ssh's own mid-execution
-    # death, never a remote plugin's. Public so PluginManager's
-    # remote-result interpretation and the spec suite share one pattern
-    # list (see CONNECTION_FAILURE_PATTERNS for what deliberately does
-    # NOT match).
+    # True when *exit_code*/*stderr*/*stdout* mean the SSH transport
+    # itself failed - no command ever ran on the remote - as opposed to
+    # a remote plugin crashing after a successful connection.
+    #
+    # The rule is ansible's own, not a list of wordings: ssh(1) reserves
+    # exit 255 for its own failures, and ansible's ssh connection plugin
+    # books EVERY 255 as AnsibleConnectionFailure (UNREACHABLE) apart
+    # from the NOT_SSH_ERROR_SIGNATURES above
+    # (plugins/connection/ssh.py's _handle_error). Matching only the
+    # ssh messages this engine had seen instead left every other
+    # silent-or-differently-worded death - a different ssh build's
+    # ProxyCommand failure, "Connection to <host> closed by remote
+    # host.", a server that vanishes without printing anything - booked
+    # as a generic FAILED task with exit 2. Issue #1663 is the third
+    # report of exactly that (macOS arm64 ssh wording vs this list's
+    # Linux-observed shapes: ansible-playbook said UNREACHABLE with
+    # recap unreachable=1, exit 4, this engine FAILED with failed=1,
+    # exit 2), so stop growing the wording list: a 255 exit that no
+    # other program explains IS the transport failing.
+    #
+    # A remote plugin's own exit status arrives THROUGH sshd (a normal
+    # nonzero exit, or 128+N for a signal death), never as ssh's 255 -
+    # the same collision ansible documents and accepts.
     def self.connection_level_failure?(exit_code : Int32, stderr : String, stdout : String = "") : Bool
       return false if exit_code == 0
-      return true if silent_transport_death?(exit_code, stderr, stdout)
-      return true if transport_dropped_mid_session?(exit_code, stderr, stdout)
+      if exit_code == 255
+        return !NOT_SSH_ERROR_SIGNATURES.any? { |signature| stdout.includes?(signature) || stderr.includes?(signature) }
+      end
       CONNECTION_FAILURE_PATTERNS.any? { |pattern| stderr.includes?(pattern) }
-    end
-
-    # The text-free half of #connection_level_failure?: ssh exited 255
-    # (its own error convention) and had nothing to say in either
-    # stream once its own "Warning: " lines (first-contact host-key
-    # acceptance) are set aside. See CONNECTION_FAILURE_PATTERNS's
-    # comment for why this shape is transport-only evidence.
-    private def self.silent_transport_death?(exit_code : Int32, stderr : String, stdout : String) : Bool
-      return false unless exit_code == 255
-      return false unless stdout.empty?
-      stderr.each_line.all? { |line| line.starts_with?("Warning: ") }
-    end
-
-    # ssh's own mid-session drop lines ("Connection closed by <host>
-    # port <n>", "Connection reset by ..."), guarded the same way the
-    # silent-death rule is: ssh's own 255 exit and an empty plugin
-    # stdout. See the CONNECTION_FAILURE_PATTERNS comment for why these
-    # stay out of the bare text list.
-    private def self.transport_dropped_mid_session?(exit_code : Int32, stderr : String, stdout : String) : Bool
-      return false unless exit_code == 255
-      return false unless stdout.empty?
-      stderr.includes?("Connection closed by ") || stderr.includes?("Connection reset by ")
     end
 
     # Exception counterpart of #connection_level_failure? - an scp/rsync/
