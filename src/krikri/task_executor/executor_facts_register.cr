@@ -111,6 +111,7 @@ module Krikri
       # long before a successful gather, so ansible's result order puts
       # the fatal line ahead of the successful hosts' ok lines
       # (live-verified vs ansible-core 2.19.11).
+      unreachable_reported = Set(String).new
       targets.each do |host|
         next unless @unreachable_hosts.includes?(host.name)
         # Same wording/shape as report_unreachable's own banner - this
@@ -119,12 +120,23 @@ module Krikri
         # Ansible's single-event recap for a host that never connects.
         # A transport failure discovered HERE carries this attempt's
         # own ssh error; a host the pre-upload pass already knew about
-        # carries that pass's recorded one.
-        report_unreachable(nil, host, fresh_ssh_errors[host.name]? || @unreachable_ssh_errors[host.name]?)
+        # carries that pass's recorded one. A play-level
+        # `ignore_unreachable:` reaches this implicit task too (real's
+        # setup task inherits every play keyword), so the report is
+        # booked ok+ignored and the host stays in the play (issue #1680).
+        report_unreachable(nil, host, fresh_ssh_errors[host.name]? || @unreachable_ssh_errors[host.name]?, ignore: @play_ignore_unreachable)
+        # An ignored unreachable never enters ansible's `_unreachable_hosts`,
+        # so later tasks and plays must retry the connection rather than
+        # repeat this result - drop the host from the run-scoped set the
+        # pre-upload pass/this gather just filled.
+        @unreachable_hosts.delete(host.name) if @play_ignore_unreachable
+        # Remember every host this pass already reported: an ignored one
+        # leaves the set above but still owes no separate ok/failed result.
+        unreachable_reported << host.name
       end
 
       targets.each do |host|
-        next if @unreachable_hosts.includes?(host.name)
+        next if unreachable_reported.includes?(host.name)
 
         success, error_message = outcomes[host.name]
 

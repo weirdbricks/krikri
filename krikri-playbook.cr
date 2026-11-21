@@ -1690,7 +1690,8 @@ playbook.plays.each_with_index do |play, _play_index|
       playbook_file: playbook_file,
       play_source_file: play.source_file,
       play_source_line: play.source_line,
-      play_throttle_value: play.throttle_value
+      play_throttle_value: play.throttle_value,
+      play_ignore_unreachable: play.ignore_unreachable?
     )
 
     # Run tasks
@@ -1835,9 +1836,14 @@ playbook.plays.each_with_index do |play, _play_index|
     # Whole-run abort check. Unreachable hosts land in halted_hosts too
     # (report_unreachable), so they are subtracted back out here -
     # Ansible's TQM keeps failed and unreachable in separate dicts and a
-    # host newly unreachable must count once, not twice.
+    # host newly unreachable must count once, not twice. The delta is
+    # clamped at zero because an ignored unreachable now REMOVES its host
+    # from the run-scoped set (the host stayed in the play, issue #1680);
+    # that must not discount a failure another host booked.
+    newly_unreachable = unreachable_hosts.size - previously_unreachable
+    newly_unreachable = 0 if newly_unreachable < 0
     batch_failures = (executor.halted_hosts - executor.ended_hosts - executor.cleared_error_hosts - unreachable_hosts).size +
-                     (unreachable_hosts.size - previously_unreachable)
+                     newly_unreachable
     if batch_hosts.size == batch_failures
       abort_entire_run = true
       break

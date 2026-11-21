@@ -1,0 +1,6 @@
+- hosts: dead
+  gather_facts: false
+  tasks:
+    - ping:
+      ignore_unreachable: true
+    - debug: msg=still-here
