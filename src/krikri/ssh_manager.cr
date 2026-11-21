@@ -441,7 +441,10 @@ module Krikri
       if exit_code == 255
         # The SSM transport composes its typed failures with an "SSM "
         # prefix; they are transport failures even when the detail text
-        # happens to contain a word from the ssh exclusion list.
+        # happens to contain a word from the ssh exclusion list. A
+        # configuration or document error is a failed task, not an
+        # unreachable host, even though the transport reports it at 255.
+        return false if SsmUnreachableMsg.task_failure_text?(stderr)
         return true if SsmUnreachableMsg.unreachable_text?(stderr)
         return !NOT_SSH_ERROR_SIGNATURES.any? { |signature| stdout.includes?(signature) || stderr.includes?(signature) }
       end
@@ -457,6 +460,7 @@ module Krikri
     # refusal, an engine bug). Message-only, no exit code to gate on.
     def self.connection_level_exception?(ex : Exception) : Bool
       message = ex.message.to_s
+      return false if SsmUnreachableMsg.task_failure_text?(message)
       SsmUnreachableMsg.unreachable_text?(message) ||
         CONNECTION_FAILURE_PATTERNS.any? { |pattern| message.includes?(pattern) } ||
         message.includes?("scp: Connection closed")

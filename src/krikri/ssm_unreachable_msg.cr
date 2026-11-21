@@ -100,10 +100,19 @@ module Krikri
       end
     end
 
-    # True for a message this module composed, i.e. an SSM transport-level
-    # failure the result layer should book like an SSH transport failure.
+    # True for a message this module composed, whether it means the host could
+    # not be reached or the request itself was invalid. Callers that classify
+    # failed-versus-unreachable must also consult #task_failure_text?.
     def self.unreachable_text?(text : String) : Bool
       text.starts_with?(PREFIX)
+    end
+
+    # True for texts describing a local configuration or request error rather
+    # than a dead transport. Ansible books these as a FAILED task (its
+    # connection plugin raises a plain error, not AnsibleConnectionFailure),
+    # so an exit-255 result carrying one is not an unreachable host.
+    def self.task_failure_text?(text : String) : Bool
+      text.starts_with?(CONFIGURATION_ERROR) || text.starts_with?(INVALID_DOCUMENT)
     end
 
     def self.windows_text?(text : String) : Bool

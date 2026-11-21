@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "../../src/krikri/ssh_unreachable_msg"
+require "../../src/krikri/ssh_manager"
 require "../../src/krikri/host"
 
 # Issue #1068: the lead text of an ssh transport-failure unreachable msg is
@@ -119,6 +120,29 @@ describe "Krikri::SSHUnreachableMsg" do
         nil, host).must_equal(
         "Failed to connect to the host via ssh: ssh: connect to host 10.0.0.9 port 22: Connection refused"
       )
+    end
+  end
+end
+
+describe "Krikri::SSHManager SSM error classification" do
+  it "books an SSM configuration error as a failed task, not unreachable" do
+    text = "#{Krikri::SsmUnreachableMsg::CONFIGURATION_ERROR}: chunk_size must be positive"
+    Krikri::SSHManager.connection_level_failure?(255, text).must_equal(false)
+    Krikri::SSHManager.connection_level_exception?(Exception.new(text)).must_equal(false)
+  end
+
+  it "books an invalid session document as a failed task" do
+    text = "#{Krikri::SsmUnreachableMsg::INVALID_DOCUMENT}: document not found"
+    Krikri::SSHManager.connection_level_failure?(255, text).must_equal(false)
+    Krikri::SSHManager.connection_level_exception?(Exception.new(text)).must_equal(false)
+  end
+
+  it "keeps a dead target, missing credentials and access denial unreachable" do
+    [Krikri::SsmUnreachableMsg::TARGET_NOT_CONNECTED,
+     Krikri::SsmUnreachableMsg::NO_CREDENTIALS,
+     Krikri::SsmUnreachableMsg::ACCESS_DENIED].each do |text|
+      Krikri::SSHManager.connection_level_failure?(255, text).must_equal(true)
+      Krikri::SSHManager.connection_level_exception?(Exception.new(text)).must_equal(true)
     end
   end
 end
