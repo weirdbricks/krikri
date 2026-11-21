@@ -45,7 +45,7 @@ describe "get_certificate plugin argument validation" do
     result = PluginSpecHelper.run("get_certificate", {"host" => "127.0.0.1", "port" => "banana"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("argument 'port' is of type <class 'str'> and we were unable to convert to int: <class 'str'> cannot be converted to an int")
+    result["msg"].as_s.must_equal("argument 'port' is of type str and we were unable to convert to int: \"'banana'\" cannot be converted to an int")
   end
 
   it "fails a non-boolean get_certificate_chain" do

@@ -2,7 +2,7 @@
 PLAY [Krikri-playbook-generator: multi-task #20] *******************************
 
 TASK [Pacman #20.0] ************************************************************
-[ERROR]: Task failed: Module failed: argument 'remove_nosave' is of type str and we were unable to convert to bool: The value 'wwxxse' is not a valid boolean. Valid booleans include: <BOOLEAN-SET-ORDER>
+[ERROR]: Task failed: Module failed: argument 'remove_nosave' is of type str and we were unable to convert to bool: The value 'wwxxse' is not a valid boolean. Valid booleans include: '0', '1', 'f', 'false', 'n', 'no', 'off', 'on', 't', 'true', 'y', 'yes', 0, 1
 Origin: <WORK>/playbook.yml:10:7
 
  8   gather_facts: false
@@ -10,7 +10,7 @@ Origin: <WORK>/playbook.yml:10:7
 10     - name: 'Pacman #20.0'
          ^ column 7
 
-fatal: [localhost]: FAILED! => {"changed": false, "msg": "argument 'remove_nosave' is of type str and we were unable to convert to bool: The value 'wwxxse' is not a valid boolean. Valid booleans include: <BOOLEAN-SET-ORDER>"}
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "argument 'remove_nosave' is of type str and we were unable to convert to bool: The value 'wwxxse' is not a valid boolean. Valid booleans include: '0', '1', 'f', 'false', 'n', 'no', 'off', 'on', 't', 'true', 'y', 'yes', 0, 1"}
 ...ignoring
 
 PLAY RECAP *********************************************************************

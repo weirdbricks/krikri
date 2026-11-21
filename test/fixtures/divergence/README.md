@@ -68,11 +68,11 @@ the normalized transcript to `expected.out`. Capture rules:
   block-buffered when redirected, so real ansible's stderr lands in one block
   after stdout while krikri's stream is line-buffered and interleaves.
 - Normalize the scratch directory to `<WORK>` and nothing else, except the
-  `Valid booleans include:` enumeration: convert_bool builds it from a Python
-  set, so its order changes with each module process (string hash
-  randomization) and two real ansible runs already disagree. `DivergenceTranscript`
-  masks only that list as `<BOOLEAN-SET-ORDER>`; its membership and every
-  surrounding word still have to match.
+  ORDER of the `Valid booleans include:` enumeration: convert_bool builds it
+  from a Python frozenset, so its iteration order changes with each module
+  process (string hash randomization) and two real ansible runs already
+  disagree. `DivergenceTranscript` sorts only that list's members;
+  membership, quoting and every surrounding word still have to match.
 - A case whose trigger lives in the RUNNING process's environment rather than in
   the play (issue #1643: the synchronize module's `get_bin_path` probe only fails
   when no rsync is on PATH, and the play's `environment:` keyword reaches only

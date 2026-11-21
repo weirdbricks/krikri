@@ -17,11 +17,13 @@ module Krikri
       # are always strings). boolean() lowercases and strips first.
       REAL_TRUE  = %w[y yes on 1 true t]
       REAL_FALSE = %w[n no off 0 false f]
-      # convert_bool.py's BOOLEANS, repr'd - Ansible iterates a
-      # Python SET here, so the order differs between module processes
-      # (PYTHONHASHSEED); this fixed order is one of the orders real
-      # emits, and only the wording shape is deterministic.
-      BOOLEANS_REPR = %w[y yes on '1' 'true' 't' 1 1.0 True n no off '0' 'false' 'f' 0 0.0 False]
+      # convert_bool.py's BOOLEANS, repr'd. It is a frozenset, so equal members
+      # collapse before it is printed: 1, 1.0 and True are one element (repr'd
+      # 1) and 0, 0.0 and False another (repr'd 0), leaving 14 entries. Ansible
+      # iterates the set, so the order differs between module processes
+      # (PYTHONHASHSEED); this fixed order is one of the orders real emits, and
+      # only the wording shape is deterministic.
+      BOOLEANS_REPR = %w['y' 'yes' 'on' '1' 'true' 't' 1 'n' 'no' 'off' '0' 'false' 'f' 0]
 
       def bool_convertible?(raw : String) : Bool
         normalized = raw.downcase.strip
@@ -45,26 +47,29 @@ module Krikri
         overlap.size == 1 ? overlap.first : nil
       end
 
-      # parameters.py renders this sentence with native_type_name(value),
-      # the Python class's bare __name__, not a class repr - ansible-core
-      # 2.21.6 says "is of type str" (live-verified via
-      # community.general.pacman's remove_nosave: wwxxse).
+      # parameters.py fills the "is of type" slot with native_type_name(value),
+      # the Python class's bare __name__, not the "<class 'str'>" class repr an
+      # earlier core printed. ansible-core 2.21.6 says "is of type str"
+      # (live-verified through community.general.pacman's remove_nosave).
       def bool_type_error(param : String, raw : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "argument '#{param}' is of type str and we were unable to convert to bool: " \
                "The value '#{raw}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}")
       end
 
+      # Same native_type_name slot as bool_type_error; check_type_int's own
+      # detail is f'"{value!r}" cannot be converted to an int', because the
+      # Decimal conversion raises the TypeError ansible-core 2.21.6 reports.
       def int_type_error(param : String, raw : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
-          msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to int: " \
-               "<class 'str'> cannot be converted to an int")
+          msg: "argument '#{param}' is of type str and we were unable to convert to int: " \
+               "\"'#{raw}'\" cannot be converted to an int")
       end
 
-      # Live-verified against ansible-core 2.19.11 (community.docker
-      # docker_container's healthy_wait_timeout: bogus): note the bare
-      # "is of type str" in the first position - 2.19 dropped the
-      # <class ...> repr there that the int wording above still carries.
+      # Both slots are native names in ansible-core 2.21.6: the wrapper says
+      # "is of type str" (see bool_type_error) while check_type_float's detail
+      # keeps the class repr. Live-verified through community.docker
+      # docker_container's healthy_wait_timeout: bogus.
       def float_type_error(param : String, raw : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "argument '#{param}' is of type str and we were unable to convert to float: " \

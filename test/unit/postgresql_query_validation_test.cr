@@ -80,8 +80,8 @@ describe "postgresql_query plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal(
-      "argument 'login_port' is of type <class 'str'> and we were unable to convert to int: " \
-      "<class 'str'> cannot be converted to an int")
+      "argument 'login_port' is of type str and we were unable to convert to int: " \
+      "\"'notaport'\" cannot be converted to an int")
   end
 
   it "fails a non-boolean autocommit" do

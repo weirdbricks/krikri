@@ -83,19 +83,23 @@ describe "pacman plugin argument validation" do
       "Failed to find required executable \"krikri-no-such-pacman-binary\" in paths: ").must_equal(true)
   end
 
-  it "fails an unconvertible bool with the bare class name (issue #1661)" do
-    # ansible-core 2.21.6's parameters.py renders the "is of type" slot
-    # with native_type_name(value), the class's __name__ - not the
-    # "<class 'str'>" repr it printed in earlier releases.
+  it "names an unconvertible bool's type the way ansible-core 2.21.6 does (issue #1661)" do
+    # parameters.py builds the "is of type" slot from native_type_name(value),
+    # the class's bare __name__; the "<class 'str'>" repr belongs to an older
+    # core. The tail is convert_bool's frozenset repr: 1/1.0/True collapse to
+    # one member and 0/0.0/False to another, so real lists 14 entries. Only
+    # errors[0] surfaces, so the message names remove_nosave even though
+    # update_cache is invalid too.
     result = PluginSpecHelper.run("pacman", {
       "remove_nosave" => "wwxxse",
       "update_cache"  => "pklpcv",
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include(
+    result["msg"].as_s.must_equal(
       "argument 'remove_nosave' is of type str and we were unable to convert to bool: " \
-      "The value 'wwxxse' is not a valid boolean. Valid booleans include: ")
+      "The value 'wwxxse' is not a valid boolean. " \
+      "Valid booleans include: 'y', 'yes', 'on', '1', 'true', 't', 1, 'n', 'no', 'off', '0', 'false', 'f', 0")
   end
 
   it "accepts the role's own task shape (state present through the package alias)" do

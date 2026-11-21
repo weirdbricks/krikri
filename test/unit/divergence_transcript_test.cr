@@ -33,6 +33,28 @@ describe "divergence transcript" do
     Krikri::DivergenceTranscript.normalize(text, "").must_equal(text)
   end
 
+  it "sorts the boolean enumeration, whose order real randomizes per process" do
+    # convert_bool iterates a frozenset, so two real ansible runs disagree on
+    # this tail; sorting is what makes a recording and its replays comparable.
+    first = "argument 'x' is of type str and we were unable to convert to bool: " \
+            "The value 'bogus' is not a valid boolean. Valid booleans include: 'y', 1, 0, 'n'\n"
+    second = "argument 'x' is of type str and we were unable to convert to bool: " \
+             "The value 'bogus' is not a valid boolean. Valid booleans include: 0, 'n', 'y', 1\n"
+    normalized = Krikri::DivergenceTranscript.normalize(first, "")
+    normalized.must_equal(Krikri::DivergenceTranscript.normalize(second, ""))
+    # Membership is part of the message: a different set must still differ.
+    Krikri::DivergenceTranscript.normalize(first.sub("'n'", "'maybe'"), "")
+      .wont_equal(normalized)
+  end
+
+  it "sorts the enumeration without swallowing the JSON after it" do
+    # A fatal line is a JSON dump: the list is followed by `"}`, which is not
+    # a member and must keep its place when the members are reordered.
+    line = %(fatal: [localhost]: FAILED! => {"msg": "Valid booleans include: 'y', 1, 0"}\n)
+    Krikri::DivergenceTranscript.normalize(line, "")
+      .must_equal(%(fatal: [localhost]: FAILED! => {"msg": "Valid booleans include: 'y', 0, 1"}\n))
+  end
+
   it "concatenates stdout then stderr and normalizes both" do
     stdout = "PLAY [/tmp/case/play.yml] ***\nok: [localhost]\n"
     stderr = "[WARNING]: /tmp/case/roles/r/defaults/main.yml:2:22\n"
