@@ -24,6 +24,7 @@ private ANSIBLE_ENV_KEYS = %w[
   ANSIBLE_REMOTE_USER
   ANSIBLE_SSH_ARGS
   ANSIBLE_FORKS
+  ANSIBLE_DEPRECATION_WARNINGS
 ]
 
 private def with_ansible_cfg(content : String, & : String ->)
@@ -171,6 +172,34 @@ describe "ansible.cfg reading" do
         ENV["ANSIBLE_FORKS"] = raw
         Krikri::AnsibleConfig.invalid_forks_setting.must_equal({raw, "env: ANSIBLE_FORKS"}, raw)
       end
+    end
+  end
+
+  # DEPRECATION_WARNINGS is the setting ansible's own "Deprecation warnings
+  # can be disabled" line names (issue #1660). Its `boolean` coercion is
+  # non-strict, so anything outside the true set - an empty env var and a
+  # typo alike - reads as False, and only an UNSET variable falls through
+  # to the ini (live-verified vs 2.21.6).
+  it "reads [defaults] deprecation_warnings below ANSIBLE_DEPRECATION_WARNINGS" do
+    with_ansible_cfg("[defaults]\ndeprecation_warnings = False\n") do
+      Krikri::AnsibleConfig.deprecation_warnings_enabled?.must_equal(false)
+
+      ENV["ANSIBLE_DEPRECATION_WARNINGS"] = "True"
+      Krikri::AnsibleConfig.deprecation_warnings_enabled?.must_equal(true)
+
+      ENV["ANSIBLE_DEPRECATION_WARNINGS"] = ""
+      Krikri::AnsibleConfig.deprecation_warnings_enabled?.must_equal(false)
+
+      ENV["ANSIBLE_DEPRECATION_WARNINGS"] = "nope"
+      Krikri::AnsibleConfig.deprecation_warnings_enabled?.must_equal(false)
+    end
+
+    with_ansible_cfg("[defaults]\ndeprecation_warnings = yes\n") do
+      Krikri::AnsibleConfig.deprecation_warnings_enabled?.must_equal(true)
+    end
+
+    with_ansible_cfg("") do
+      Krikri::AnsibleConfig.deprecation_warnings_enabled?.must_equal(true)
     end
   end
 end

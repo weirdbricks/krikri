@@ -1,0 +1,17 @@
+# Issue #1660's rule, replayed in-process: a project that turns deprecation
+# warnings off must see none of them. Two shapes are covered - the
+# playbook-load deprecation for a mapping-form `action:` and the module-side
+# `_text` import deprecation a task's payload raises - because ansible gates
+# both from the same DEPRECATION_WARNINGS setting, the "can be disabled" hint
+# included, while the task results stay unchanged.
+#
+# `env.txt` carries the switch and `inventory.ini` pins the interpreter.
+- hosts: local
+  gather_facts: false
+  tasks:
+    - name: Deprecated mapping form of the action keyword
+      action:
+        module: deprecation_probe
+
+    - name: Module importing the deprecated _text helpers
+      deprecation_probe:

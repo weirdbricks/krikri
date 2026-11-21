@@ -275,6 +275,10 @@ module Krikri
         frames.last.parts << PendingDeprecation.new(dedupe, key, lines, entry)
         return
       end
+      # DEPRECATION_WARNINGS is checked where the block would PRINT, never
+      # where it is captured: the capture above still carries *entry*, so a
+      # task's `register:` keeps the deprecation real also keeps.
+      return unless Krikri::DeprecationHint.enabled?
       DEPRECATION_CLAIM_MUTEX.synchronize do
         return unless dedupe.add?(key)
         emit_deprecation_hint
@@ -286,6 +290,7 @@ module Krikri
     # claim happens here, so an origin a dropped capture merely prepared is
     # still free to print for the read that really happens.
     def self.replay_deprecation(pending : PendingDeprecation) : Nil
+      return unless Krikri::DeprecationHint.enabled?
       DEPRECATION_CLAIM_MUTEX.synchronize do
         next unless pending.dedupe.add?(pending.key)
         emit_deprecation_hint
@@ -391,6 +396,7 @@ module Krikri
     # value as a payload, while a config-file origin prints no payload.
     # Deduped on the whole emitted shape, like emit_core_deprecation.
     def self.emit_deprecation_with_origin(text : String, origin : String, payload : String? = nil) : Nil
+      return unless Krikri::DeprecationHint.enabled?
       line = "[DEPRECATION WARNING]: #{text}"
       key = payload ? "#{line}\n#{origin}\n#{payload}" : "#{line}\n#{origin}"
       return unless @@deprecation_texts.add?(key)
@@ -828,6 +834,7 @@ module Krikri
     # names (pseudo-tasks) and non-deprecated modules are no-ops.
     def self.emit_module_redirect_deprecation(module_name : String?, origin : String? = nil) : Nil
       return unless module_name
+      return unless Krikri::DeprecationHint.enabled?
       if text = Krikri::PlaybookParser.redirect_deprecation_text(module_name)
         # Ansible's Display dedups a deprecation's console line on the
         # WHOLE formatted message, Origin block included - so a positioned
