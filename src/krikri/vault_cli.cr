@@ -132,6 +132,14 @@ module Krikri
       read_secret(prompt) || ""
     end
 
+    # Public: the -K/--ask-become-pass prompt. ansible-core's cli/__init__.py
+    # keys "[defaults to SSH password]" on ask_pass - the suffix appears only
+    # when -k is also prompting for the connection password; a
+    # --connection-password-file does not add it (verified against 2.21.6).
+    def self.become_prompt(ask_pass : Bool) : String
+      ask_pass ? "BECOME password[defaults to SSH password]: " : "BECOME password: "
+    end
+
     # Public: a vault password prompt, applying the check ansible applies
     # to a secret as it loads it - an empty (or absent) password is fatal
     # up front instead of a later decryption failure rendered as
