@@ -24,6 +24,10 @@ shards:
     git: https://github.com/weirdbricks/krikri-aws-signer.git
     version: 0.3.0+git.commit.1dab322121cfa43790899fccde91d1651d001e2c
 
+  krikri-aws-ssm:
+    git: https://github.com/weirdbricks/krikri-aws-ssm.git
+    version: 0.2.0+git.commit.9e57e3025d4beeb2abb8aea0c89307d895f310d1
+
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git
     version: 0.4.38+git.commit.a92ac19bac8d117ddee2796f8a209b5a01e771e2

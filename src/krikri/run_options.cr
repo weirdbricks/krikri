@@ -1,3 +1,5 @@
+require "json"
+
 module Krikri
   # Command-line facts exposed to playbooks as magic vars
   # (ansible_run_tags, ansible_skip_tags, ansible_forks).
@@ -12,5 +14,10 @@ module Krikri
     # Numeric -v/-vv/... verbosity, readable from output paths that don't
     # carry the executor (HandlerRunner, ResultDisplay).
     class_property verbosity : Int32 = 0
+    # The parsed -e/--extra-vars values. The eager plugin pre-upload pass
+    # runs before any TaskExecutor context exists; without this view an
+    # `-e ansible_connection=...` would be invisible there and the pass
+    # could dial SSH at an SSM/local target.
+    class_property extra_vars : Hash(String, JSON::Any) = {} of String => JSON::Any
   end
 end

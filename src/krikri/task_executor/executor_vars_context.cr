@@ -2,6 +2,7 @@ require "../run_options"
 require "../controller_python"
 require "../deprecation_hint"
 require "../value_origin_chain"
+require "../connection_types"
 require "./executor"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
@@ -817,6 +818,12 @@ module Krikri
     private def default_connection_for(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : String
       delegate_to = task.delegate_to
       return delegate_connection_from(delegate_to) if delegate_to && !delegate_to_templated?(delegate_to)
+      # An explicit SSM alias is reported verbatim in play_context, never
+      # flattened to "ssh" (play_context.remote_addr/connection drives
+      # controller-side plugins).
+      if raw = ConnectionTypes.ssm_name(host, vars_context)
+        return raw
+      end
       PluginManager.local_connection?(host, vars_context) ? "local" : "ssh"
     end
 

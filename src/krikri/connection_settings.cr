@@ -1,6 +1,9 @@
 require "./host"
 require "./passwords"
 require "./ansible_config"
+require "./connection_types"
+require "./ssm_settings"
+require "./run_options"
 require "system/user"
 
 module Krikri
@@ -53,6 +56,18 @@ module Krikri
     # ssh_executable option (`ansible_ssh_executable`; issue #1483). nil is
     # that option's own default: plain `ssh` from PATH.
     getter ssh_executable : String?
+    # The inventory host name this dispatch belongs to. SSHManager's
+    # per-host state is keyed by connect address, but the SSM registry
+    # must key by the inventory name so two names for one instance do not
+    # alias one session.
+    getter host_name : String
+    # The raw effective ansible_connection name (an inventory/play/task
+    # var), nil when no explicit one is set. Only SSM resolution needs it
+    # today; it also lets play_context report the raw name instead of
+    # falling back to "ssh".
+    getter connection_type : String?
+    # Non-nil only when connection_type is one of the SSM aliases.
+    getter ssm : SsmSettings?
 
     # Every variable name that can change the actual SSH connection (or
     # its escalation) for a task. TaskBatcher solos any task whose own
@@ -69,12 +84,42 @@ module Krikri
       "ansible_ssh_executable",
       "ansible_become", "ansible_become_user",
       "ansible_become_password", "ansible_become_pass", "ansible_sudo_pass",
+      "ansible_connection",
+      "ansible_aws_ssm_instance_id", "ansible_aws_ssm_region",
+      "ansible_aws_ssm_profile", "ansible_aws_ssm_document",
+      "ansible_aws_ssm_timeout", "ansible_aws_ssm_retries",
+      "ansible_aws_ssm_endpoint_url",
+      "ansible_aws_ssm_access_key_id", "aws_access_key_id",
+      "ansible_aws_ssm_secret_access_key", "aws_secret_access_key",
+      "ansible_aws_ssm_session_token",
+      "ansible_aws_ssm_plugin", "ansible_aws_ssm_bucket_name",
+      "ansible_aws_ssm_s3_addressing_style", "s3_addressing_style",
     ]
+
+    # The identity Ansible's aws_ssm connection uses as `remote_user`:
+    # the controller's own username (`getpass.getuser()`), not ansible_user.
+    # The session's OS user is whatever the SSM document runs as, so using
+    # ansible_user here can make `become: true` skip the sudo wrap when
+    # become_user happens to equal it.
+    def become_baseline_user : String?
+      ssm? ? ConnectionSettings.controller_username : user
+    end
+
+    @@controller_username : String?
+
+    def self.controller_username : String?
+      @@controller_username ||= begin
+        System::User.find_by?(id: LibC.getuid.to_s).try(&.username) || ENV["USER"]?
+      rescue
+        ENV["USER"]?
+      end
+    end
 
     def initialize(@conn_host : String, @user : String, @port : Int32?,
                    @identity_file : String?, @password : String?,
                    @common_args : Array(String), @extra_args : Array(String),
-                   @ssh_executable : String? = nil)
+                   @ssh_executable : String? = nil, @host_name : String = "",
+                   @connection_type : String? = nil, @ssm : SsmSettings? = nil)
     end
 
     def self.resolve(host : Host, vars : Hash(String, JSON::Any)?) : ConnectionSettings
@@ -111,8 +156,17 @@ module Krikri
       password = Passwords.connection(vars, host)
       common_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_common_args"))
       extra_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_extra_args"))
+      connection_type = ConnectionTypes.resolved_name(host, vars)
       new(conn_host, user, port, identity_file, password, common_args, extra_args,
-        executable_setting(vars, host))
+        executable_setting(vars, host), host.name, connection_type,
+        ssm_settings_for(host, vars, connection_type))
+    end
+
+    private def self.ssm_settings_for(host : Host, vars : Hash(String, JSON::Any)?,
+                                      connection_type : String?) : SsmSettings?
+      return nil unless connection_type
+      return nil unless ConnectionTypes.ssm?(connection_type)
+      SsmSettings.resolve(host, vars)
     end
 
     # ansible's ssh_executable option. It has no deprecated alias, and its
@@ -198,13 +252,33 @@ module Krikri
     # play-start plugin pre-pass, which holds the raw play vars and has
     # no rendered per-task context.
     def self.resolve_play(host : Host, play_vars : Hash(String, JSON::Any)?) : ConnectionSettings
+      keys = CONNECTION_VAR_KEYS + Passwords::CONNECTION_KEYS
       merged = host.vars.dup
       play_vars.try do |vars|
-        (CONNECTION_VAR_KEYS + Passwords::CONNECTION_KEYS).each do |key|
+        keys.each do |key|
           merged[key] = vars[key] if vars.has_key?(key)
         end
       end
+      # Extra vars outrank every variable scope in Ansible's precedence,
+      # and the pre-upload pass has no rendered task context to read them
+      # from. RunOptions.extra_vars is the CLI's parsed -e view.
+      extra = RunOptions.extra_vars
+      keys.each do |key|
+        merged[key] = extra[key] if extra.has_key?(key)
+      end
       resolve(host, merged)
+    end
+
+    def ssm? : Bool
+      !@ssm.nil?
+    end
+
+    # The OS user the SSM session actually runs as (ssm-user for a
+    # standard shell document), or the SSH user otherwise. Staging paths
+    # use this so an SSM run never writes into the tree a later SSH run as
+    # root/admin would verify as its own.
+    def staging_user : String
+      ssm? ? SsmSettings::SESSION_OS_USER : user
     end
 
     # The (host, user, port) spec every SSHManager transport and every
@@ -221,7 +295,7 @@ module Krikri
     def fingerprint : String
       [conn_host, user, port.to_s, identity_file.to_s, password.to_s,
        common_args.join('\u{1}'), extra_args.join('\u{1}'),
-       ssh_executable.to_s].join('\u{2}')
+       ssh_executable.to_s, ssm.try(&.identity_key).to_s].join('\u{2}')
     end
 
     # The `-o`-style argv every ssh/scp/rsync invocation for THIS

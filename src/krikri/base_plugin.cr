@@ -933,7 +933,8 @@ module Krikri
             identity_file: get_identity_file,
             extra_args: conn.ssh_extra_options,
             raise_spawn_errors: true,
-            ssh_executable: conn.ssh_executable
+            ssh_executable: conn.ssh_executable,
+            connection: conn
           )
         else
           SSHManager.exec(
@@ -945,7 +946,8 @@ module Krikri
             identity_file: get_identity_file,
             extra_args: conn.ssh_extra_options,
             raise_spawn_errors: true,
-            ssh_executable: conn.ssh_executable
+            ssh_executable: conn.ssh_executable,
+            connection: conn
           )
         end
       end
@@ -1173,7 +1175,8 @@ module Krikri
           effective_connection.port,
           identity_file: get_identity_file,
           extra_args: effective_connection.ssh_extra_options,
-          ssh_executable: effective_connection.ssh_executable
+          ssh_executable: effective_connection.ssh_executable,
+          connection: effective_connection
         )
       end
     end
@@ -1191,7 +1194,8 @@ module Krikri
           effective_connection.port,
           identity_file: get_identity_file,
           extra_args: effective_connection.ssh_extra_options,
-          ssh_executable: effective_connection.ssh_executable
+          ssh_executable: effective_connection.ssh_executable,
+          connection: effective_connection
         )
       end
     end

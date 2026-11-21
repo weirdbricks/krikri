@@ -16,6 +16,8 @@ require "./inventory_parser"
 require "./task_executor/output_routing"
 require "./action_plugin_manager"
 require "./connection_plugin_loader"
+require "./connection_type_loader"
+require "./run_options"
 require "./timing_profile"
 require "./become_messages"
 require "./ssh_unreachable_msg"
@@ -600,6 +602,13 @@ module Krikri
           # module for this host happen under a local override" needs
           # a full pass over every play's tasks up front, not just
           # their hosts:.
+          # The PLAY's effective connection spec, including -e extra vars
+          # (resolve_play reads RunOptions.extra_vars). Resolved before the
+          # local/not-found skips so `-e ansible_connection=local` and
+          # `-e ansible_connection=amazon.aws.aws_ssm` take effect here,
+          # where no TaskExecutor vars context exists yet.
+          conn = ConnectionSettings.resolve_play(host, play.vars)
+          next if conn.connection_type.try { |name| ConnectionTypes.local?(name) }
           next if local_connection?(host, host.vars, playbook_dir)
           # The play's own `connection: local` keyword routes every task
           # (and the fact gather) through the controller, so an eager SSH
@@ -655,14 +664,14 @@ module Krikri
           # before the per-task check reported the real failure.
           next if [host.vars["ansible_connection"]?.try(&.as_s?),
                    role_default_conn,
-                   play.connection].compact.any? { |conn_type| connection_plugin_not_found?(conn_type, playbook_dir) || connection_plugin_unsupported?(conn_type, playbook_dir) }
+                   play.connection,
+                   RunOptions.extra_vars["ansible_connection"]?.try(&.as_s?)].compact.any? { |conn_type| connection_plugin_not_found?(conn_type, playbook_dir) || connection_plugin_unsupported?(conn_type, playbook_dir) }
 
           # Deduplicate by connection details - the PLAY's effective
-          # spec (play vars win over inventory host vars for the
+          # spec (extra vars > play vars > inventory host vars for the
           # connection keys, matching the executor's own precedence), so
           # a play-level `vars: {ansible_port: ...}` stages the plugins
           # where its tasks will really connect.
-          conn = ConnectionSettings.resolve_play(host, play.vars)
           host_key = conn.spec_key
 
           unless host_keys_seen.includes?(host_key)
@@ -1081,13 +1090,14 @@ module Krikri
       connection_host = conn.conn_host
       host_key = conn.spec_key
       user = conn.user
+      staging_user = conn.staging_user
       identity_file = conn.identity_file
       extra_args = conn.ssh_extra_options
 
       # Initialize plugin cache for this host
       @@uploaded_plugins[host_key] ||= Set(String).new
 
-      staging_dir = remote_plugin_dir(user)
+      staging_dir = remote_plugin_dir(staging_user)
 
       candidates = plugin_names.reject { |name| @@uploaded_plugins[host_key].includes?(name) }
       return if candidates.empty?
@@ -1140,7 +1150,7 @@ module Krikri
         true
         SCRIPT
       remote_md5s = Hash(String, String).new
-      list_result = SSHManager.exec_script(connection_host, user, list_script, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
+      list_result = SSHManager.exec_script(connection_host, user, list_script, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable, connection: conn)
       if list_result[:exit_code] == 75
         raise "Refusing to use plugin staging dir #{staging_base} on #{connection_host}: " \
               "a local user appears to have planted it (foreign-owned or symlinked). " \
@@ -1259,7 +1269,8 @@ module Krikri
           mode: 0o755,
           identity_file: identity_file,
           extra_args: extra_args,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          connection: conn
         )
 
         unless rsync_ok
@@ -1278,7 +1289,8 @@ module Krikri
               mode: nil,
               identity_file: identity_file,
               extra_args: extra_args,
-              ssh_executable: conn.ssh_executable
+              ssh_executable: conn.ssh_executable,
+              connection: conn
             )
           end
         end
@@ -1312,7 +1324,7 @@ module Krikri
           str << "echo " << Shell.single_quote(local_md5s[plugin_name].to_s) << " > " << Shell.single_quote("#{staging_dir}/#{plugin_name}.md5") << "\n"
         end
       end
-      SSHManager.exec_script(connection_host, user, write_script, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
+      SSHManager.exec_script(connection_host, user, write_script, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable, connection: conn)
 
       plugins_to_upload.each { |name| @@uploaded_plugins[host_key].add(name) }
 
@@ -1728,13 +1740,13 @@ module Krikri
     # become_user. A nonexistent user is left to sudo's own error path.
     def self.become_chown_probe_failure(conn : ConnectionSettings, become : Bool, become_user : String?) : JSON::Any?
       return nil unless become_user && !become_user.empty?
-      return nil unless conn.user == "root" && become_needed?(become, become_user, conn.user)
+      return nil unless conn.user == "root" && become_needed?(become, become_user, conn.become_baseline_user)
       key = "#{conn.conn_host}|#{conn.port}|#{conn.user}|#{become_user}"
       ok = @@chown_probe_mutex.synchronize { @@chown_probe_cache[key]? }
       if ok.nil?
         ok = begin
           r = SSHManager.exec_script(conn.conn_host, conn.user, chown_probe_script(become_user), conn.port,
-            timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable)
+            timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable, connection: conn)
           # Only a refused chown on a user that exists counts; 255 is ssh.
           r[:exit_code] != 1 || !user_exists_remote?(conn, become_user)
         rescue
@@ -1766,7 +1778,7 @@ module Krikri
 
     private def self.user_exists_remote?(conn : ConnectionSettings, user : String) : Bool
       r = SSHManager.exec_script(conn.conn_host, conn.user, "getent passwd #{Shell.quote_arg(user)} >/dev/null", conn.port,
-        timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable)
+        timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable, connection: conn)
       r[:exit_code] == 0
     end
 
@@ -2097,7 +2109,8 @@ module Krikri
         identity_file: conn.identity_file,
         extra_args: conn.ssh_extra_options,
         fresh_connection: false,
-        ssh_executable: conn.ssh_executable
+        ssh_executable: conn.ssh_executable,
+        connection: conn
       )
     end
 
@@ -2220,7 +2233,7 @@ module Krikri
         return daemon_result
       end
 
-      target = remote_plugin_target(plugin_name, become, become_user, conn.user, Passwords.become(vars, host), become_flags, remote_term_forwarding(vars))
+      target = remote_plugin_target(plugin_name, become, become_user, conn.become_baseline_user, Passwords.become(vars, host), become_flags, remote_term_forwarding(vars), conn.staging_user)
 
       # Execute plugin remotely with config via stdin.
       #
@@ -2274,7 +2287,8 @@ module Krikri
         timeout: remaining_exec_timeout(started, task_timeout),
         identity_file: conn.identity_file,
         extra_args: extra_args,
-        ssh_executable: conn.ssh_executable
+        ssh_executable: conn.ssh_executable,
+        connection: conn
       )
 
       return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, result)
@@ -2282,8 +2296,8 @@ module Krikri
       # ansible fails the task itself when the connection user is root and
       # the become_user does not exist (see become_chown_failure_result);
       # mirror that wording before the generic parse gets a look in.
-      if become_needed?(become, become_user, conn.user) &&
-         (failure = become_chown_failure_result(result[:exit_code], result[:stderr], become_user, conn.user))
+      if become_needed?(become, become_user, conn.become_baseline_user) &&
+         (failure = become_chown_failure_result(result[:exit_code], result[:stderr], become_user, conn.become_baseline_user))
         return failure
       end
 
@@ -2300,7 +2314,7 @@ module Krikri
       # re-uploaded mid-run either - detect it, drop the stale belief,
       # upload for real, and retry once. Bounded to a single retry so a
       # genuinely broken target still fails instead of looping.
-      if missing_remote_binary?(interpreted, target, remote_plugin_dir(conn.user))
+      if missing_remote_binary?(interpreted, target, remote_plugin_dir(conn.staging_user))
         recover_missing_plugin!(host, plugin_name, vars)
         # The binary is back, so continue on the daemon path (issue
         # #1158) rather than proving it with one more per-task ssh exec:
@@ -2326,11 +2340,12 @@ module Krikri
           timeout: remaining_exec_timeout(started, task_timeout),
           identity_file: conn.identity_file,
           extra_args: extra_args,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          connection: conn
         )
         return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, retry_result)
-        if become_needed?(become, become_user, conn.user) &&
-           (failure = become_chown_failure_result(retry_result[:exit_code], retry_result[:stderr], become_user, conn.user))
+        if become_needed?(become, become_user, conn.become_baseline_user) &&
+           (failure = become_chown_failure_result(retry_result[:exit_code], retry_result[:stderr], become_user, conn.become_baseline_user))
           return failure
         end
         return interpret_remote_result(retry_result[:exit_code], retry_result[:stdout], retry_result[:stderr])
@@ -2403,9 +2418,12 @@ module Krikri
       daemon_scope : String? = nil,
     ) : JSON::Any?
       return nil unless @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become, become_flags)
+      # SSM has no resident SSH daemon: the transport is one Session per
+      # host, never a per-task ssh process.
+      return nil if conn.ssm?
 
       extra_args = conn.ssh_extra_options
-      daemon_user = become_needed?(become, become_user || "root", conn.user) ? (become_user || "root") : nil
+      daemon_user = become_needed?(become, become_user || "root", conn.become_baseline_user) ? (become_user || "root") : nil
       return nil if SSHManager.daemon_unavailable?(conn.conn_host, conn.user, conn.port, daemon_user,
                       SSHManager.connection_sig(conn.identity_file, extra_args, conn.password), daemon_scope)
 
@@ -2414,7 +2432,7 @@ module Krikri
           conn.conn_host,
           conn.user,
           conn.port,
-          "#{remote_plugin_dir(conn.user)}/#{simple_plugin_name(plugin_name)}",
+          "#{remote_plugin_dir(conn.staging_user)}/#{simple_plugin_name(plugin_name)}",
           simple_plugin_name(plugin_name),
           JSON.parse(config),
           identity_file: conn.identity_file,
@@ -2692,9 +2710,9 @@ module Krikri
     # the sudo invocation launching it - sudo carries TERM into the become
     # user's environment, the same assumption the become daemon's own
     # `TERM=... sudo` spawn already relies on (issue #606).
-    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil, become_password : String? = nil, become_flags : String? = nil, term : String? = nil) : String
+    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil, become_password : String? = nil, become_flags : String? = nil, term : String? = nil, staging_user : String? = nil) : String
       simple_name = simple_plugin_name(plugin_name)
-      remote_plugin_path = "#{remote_plugin_dir(remote_user)}/#{simple_name}"
+      remote_plugin_path = "#{remote_plugin_dir(staging_user || remote_user)}/#{simple_name}"
       term_prefix = remote_term_prefix(term)
       return "#{term_prefix}#{remote_plugin_path}" unless become_needed?(become, become_user, remote_user)
       # -H matches ansible's sudo become plugin (sets HOME to the become
@@ -3188,89 +3206,48 @@ module Krikri
       staged_path
     end
 
-    # Connection types this engine can actually dispatch, split by the
-    # transport they mean, matched CASE-SENSITIVELY exactly like Ansible's
-    # own plugin loader, which looks the name up verbatim against plugin
-    # filenames (no lowercasing anywhere in the resolution path - verified
-    # live against ansible-core 2.19.11: `connection: Local` fails the task
-    # with "the connection plugin 'Local' was not found", and so does any
-    # FQCN that names no real connection plugin, e.g.
-    # `community.grafana.grafana`). "smart" is Ansible's default alias
-    # resolving to ssh for a remote host; paramiko_ssh is still ssh for
-    # this engine's purposes.
-    LOCAL_CONNECTION_TYPES = Set{
-      "local", "ansible.builtin.local", "ansible.legacy.local",
-    }
-
-    SSH_CONNECTION_TYPES = Set{
-      "ssh", "smart", "paramiko_ssh",
-      "ansible.builtin.ssh", "ansible.builtin.smart", "ansible.builtin.paramiko_ssh",
-      "ansible.legacy.ssh", "ansible.legacy.smart", "ansible.legacy.paramiko_ssh",
-    }
-
-    # Connection plugins Ansible RESOLVES (shipped in ansible-core
-    # itself, so the loader never returns not-found for them) but this
-    # engine has no transport for: psrp/winrm (Windows), etc. They keep
-    # the same "unknown connection falls back to SSH" behavior every
-    # unimplemented-but-real connection plugin always had here - failing
-    # them as "not found" would misreport a resolvable connection (Ansible reaches an actual connection ATTEMPT for those, failing
-    # with a connect error, not a resolution error).
-    RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES = Set{"psrp", "winrm"}
+    # The connection-type sets and the loader-aware transport verdicts
+    # live in connection_types.cr / connection_type_loader.cr, so
+    # ConnectionSettings can consult the SSM predicate without requiring
+    # Ansible's connection-plugin loader (and its role/playbook parser)
+    # into every plugin binary. These aliases keep the existing
+    # PluginManager spelling for callers and specs.
+    LOCAL_CONNECTION_TYPES                    = ConnectionTypes::LOCAL_CONNECTION_TYPES
+    SSH_CONNECTION_TYPES                      = ConnectionTypes::SSH_CONNECTION_TYPES
+    RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES = ConnectionTypes::RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES
+    SSM_CONNECTION_TYPES                      = ConnectionTypes::SSM_CONNECTION_TYPES
 
     # Whether *raw* (the effective connection type: an inventory/role/
     # task-level ansible_connection value, or a task's own `connection:`
     # keyword after substitution) names no connection plugin Ansible
     # could resolve either - so a task using it must fail the way
     # Ansible's TaskExecutor._get_connection does, instead of silently
-    # falling back to SSH. A plugin name is checked against every path
-    # Ansible's own loader consults (the playbook's and each role's
-    # `connection_plugins/`, ANSIBLE_CONNECTION_PLUGINS, a collection's
-    # `plugins/connection/` - see ConnectionPluginLoader): a plugin that
-    # EXISTS there is a resolution success Ansible would then execute (see
-    # connection_plugin_unsupported? for the separate "resolved but not
-    # executable here" verdict), while a plugin that exists NOWHERE is the
-    # not-found verdict.
+    # falling back to SSH.
     def self.connection_plugin_not_found?(raw : String, playbook_dir : String? = nil) : Bool
-      connection_plugin_transport(raw, playbook_dir).nil?
+      ConnectionTypes.not_found?(raw, playbook_dir)
     end
 
-    # This engine's transport for *raw*: "local" or "ssh", or nil when
-    # Ansible's loader would not resolve the name either. A built-in name
-    # keeps its fixed transport; any other resolvable plugin resolves to
-    # the transport its own class implies (ConnectionPluginLoader), so the
-    # local-vs-remote decisions around it (eager upload, delegation) never
-    # reach some other host. Such a plugin is not runnable here though -
-    # see connection_plugin_unsupported?.
+    # This engine's transport for *raw*: "local", "ssh" or "ssm", or nil
+    # when Ansible's loader would not resolve the name either. A built-in
+    # name keeps its fixed transport; in particular the three SSM aliases
+    # return "ssm" BEFORE ConnectionPluginLoader is consulted, so an
+    # installed amazon.aws/community.aws collection cannot turn aws_ssm
+    # back into the "resolved but not executable" failure. Any other
+    # resolvable plugin resolves to the transport its own class implies
+    # (ConnectionPluginLoader).
     def self.connection_plugin_transport(raw : String, playbook_dir : String? = nil) : String?
-      return "local" if LOCAL_CONNECTION_TYPES.includes?(raw)
-      return "ssh" if SSH_CONNECTION_TYPES.includes?(raw)
-      return "ssh" if RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES.includes?(raw)
-
-      source = ConnectionPluginLoader.find_source(raw, playbook_dir)
-      return nil unless source
-
-      ConnectionPluginLoader.local_source?(source) ? "local" : "ssh"
+      ConnectionTypes.transport(raw, playbook_dir)
     end
 
     # Whether *raw* names a connection plugin Ansible itself WOULD load
     # and execute but this engine cannot: a Python connection plugin
-    # found on one of Ansible's loader paths. Its connection lifecycle
-    # (_connect/exec_command/put_file/fetch_file) is the whole transport
-    # layer SSH or local execution replaces here, so no transport
-    # substitution can stand in for it. Tasks using one are failed
-    # outright (connection_plugin_execution_failure) rather than run over
-    # a different transport: that substitution is what made an SSM-style
-    # plugin ssh to its `ansible_host=<instance id>` instead of reaching
-    # the host (issues #1541, #1658).
+    # found on one of Ansible's loader paths.
     def self.connection_plugin_unsupported?(raw : String, playbook_dir : String? = nil) : Bool
-      return false if builtin_connection_type?(raw)
-      !ConnectionPluginLoader.find_source(raw, playbook_dir).nil?
+      ConnectionTypes.unsupported?(raw, playbook_dir)
     end
 
     private def self.builtin_connection_type?(raw : String) : Bool
-      LOCAL_CONNECTION_TYPES.includes?(raw) ||
-        SSH_CONNECTION_TYPES.includes?(raw) ||
-        RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES.includes?(raw)
+      ConnectionTypes.builtin?(raw)
     end
 
     # The task failure a plugin Ansible would run gets here. The prefix is

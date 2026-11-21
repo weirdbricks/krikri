@@ -729,6 +729,10 @@ unless extra_vars_args.empty?
     exit 1
   end
 end
+# The eager plugin pre-upload pass runs before TaskExecutor builds any
+# vars context; it needs this small view to honor
+# `-e ansible_connection=...` (and the other connection options).
+Krikri::RunOptions.extra_vars = extra_vars
 
 # Validate args
 if playbook_file.empty?

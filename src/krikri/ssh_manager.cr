@@ -12,6 +12,8 @@ require "./timing_profile"
 require "./bigint_json"
 require "./plugin_daemon"
 require "./connection_settings"
+require "./ssm_transport"
+require "./ssm_unreachable_msg"
 require "./ansible_config"
 
 module Krikri
@@ -437,6 +439,10 @@ module Krikri
     def self.connection_level_failure?(exit_code : Int32, stderr : String, stdout : String = "") : Bool
       return false if exit_code == 0
       if exit_code == 255
+        # The SSM transport composes its typed failures with an "SSM "
+        # prefix; they are transport failures even when the detail text
+        # happens to contain a word from the ssh exclusion list.
+        return true if SsmUnreachableMsg.unreachable_text?(stderr)
         return !NOT_SSH_ERROR_SIGNATURES.any? { |signature| stdout.includes?(signature) || stderr.includes?(signature) }
       end
       CONNECTION_FAILURE_PATTERNS.any? { |pattern| stderr.includes?(pattern) }
@@ -451,7 +457,8 @@ module Krikri
     # refusal, an engine bug). Message-only, no exit code to gate on.
     def self.connection_level_exception?(ex : Exception) : Bool
       message = ex.message.to_s
-      CONNECTION_FAILURE_PATTERNS.any? { |pattern| message.includes?(pattern) } ||
+      SsmUnreachableMsg.unreachable_text?(message) ||
+        CONNECTION_FAILURE_PATTERNS.any? { |pattern| message.includes?(pattern) } ||
         message.includes?("scp: Connection closed")
     end
 
@@ -476,7 +483,15 @@ module Krikri
       fresh_connection : Bool = false,
       raise_spawn_errors : Bool = false,
       ssh_executable : String? = nil,
+      connection : ConnectionSettings? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      if conn = connection
+        if conn.ssm?
+          @@stats["commands_executed"] += 1
+          return SsmTransport.exec(conn, command, timeout)
+        end
+      end
+
       init
       @@stats["commands_executed"] += 1
 
@@ -561,7 +576,15 @@ module Krikri
       extra_args : Array(String) = [] of String,
       raise_spawn_errors : Bool = false,
       ssh_executable : String? = nil,
+      connection : ConnectionSettings? = nil,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      if conn = connection
+        if conn.ssm?
+          @@stats["commands_executed"] += 1
+          return SsmTransport.exec_script(conn, script, timeout)
+        end
+      end
+
       init
       @@stats["commands_executed"] += 1
 
@@ -1124,6 +1147,8 @@ module Krikri
     # underneath them. Both are dropped for every key matching the host;
     # the `ssh -O exit` is best-effort (no master socket = no-op).
     def self.reset_connection(host_name : String) : Nil
+      SsmRegistry.reset(host_name)
+
       matching = @@daemon_processes.keys.select { |(h, _, _, _, _)| h == host_name }
       matching.each do |key|
         kill_daemon(*key)
@@ -1151,6 +1176,8 @@ module Krikri
     # `rescue IO::EOFError` - no explicit "goodbye" message needed) and
     # returns without waiting for the ssh clients to exit.
     def self.close_all_daemons : Nil
+      SsmRegistry.close_all
+
       processes = @@daemon_processes.values
       @@daemon_processes.clear
       return if processes.empty?
@@ -1186,7 +1213,16 @@ module Krikri
       recursive : Bool = false,
       extra_args : Array(String) = [] of String,
       ssh_executable : String? = nil,
+      connection : ConnectionSettings? = nil,
     )
+      if conn = connection
+        if conn.ssm?
+          @@stats["files_uploaded"] += 1
+          SsmTransport.upload(conn, local_path, remote_path, mode, recursive)
+          return
+        end
+      end
+
       init
       @@stats["files_uploaded"] += 1
 
@@ -1224,7 +1260,7 @@ module Krikri
       # files and can fold one chmod into a round trip it already makes -
       # otherwise this costs an extra round trip *per file*.
       if mode && mode != 0o644
-        exec(host, user, "chmod #{mode.to_s(8)} #{Shell.single_quote(remote_path)}", port, identity_file: identity_file, extra_args: extra_args, ssh_executable: ssh_executable)
+        exec(host, user, "chmod #{mode.to_s(8)} #{Shell.single_quote(remote_path)}", port, identity_file: identity_file, extra_args: extra_args, ssh_executable: ssh_executable, connection: connection)
       end
     end
 
@@ -1238,7 +1274,17 @@ module Krikri
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
       ssh_executable : String? = nil,
+      connection : ConnectionSettings? = nil,
+      gzip : Bool = false,
     )
+      if conn = connection
+        if conn.ssm?
+          @@stats["files_downloaded"] += 1
+          SsmTransport.download(conn, remote_path, local_path, gzip: gzip)
+          return
+        end
+      end
+
       init
       @@stats["files_downloaded"] += 1
 
@@ -1296,7 +1342,10 @@ module Krikri
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
       ssh_executable : String? = nil,
+      connection : ConnectionSettings? = nil,
     ) : Bool
+      return false if connection.try(&.ssm?)
+
       init
 
       return false unless rsync_available?
@@ -1379,7 +1428,10 @@ module Krikri
       identity_file : String? = nil,
       extra_args : Array(String) = [] of String,
       ssh_executable : String? = nil,
+      connection : ConnectionSettings? = nil,
     ) : Bool
+      return false if connection.try(&.ssm?)
+
       init
 
       return false if local_files.empty?
@@ -1416,6 +1468,8 @@ module Krikri
 
     # Close specific connection
     def self.close_connection(host : String, user : String, port : Int32? = nil) : Nil
+      SsmRegistry.close_connection(host, host)
+
       sigs = @@control_specs[{host, user, port}]?.try(&.to_a) || [""]
       sigs.each do |sig|
         control_path = get_control_path(host, user, port, sig)
@@ -1437,6 +1491,7 @@ module Krikri
 
     # Close all connections
     def self.close_all : Nil
+      SsmRegistry.close_all(bounded: 2.seconds)
       return unless Dir.exists?(@@control_path_dir)
 
       # Remove all control sockets

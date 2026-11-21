@@ -3,6 +3,7 @@ require "../controller_python"
 require "../plugin_helpers/ansible_splitlines"
 require "../plugin_helpers/script_pty_capture"
 require "../module_utils_deprecations"
+require "../connection_types"
 
 module Krikri
   class TaskExecutor
@@ -2329,8 +2330,7 @@ module Krikri
       # side effects (a `file:` step reports ok on its second run because
       # the first run created the directory). Only the missing step and the
       # steps that never ran are sent again.
-      ssh_user = conn.user
-      resend = PluginManager.batch_steps_to_resend(interpreted, steps.map(&.module_name), ssh_user)
+      resend = PluginManager.batch_steps_to_resend(interpreted, steps.map(&.module_name), conn.staging_user)
       return interpreted if resend.empty?
 
       # The re-upload this recovery performs fails exactly like any
@@ -2386,8 +2386,8 @@ module Krikri
         # and the become_user does not exist (see become_chown_failure_result);
         # the batch path must word it the same way the one-shot
         # PluginManager path does, before the generic parse gets a look in.
-        failure = if PluginManager.become_needed?(become, step.become_user, conn.user)
-                    PluginManager.become_chown_failure_result(step_result.exit_code, step_result.stderr, step.become_user, conn.user)
+        failure = if PluginManager.become_needed?(become, step.become_user, conn.become_baseline_user)
+                    PluginManager.become_chown_failure_result(step_result.exit_code, step_result.stderr, step.become_user, conn.become_baseline_user)
                   end
         interpreted[idx] = failure || PluginManager.interpret_remote_result(step_result.exit_code, step_result.stdout, step_result.stderr)
       end
@@ -2421,6 +2421,9 @@ module Krikri
     # one.
     private def try_daemon_batch(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)?
       return nil unless PluginManager.daemon_enabled?
+      # SSM sessions are not SSH daemons; the script transport below is
+      # the only batch path for an SSM host.
+      return nil if conn.ssm?
       return nil if steps.empty?
 
       become_user = steps.first.become_user
@@ -2487,8 +2490,8 @@ module Krikri
 
     private def run_batch_script(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
       batch_id = Random::Secure.hex(8)
-      script = BatchScript.build(batch_id, steps, conn.user)
-      raw = SSHManager.exec_script(conn.conn_host, conn.user, script, conn.port, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable)
+      script = BatchScript.build(batch_id, steps, conn.staging_user)
+      raw = SSHManager.exec_script(conn.conn_host, conn.user, script, conn.port, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable, connection: conn)
       parsed = BatchScript.parse(raw[:stdout])
 
       # The batch transport only ever sees the SSH invocation's STDOUT -
@@ -2872,7 +2875,7 @@ module Krikri
         }.to_json)
       end
       step_conn = ConnectionSettings.resolve(host, vars_context)
-      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, step_conn.user, Passwords.become(vars_context, host), substituted_become_flags, PluginManager.remote_term_forwarding(vars_context))
+      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, step_conn.become_baseline_user, Passwords.become(vars_context, host), substituted_become_flags, PluginManager.remote_term_forwarding(vars_context), step_conn.staging_user)
 
       # The daemon transport (item 3) dispatches by module NAME inside an
       # already-running process, and takes its privilege from which
@@ -2888,7 +2891,7 @@ module Krikri
       # Ansible never runs - and that a minimal host may not even have.
       BatchScript::Step.new(plugin_target, config_json, resolve_task_ignore_errors(task, vars_context),
         PluginManager.simple_plugin_name(task.module_name),
-        PluginManager.become_needed?(become, become_user, step_conn.user) ? become_user : nil,
+        PluginManager.become_needed?(become, become_user, step_conn.become_baseline_user) ? become_user : nil,
         substituted_params, substituted_become_flags)
     end
 
@@ -4438,6 +4441,7 @@ module Krikri
         # applies; play_context.remote_user mirrors ansible_user the same
         # way build_vars_context fills it.
         connection = vars_context["ansible_connection"]?.try(&.as_s?) ||
+                     ConnectionTypes.ssm_name(exec_host, vars_context) ||
                      (PluginManager.local_connection?(exec_host, vars_context) ? "local" : "ssh")
         remote_user = vars_context["ansible_user"]?.try(&.as_s?) || exec_host.user
         # play_context.port is var-driven only: the ansible_port var when

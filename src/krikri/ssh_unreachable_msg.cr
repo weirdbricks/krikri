@@ -1,4 +1,6 @@
 # The ssh transport-failure wrapper an unreachable msg carries, shared by
+require "./ssm_unreachable_msg"
+
 # PluginManager (which books the transport failure) and the TaskExecutor's
 # display/loop paths (which recompose it). Own leaf file for the same
 # require-cycle reason become_messages.cr is one.
@@ -26,6 +28,10 @@ module Krikri
     # death - ansible-playbook's msg ends `... can be reached over ssh:`
     # with no trailing space (live-verified vs 2.21.6).
     def self.unreachable_msg(detail : String, pipelining : Bool, connection_host : String) : String
+      # SSM composes its own actionable, "SSM "-prefixed line; wrapping it in
+      # ssh's wording would misreport the transport.
+      return detail if SsmUnreachableMsg.unreachable_text?(detail)
+
       if pipelining
         %(Data could not be sent to remote host "#{connection_host}". Make sure this host can be reached over ssh: #{detail})
       else

@@ -7,6 +7,7 @@ require "../param_sentinels"
 require "../plugin_helpers/synchronize_rsync"
 require "../plugin_helpers/strict_bool_params"
 require "../passwords"
+require "../ssm_settings"
 
 module Krikri
   # ansible.posix.synchronize as a controller-side action plugin that
@@ -161,6 +162,19 @@ module Krikri
     # AnsibleModule setup (bool conversion, then mode's choices)
     # validation follows in execute, matching real's
     # action-plugin-before-module ordering.
+    private def pre_dispatch_failure : ActionResult?
+      munging_literal_type_failure || ssm_transport_failure
+    end
+
+    private def ssm_transport_failure : ActionResult?
+      return nil unless ConnectionSettings.resolve(@host, @vars).ssm?
+      ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+        false, true, SsmSettings::SYNCHRONIZE_UNSUPPORTED_MESSAGE,
+        extra: {"_ansible_module_never_ran" => JSON::Any.new(true)},
+        key_order: PARAM_FAILURE_KEY_ORDER
+      ), PARAM_FAILURE_KEY_ORDER))
+    end
+
     private def invalid_params_result(src_param, dest_param) : ActionResult?
       # Real's guard is `src is None or dest is None`, so a null or absent
       # src/dest fails HERE (the action plugin, before the module is ever
@@ -253,7 +267,7 @@ module Krikri
       if invalid = invalid_params_result(src_param, dest_param)
         return invalid
       end
-      if failure = munging_literal_type_failure
+      if failure = pre_dispatch_failure
         return failure
       end
       # Real's action plugin pops use_ssh_args out of the task args before

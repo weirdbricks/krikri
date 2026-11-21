@@ -1442,11 +1442,11 @@ module Krikri
       end
 
       run_remote = ->(command : String, timeout : Int32) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)? do
-        wrapper = PluginManager.become_shell_wrapper(command, become, become_user, conn.user, become_password, become_flags)
+        wrapper = PluginManager.become_shell_wrapper(command, become, become_user, conn.become_baseline_user, become_password, become_flags)
         if wrapper[:via_stdin]
-          SSHManager.exec_script(connection_host, user, wrapper[:command], conn.port, timeout: timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable) rescue nil
+          SSHManager.exec_script(connection_host, user, wrapper[:command], conn.port, timeout: timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable, connection: conn) rescue nil
         else
-          SSHManager.exec(connection_host, user, wrapper[:command], conn.port, timeout: timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable) rescue nil
+          SSHManager.exec(connection_host, user, wrapper[:command], conn.port, timeout: timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable, connection: conn) rescue nil
         end
       end
 
@@ -2752,7 +2752,8 @@ module Krikri
           conn.port,
           identity_file: conn.identity_file,
           extra_args: conn.ssh_extra_options,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          connection: conn
         )
       rescue
         return params
@@ -2835,7 +2836,8 @@ module Krikri
         conn.port,
         identity_file: conn.identity_file,
         extra_args: conn.ssh_extra_options,
-        ssh_executable: conn.ssh_executable
+        ssh_executable: conn.ssh_executable,
+        connection: conn
       )
       return nil unless result[:exit_code] == 0 && result[:stdout].strip == local_sha1
 
@@ -2886,7 +2888,8 @@ module Krikri
           identity_file: conn.identity_file,
           recursive: true,
           extra_args: conn.ssh_extra_options,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          connection: conn
         )
       rescue
         return params
@@ -3027,7 +3030,8 @@ module Krikri
           conn.port,
           identity_file: conn.identity_file,
           extra_args: conn.ssh_extra_options,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          connection: conn
         )
       rescue
         return params
@@ -3198,7 +3202,8 @@ module Krikri
             conn.port,
             identity_file: conn.identity_file,
             extra_args: conn.ssh_extra_options,
-            ssh_executable: conn.ssh_executable
+            ssh_executable: conn.ssh_executable,
+            connection: conn
           )
         end
       end
@@ -3289,7 +3294,8 @@ module Krikri
           conn.port,
           identity_file: conn.identity_file,
           extra_args: conn.ssh_extra_options,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          connection: conn
         )
         verdict = PluginHelpers::InterpreterProbe.parse(result[:stdout]) if result[:exit_code] == 0
       rescue
@@ -3313,7 +3319,8 @@ module Krikri
         conn.port,
         identity_file: conn.identity_file,
         extra_args: conn.ssh_extra_options,
-        ssh_executable: conn.ssh_executable
+        ssh_executable: conn.ssh_executable,
+        connection: conn
       )
       return nil unless result[:exit_code] == 0
       PluginHelpers::ScriptRemoteStaging.parsed_tmpdir(result[:stdout])
@@ -3331,7 +3338,8 @@ module Krikri
         conn.port,
         identity_file: conn.identity_file,
         extra_args: conn.ssh_extra_options,
-        ssh_executable: conn.ssh_executable
+        ssh_executable: conn.ssh_executable,
+        connection: conn
       )
     end
 
@@ -3419,7 +3427,8 @@ module Krikri
           identity_file: conn.identity_file,
           recursive: true,
           extra_args: conn.ssh_extra_options,
-          ssh_executable: conn.ssh_executable
+          ssh_executable: conn.ssh_executable,
+          connection: conn
         )
       rescue
         return params

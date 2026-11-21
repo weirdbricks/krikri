@@ -713,3 +713,21 @@ describe "SynchronizeActionPlugin missing rsync" do
     end
   end
 end
+
+describe "SynchronizeActionPlugin over SSM" do
+  it "fails cleanly before building an rsync-over-ssh argv" do
+    host = Krikri::Host.new("i-0123456789")
+    host.vars["ansible_connection"] = JSON::Any.new("amazon.aws.aws_ssm")
+
+    result = Krikri::SynchronizeActionPlugin.new(
+      {"src" => "/tmp/sync-src/", "dest" => "/tmp/sync-dest/"},
+      {"ansible_connection" => JSON::Any.new("amazon.aws.aws_ssm")},
+      host, nil, host).execute
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["changed"].as_bool.must_equal(false)
+    json.as_h["msg"].as_s.must_equal(Krikri::SsmSettings::SYNCHRONIZE_UNSUPPORTED_MESSAGE)
+    json.as_h.has_key?("cmd").must_equal(false)
+  end
+end

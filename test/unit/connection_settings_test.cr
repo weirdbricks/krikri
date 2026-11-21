@@ -408,3 +408,101 @@ describe Krikri::TaskBatcher do
     groups.any? { |group| group.map(&.name).includes?("switch") && group.size > 1 }.must_equal(false)
   end
 end
+
+describe "Krikri::ConnectionSettings (aws_ssm)" do
+  serial!
+
+  it "resolves the SSM settings, raw connection name and staging identity" do
+    host = conn_host("web1", "admin")
+    host.vars["ansible_connection"] = jv("amazon.aws.aws_ssm")
+    host.vars["ansible_aws_ssm_instance_id"] = jv("i-0123456789")
+    host.vars["ansible_aws_ssm_region"] = jv("us-east-2")
+
+    conn = Krikri::ConnectionSettings.resolve(host, nil)
+
+    conn.ssm?.must_equal(true)
+    conn.connection_type.must_equal("amazon.aws.aws_ssm")
+    conn.host_name.must_equal("web1")
+    conn.staging_user.must_equal("ssm-user")
+    ssm = conn.ssm || raise "expected SSM settings"
+    ssm.target.must_equal("i-0123456789")
+    ssm.region.must_equal("us-east-2")
+  end
+
+  it "leaves an ordinary ssh host on its own staging identity" do
+    conn = Krikri::ConnectionSettings.resolve(conn_host("web1", "admin"), nil)
+
+    conn.ssm?.must_equal(false)
+    conn.connection_type.must_be_nil
+    conn.staging_user.must_equal("admin")
+    conn.ssm.must_be_nil
+  end
+
+  it "uses the controller username as the SSM become baseline, not ansible_user" do
+    settings = Krikri::SsmSettings.new("i-0123456789")
+    conn = Krikri::ConnectionSettings.new(
+      "i-0123456789", "root", nil, nil, nil, [] of String, [] of String,
+      host_name: "web1", connection_type: "aws_ssm", ssm: settings)
+    conn.become_baseline_user.must_equal(Krikri::ConnectionSettings.controller_username)
+    conn.become_baseline_user.wont_equal("root") unless Krikri::ConnectionSettings.controller_username == "root"
+
+    ssh = Krikri::ConnectionSettings.new(
+      "host", "deploy", nil, nil, nil, [] of String, [] of String)
+    ssh.become_baseline_user.must_equal("deploy")
+  end
+
+  it "sees -e extra vars in the play-level pre-pass resolution" do
+    previous = Krikri::RunOptions.extra_vars
+    begin
+      Krikri::RunOptions.extra_vars = {
+        "ansible_connection" => jv("amazon.aws.aws_ssm"),
+      } of String => JSON::Any
+      host = conn_host("web1", "admin")
+      host.vars["ansible_aws_ssm_instance_id"] = jv("i-0123456789")
+
+      conn = Krikri::ConnectionSettings.resolve_play(host, nil)
+
+      conn.ssm?.must_equal(true)
+      conn.connection_type.must_equal("amazon.aws.aws_ssm")
+      ssm = conn.ssm || raise "expected SSM settings"
+      ssm.target.must_equal("i-0123456789")
+    ensure
+      Krikri::RunOptions.extra_vars = previous
+    end
+  end
+
+  it "lets -e outrank a play-level ansible_connection var" do
+    previous = Krikri::RunOptions.extra_vars
+    begin
+      Krikri::RunOptions.extra_vars = {
+        "ansible_connection" => jv("local"),
+      } of String => JSON::Any
+      host = conn_host("web1", "admin")
+      play_vars = {"ansible_connection" => jv("ssh")} of String => JSON::Any
+
+      conn = Krikri::ConnectionSettings.resolve_play(host, play_vars)
+
+      conn.connection_type.must_equal("local")
+    ensure
+      Krikri::RunOptions.extra_vars = previous
+    end
+  end
+end
+
+describe "Krikri::TaskBatcher (aws_ssm)" do
+  it "solos a task whose own vars flip ansible_connection to SSM" do
+    tasks_yaml = <<-YAML
+      - name: a
+        ansible.builtin.command: echo one
+      - name: switch
+        ansible.builtin.command: echo two
+        vars:
+          ansible_connection: amazon.aws.aws_ssm
+      - name: c
+        ansible.builtin.command: echo three
+      YAML
+    playbook = Krikri::PlaybookParser.parse_string("- hosts: x\n  tasks:\n" + tasks_yaml.split("\n").map { |line| "  #{line}" }.join("\n"))
+    groups = Krikri::TaskBatcher.plan(playbook.plays[0].tasks)
+    groups.any? { |group| group.map(&.name).includes?("switch") && group.size > 1 }.must_equal(false)
+  end
+end

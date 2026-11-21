@@ -1,4 +1,5 @@
 require "./executor"
+require "../ssm_settings"
 
 module Krikri
   class TaskExecutor
@@ -947,6 +948,13 @@ module Krikri
       # never a local-connection vote - an inventory-defined localhost is
       # a plain ssh target), so async dispatch cannot disagree with the
       # synchronous path about where the same task runs.
+      if ConnectionSettings.resolve(exec_host, vars).ssm?
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => true,
+          "msg"     => SsmSettings::ASYNC_UNSUPPORTED_MESSAGE,
+        }.to_json)
+      end
       is_local = PluginManager.local_connection?(exec_host, vars)
       unless is_local
         return execute_remote_async(task, exec_host, config_json, vars, substitutor, substituted_become_user)
@@ -1153,7 +1161,7 @@ module Krikri
       become_pw = Passwords.become(vars, exec_host)
       conn = ConnectionSettings.resolve(exec_host, vars)
       substituted_become_flags = resolve_task_become_flags(task, exec_host, vars, substitutor)
-      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, conn.user, become_pw, substituted_become_flags, PluginManager.remote_term_forwarding(vars))
+      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, conn.become_baseline_user, become_pw, substituted_become_flags, PluginManager.remote_term_forwarding(vars), conn.staging_user)
       # With a become password the target is the probe+sudo -S wrapper,
       # which is full of single quotes - it cannot live inside the
       # `sh -c '<...>'` argv string below (the quotes would terminate
@@ -1161,7 +1169,7 @@ module Krikri
       # anyway). That shape writes the inner command to its own base64'd
       # file instead; without a password the launch bytes stay exactly
       # as they always were.
-      pw_wrapped = !become_pw.nil? && PluginManager.become_needed?(become, become_user, conn.user)
+      pw_wrapped = !become_pw.nil? && PluginManager.become_needed?(become, become_user, conn.become_baseline_user)
       connection_host = conn.conn_host
       user = conn.user
       identity_file = conn.identity_file
@@ -1209,7 +1217,7 @@ module Krikri
                  SCRIPT
                end
 
-      launched = SSHManager.exec_script(connection_host, user, launch, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
+      launched = SSHManager.exec_script(connection_host, user, launch, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable, connection: conn)
       if launched[:exit_code] != 0
         return JSON.parse({
           "changed" => false,
@@ -1245,7 +1253,7 @@ module Krikri
       deadline = Time.instant + (task.async_seconds || raise "BUG: async_seconds missing").seconds
       loop do
         sleep poll.seconds
-        check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable)
+        check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable, connection: conn)
         if (output = check[:stdout].strip).size > 0
           if status = (JSON.parse(output) rescue nil)
             # The file can still hold the synchronous launch stub
