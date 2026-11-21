@@ -1,0 +1,19 @@
+
+PLAY [localctl] ****************************************************************
+
+TASK [ping] ********************************************************************
+[ERROR]: Task failed: Data could not be sent to remote host "192.0.2.1". Make sure this host can be reached over ssh: Connection to 192.0.2.1 closed by remote host.
+Origin: <WORK>/playbook.yml:7:7
+
+5   gather_facts: false
+6   tasks:
+7     - ping:
+        ^ column 7
+
+failed: [localctl -> target] (item=one) => {"ansible_loop_var": "item", "changed": false, "item": "one", "msg": "Task failed: Data could not be sent to remote host \"192.0.2.1\". Make sure this host can be reached over ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+failed: [localctl -> target] (item=two) => {"ansible_loop_var": "item", "changed": false, "item": "two", "msg": "Task failed: Data could not be sent to remote host \"192.0.2.1\". Make sure this host can be reached over ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+fatal: [localctl -> target]: UNREACHABLE! => {"changed": false, "msg": "All items completed", "results": [{"ansible_loop_var": "item", "changed": false, "exception": "(traceback unavailable)", "item": "one", "msg": "Task failed: Data could not be sent to remote host \"192.0.2.1\". Make sure this host can be reached over ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}, {"ansible_loop_var": "item", "changed": false, "exception": "(traceback unavailable)", "item": "two", "msg": "Task failed: Data could not be sent to remote host \"192.0.2.1\". Make sure this host can be reached over ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}], "unreachable": true}
+
+PLAY RECAP *********************************************************************
+localctl                   : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+

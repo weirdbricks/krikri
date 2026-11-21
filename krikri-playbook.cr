@@ -1243,7 +1243,18 @@ if key_file = private_key_file
   inventory.hosts.each_value { |host| host.vars["ansible_ssh_private_key_file"] = JSON::Any.new(key_file) }
 end
 if conn = connection_override
-  inventory.hosts.each_value { |host| host.vars["ansible_connection"] = JSON::Any.new(conn) }
+  # -c sets the connection DEFAULT; a host's own ansible_connection variable
+  # beats it (TaskExecutor._get_connection reads the variable over
+  # play_context.connection, live-verified vs 2.21.6: `-c local` with an
+  # inventory host pinned ansible_connection=ssh still dials ssh). The
+  # divergence harness always runs its cases with -c local, so clobbering
+  # host vars here turned every pinned-ssh delegate into a local dispatch
+  # (issue #1688's corpus case is the first inventory that needs the pin to
+  # survive).
+  inventory.hosts.each_value do |host|
+    next if host.vars["ansible_connection"]?
+    host.vars["ansible_connection"] = JSON::Any.new(conn)
+  end
 end
 # -b/--become and --become-user are deliberately NOT applied as
 # `ansible_become`/`ansible_become_user` host vars: Ansible's -b

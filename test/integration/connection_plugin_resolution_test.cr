@@ -20,14 +20,24 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook(pb : String, extra_args : Array(String) = [] of String) : {Process::Status, String}
-  playbook = File.tempname("connection-type", ".yml")
+private def run_playbook(pb : String, extra_args : Array(String) = [] of String, host_connection : String? = nil) : {Process::Status, String}
+  dir = File.tempname("connection-type")
+  Dir.mkdir_p(dir)
+  inv = File.join(dir, "inv.ini")
+  # A connection set ON THE HOST is how these tests hand the type over: real
+  # reads the host's ansible_connection variable over the CLI -c default
+  # (TaskExecutor._get_connection, live-verified vs 2.21.6 both ways: -c local
+  # with a host pinned Local fails naming 'Local', -c Local with a host pinned
+  # local runs locally), so -c would not reach the resolution path this file
+  # pins.
+  File.write(inv, host_connection ? "localhost ansible_connection=#{host_connection}\n" : File.read(INVENTORY))
+  playbook = File.join(dir, "pb.yml")
   File.write(playbook, pb)
   captured = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY] + extra_args + [playbook], output: captured, error: captured)
+  status = Process.run(BINARY, ["-i", inv] + extra_args + [playbook], output: captured, error: captured)
   {status, captured.to_s}
 ensure
-  File.delete(playbook) if playbook && File.exists?(playbook)
+  FileUtils.rm_r(dir) if dir && Dir.exists?(dir)
 end
 
 describe "unresolvable connection type fails the task like Ansible" do
@@ -35,7 +45,7 @@ describe "unresolvable connection type fails the task like Ansible" do
   # and `it` names cannot interpolate, so the classic suite's conn_type
   # loop is unrolled into one static it per connection type.
   it "fails the task (not unreachable) for ansible_connection community.grafana.grafana set on the host" do
-    status, output = run_playbook(<<-YAML, ["-c", "community.grafana.grafana"])
+    status, output = run_playbook(<<-YAML, host_connection: "community.grafana.grafana")
       - hosts: localhost
         gather_facts: false
         tasks:
@@ -52,7 +62,7 @@ describe "unresolvable connection type fails the task like Ansible" do
   end
 
   it "fails the task (not unreachable) for ansible_connection Podman set on the host" do
-    status, output = run_playbook(<<-YAML, ["-c", "Podman"])
+    status, output = run_playbook(<<-YAML, host_connection: "Podman")
       - hosts: localhost
         gather_facts: false
         tasks:
@@ -69,7 +79,7 @@ describe "unresolvable connection type fails the task like Ansible" do
   end
 
   it "fails the task (not unreachable) for ansible_connection Local set on the host" do
-    status, output = run_playbook(<<-YAML, ["-c", "Local"])
+    status, output = run_playbook(<<-YAML, host_connection: "Local")
       - hosts: localhost
         gather_facts: false
         tasks:
@@ -86,7 +96,7 @@ describe "unresolvable connection type fails the task like Ansible" do
   end
 
   it "fails the task (not unreachable) for ansible_connection LOCAL set on the host" do
-    status, output = run_playbook(<<-YAML, ["-c", "LOCAL"])
+    status, output = run_playbook(<<-YAML, host_connection: "LOCAL")
       - hosts: localhost
         gather_facts: false
         tasks:
@@ -103,7 +113,7 @@ describe "unresolvable connection type fails the task like Ansible" do
   end
 
   it "fails the task (not unreachable) for ansible_connection bogusconnection set on the host" do
-    status, output = run_playbook(<<-YAML, ["-c", "bogusconnection"])
+    status, output = run_playbook(<<-YAML, host_connection: "bogusconnection")
       - hosts: localhost
         gather_facts: false
         tasks:
@@ -117,6 +127,26 @@ describe "unresolvable connection type fails the task like Ansible" do
     output.must_include("failed=1", output)
     output.wont_include("unreachable=1", output)
     output.wont_include("Failed to upload", output)
+  end
+
+  it "keeps the CLI -c default from clobbering a host's own ansible_connection (issue #1688)" do
+    # Real reads the host's ansible_connection variable over the CLI -c
+    # default (live-verified vs 2.21.6 both ways), so `-c local` with the
+    # host pinned to an unresolvable type still fails naming THAT type -
+    # the engine used to stamp -c over every host var, which made the
+    # divergence harness's -c local turn pinned-ssh delegates into local
+    # dispatches.
+    status, output = run_playbook(<<-YAML, ["-c", "local"], host_connection: "Local")
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: ordinary task
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+    status.success?.must_equal(false, output)
+    output.must_include("the connection plugin 'Local' was not found", output)
+    output.wont_include("unreachable=1", output)
   end
 
   it "fails via a task-level connection: override too" do
@@ -134,7 +164,7 @@ describe "unresolvable connection type fails the task like Ansible" do
   end
 
   it "still fails Gathering Facts (not unreachable) when the play gathers facts" do
-    status, output = run_playbook(<<-YAML, ["-c", "community.grafana.grafana"])
+    status, output = run_playbook(<<-YAML, host_connection: "community.grafana.grafana")
       - hosts: localhost
         gather_facts: true
         tasks:
@@ -159,7 +189,7 @@ describe "unresolvable connection type fails the task like Ansible" do
     # skip raises Minitest::Skip instead.
     skip "containers.podman not installed on this controller" unless File.exists?(File.join(ENV["HOME"], ".ansible", "collections",
                                                                        "ansible_collections", "containers", "podman", "plugins", "connection", "podman.py"))
-    status, output = run_playbook(<<-YAML, ["-c", "containers.podman.podman"])
+    status, output = run_playbook(<<-YAML, host_connection: "containers.podman.podman")
       - hosts: localhost
         gather_facts: false
         tasks:

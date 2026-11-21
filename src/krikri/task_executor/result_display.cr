@@ -2981,15 +2981,16 @@ module Krikri
     end
 
     # The [ERROR] block that precedes a LOOPED task's per-item
-    # ssh-unreachable `failed:` line (issue #275), whose shape follows the
-    # ORIGIN host's own connection:
-    # - origin over ssh: real prints the collapsed single segment - just
-    #   the "Task failed: Failed to connect ..." brief carrying the task's
-    #   Origin, no second segment, no cause section. Observed on the #275
-    #   round's real ssh-origin repro.
-    # - ansible_connection=local origin: the two-segment chain - "Task
-    #   failed." with the task Origin, then the bare ssh failure under
-    #   "<<< caused by >>>".
+    # ssh-unreachable `failed:` line (issue #275), whose shape:
+    # - a DELEGATED item: real prints the collapsed single segment - just
+    #   the "Task failed: <brief>" msg carrying the task's Origin - no
+    #   second segment, no cause section, whatever the ORIGIN host's own
+    #   connection is (issue #1688, live-verified vs 2.21.6 on a local
+    #   origin delegating to an ssh host; same rule the non-looped
+    #   report_unreachable path follows, issue #650).
+    # - a non-delegated item on a local origin: the two-segment chain -
+    #   "Task failed." with the task Origin, then the bare ssh failure
+    #   under "<<< caused by >>>".
     # The bare ssh failure keeps its own empty events list in the chained
     # form so collapse never folds the two segments back into one (it
     # mirrors the ssh connection plugin's own exception event).

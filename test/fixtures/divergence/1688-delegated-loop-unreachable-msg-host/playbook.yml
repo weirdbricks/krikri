@@ -1,0 +1,11 @@
+# The issue #1688 repro verbatim: a looped task delegated to an ssh host
+# whose transport always fails. The wrapper script plays the dead ssh
+# endpoint (stderr detail + exit 255), so no real host is needed.
+- hosts: localctl
+  gather_facts: false
+  tasks:
+    - ping:
+      delegate_to: target
+      loop:
+        - one
+        - two
