@@ -4522,7 +4522,7 @@ module Krikri
       end
     end
 
-    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?, active_guarantee : Set(String) = Set(String).new, active_loop_vars : Set(String) = Set(String).new, branch_skipped : Bool = false) : Nil
+    private def scan_block_tag_refs(cond_no_strings : String, loop_var : String?, active_guarantee : Set(String) = Set(String).new, active_loop_vars : Set(String) = Set(String).new, branch_skipped : Bool = false, set_targets : Set(String) = Set(String).new) : Nil
       # Jinja never renders a branch an enclosing loop's statically decided
       # iterable rules out (an empty iterable's body, or a non-empty one's
       # `{% else %}`), so a reference that only that branch would evaluate
@@ -4556,6 +4556,9 @@ module Krikri
         # Crinja for-loop binding, never as a real substitutor variable
         # (round 813222, pluggero.burpsuite).
         next if active_loop_vars.includes?(root)
+        # Bound by a {% set %} earlier in the SAME template text: Jinja
+        # keeps the assignment visible to every later tag (issue #1685).
+        next if set_targets.includes?(root)
         # The shared tolerance chain from the `{{ }}`-span scanner
         # (keywords, builtin filters, filter/function calls, kwarg
         # names, `| default(...)`, and - the ruzickap.proxy_settings
@@ -4985,6 +4988,12 @@ module Krikri
 
     private def scan_strict_block_tags_for_undefined(text : String) : Nil
       stack = [] of BlockTagFrame
+      # Names bound by a {% set %} seen SO FAR in this text. ansible-core
+      # renders `{% set n = [...] %}{% for p in n %}` as ONE template and
+      # Jinja keeps the assignment visible to every later tag - for
+      # iterables, `{% if %}` conditions and filter chains alike (issue
+      # #1685) - so a later tag referencing the target must not raise.
+      set_roots = Set(String).new
       i = 0
       while i < text.size
         # Scan forward from i to the next `{%` block-tag opener (NOT
@@ -5036,6 +5045,14 @@ module Krikri
           # nothing - fall through to the general condition parse below
         end
 
+        # A block assign form ({% set x %}...{% endset %}) has no '=' and
+        # no RHS to scan - only its target binding, like any other set.
+        if stripped.starts_with?("set ") && !stripped.index('=')
+          add_set_target_roots(stripped[4..], set_roots)
+          i = close + 2
+          next
+        end
+
         parsed = parse_block_tag_condition(stripped)
         if parsed
           loop_var, cond = parsed
@@ -5068,7 +5085,13 @@ module Krikri
         # was missing the same-clause case.
         own_guards = block_tag_defined_guards(cond_no_strings)
         scan_block_tag_refs(cond_no_strings, loop_var, active_guarantee | own_guards, active_loop_vars,
-          stack.any?(&.branch_skipped?))
+          stack.any?(&.branch_skipped?), set_roots)
+        # After scanning a set tag's RHS, its target(s) bind for the rest
+        # of the text (issue #1685) - including this set tag's own later
+        # siblings and anything nested inside them.
+        if stripped.starts_with?("set ") && (set_target_text = loop_var)
+          add_set_target_roots(set_target_text, set_roots)
+        end
 
         if stripped.starts_with?("if ")
           stack.push(BlockTagFrame.new(:if, own_guards))
@@ -5087,6 +5110,18 @@ module Krikri
             branch_skipped: iterable_state == :empty))
         end
         i = close + 2
+      end
+    end
+
+    # Records the ROOT name(s) a {% set %} binds into *set_roots*: `x` in
+    # `set x = ...`, both names in the tuple form `set a, b = ...`, the
+    # object in the attribute form `set ns.attr = ...`, and the same for a
+    # block assign form's `set x` (with or without a trailing `| filter`).
+    private def add_set_target_roots(target_text : String, set_roots : Set(String)) : Nil
+      target_text.split(',').each do |part|
+        if (root = part.strip[/\A[A-Za-z_][A-Za-z0-9_]*/])
+          set_roots << root
+        end
       end
     end
 
