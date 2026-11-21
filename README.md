@@ -58,6 +58,47 @@ What changes when you swap `ansible-playbook` for `krikri-playbook`:
 
 ---
 
+## 🔌 AWS SSM Session Manager
+
+Set `ansible_connection=aws_ssm` (also accepted: `amazon.aws.aws_ssm`,
+`community.aws.aws_ssm`) to run a play over a Systems Manager session instead of
+ssh. krikri speaks the SSM data-channel protocol itself: the controller needs
+**no AWS CLI and no `session-manager-plugin`**, and **no S3 bucket** - plugins,
+files and command output all travel over the session.
+
+```ini
+[targets]
+web1 ansible_connection=aws_ssm ansible_aws_ssm_instance_id=i-0123456789abcdef0 ansible_aws_ssm_region=us-east-1
+```
+
+Requirements:
+
+- the SSM agent running on the target, with an instance profile carrying
+  `AmazonSSMManagedInstanceCore` or equivalent;
+- controller permissions for `ssm:StartSession`, `ssm:ResumeSession` and
+  `ssm:TerminateSession`, plus `kms:GenerateDataKey` when the account's Session
+  Manager preferences require KMS encryption;
+- egress to `ssm.<region>.amazonaws.com` and the session messages gateway;
+- Linux targets only, and AWS credentials from the standard chain (environment,
+  shared profiles including `role_arn`/`source_profile`, SSO cache,
+  `credential_process`, web identity, ECS, IMDSv2).
+
+Supported options use Ansible's names and precedence: the target comes from
+`ansible_aws_ssm_instance_id`, else `ansible_host`, else the host name;
+`ansible_aws_ssm_region`, `_profile`, `_document`, `_timeout`, `_retries`,
+`_endpoint_url`, `_access_key_id`, `_secret_access_key`, `_session_token`, and
+`ansible_shell_type` (Linux shells only). `ansible_aws_ssm_bucket_name`,
+`ansible_aws_ssm_plugin` and the S3 addressing options are accepted and ignored
+with a one-time warning.
+
+`ansible_user`/`remote_user` are not login identities over SSM: the session runs
+as the document's user (`ssm-user` by default), so use `become`/`become_user` to
+switch privileges. Deliberate v1 limits (no Windows, no `async:`, no
+`synchronize`, no port forwarding, no interactive MFA AssumeRole) are in
+[KNOWN_MISSING.md](KNOWN_MISSING.md#aws-ssm-connections-deliberate-v1-limits).
+
+---
+
 ## ⚡ Performance
 
 Native compiled modules, one persistent SSH connection per host, and

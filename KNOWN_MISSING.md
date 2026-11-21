@@ -41,6 +41,37 @@ deleted from here.
 Do not re-litigate without new evidence - and if new evidence turns up, open an issue rather than
 arguing with the note in place.
 
+### AWS SSM connections: deliberate v1 limits
+
+`ansible_connection=aws_ssm` (and the `amazon.aws.`/`community.aws.` spellings) is a native
+transport: no AWS CLI, no `session-manager-plugin`, no S3 bucket. The entries below are decided for
+v1, and they are not all the same kind of thing: no S3, no port forwarding and no SSH-over-SSM are
+**non-goals** (the issue exists to avoid them); no Windows/`async:`/`synchronize` and the MFA gap
+are **unsupported capabilities** that fail cleanly instead of half-working.
+
+- **S3 is never used, by design - it is not an unimplemented plugin feature.**
+  `ansible_aws_ssm_bucket_name`, `ansible_aws_ssm_plugin` and the S3 addressing options are
+  accepted and ignored with a one-time warning so existing inventories keep working; files and
+  plugins always travel over the session itself.
+- **`ansible_user` is not a login user.** The session runs as the SSM document's run-as user
+  (`ssm-user` for a standard shell document). `become`/`become_user` is the only way to switch
+  privileges, matching Ansible's own plugin note.
+- **Linux shells only.** A PowerShell `ansible_shell_type` or Windows `ansible_os_family`/
+  `ansible_system` fails before a session is opened; krikri has no winrm/psrp transport either.
+- **No port forwarding, no SSH-over-SSM (`AWS-StartSSHSession`), no smux** - non-goals, not
+  missing branches.
+- **`async:` and `synchronize:` fail cleanly** with documented messages (`async is not supported
+  over aws_ssm yet`); there is no resident daemon over SSM, and `synchronize` would build an
+  rsync-over-ssh argv.
+- **Credential subset.** Environment statics and web identity, shared profiles (`role_arn` +
+  `source_profile`/`credential_source`, `credential_process`, SSO cache), ECS container credentials
+  and IMDSv2 are supported. An interactive MFA-token AssumeRole is not; it fails with a clear
+  error.
+- **Session lifetime.** Amazon's idle timeout and one-hour session cap still apply. A session that
+  dies mid-command fails the task rather than re-running it, because the remote state is unknown.
+- **The controller needs no AWS CLI and no session-manager-plugin** - the improvement over
+  Ansible's plugin, which requires both plus a bucket.
+
 ### A non-string `import_tasks:` file value crashes real Ansible; imitated only for play-level tasks and handlers
 
 A static import whose target is not a string, in the mapping form
