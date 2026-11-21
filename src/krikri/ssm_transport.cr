@@ -76,7 +76,15 @@ module Krikri
 
       session = SsmRegistry.get_or_open(conn.host_name, settings)
       SsmRegistry.operation_lock(session).synchronize do
-        exec_locked(conn, session, settings, command, timeout)
+        SsmRegistry.begin_operation(session)
+        begin
+          result = exec_locked(conn, session, settings, command, timeout)
+          SsmRegistry.end_operation(session, result[:exit_code] != 255)
+          result
+        rescue ex
+          SsmRegistry.end_operation(session, false)
+          raise ex
+        end
       end
     rescue ex
       failure(ex)
@@ -89,7 +97,15 @@ module Krikri
 
       session = SsmRegistry.get_or_open(conn.host_name, settings)
       SsmRegistry.operation_lock(session).synchronize do
-        exec_script_locked(session, settings, script, timeout)
+        SsmRegistry.begin_operation(session)
+        begin
+          result = exec_script_locked(session, settings, script, timeout)
+          SsmRegistry.end_operation(session, result[:exit_code] != 255)
+          result
+        rescue ex
+          SsmRegistry.end_operation(session, false)
+          raise ex
+        end
       end
     rescue ex
       failure(ex)
@@ -149,16 +165,17 @@ module Krikri
       payload = Base64.strict_encode(script)
       markers = new_markers
       line = String.build do |io|
-        io << "printf '\\n%s\\n%s%s\\n' " << Shell.quote_arg(markers.start) << ' '
-        io << Shell.quote_arg(markers.ready_first) << ' ' << Shell.quote_arg(markers.ready_second)
-        io << "; head -c " << wrapped_encoded_size(payload.bytesize.to_i64) << " | base64 -d | bash"
+        io << "printf '\\n%s\\n' " << Shell.quote_arg(markers.start)
+        # READY comes from inside the consumer: on a live agent, printing it
+        # before the pipeline starts let the first ~200 KiB be written before
+        # `head` was reading, and the agent dropped it.
+        io << "; ( printf '%s%s\\n' " << Shell.quote_arg(markers.ready_first) << ' '
+        io << Shell.quote_arg(markers.ready_second) << " >&2; exec head -c "
+        io << wrapped_encoded_size(payload.bytesize.to_i64) << " ) | base64 -d | bash"
         io << "; printf '\\n%s\\n%s\\n' \"$?\" " << Shell.quote_arg(markers.finish)
       end
       session.write(line + "\n")
       return bootstrap_failure unless wait_for_marker(session, markers.ready, timeout)
-      # READY proves the printf ran, but the shell may still be forking
-      # `head`; a brief grace lets it reach the read before a large
-      # payload starts filling the canonical buffer.
       sleep 50.milliseconds
       write_payload(session, payload, timeout)
       collect_after_ready(session, markers.finish, timeout)
@@ -169,18 +186,25 @@ module Krikri
                                     mode : Int32?) : Nil
       session = SsmRegistry.get_or_open(conn.host_name, settings)
       SsmRegistry.operation_lock(session).synchronize do
-        raise Error.new(prep_failure[:stderr]) unless prepare_locked(session, settings)
-        capabilities = capabilities_locked(conn, session, settings, DEFAULT_TIMEOUT)
-        source = compress_for_upload(local_path, capabilities)
+        SsmRegistry.begin_operation(session)
         begin
-          result = stream_upload_locked(session, source, remote_path, mode)
-          unless result[:exit_code] == 0
-            detail = result[:stderr].strip
-            detail = "no output" if detail.empty?
-            raise Error.new("Failed to upload #{local_path} to #{settings.target}:#{remote_path}: #{detail}")
+          raise Error.new(prep_failure[:stderr]) unless prepare_locked(session, settings)
+          capabilities = capabilities_locked(conn, session, settings, DEFAULT_TIMEOUT)
+          source = compress_for_upload(local_path, capabilities)
+          begin
+            result = stream_upload_locked(session, source, remote_path, mode)
+            unless result[:exit_code] == 0
+              detail = result[:stderr].strip
+              detail = "no output" if detail.empty?
+              raise Error.new("Failed to upload #{local_path} to #{settings.target}:#{remote_path}: #{detail}")
+            end
+          ensure
+            source.cleanup.call
           end
-        ensure
-          source.cleanup.call
+          SsmRegistry.end_operation(session, true)
+        rescue ex
+          SsmRegistry.end_operation(session, false)
+          raise ex
         end
       end
     rescue ex : KrikriAwsSsm::Error
@@ -196,12 +220,19 @@ module Krikri
                                       timeout : Int32, gzip : Bool) : Nil
       session = SsmRegistry.get_or_open(conn.host_name, settings)
       SsmRegistry.operation_lock(session).synchronize do
-        raise Error.new(prep_failure[:stderr]) unless prepare_locked(session, settings)
-        capabilities = gzip ? capabilities_locked(conn, session, settings, timeout) : nil
-        if gzip && !capabilities.try(&.gzip)
-          raise Error.new("#{SsmUnreachableMsg::PREFIX}target has no gzip for a compressed download")
+        SsmRegistry.begin_operation(session)
+        begin
+          raise Error.new(prep_failure[:stderr]) unless prepare_locked(session, settings)
+          capabilities = gzip ? capabilities_locked(conn, session, settings, timeout) : nil
+          if gzip && !capabilities.try(&.gzip)
+            raise Error.new("#{SsmUnreachableMsg::PREFIX}target has no gzip for a compressed download")
+          end
+          download_locked(session, remote_path, local_path, timeout, gzip)
+          SsmRegistry.end_operation(session, true)
+        rescue ex
+          SsmRegistry.end_operation(session, false)
+          raise ex
         end
-        download_locked(session, remote_path, local_path, timeout, gzip)
       end
     rescue ex : KrikriAwsSsm::Error
       raise Error.new(SsmUnreachableMsg.unreachable_text(ex))
@@ -272,10 +303,13 @@ module Krikri
       chmod = mode && mode != 0o644 ? "chmod #{mode.to_s(8)} #{q_tmp} && " : ""
       markers = new_markers
       line = String.build do |io|
-        io << "printf '\\n%s\\n%s%s\\n' " << Shell.quote_arg(markers.start) << ' '
-        io << Shell.quote_arg(markers.ready_first) << ' ' << Shell.quote_arg(markers.ready_second)
+        io << "printf '\\n%s\\n' " << Shell.quote_arg(markers.start)
         io << "; rm -f " << q_tmp << " 2>/dev/null"
-        io << "; ( head -c " << payload_size << " | base64 -d | " << decoder << " > " << q_tmp << " )"
+        # READY is printed by the consumer itself, so streaming only starts
+        # once `head` is reading; see exec_script_locked for the live reason.
+        io << "; ( printf '%s%s\\n' " << Shell.quote_arg(markers.ready_first) << ' '
+        io << Shell.quote_arg(markers.ready_second) << " >&2; exec head -c " << payload_size
+        io << " ) | base64 -d | " << decoder << " > " << q_tmp
         io << " && " << chmod << "mv -f " << q_tmp << ' ' << q_dest
         io << "; rc=$?"
         io << "; [ $rc -eq 0 ] || rm -f " << q_tmp << " 2>/dev/null"

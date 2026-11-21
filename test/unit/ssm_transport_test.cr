@@ -16,6 +16,8 @@ class FakeSsmShellSession
   @outputs = Channel(KrikriAwsSsm::Output?).new(32)
   @closed = false
   @pending_markers : Array(String)? = nil
+  property close_reason_value : KrikriAwsSsm::CloseReason? = nil
+  getter resume_calls = 0
 
   def write(bytes : Bytes) : Nil
     write(String.new(bytes))
@@ -37,7 +39,12 @@ class FakeSsmShellSession
   end
 
   def close_reason : KrikriAwsSsm::CloseReason?
-    nil
+    @close_reason_value
+  end
+
+  def drop_network : Nil
+    @close_reason_value = KrikriAwsSsm::CloseReason::NetworkLost
+    @closed = true
   end
 
   def error : Exception?
@@ -54,6 +61,9 @@ class FakeSsmShellSession
   end
 
   def resume : Nil
+    @resume_calls += 1
+    @closed = false
+    @close_reason_value = nil
   end
 
   private def emit(text : String) : Nil
@@ -181,6 +191,19 @@ describe Krikri::SsmTransport do
     result[:exit_code].must_equal(0)
     result[:stdout].must_equal("hello\n")
     result[:stderr].must_equal("")
+    fake.closed?.must_equal(false)
+  end
+
+  it "resumes an idle session after a network drop instead of reopening" do
+    fake = install_fake_ssm_session
+    conn = ssm_test_connection(Krikri::SsmSettings.new("i-0123456789"))
+
+    Krikri::SsmTransport.exec(conn, "echo hi", 10)
+    fake.drop_network
+    result = Krikri::SsmTransport.exec(conn, "echo hi", 10)
+
+    result[:exit_code].must_equal(0)
+    fake.resume_calls.must_equal(1)
     fake.closed?.must_equal(false)
   end
 
