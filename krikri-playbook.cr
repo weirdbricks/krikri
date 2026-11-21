@@ -1280,16 +1280,25 @@ if conn_pw_file = connection_password_file
   inventory.hosts.each_value { |host| host.vars["ansible_password"] = JSON::Any.new(File.read(conn_pw_file).strip) }
 end
 if become_pw_file = become_password_file
-  inventory.hosts.each_value { |host| host.vars["ansible_become_password"] = JSON::Any.new(File.read(become_pw_file).strip) }
+  become_pw = File.read(become_pw_file).strip
+  inventory.hosts.each_value { |host| Krikri::Passwords.register_cli_become_password(host.name, become_pw) }
 end
 
+ssh_password_answer : String? = nil
 if ask_pass
   password = Krikri::VaultCli.prompt_password("SSH password: ")
+  ssh_password_answer = password
   inventory.hosts.each_value { |host| host.vars["ansible_password"] = JSON::Any.new(password) }
 end
 if ask_become_pass
   password = Krikri::VaultCli.prompt_password(Krikri::VaultCli.become_prompt(ask_pass))
-  inventory.hosts.each_value { |host| host.vars["ansible_become_password"] = JSON::Any.new(password) }
+  # ansible's ask_passwords prompts "BECOME password[defaults to SSH
+  # password]": an empty -K answer falls back to the SSH password when -k
+  # also prompted (cli/__init__.py). Either way the value reaches the
+  # become layer through the registry, never as a host var - the CLI
+  # become password must stay out of the template namespace (issue #1690).
+  password = ssh_password_answer if password.empty? && ssh_password_answer
+  inventory.hosts.each_value { |host| Krikri::Passwords.register_cli_become_password(host.name, password) }
 end
 
 # Register every host's connection password with the SSH layer, keyed on

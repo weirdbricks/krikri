@@ -260,4 +260,26 @@ describe "Krikri::Passwords resolution (sshpass_wrapping_test.cr)" do
     Krikri::Passwords.become({"ansible_sudo_pass" => JSON::Any.new("c")}).must_equal("c")
     Krikri::Passwords.become(nil).must_be_nil
   end
+
+  it "serves the CLI become password from the registry, below any var, never empty" do
+    Krikri::Passwords.clear_cli_become_passwords
+    host = Krikri::Host.new("registry-fallback-host")
+    # No -K/--become-password-file and no var: no become password at all.
+    Krikri::Passwords.become(nil, host).must_be_nil
+    # The CLI-supplied value (-K/--become-password-file) resolves for its
+    # host only - it reaches the become layer without ever being a host
+    # var (issue #1690: publishing it made `debug: var=ansible_become_password`
+    # print the secret; real ansible reports the variable undefined).
+    Krikri::Passwords.register_cli_become_password(host.name, "cli-pw")
+    Krikri::Passwords.become(nil, host).must_equal("cli-pw")
+    Krikri::Passwords.become(nil, Krikri::Host.new("registry-other-host")).must_be_nil
+    # ansible-core reads the variables layer before the task_keys layer the
+    # CLI value rides on: an inventory/task ansible_become_password outranks it.
+    host.vars["ansible_become_password"] = JSON::Any.new("inventory-pw")
+    Krikri::Passwords.become(nil, host).must_equal("inventory-pw")
+    # An empty -K answer (bare Enter) registers nothing, so no empty
+    # password can ever surface.
+    Krikri::Passwords.register_cli_become_password("registry-empty-host", "")
+    Krikri::Passwords.become(nil, Krikri::Host.new("registry-empty-host")).must_be_nil
+  end
 end

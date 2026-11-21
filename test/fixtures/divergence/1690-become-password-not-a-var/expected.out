@@ -1,0 +1,20 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [debug] *******************************************************************
+ok: [localhost] => {
+    "ansible_become_password": "<< error 1 - 'ansible_become_password' is undefined >>"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Encountered 1 template error.
+error 1 - 'ansible_become_password' is undefined
+Origin: <WORK>/playbook.yml:5:14
+
+3   tasks:
+4     - debug:
+5         var: ansible_become_password
+               ^ column 14
+

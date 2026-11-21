@@ -395,16 +395,25 @@ if conn_pw_file = connection_password_file
   hosts.each { |host| host.vars["ansible_password"] = JSON::Any.new(File.read(conn_pw_file).strip) }
 end
 if become_pw_file = become_password_file
-  hosts.each { |host| host.vars["ansible_become_password"] = JSON::Any.new(File.read(become_pw_file).strip) }
+  become_pw = File.read(become_pw_file).strip
+  hosts.each { |host| Krikri::Passwords.register_cli_become_password(host.name, become_pw) }
 end
 
+ssh_password_answer : String? = nil
 if ask_pass
   password = Krikri::VaultCli.prompt_password("SSH password: ")
+  ssh_password_answer = password
   hosts.each { |host| host.vars["ansible_password"] = JSON::Any.new(password) }
 end
 if ask_become_pass
   password = Krikri::VaultCli.prompt_password(Krikri::VaultCli.become_prompt(ask_pass))
-  hosts.each { |host| host.vars["ansible_become_password"] = JSON::Any.new(password) }
+  # Same wiring as krikri-playbook.cr: an empty -K answer falls back to the
+  # SSH password when -k also prompted (ansible's cli/__init__.py
+  # ask_passwords), and the CLI become password reaches the become layer
+  # through the registry, never as a template-visible host var (issue
+  # #1690).
+  password = ssh_password_answer if password.empty? && ssh_password_answer
+  hosts.each { |host| Krikri::Passwords.register_cli_become_password(host.name, password) }
 end
 
 # Same connection-password registration as krikri-playbook.cr: hand every
