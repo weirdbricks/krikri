@@ -9,6 +9,84 @@ module Krikri
   # success).
   class SpawnError < Exception; end
 
+  # The ssh command line itself could not be executed on the controller:
+  # the binary `ansible_ssh_executable` names (or plain `ssh`) is missing,
+  # not executable, or otherwise un-spawnable. Ansible's ssh connection
+  # plugin reports this as a CONTROLLER error, not a connection failure -
+  # its subprocess.Popen([ssh, ...]) raising OSError becomes
+  # AnsibleError("Unable to execute ssh command line on a controller.")
+  # with the OSError chained as its cause, and the task FAILS (recap
+  # failed=1, exit 2) instead of going UNREACHABLE (live-verified vs
+  # 2.21.6, issue #1683). `errno_detail` carries the chained cause's
+  # text, ansible's own OSError repr ("[Errno 2] No such file or
+  # directory: b'/nonexistent/ssh'"), which the display splits back out
+  # as the block's "<<< caused by >>>" section.
+  class SshCommandNotExecutableError < Exception
+    getter errno_detail : String
+
+    def initialize(@errno_detail : String)
+      super("Unable to execute ssh command line on a controller.")
+    end
+
+    # The failed task's msg: the "Task failed: " wrap ansible's executor
+    # puts on every controller-side exception, over the brief and the
+    # errno cause joined the way _text_utils.concat_message joins an
+    # exception chain (trailing ". " stripped off the left side).
+    def task_failure_msg : String
+      "Task failed: Unable to execute ssh command line on a controller: #{errno_detail}"
+    end
+
+    # Builds the error from a local spawn failure of *path*: the errno
+    # comes off the exception itself (Crystal's Process.new raises
+    # File::NotFoundError with the OS error attached).
+    def self.from_spawn_failure(path : String, ex : File::Error) : SshCommandNotExecutableError
+      os_error = ex.os_error
+      errno = os_error.try(&.value.to_i32) || (File.exists?(path) ? 13 : 2)
+      new("[Errno #{errno}] #{errno_string(errno)}: b'#{path}'")
+    end
+
+    # Builds the error when the child-ssh a transfer spawns reports its
+    # own exec failure (scp's `-S` binary: the child dies before any
+    # protocol runs and scp relays "<path>: <strerror>"). No errno rides
+    # the stderr, so the controller stateside is probed: the two spawn
+    # failures a shell can observe are a missing file (ENOENT) and a
+    # present-but-not-executable one (EACCES; a directory among them).
+    def self.from_transfer_report(path : String) : SshCommandNotExecutableError
+      errno = if File.exists?(path)
+                13 # EACCES
+              else
+                2 # ENOENT
+              end
+      new("[Errno #{errno}] #{errno_string(errno)}: b'#{path}'")
+    end
+
+    # The strerror(3) texts for the errnos a spawn can fail with; libc's
+    # full table is not exposed to Crystal, and these cover the shapes an
+    # un-spawnable ssh command line actually takes.
+    private STRERROR = {
+       1 => "Operation not permitted",
+       2 => "No such file or directory",
+       8 => "Exec format error",
+      13 => "Permission denied",
+      20 => "Not a directory",
+      36 => "File name too long",
+      40 => "Too many levels of symbolic links",
+    }
+
+    # True when *text* is exactly one of the spawn strerror strings - the
+    # discriminator SSHManager's transfer path uses to tell scp's relay of
+    # a child-ssh exec failure ("<path>: No such file or directory") from
+    # the child ssh's own runtime stderr ("ssh: connect to host ...:
+    # Connection refused"), which shares the "ssh: " prefix.
+    def self.spawn_errno_string?(text : String) : Bool
+      STRERROR.values.includes?(text)
+    end
+
+    private def self.errno_string(errno : Int32) : String
+      STRERROR[errno]? || "Unknown error #{errno}"
+    end
+  end
+
   # Test-only spawn-failure hook for the controller-side Python runners
   # (issue #705): KRIKRI_TEST_FORCE_PYTHON_SPAWN_FAILURE names a counter
   # file; while that file exists with a positive integer, each python3

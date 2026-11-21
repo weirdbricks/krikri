@@ -1700,6 +1700,26 @@ module Krikri
         end
         return
       end
+      # An un-spawnable ssh command line (ansible_ssh_executable's binary
+      # missing or not executable - issue #1683): real's chain is the
+      # three-link shape the ssh plugin's `raise AnsibleError(...) from
+      # OSError` builds - "Task failed." at the task's Origin, the bare
+      # "Unable to execute ssh command line on a controller." brief, then
+      # the OSError repr under a caused-by section (live-verified vs
+      # 2.21.6). The empty events list on the errno leaf is the collapse
+      # barrier that keeps the brief and the errno text as separate
+      # segments, exactly as real renders them.
+      if msg.starts_with?("Task failed: Unable to execute ssh command line on a controller: ")
+        if origin = error_origin_context(source_task)
+          brief = "Unable to execute ssh command line on a controller."
+          errno_detail = msg["Task failed: Unable to execute ssh command line on a controller: ".size..]
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true,
+              ErrorBlock::Node.new(brief).with_chain(ErrorBlock::DIRECT_CAUSE, true,
+                ErrorBlock::Node.new(errno_detail, events: [] of ErrorBlock::Node))))
+        end
+        return
+      end
       # A templated `timeout:` that resolved to a non-integer (the
       # executor's task_timeout_conversion_failure): the brief is real's
       # exact wording; the chain is a best-effort two-link approximation

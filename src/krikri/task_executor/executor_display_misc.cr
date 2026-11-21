@@ -1150,9 +1150,14 @@ module Krikri
         # (see its typed rescue) - one clean failed task with the
         # actionable arch message, never a crash or a bogus UNREACHABLE.
         return JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
+      rescue ex : SshCommandNotExecutableError
+        # Same controller-error shape execute_remote_plugin returns: an
+        # un-spawnable ssh command line FAILS the task (exit 2), it is
+        # not an unreachable (issue #1683).
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => ex.task_failure_msg}.to_json)
       rescue ex
         raise ex unless SSHManager.connection_level_exception?(ex)
-        detail = ex.message.to_s.lines.first?.to_s
+        detail = ex.message.to_s.strip
         return JSON.parse({
           "changed"     => false,
           "msg"         => SSHUnreachableMsg.unreachable_msg(detail, vars, exec_host),

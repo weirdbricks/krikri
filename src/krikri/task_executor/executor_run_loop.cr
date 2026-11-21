@@ -2355,9 +2355,16 @@ module Krikri
       # run. Any other exception still propagates.
       begin
         PluginManager.recover_missing_plugins!(host, resend.map { |idx| steps[idx].module_name }.uniq!, host.vars)
+      rescue ex : SshCommandNotExecutableError
+        # Same controller-error shape execute_remote_plugin returns: an
+        # un-spawnable ssh command line FAILS the re-sent steps (exit 2),
+        # it is not an unreachable (issue #1683).
+        failed = JSON.parse({"changed" => false, "failed" => true, "msg" => ex.task_failure_msg}.to_json)
+        resend.each { |idx| interpreted[idx] = failed }
+        return interpreted
       rescue ex
         raise ex unless SSHManager.connection_level_exception?(ex)
-        detail = ex.message.to_s.lines.first?.to_s
+        detail = ex.message.to_s.strip
         unreachable = JSON.parse({
           "changed"     => false,
           "msg"         => SSHUnreachableMsg.unreachable_msg(detail, host.vars, host),
@@ -2878,9 +2885,14 @@ module Krikri
         # failed task with the actionable arch message, never an
         # unhandled crash and never a bogus UNREACHABLE.
         return JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
+      rescue ex : SshCommandNotExecutableError
+        # Same controller-error shape execute_remote_plugin returns: an
+        # un-spawnable ssh command line FAILS the task (exit 2), it is
+        # not an unreachable (issue #1683).
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => ex.task_failure_msg}.to_json)
       rescue ex
         raise ex unless SSHManager.connection_level_exception?(ex)
-        detail = ex.message.to_s.lines.first?.to_s
+        detail = ex.message.to_s.strip
         return JSON.parse({
           "changed"     => false,
           "msg"         => SSHUnreachableMsg.unreachable_msg(detail, vars_context, host),

@@ -548,6 +548,15 @@ module Krikri
             }
           end
         rescue ex
+          # The ssh process itself failed to exec (the binary named by
+          # ansible_ssh_executable is missing/unspawnable): ansible's ssh
+          # plugin reports that a CONTROLLER error - AnsibleError chained on
+          # the Popen OSError - and the task FAILS, it never books a 255
+          # connection failure (issue #1683). Pipe-setup and other
+          # non-File::Error spawn failures keep the old 255 synthesis.
+          if !spawned && ex.is_a?(File::Error)
+            raise SshCommandNotExecutableError.from_spawn_failure(ssh_cmd[0], ex)
+          end
           if raise_spawn_errors && !spawned
             raise SpawnError.new("Failed to spawn process: #{ex.message}")
           end
@@ -632,6 +641,12 @@ module Krikri
             }
           end
         rescue ex
+          # Same controller-error classification as #exec's rescue: an
+          # un-spawnable ssh command line is ansible's FAILED-task
+          # AnsibleError, never a 255 connection failure (issue #1683).
+          if !spawned && ex.is_a?(File::Error)
+            raise SshCommandNotExecutableError.from_spawn_failure(ssh_cmd[0], ex)
+          end
           if raise_spawn_errors && !spawned
             raise SpawnError.new("Failed to spawn process: #{ex.message}")
           end
@@ -1256,6 +1271,14 @@ module Krikri
       unless result.exit_code? == 0
         detail = (err_io.to_s + out_io.to_s).strip
         detail = detail.empty? ? "no output" : detail
+        # scp relays its child ssh's own exec failure ("<path>: <strerror>"
+        # before any protocol runs) - the transfer can never succeed when
+        # the ssh command line itself is un-spawnable, and ansible books
+        # that a controller error (FAILED), not a connection failure
+        # (issue #1683).
+        if transfer_ssh_spawn_failure?(detail, ssh_executable)
+          raise SshCommandNotExecutableError.from_transfer_report(ssh_executable || "ssh")
+        end
         raise "Failed to upload #{local_path} to #{host}:#{remote_path}: #{detail}"
       end
 
@@ -1314,8 +1337,31 @@ module Krikri
       unless result.exit_code? == 0
         detail = (err_io.to_s + out_io.to_s).strip
         detail = detail.empty? ? "no output" : detail
+        if transfer_ssh_spawn_failure?(detail, ssh_executable)
+          raise SshCommandNotExecutableError.from_transfer_report(ssh_executable || "ssh")
+        end
         raise "Failed to download #{host}:#{remote_path} to #{local_path}: #{detail}"
       end
+    end
+
+    # The child ssh a transfer spawns (scp's `-S` binary, else scp's own
+    # default) dies before any protocol runs when the ssh command line
+    # itself cannot be executed, and scp relays the exec failure as
+    # "<path>: <strerror>" on the first stderr line. True when *detail*
+    # carries that shape for *ssh_executable* - the one failure ansible
+    # books as a controller error instead of a connection failure
+    # (issue #1683). The line must be EXACTLY "<exe>: <spawn strerror>":
+    # a child ssh that RAN and failed at connect relays its own stderr
+    # through scp, and those lines also start with "ssh: " ("ssh: connect
+    # to host ...: Connection refused") but never end in a bare
+    # exec-errno string.
+    private def self.transfer_ssh_spawn_failure?(detail : String, ssh_executable : String?) : Bool
+      exe = ssh_executable || "ssh"
+      first_line = detail.lines.first?
+      return false unless first_line
+      prefix = "#{exe}: "
+      return false unless first_line.starts_with?(prefix)
+      SshCommandNotExecutableError.spawn_errno_string?(first_line[prefix.size..])
     end
 
     # Whether the `rsync` binary is available locally. Resolved once per
