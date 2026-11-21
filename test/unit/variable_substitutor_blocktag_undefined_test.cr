@@ -228,6 +228,52 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
       ).must_equal("a=1;b=2;")
     end
 
+    it "does not false-positive on a {% set %} target used as a later for-iterable (issue #1685)" do
+      # ansible-core renders `{% set n = ['a','b'] %}{% for p in n %}{{ p
+      # }}{% endfor %}` as one template - Jinja keeps the assignment
+      # visible to every later tag. The scan tracked if/for structure but
+      # dropped the set target, so the later `{% for p in n %}` raised
+      # "'n' is undefined" where ansible renders "ab" (issue #1685, live
+      # vs ansible-core 2.21.6).
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% set n = ['a','b'] %}{% for p in n %}{{ p }}{% endfor %}", strict: true).must_equal("ab")
+    end
+
+    it "does not false-positive on a {% set %} target used in a later if condition (issue #1685)" do
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% set n = 3 %}{% if n > 2 %}big{% endif %}", strict: true).must_equal("big")
+    end
+
+    it "does not false-positive on a {% set %} target referenced by a later set's RHS" do
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% set n = 2 %}{% set m = n + 1 %}{{ m }}", strict: true).must_equal("3")
+    end
+
+    it "does not false-positive on a block-assign {% set x %} target (issue #1685)" do
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% set x %}ab{% endset %}{% for p in x %}{{ p }}{% endfor %}", strict: true).must_equal("ab")
+    end
+
+    it "does not false-positive on a tuple-form {% set a, b %} target (issue #1685)" do
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% set a, b = 'x', 'y' %}{% if a + b == 'xy' %}ok{% endif %}", strict: true).must_equal("ok")
+    end
+
+    it "still raises for a name used as a for-iterable BEFORE its {% set %}" do
+      # The binding starts at the set tag: a reference EARLIER in the text
+      # is genuinely undefined, exactly as in ansible-core.
+      v = {} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      assert_raises_message(Krikri::UndefinedVariableError, /'n' is undefined/) do
+        sub.substitute("{% for p in n %}{{ p }}{% endfor %}{% set n = ['a'] %}", strict: true)
+      end
+    end
+
     it "still raises for a genuinely undefined var inside a nested {% set %} tag with no enclosing for-loop" do
       # Companion to the round 813222 fix above: the loop-var carry-over
       # must not swallow every future undefined-inside-{% set %} case.

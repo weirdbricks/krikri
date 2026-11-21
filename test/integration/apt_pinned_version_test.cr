@@ -110,8 +110,11 @@ end
 
 # Stub PATH dir like with_bad_pin_shim, but `apt-cache policy` prints a
 # realistic full stanza (package header, Installed:/Candidate: lines, the
-# Version table's version row AND a deeper-indented mirror row) and
-# `apt-get` logs every invocation and exits 0.
+# Version table's version row AND a deeper-indented mirror row),
+# `apt-get` logs every invocation and exits 0, and `dpkg-query` reports
+# htop NOT installed (real dpkg-query's empty-stdout exit-1 shape for an
+# unknown name) so a dev host that happens to have the real htop
+# installed can't turn the run into a no-op before the shims are hit.
 private def with_htop_policy_shim(&)
   dir = File.join(Dir.tempdir, "krikri-apt-htop-policy-#{Random.rand(1_000_000)}")
   log = File.join(dir, "calls.log")
@@ -151,16 +154,22 @@ describe "apt plugin wildcard pin version-table resolution" do
   # mirror rows are not versions, and a `*` pin used to match the header
   # first, handing apt-get `htop=htop:` ("Version 'htop:' ... was not
   # found", exit 2).
+  # `_python_apt_absent` forces the CLI resolution path the shims model:
+  # with python-apt really present, resolution consults the host's real
+  # cache (which on a dev box may carry the same candidate version, making
+  # the shim's policy output vacuous), and the probe's auto-install adds a
+  # python3-apt install line of its own.
   it "resolves a wildcard pin to a version-table row, never the package header" do
     with_htop_policy_shim do |env, log|
       result = PluginSpecHelper.run("apt", {
-        "name"         => "htop=*",
-        "state"        => "present",
-        "_environment" => env,
+        "name"               => "htop=*",
+        "state"              => "present",
+        "_environment"       => env,
+        "_python_apt_absent" => "true",
       })
 
       result["failed"]?.try(&.as_bool?).must_be_nil
-      install_calls = File.exists?(log) ? File.read_lines(log).select(&.includes?(" install ")) : [] of String
+      install_calls = File.exists?(log) ? File.read_lines(log).select { |line| line.includes?(" install ") && line.includes?("htop=") } : [] of String
       install_calls.size.must_equal(1)
       install_calls[0].includes?("htop=3.4.1-5").must_equal(true)
       install_calls[0].includes?("htop:").must_equal(false)

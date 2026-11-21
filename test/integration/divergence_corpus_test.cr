@@ -83,6 +83,7 @@ private DIVERGENCE_CASES = [
   {issue: 1660, slug: "deprecation-warnings-disabled"},
   {issue: 1661, slug: "pacman-bool-type-name"},
   {issue: 1662, slug: "swap-when-list-per-item-fact-blocks"},
+  {issue: 1685, slug: "set-then-for-iterable"},
   {issue: 1686, slug: "block-tag-native-typing"},
 ]
 
@@ -416,6 +417,11 @@ describe "divergence corpus" do
 
   it "replays 1662-swap-when-list-per-item-fact-blocks" do
     expected, actual, report = divergence_transcripts(1662, "swap-when-list-per-item-fact-blocks")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1685-set-then-for-iterable" do
+    expected, actual, report = divergence_transcripts(1685, "set-then-for-iterable")
     assert_equal(expected, actual, report)
   end
 
