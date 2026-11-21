@@ -977,6 +977,18 @@ because anyone intends to fix them.
   package database). The plugin answers a plain ok there, so on an Arch host krikri reports ok where
   real reports the real work's changed/ok - out of scope with apt/dnf/yum backends, this engine
   targets Ubuntu and RHEL-family hosts.
+- `community.general.pkgng` (issue #1679) - ported surface: the AnsibleModule argument validation
+  (main()'s argument_spec and `rootdir`/`chroot`/`jail` mutual exclusion) and the
+  `get_bin_path("pkg", required=True)` probe main() runs before ANY package work, check mode
+  included - so a host without pkg fatals the task with real's
+  `Failed to find required executable "pkg" in paths: ...` (onelove-roles.freebsd-consul-template on
+  Ubuntu used to get the graceful skip + engine-limit exit 4 there, which let the play run on into
+  the role's directory/template tasks and its service handler). Everything AFTER a successful probe
+  is deliberately unported: `pkgng_older_than` and the install/remove/upgrade/annotation/autoremove
+  work (real drives `pkg info`/`pkg install` against a real FreeBSD package database). The plugin
+  answers a plain ok there, so on a FreeBSD host krikri reports ok where real reports the real
+  work's changed/ok - out of scope with apt/dnf/yum backends, this engine targets Ubuntu and
+  RHEL-family hosts.
 - `meta:` - every action in Ansible's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,
   `reset_connection`), each matched to Ansible's observed behavior. Non-obvious ones: `end_play` and
