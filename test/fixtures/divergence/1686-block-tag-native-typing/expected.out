@@ -1,0 +1,22 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [set_fact] ****************************************************************
+ok: [localhost]
+
+TASK [debug] *******************************************************************
+ok: [localhost] => {
+    "msg": "a=int b=list c=int d=list e=int f=str"
+}
+
+TASK [debug] *******************************************************************
+ok: [localhost] => (item=a) => {
+    "msg": "loop-test a"
+}
+ok: [localhost] => (item=b) => {
+    "msg": "loop-test b"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

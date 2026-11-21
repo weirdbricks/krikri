@@ -313,4 +313,43 @@ describe "set_fact keeps a Jinja string expression a string (2.19 native typing)
     # a templated loop item is natively typed in ansible, not "True" text
     output.must_include("item ran")
   end
+
+  it "types a block-tag set_fact by its runtime output chunks (issue #1686)" do
+    # ansible-core 2.19+ native typing decided by RUNTIME output chunks,
+    # not the rendered text's shape (live-verified vs 2.21.5, the exact
+    # matrix below): exactly one non-stringified `{{ }}` chunk keeps its
+    # native type - the `{% set %}` list IS the list (and is then usable
+    # as a loop: source), a comment adds no chunk, a single-iteration for
+    # keeps the item's type - while two chunks join into the str "12" and
+    # a literal-text chunk stays the str "5". krikri used to re-type the
+    # rendered TEXT by shape: the list stayed a repr string (breaking the
+    # loop) and "12" became the int 12.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - set_fact:
+              a: "{% set n = 5 %}{{ n }}"
+              b: "{% set l = ['a','b'] %}{{ l }}"
+              e: "{% if true %}{{ 5 }}{% endif %}"
+              f: "{% for i in [1,2] %}{{ i }}{% endfor %}"
+              g: "{% for i in [1] %}{{ i }}{% endfor %}"
+              h: "{% if true %}5{% endif %}"
+              i2: "{# c #}{{ 5 }}"
+              j2: "{% set s = '5' %}{{ s }}"
+              k2: "{% set d = {'a': 1} %}{{ d }}"
+              l2: "{% if false %}{{ 5 }}{% endif %}"
+              o2: "{% set t = true %}{{ t }}"
+          - debug:
+              msg: "A={{ a | type_debug }} B={{ b | type_debug }} E={{ e | type_debug }} F={{ f | type_debug }} G={{ g | type_debug }} H={{ h | type_debug }} I={{ i2 | type_debug }} J={{ j2 | type_debug }} K={{ k2 | type_debug }} L={{ l2 | type_debug }} O={{ o2 | type_debug }} FV={{ f }}"
+          - debug: msg="loop-test {{ item }}"
+            loop: "{{ b }}"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("A=int B=list E=int F=str G=int H=str I=int J=str K=dict L=NoneType O=bool FV=12")
+    output.must_include("loop-test a")
+    output.must_include("loop-test b")
+  end
 end

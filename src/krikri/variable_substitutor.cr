@@ -4139,7 +4139,7 @@ module Krikri
       stripped.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+)|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\s+is\s+(?:not\s+)?(?:defined|undefined)\z/)
     end
 
-    private def render_block_tag_text(text : String, strict : Bool, renderer) : String
+    private def render_block_tag_text(text : String, strict : Bool, renderer, capture_chunks : Bool = false) : String
       return text if @@block_tag_escalation_depth >= MAX_BLOCK_TAG_ESCALATION_DEPTH
       # strict: pre-render scan for undefined bare references inside
       # `{% %}` block conditions. Crinja's lenient default
@@ -4181,9 +4181,49 @@ module Krikri
       end
       @@block_tag_escalation_depth += 1
       begin
-        renderer.render(text)
+        capture_chunks ? renderer.render_capturing_chunks!(text) : renderer.render(text)
       ensure
         @@block_tag_escalation_depth -= 1
+      end
+    end
+
+    # The native-typed wire value for a block-tag template's rendered output,
+    # or nil to keep the plain rendered text. ansible-core 2.19+ types a
+    # block-tag value by its RUNTIME output chunks, not by the rendered
+    # text's shape (issue #1686, live-verified vs 2.21.5): exactly one
+    # non-stringified `{{ }}` output chunk keeps that chunk's NATIVE type -
+    # a `{% set l = ['a','b'] %}{{ l }}` set_fact IS the list, `{% if true
+    # %}{{ 5 }}{% endif %}` the int 5, `{# c #}{{ 5 }}` the int 5 (a comment
+    # is no chunk), a single-iteration `{% for %}` the item's own type -
+    # while every multi-chunk render ("56" from two spans) and every literal
+    # -text or string chunk stays a plain str, however numeric- or
+    # list-looking the text reads ("5" from `{% if true %}5{% endif %}` is
+    # the str "5" on real). The wire form is the same NATIVE_TYPED_PREFIX +
+    # JSON the whole-span path rides (the set_fact plugin's prefix decode
+    # keeps the type instead of re-coercing by shape). An empty render (zero
+    # chunks - issue #1006's None flow, handled by the caller's
+    # NONE_SENTINEL rule) and the lenient give-back-the-original-text
+    # fallback (no chunk verdict exists for a render that never ran) stay
+    # unmarked.
+    private def native_typed_block_tag_value(text : String, rendered_block : String, renderer) : String?
+      return nil if rendered_block == text
+      chunks = renderer.captured_chunks
+      if chunks.size == 1 && (typed = native_block_chunk_value(chunks.first))
+        return Krikri::NATIVE_TYPED_PREFIX + typed.to_json
+      end
+      return nil if chunks.empty? && rendered_block.empty?
+      Krikri::NATIVE_TYPED_PREFIX + rendered_block.to_json
+    end
+
+    # The JSON value a single output chunk contributes natively, or nil when
+    # the chunk is stringified (a str/Markup - including a lenient
+    # Undefined's text - finalizes a plain str on real, never its rendered
+    # text re-typed). Tuples count: ansible's finalize turns them into
+    # lists, and to_json_any maps them to JSON arrays.
+    private def native_block_chunk_value(value : KrikriJinja::AnyValue) : JSON::Any?
+      case value.raw
+      when Int64, Float64, Bool, Nil, Array, Hash, KrikriJinja::TupleValue
+        KrikriJinja.to_json_any(value)
       end
     end
 
@@ -4237,10 +4277,14 @@ module Krikri
 
     private def substitute_impl_guarded(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       if text.includes?("{%") || text.includes?("{#")
-        rendered_block = render_block_tag_text(text, strict, renderer)
+        rendered_block = render_block_tag_text(text, strict, renderer, capture_chunks: native)
         UnsafeValues.mark_unsafe(rendered_block) if expression_uses_unsafe_root?(text)
         UnsafeValues.mark_derived(rendered_block)
-        return rendered_block
+        # ansible-core 2.19+ types a block-tag value by its RUNTIME output
+        # chunks (issue #1686) - see #native_typed_block_tag_value. Only the
+        # native_containers callers (set_fact) pass native: true; every other
+        # module param keeps the plain rendered text.
+        return native ? (native_typed_block_tag_value(text, rendered_block, renderer) || rendered_block) : rendered_block
       end
 
       # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #20 (narrow sub-scope):
