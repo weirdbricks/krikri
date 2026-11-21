@@ -101,7 +101,9 @@ describe "aws_ssm connection" do
       assert_includes output, "ok=2"
       # FakeGateway rejects an upgrade whose Host/signature does not verify,
       # so reaching this point already proves SigV4; pin the signed set too.
-      assert_equal ["host", "x-amz-date", "x-amz-security-token"], gateway.upgrade_results.receive.signed_headers
+      result = gateway.next_upgrade_result(30.seconds)
+      raise "no websocket upgrade was recorded" unless result
+      assert_equal ["host", "x-amz-date", "x-amz-security-token"], result.signed_headers
     end
   end
 
