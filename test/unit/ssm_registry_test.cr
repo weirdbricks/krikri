@@ -5,6 +5,9 @@ class FakeSsmSession
   include Krikri::SsmRegistry::SessionHandle
 
   getter? terminated = false
+  getter resume_calls = 0
+  property close_reason_value : KrikriAwsSsm::CloseReason? = nil
+  property resume_error : Exception? = nil
 
   def write(bytes : Bytes) : Nil
   end
@@ -21,7 +24,12 @@ class FakeSsmSession
   end
 
   def close_reason : KrikriAwsSsm::CloseReason?
-    nil
+    @close_reason_value
+  end
+
+  def close_with(reason : KrikriAwsSsm::CloseReason) : Nil
+    @close_reason_value = reason
+    @terminated = true
   end
 
   def error : Exception?
@@ -37,6 +45,12 @@ class FakeSsmSession
   end
 
   def resume : Nil
+    @resume_calls += 1
+    if error = @resume_error
+      raise error
+    end
+    @terminated = false
+    @close_reason_value = nil
   end
 end
 
@@ -216,5 +230,67 @@ describe Krikri::SsmRegistry do
 
     Krikri::SsmRegistry.reset("web1")
     Krikri::SsmRegistry.prepared?(session).must_equal(false)
+  end
+
+  it "resumes a network-lost session instead of opening a new one" do
+    created = [] of Krikri::SsmSettings
+    install_factory(created)
+    settings = registry_settings
+    session = Krikri::SsmRegistry.get_or_open("web1", settings).as(FakeSsmSession)
+    Krikri::SsmRegistry.mark_prepared(session)
+    session.close_with(KrikriAwsSsm::CloseReason::NetworkLost)
+
+    again = Krikri::SsmRegistry.get_or_open("web1", settings)
+
+    again.same?(session).must_equal(true)
+    session.resume_calls.must_equal(1)
+    created.size.must_equal(1)
+    # The reattached pty needs its stty/prompt bootstrap again.
+    Krikri::SsmRegistry.prepared?(session).must_equal(false)
+  end
+
+  it "opens a fresh session when the last operation did not finish" do
+    created = [] of Krikri::SsmSettings
+    install_factory(created)
+    settings = registry_settings
+    session = Krikri::SsmRegistry.get_or_open("web1", settings).as(FakeSsmSession)
+    Krikri::SsmRegistry.begin_operation(session)
+    Krikri::SsmRegistry.end_operation(session, false)
+    session.close_with(KrikriAwsSsm::CloseReason::NetworkLost)
+
+    again = Krikri::SsmRegistry.get_or_open("web1", settings)
+
+    again.same?(session).must_equal(false)
+    session.resume_calls.must_equal(0)
+    created.size.must_equal(2)
+  end
+
+  it "does not resume a session the server-side closed" do
+    created = [] of Krikri::SsmSettings
+    install_factory(created)
+    settings = registry_settings
+    session = Krikri::SsmRegistry.get_or_open("web1", settings).as(FakeSsmSession)
+    session.close_with(KrikriAwsSsm::CloseReason::SessionTimeout)
+
+    again = Krikri::SsmRegistry.get_or_open("web1", settings)
+
+    again.same?(session).must_equal(false)
+    session.resume_calls.must_equal(0)
+    created.size.must_equal(2)
+  end
+
+  it "falls back to a new session when resume fails" do
+    created = [] of Krikri::SsmSettings
+    install_factory(created)
+    settings = registry_settings
+    session = Krikri::SsmRegistry.get_or_open("web1", settings).as(FakeSsmSession)
+    session.close_with(KrikriAwsSsm::CloseReason::NetworkLost)
+    session.resume_error = KrikriAwsSsm::SessionNotFound.new("SessionNotFound", "gone")
+
+    again = Krikri::SsmRegistry.get_or_open("web1", settings)
+
+    again.same?(session).must_equal(false)
+    session.resume_calls.must_equal(1)
+    created.size.must_equal(2)
   end
 end

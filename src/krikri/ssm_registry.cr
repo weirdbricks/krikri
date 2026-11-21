@@ -44,6 +44,13 @@ module Krikri
     # reentrant (markers from two commands would interleave), so exec,
     # script, upload and download serialize on it.
     @@operation_locks = Hash(UInt64, Mutex).new
+    # Sessions with an operation in progress, and sessions whose last
+    # operation did not finish cleanly. A dropped channel may only be
+    # resumed when the shell was idle: a half-written upload or a command
+    # whose marker never returned leaves the remote shell in an unknown
+    # state, so the next task must get a fresh session instead.
+    @@in_flight = Set(UInt64).new
+    @@unsafe = Set(UInt64).new
     @@factory : SessionFactory? = nil
     @@default_factory : SessionFactory? = nil
     @@at_exit_installed = false
@@ -60,7 +67,8 @@ module Krikri
     end
 
     # Returns the live session for (host_name, settings), opening one on
-    # first use. A closed session is dropped and replaced.
+    # first use. A closed session is dropped and replaced, except a channel
+    # lost while the shell was idle, which is resumed in place.
     #
     # The session is opened while holding only its own key mutex, never the
     # registry-wide mutex: StartSession + websocket handshake can take
@@ -74,9 +82,14 @@ module Krikri
         existing = @@mutex.synchronize { @@entries[key]? }
         if existing
           if existing.closed?
+            if (resumed = try_resume(existing))
+              next resumed
+            end
             @@mutex.synchronize do
               @@entries.delete(key)
               @@prepared.delete(existing.object_id)
+              @@in_flight.delete(existing.object_id)
+              @@unsafe.delete(existing.object_id)
             end
           else
             next existing
@@ -122,6 +135,49 @@ module Krikri
       @@mutex.synchronize { @@prepared << session.object_id }
     end
 
+    # Bracket one shell operation. *completed* is true only when the
+    # operation reached a result with a known exit status, so a session
+    # that died mid-command is never resumed.
+    def self.begin_operation(session : SessionHandle) : Nil
+      @@mutex.synchronize { @@in_flight << session.object_id }
+    end
+
+    def self.end_operation(session : SessionHandle, completed : Bool) : Nil
+      @@mutex.synchronize do
+        @@in_flight.delete(session.object_id)
+        if completed
+          @@unsafe.delete(session.object_id)
+        else
+          @@unsafe << session.object_id
+        end
+      end
+    end
+
+    # True when the session is not mid-operation and its last operation
+    # ended cleanly, i.e. a network drop (if that is why it closed) can be
+    # resumed without trusting a half-finished remote command.
+    def self.resumable?(session : SessionHandle) : Bool
+      @@mutex.synchronize do
+        !@@in_flight.includes?(session.object_id) && !@@unsafe.includes?(session.object_id)
+      end
+    end
+
+    # Reattach to the same remote shell/process with ResumeSession. Only a
+    # lost channel is resumable: an idle timeout, an agent close or a
+    # terminate means the server-side session is gone.
+    private def self.try_resume(session : SessionHandle) : SessionHandle?
+      return nil unless resumable?(session)
+      return nil unless session.close_reason == KrikriAwsSsm::CloseReason::NetworkLost
+      session.resume
+      @@mutex.synchronize do
+        @@prepared.delete(session.object_id)
+        @@unsafe.delete(session.object_id)
+      end
+      session
+    rescue
+      nil
+    end
+
     # meta: reset_connection - terminate this host's SSM sessions and
     # forget them so the next task opens fresh ones.
     def self.reset(host_name : String) : Nil
@@ -132,6 +188,8 @@ module Krikri
           session = @@entries.delete(key)
           next unless session
           @@prepared.delete(session.object_id)
+          @@in_flight.delete(session.object_id)
+          @@unsafe.delete(session.object_id)
           dropped << session
         end
       end
@@ -154,6 +212,8 @@ module Krikri
           session = @@entries.delete(key)
           next unless session
           @@prepared.delete(session.object_id)
+          @@in_flight.delete(session.object_id)
+          @@unsafe.delete(session.object_id)
           dropped << session
         end
       end
@@ -169,6 +229,8 @@ module Krikri
         @@entries.each_value { |session| sessions << session }
         @@entries.clear
         @@prepared.clear
+        @@in_flight.clear
+        @@unsafe.clear
       end
       return if sessions.empty?
 
