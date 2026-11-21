@@ -365,6 +365,45 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
     end
   end
 
+  it "reports an unsigned rpm's GPG failure from yum: (issue 1673)" do
+    # sparknsh.graylog_collector's `yum: name: <release .rpm URL>` on
+    # Rocky installs an rpm that carries no signature at all, so libdnf's
+    # key error is "Package <file> is not signed" rather than the
+    # missing-public-key text. Real ansible-core 2.21.6 still raises the
+    # module-level "Failed to validate GPG signature for <nevra>: <key
+    # error>" fatal (results [], rc 1, no failures key), and the CLI
+    # names the nevra only through the @commandline row - the round's own
+    # output is the fixture below.
+    with_failing_dnf_shim(
+      "Last metadata expiration check: 0:44:26 ago on Sat Nov 21 02:48:18 2026.\n" \
+      "Dependencies resolved.\n" \
+      "================================================================================\n" \
+      " Package                 Architecture Version          Repository          Size\n" \
+      "================================================================================\n" \
+      "Installing:\n" \
+      " collector-sidecar       x86_64       0.1.7-1          @commandline        12 M\n" \
+      "Transaction Summary\n" \
+      "================================================================================\n" \
+      "Install  1 Package\n",
+      "Package collector-sidecar-0.1.7-1.x86_64paoog44m.rpm is not signed\nError: GPG check FAILED\n") do
+      rpm = PluginSpecHelper.tmp_path("collector-sidecar-0.1.7-1.x86_64.rpm")
+      File.write(rpm, "")
+      result = PluginSpecHelper.run("yum",
+        {"name" => rpm, "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(
+        "Failed to validate GPG signature for collector-sidecar-0.1.7-1.x86_64: Package collector-sidecar-0.1.7-1.x86_64paoog44m.rpm is not signed")
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result["rc"].as_i.must_equal(1)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
   it "produces the same shape from package: (use: dnf)" do
     with_failing_dnf_shim(MISSING_PKG_STDOUT, MISSING_PKG_STDERR) do
       result = PluginSpecHelper.run("package",

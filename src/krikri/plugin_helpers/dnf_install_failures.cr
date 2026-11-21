@@ -209,11 +209,15 @@ module Krikri
       # Ansible's dnf module checks the signature of a remote/local .rpm
       # itself before the transaction and fails with a module-level
       # "Failed to validate GPG signature for <nevra>: <libdnf error>"
-      # (issue #60) instead of the CLI's generic install failure. The CLI
-      # output carries both pieces: "Public key for <file> is not installed"
-      # and "Failing package is: <nevra>".
+      # (issues #60, #1673) instead of the CLI's generic install failure.
+      # The CLI output carries both pieces: the libdnf key error and
+      # "Failing package is: <nevra>". A package that carries no signature
+      # at all fails with "Package <file> is not signed" instead of the
+      # missing-public-key text, and still names the failing rpm only
+      # through the transaction table's @commandline row.
       private def gpg_validation_failure_msg(output : String) : String?
-        key_err = output.match(/(Public key for \S+ is not installed)/)
+        key_err = output.match(/(Public key for \S+ is not installed)/) ||
+                  output.match(/(Package \S+\.rpm is not signed)/)
         nevra = output.match(/Failing package is:\s*(\S+)/).try(&.[1]) || commandline_nevra(output)
         return nil unless key_err && nevra
         "Failed to validate GPG signature for #{nevra}: #{key_err[1]}"
