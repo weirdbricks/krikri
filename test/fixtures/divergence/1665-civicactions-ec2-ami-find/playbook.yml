@@ -1,0 +1,11 @@
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  # The role's own defaults provide the rest; image/root are the two the
+  # play is expected to supply. Both are irrelevant to this case - real
+  # refuses the playbook at LOAD time, before any variable is templated.
+  vars:
+    image: "ami-0123456789abcdef0"
+    root: "8"
+  roles:
+    - CivicActions.ec2-800-53-deploy
