@@ -250,6 +250,49 @@ describe Krikri::SsmTransport do
     result[:exit_code].must_equal(255)
     result[:stderr].must_equal(Krikri::SsmSettings::WINDOWS_UNSUPPORTED_MESSAGE)
   end
+
+  describe ".compress_for_upload" do
+    it "gzip-compresses a multi-MB source into a complete, readable stream" do
+      source_path = PluginSpecHelper.tmp_path("ssm-upload-source.bin")
+      File.open(source_path, "wb") do |file|
+        3.times { file.write(Random::Secure.random_bytes(1_048_576)) }
+      end
+      # The target's probe reports xz first, but the pinned xz shard
+      # truncates multi-megabyte streams (its close can stop before the
+      # footer, and the target's `xz -dc` then exits 1), so the uploader
+      # must pick gzip. Reading the whole stream back proves the footer
+      # and every block are there.
+      capabilities = Krikri::SsmTransport::TransferCapabilities.new("xz", true)
+
+      source = Krikri::SsmTransport.compress_for_upload(source_path, capabilities)
+      begin
+        source.decoder.must_equal("gzip")
+        decompressed = 0_i64
+        File.open(source.path, "rb") do |input|
+          Compress::Gzip::Reader.open(input) do |reader|
+            buffer = Bytes.new(65_536)
+            while (count = reader.read(buffer)) > 0
+              decompressed += count
+            end
+          end
+        end
+        decompressed.must_equal(3_i64 * 1_048_576)
+      ensure
+        source.cleanup.call
+      end
+    end
+
+    it "streams the raw file when the target has no decompressor" do
+      source_path = PluginSpecHelper.tmp_path("ssm-upload-raw.bin")
+      File.write(source_path, "hello")
+
+      source = Krikri::SsmTransport.compress_for_upload(
+        source_path, Krikri::SsmTransport::TransferCapabilities.new("raw", false))
+
+      source.decoder.must_equal("raw")
+      source.path.must_equal(source_path)
+    end
+  end
 end
 
 describe "Krikri::SSHManager (ssm transport delegation)" do

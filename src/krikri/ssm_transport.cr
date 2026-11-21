@@ -1,6 +1,5 @@
 require "base64"
 require "compress/gzip"
-require "xz"
 require "random/secure"
 require "krikri-aws-ssm"
 require "./shell"
@@ -25,9 +24,10 @@ module Krikri
   # how upload runs its chmod/rename without deadlocking.
   #
   # Transfers stream base64 in pty-safe 3000-byte lines. Upload probes the
-  # target once per session for xz, then gzip, then raw and compresses to a
-  # controller temp file; download streams the target's `base64` output
-  # straight to disk. Every stdin bootstrap waits for a split READY marker
+  # target once per session for a decompressor and compresses to a
+  # controller temp file (gzip when the target has it, else raw; see
+  # #compress_for_upload for why xz is not used locally); download streams
+  # the target's `base64` output straight to disk. Every stdin bootstrap waits for a split READY marker
   # before writing bytes, because the pty's canonical buffer is ~4KB and a
   # payload written before the shell reaches `head` would be dropped.
   module SsmTransport
@@ -46,10 +46,6 @@ module Krikri
     # payload's total size can be computed from the file size alone.
     RAW_CHUNK_BYTES    = 2250
     DECODE_BATCH_BYTES = 4096
-    # The xz shard's Writer drops input when a single write leaves bytes in
-    # its internal buffer; small chunks plus a flush after each round-trip
-    # correctly through liblzma (verified against 2MB of random data).
-    XZ_CHUNK_BYTES = 2048
 
     class Error < Exception
     end
@@ -63,8 +59,8 @@ module Krikri
       end
     end
 
-    private record TransferCapabilities, decoder : String, gzip : Bool
-    private record UploadSource, path : String, decoder : String, cleanup : Proc(Nil)
+    record TransferCapabilities, decoder : String, gzip : Bool
+    record UploadSource, path : String, decoder : String, cleanup : Proc(Nil)
 
     PROBE_COMMAND = %q{if command -v xz >/dev/null 2>&1; then d=xz; elif command -v gzip >/dev/null 2>&1; then d=gzip; else d=raw; fi; if command -v gzip >/dev/null 2>&1; then g=gzip; else g=no; fi; printf '%s %s\n' "$d" "$g"}
 
@@ -609,19 +605,25 @@ module Krikri
 
     # --- compression -------------------------------------------------------
 
-    private def self.compress_for_upload(local_path : String,
-                                         capabilities : TransferCapabilities) : UploadSource
-      if capabilities.decoder == "xz"
-        begin
-          return compress_with(local_path, "xz", ".xz")
-        rescue
-          # local liblzma unavailable/failed - degrade to gzip or raw
-        end
-      end
+    # gzip, never a local xz. The pinned xz shard (naqvis/xz.cr) truncates
+    # multi-megabyte streams: its Writer#close can stop before the stream
+    # footer is emitted, so the target's `xz -dc` exits 1 after writing the
+    # full payload and the upload fails. That is exactly the 42 MB fat
+    # plugin binary krikri uploads per host. gzip's stdlib writer is
+    # verified end-to-end and, at this size, also faster on the controller
+    # (~1.5 s and 13 MB vs ~30 s and 7 MB), so the size win does not pay
+    # for the transfer it saves. The target-side `xz` probe stays because
+    # an xz-only image still needs the raw fallback, and the capability is
+    # recorded per session.
+    #
+    # Public as a spec seam.
+    def self.compress_for_upload(local_path : String,
+                                 capabilities : TransferCapabilities) : UploadSource
       if capabilities.gzip
         begin
           return compress_with(local_path, "gzip", ".gz")
         rescue
+          # local gzip unavailable/failed - fall back to the raw payload
         end
       end
       UploadSource.new(local_path, "raw", -> { nil })
@@ -631,17 +633,7 @@ module Krikri
       path = File.tempname("krikri-ssm-upload", suffix)
       File.open(local_path, "rb") do |input|
         File.open(path, "wb") do |output|
-          if kind == "xz"
-            buffer = Bytes.new(XZ_CHUNK_BYTES)
-            Compress::XZ::Writer.open(output) do |writer|
-              while (count = input.read_greedy(buffer)) > 0
-                writer.write(buffer[0, count])
-                writer.flush
-              end
-            end
-          else
-            Compress::Gzip::Writer.open(output) { |writer| IO.copy(input, writer) }
-          end
+          Compress::Gzip::Writer.open(output) { |writer| IO.copy(input, writer) }
         end
       end
       UploadSource.new(path, kind, -> { File.delete(path) if File.exists?(path); nil })

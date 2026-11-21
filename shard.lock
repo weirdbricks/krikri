@@ -26,7 +26,7 @@ shards:
 
   krikri-aws-ssm:
     git: https://github.com/weirdbricks/krikri-aws-ssm.git
-    version: 0.2.0+git.commit.9e57e3025d4beeb2abb8aea0c89307d895f310d1
+    version: 0.2.0+git.commit.52c1526b7c16c65b75b9df394b04abef85fef8bb
 
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git

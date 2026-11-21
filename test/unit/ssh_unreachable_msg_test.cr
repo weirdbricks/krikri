@@ -38,6 +38,15 @@ describe "Krikri::SSHUnreachableMsg" do
       )
     end
 
+    it "leaves the SSM Windows refusal unwrapped" do
+      # The Windows guard fails before any session (or ssh) exists, so the
+      # ssh lead ("Make sure this host can be reached over ssh") would
+      # misreport both the transport and the cause.
+      text = Krikri::SsmUnreachableMsg::WINDOWS_UNSUPPORTED
+      Krikri::SSHUnreachableMsg.unreachable_msg(text, true, "10.0.0.5").must_equal(text)
+      Krikri::SSHUnreachableMsg.unreachable_msg(text, false, "10.0.0.5").must_equal(text)
+    end
+
     it "trims the trailing space an empty ssh detail would leave" do
       # Issue #1663's silent-death shape: ssh exits 255 with nothing on
       # stderr, so there is no detail to append. ansible-playbook's msg

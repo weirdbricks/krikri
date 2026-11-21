@@ -39,7 +39,7 @@ dependencies:
   # phase 11); replace with the tag then.
   krikri-aws-ssm:
     github: weirdbricks/krikri-aws-ssm
-    commit: 9e57e3025d4beeb2abb8aea0c89307d895f310d1
+    commit: 52c1526b7c16c65b75b9df394b04abef85fef8bb
 
 development_dependencies:
   ameba:

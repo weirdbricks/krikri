@@ -3609,6 +3609,21 @@ module Krikri
                         pruned[key] = v
                       end
                     end
+                    # A controller-only plugin (fetch:) opens its own SSM
+                    # session back to the target, so it needs the same
+                    # connection options this task resolved.
+                    PluginManager::SSM_WIRE_VAR_KEYS.each do |key|
+                      if v = vars_context[key]?
+                        pruned[key] = v
+                      end
+                    end
+                    if PluginManager.controller_only?(task.module_name)
+                      PluginManager::SSM_CREDENTIAL_WIRE_VAR_KEYS.each do |key|
+                        if v = vars_context[key]?
+                          pruned[key] = v
+                        end
+                      end
+                    end
                     pruned
                   end
 

@@ -29,8 +29,11 @@ module Krikri
     # with no trailing space (live-verified vs 2.21.6).
     def self.unreachable_msg(detail : String, pipelining : Bool, connection_host : String) : String
       # SSM composes its own actionable, "SSM "-prefixed line; wrapping it in
-      # ssh's wording would misreport the transport.
-      return detail if SsmUnreachableMsg.unreachable_text?(detail)
+      # ssh's wording would misreport the transport. The Windows guard is
+      # likewise an SSM-side refusal (it never dialled ssh), so it keeps
+      # its own text instead of the "Make sure this host can be reached
+      # over ssh" lead.
+      return detail if SsmUnreachableMsg.unreachable_text?(detail) || SsmUnreachableMsg.windows_text?(detail)
 
       if pipelining
         %(Data could not be sent to remote host "#{connection_host}". Make sure this host can be reached over ssh: #{detail})

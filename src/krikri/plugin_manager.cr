@@ -1046,6 +1046,39 @@ module Krikri
       "inventory_hostname",
     ]
 
+    # The aws_ssm connection options a controller-only plugin's own
+    # dial-out needs to resolve the same SsmSettings the executor used.
+    # fetch: runs on the controller and opens its own SSM session for the
+    # remote read/checksum, so without these it fell back to the public
+    # AWS endpoint with no region/endpoint override and its existence
+    # check failed with a misleading "remote file does not exist".
+    # Non-secret values only: this JSON also crosses the session to every
+    # REMOTE plugin binary (which sees ansible_connection=local and never
+    # dials out, so it has no use for them either).
+    SSM_WIRE_VAR_KEYS = [
+      "ansible_aws_ssm_instance_id",
+      "ansible_aws_ssm_region",
+      "ansible_aws_ssm_profile",
+      "ansible_aws_ssm_document",
+      "ansible_aws_ssm_timeout",
+      "ansible_aws_ssm_retries",
+      "ansible_aws_ssm_endpoint_url",
+      "ansible_shell_type",
+    ]
+
+    # Static credentials from the connection options. Added ONLY for a
+    # CONTROLLER-ONLY plugin: that config is handed to a local plugin
+    # process on stdin. A remote plugin's config crosses the session, and
+    # a controller credential must never be shipped there - the same rule
+    # that keeps the SSH password keys out of WIRE_VAR_KEYS.
+    SSM_CREDENTIAL_WIRE_VAR_KEYS = [
+      "ansible_aws_ssm_access_key_id",
+      "ansible_aws_ssm_secret_access_key",
+      "ansible_aws_ssm_session_token",
+      "aws_access_key_id",
+      "aws_secret_access_key",
+    ]
+
     # Same @@local_md5_cache contract (computed once per distinct local
     # file per process), but aware that build.sh's fat plugin binary
     # means many DIFFERENT plugin names now resolve to the SAME
