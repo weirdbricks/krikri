@@ -29,6 +29,14 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
 private DELEGATE_NAME = "your_CA_controller_inventory_hostname"
+
+# Issue #1688's delegate: an INVENTORY host whose ansible_host is a name the
+# resolver refuses. A pinned interpreter keeps real's interpreter discovery
+# off the connection (the discovery exec's failure renders a different block
+# shape than the module exec's), so the module dispatch is the host's FIRST
+# ssh usage - the scenario the pipelined "Data could not be sent" lead and
+# its host name belong to.
+private DELEGATE_HOST_NAME = "dead_delegate_host_inventory_name"
 # The ssh transport's own error wording for a name the resolver refuses is
 # gai_strerror(getaddrinfo(...)) on this host - EAI_NONAME ("Name or service
 # not known") on a resolver that answers NXDOMAIN, EAI_AGAIN ("Temporary
@@ -41,14 +49,43 @@ private DELEGATE_NAME = "your_CA_controller_inventory_hostname"
 private SSH_DETAIL = "ssh: Could not resolve hostname #{DELEGATE_NAME.downcase}: #{resolver_refusal_detail}"
 
 private def resolver_refusal_detail : String
+  resolver_refusal_for(DELEGATE_NAME)
+end
+
+private def resolver_refusal_for(name : String) : String
   hints = LibC::Addrinfo.new
   hints.ai_family = LibC::AF_UNSPEC
   hints.ai_socktype = LibC::SOCK_STREAM
-  code = LibC.getaddrinfo(DELEGATE_NAME.downcase, nil, pointerof(hints), out addrs)
+  code = LibC.getaddrinfo(name.downcase, nil, pointerof(hints), out addrs)
   LibC.freeaddrinfo(addrs) if addrs && code == 0
   # A resolver that somehow answers the name is not an environment this
   # test's shape can occur on; fall back to the EAI_NONAME wording.
   code == 0 ? "Name or service not known" : String.new(LibC.gai_strerror(code))
+end
+
+private def delegate_host_ssh_detail : String
+  "ssh: Could not resolve hostname #{DELEGATE_HOST_NAME.downcase}: #{resolver_refusal_for(DELEGATE_HOST_NAME)}"
+end
+
+# Like run_play, but with the delegate host in the inventory and the
+# pipelined lead pinned ON: the pipelined wrapper is what puts the
+# connection host INTO the unreachable msg (SSHUnreachableMsg), so the
+# option is stated here instead of inherited from the developer's shell.
+private def run_pipelined_play(playbook : String) : {Process::Status, String}
+  dir = PluginSpecHelper.tmp_path("delegated-loop-unreach-1688")
+  FileUtils.mkdir_p(dir)
+  inv = File.join(dir, "inv.ini")
+  File.write(inv, "testhost ansible_connection=local\ntarget ansible_connection=ssh ansible_host=#{DELEGATE_HOST_NAME} ansible_python_interpreter=/usr/bin/python3\n")
+  pb = File.join(dir, "pb.yml")
+  File.write(pb, playbook)
+  output = IO::Memory.new
+  env = ENV.to_h
+  env.delete("ANSIBLE_SSH_PIPELINING")
+  env["ANSIBLE_PIPELINING"] = "True"
+  status = Process.run(BINARY, ["-i", inv, pb, "-T", "5"], output: output, error: output, chdir: dir, env: env)
+  {status, output.to_s}
+ensure
+  FileUtils.rm_r(dir) if dir && Dir.exists?(dir)
 end
 
 private def run_play(playbook : String) : {Process::Status, String}
@@ -158,5 +195,41 @@ describe "looped delegated task to an unresolvable delegate (issue #275)" do
     remote.wont_include("Task failed.\n")
 
     shown.call(true).must_include("<<< caused by >>>")
+  end
+
+  # Issue #1688: the pipelined unreachable msg must name the connection host
+  # the engine actually dialled - the DELEGATE's own ansible_host - never the
+  # origin's inventory name, and the [ERROR] block stays the single plain
+  # segment for a delegated item whatever the origin host's own connection is.
+  it "names the dialled delegate in the pipelined unreachable msg (issue #1688)" do
+    status, output = run_pipelined_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - slurp:
+              src: /etc/hostname
+            delegate_to: target
+            loop:
+              - /etc/hostname
+              - /etc/passwd
+    YAML
+
+    status.exit_code.must_equal(4)
+    detail = delegate_host_ssh_detail
+    msg = "Task failed: Data could not be sent to remote host \"#{DELEGATE_HOST_NAME}\". Make sure this host can be reached over ssh: #{detail}"
+    lines = output.lines
+
+    # The single plain block, with the delegate's connection host in the msg.
+    err = find_line(lines, "[ERROR]: #{msg}")
+    lines[err].must_equal("[ERROR]: #{msg}")
+
+    # No "Task failed." head, no cause section - ansible prints one plain
+    # segment for a delegated unreachable (live-verified vs 2.21.6).
+    output.wont_include("<<< caused by >>>")
+    output.wont_include("remote host \"testhost\"")
+
+    item1 = find_line(lines, "failed: [testhost -> target] (item=/etc/hostname)")
+    (item1 > err).must_equal(true)
+    lines[item1].must_equal("failed: [testhost -> target] (item=/etc/hostname) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"/etc/hostname\", \"msg\": #{msg.dump}, \"unreachable\": true}")
   end
 end

@@ -85,6 +85,7 @@ private DIVERGENCE_CASES = [
   {issue: 1662, slug: "swap-when-list-per-item-fact-blocks"},
   {issue: 1685, slug: "set-then-for-iterable"},
   {issue: 1686, slug: "block-tag-native-typing"},
+  {issue: 1688, slug: "delegated-loop-unreachable-msg-host"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -152,6 +153,11 @@ describe "divergence corpus" do
 
   it "replays 1581-jedimt-vcenter-ovf-ova-index" do
     expected, actual, report = divergence_transcripts(1581, "jedimt-vcenter-ovf-ova-index")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1688-delegated-loop-unreachable-msg-host" do
+    expected, actual, report = divergence_transcripts(1688, "delegated-loop-unreachable-msg-host")
     assert_equal(expected, actual, report)
   end
 

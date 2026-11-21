@@ -2850,12 +2850,22 @@ module Krikri
           # the block once); the msg is the task-level error brief + the
           # ssh transport's own error, never the "Failed to upload ..."
           # framing this engine's dispatch produces, because ansible's
-          # exception there is raised by the ssh connection plugin. The
-          # block's shape follows the ORIGIN host's own connection - sole
-          # brief segment for an ssh origin, the chain for a local one
+          # exception there is raised by the ssh connection plugin.
+          # The msg names the connection host ansible actually dialled -
+          # the DELEGATE's own ansible_host (issue #1688: for a local
+          # origin delegating to an ssh host, real's msg names the
+          # delegate's 192.0.2.x, never the origin's inventory name) - so
+          # a delegated item composes it off the delegate host, the same
+          # host the dispatch itself resolved.
+          # The block's shape: one plain segment for a DELEGATED item
+          # whatever the ORIGIN host's own connection is (issue #1688,
+          # live-verified vs 2.21.6 - same rule the non-looped
+          # report_unreachable path already follows, issue #650), and the
+          # chain shape only for a non-delegated item on a local origin
           # (see loop_unreachable_error_node for real's two shapes).
           if unreachable_task_result?(result) && !Krikri::Oneline.enabled? && !resolve_loop_item_no_log(task, item, idx, loop_items, base_vars_context, host)
-            unreachable_msg = unreachable_loop_item_msg(result, base_vars_context, host)
+            msg_host = delegate_target && item_delegate ? item_delegate : host
+            unreachable_msg = unreachable_loop_item_msg(result, base_vars_context, msg_host)
             if result_h = result.as_h?
               # ansible's converted item result carries no transport
               # stderr and no module invocation (the module never ran);
@@ -2870,7 +2880,7 @@ module Krikri
             ErrorBlock.emit(ResultDisplay.loop_unreachable_error_node(
               unreachable_msg,
               ResultDisplay.error_origin_context(task),
-              local_origin: PluginManager.local_connection?(host, base_vars_context || {} of String => JSON::Any),
+              local_origin: delegate_target.nil? && PluginManager.local_connection?(host, base_vars_context || {} of String => JSON::Any),
             ))
             host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
             dump = JSON::Any.new({
