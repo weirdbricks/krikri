@@ -37,6 +37,27 @@ describe "Krikri::SSHUnreachableMsg" do
         "ssh: connect to host localhost port 22: Connection refused"
       )
     end
+
+    it "trims the trailing space an empty ssh detail would leave" do
+      # Issue #1663's silent-death shape: ssh exits 255 with nothing on
+      # stderr, so there is no detail to append. ansible-playbook's msg
+      # ends `... can be reached over ssh:` - the task error is
+      # str(value).rstrip()'d (_internal/_task.py), so no trailing space
+      # survives into the printed line or the fatal JSON (live-verified
+      # vs 2.21.6).
+      Krikri::SSHUnreachableMsg.unreachable_msg("", true, "127.0.0.1").must_equal(
+        "Data could not be sent to remote host \"127.0.0.1\". Make sure this host can be reached over ssh:"
+      )
+      Krikri::SSHUnreachableMsg.unreachable_msg("", false, "127.0.0.1").must_equal(
+        "Failed to connect to the host via ssh:"
+      )
+      # A detail with trailing whitespace is trimmed too (ssh's own
+      # stderr usually ends with a newline).
+      Krikri::SSHUnreachableMsg.unreachable_msg("Connection closed by 10.0.0.1 port 22\r\n",
+        false, "10.0.0.1").must_equal(
+        "Failed to connect to the host via ssh: Connection closed by 10.0.0.1 port 22"
+      )
+    end
   end
 
   describe ".pipelining_enabled?" do

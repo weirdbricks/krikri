@@ -8,14 +8,17 @@ require "../../src/krikri/ssh_manager"
 # remote" FAILED task while ansible-playbook booked UNREACHABLE
 # and halted the host at Gathering Facts (recap `unreachable=1
 # failed=0` vs this engine's `failed=2 ok=3 skipped=5`). Distinguishing
-# the two is SSHManager.connection_level_failure?'s job: its pattern
-# list below is the single source of truth shared by
+# the two is SSHManager.connection_level_failure?'s job, shared by
 # PluginManager.interpret_remote_result (which stamps the result) and
-# the batch-script transport. These specs pin BOTH directions of the
-# classification - a remote plugin crash (loader error, traceback, a
-# plain "Permission denied" from touching a root-owned file) must never
-# be mistaken for the transport dying, and a real ssh(1) connection
-# error must always be caught.
+# the batch-script transport. Its rule is ansible's own (ssh's 255 exit
+# is the transport failing, bar a short list of signatures a remote
+# program owns - see plugins/connection/ssh.py's _handle_error), not a
+# list of ssh wordings: issue #1663 was the third report that a
+# wording-based classifier books a real transport death as FAILED
+# whenever ssh words it differently. These specs pin BOTH directions -
+# a remote plugin crash (a plain nonzero exit, a 255 some other program
+# explains) must never be mistaken for the transport dying, and a real
+# ssh(1) connection error must always be caught.
 describe "Krikri::SSHManager (ssh_connection_failure_test.cr)" do
   describe ".connection_level_failure?" do
     it "recognizes ssh's own connect-failure stderr shapes" do
@@ -88,38 +91,70 @@ describe "Krikri::SSHManager (ssh_connection_failure_test.cr)" do
       Krikri::SSHManager.connection_level_failure?(255, "Warning: Permanently added '[127.0.0.1]:22991' (ED25519) to the list of known hosts.\n", "").must_equal(true)
     end
 
-    it "keeps evidence-bearing nonzero exits out of the silent-death rule" do
-      # A plugin that produced output ran - its death is not provably
-      # transport-level.
-      Krikri::SSHManager.connection_level_failure?(255, "", "some plugin output").must_equal(false)
+    it "classifies every ssh 255 exit as a connection failure, whatever ssh's wording" do
+      # ansible's rule is the exit code, not the text: ssh(1) reserves
+      # 255 for its own failures and the ssh connection plugin raises
+      # AnsibleConnectionFailure for it (plugins/connection/ssh.py's
+      # _handle_error). Matching only the ssh wordings this engine had
+      # already observed booked a real transport death as a generic
+      # FAILED task whenever a different ssh build (or libc, or locale)
+      # worded it differently - issue #1663 was the third report of that
+      # shape, with macOS's ssh against a broken ProxyCommand.
+      {
+        "Connection to 127.0.0.1 closed by remote host.",
+        "Write failed: Broken pipe",
+        "ssh_dispatch_run_fatal: Connection to 127.0.0.1 port 22: Broken pipe",
+        "mux_client_request_session: read from master failed: Broken pipe",
+        "Timeout, server 10.0.0.1 not responding.",
+        "Pseudo-terminal will not be allocated because stdin is not a terminal.\nfatal: could not open any host key",
+      }.each do |stderr|
+        Krikri::SSHManager.connection_level_failure?(255, stderr, "").must_equal(true, "#{stderr.inspect} should classify as a connection-level failure")
+      end
+      # ansible does not consult stdout for this rule either, and neither
+      # does this engine any more: a 255 with plugin output still means
+      # the transport died before the module's result could be trusted.
+      Krikri::SSHManager.connection_level_failure?(255, "", "some plugin output").must_equal(true)
+      # ssh's warning lines don't launder remote stderr past the rule.
+      Krikri::SSHManager.connection_level_failure?(255, "Warning: Permanently added '[127.0.0.1]:22991' (ED25519) to the list of known hosts.\nerror while loading shared libraries: libyaml-0.so.2\n", "").must_equal(true)
+    end
+
+    it "keeps a 255 exit that another program explains as a module failure" do
+      # ansible's b_NOT_SSH_ERRORS: these signatures mean the 255 came
+      # from the remote side, not from ssh - so the task keeps its
+      # module-failure booking. Scanned in BOTH streams, exactly as
+      # _handle_error scans them.
+      {
+        "Traceback (most recent call last):\n  File \"/tmp/x.py\", line 1, in <module>\nNameError: name 'x' is not defined",
+        "PHP Parse error:  syntax error, unexpected end of file",
+        "chmod: invalid mode: 'u+rw'",
+        "chmod: A flag or octal number is not correct.",
+      }.each do |text|
+        Krikri::SSHManager.connection_level_failure?(255, text, "").must_equal(false, "#{text.inspect} in stderr should NOT classify as a connection-level failure")
+        Krikri::SSHManager.connection_level_failure?(255, "", text).must_equal(false, "#{text.inspect} in stdout should NOT classify as a connection-level failure")
+      end
+    end
+
+    it "keeps a plain nonzero remote exit status out of the transport classification" do
       # A remote signal death arrives through sshd as 128+N, never bare 255.
       Krikri::SSHManager.connection_level_failure?(137, "", "").must_equal(false)
       # A plain nonzero remote exit status is the plugin's own.
       Krikri::SSHManager.connection_level_failure?(3, "", "").must_equal(false)
-      # ssh's warning lines don't launder real remote stderr through the rule.
-      Krikri::SSHManager.connection_level_failure?(255, "Warning: Permanently added '[127.0.0.1]:22991' (ED25519) to the list of known hosts.\nerror while loading shared libraries: libyaml-0.so.2\n", "").must_equal(false)
+      # ...and transport-adjacent text alone never makes it one.
+      Krikri::SSHManager.connection_level_failure?(3, "Connection closed by 127.0.0.1 port 22993\r\n", "").must_equal(false)
     end
 
     it "classifies ssh's own mid-session drop line (Connection closed by) as a connection failure" do
       # Live shape (2026-10-07, podman socket that accepts TCP and closes):
       # ssh prints "Connection closed by <ip> port <n>" and exits 255.
-      # The words alone stay out of CONNECTION_FAILURE_PATTERNS (a remote
-      # command's stderr can carry them) - the guarded tier requires
-      # ssh's 255 exit and empty plugin stdout.
       Krikri::SSHManager.connection_level_failure?(255, "Connection closed by 127.0.0.1 port 22993\r\n", "").must_equal(true)
       Krikri::SSHManager.connection_level_failure?(255, "Connection reset by 127.0.0.1 port 22993\r\n", "").must_equal(true)
       Krikri::SSHManager.connection_level_failure?(255, "Connection reset by peer", "").must_equal(true)
     end
 
-    it "keeps the mid-session drop guard one-sided against remote command output" do
-      # Plugin produced output -> it ran; its stderr text (even
-      # transport-adjacent) is its own, not the transport's.
-      Krikri::SSHManager.connection_level_failure?(255, "Connection closed by 127.0.0.1 port 22993\r\n", "some plugin output").must_equal(false)
+    it "keeps an ssh exit 0 out of the transport classification" do
       # A remote command's own ssh failure arrives inside the plugin's
-      # JSON result (ssh exit 0) - the exit gate already keeps it out.
+      # JSON result (ssh exit 0) - the exit gate keeps it out.
       Krikri::SSHManager.connection_level_failure?(0, "Connection closed by 10.0.0.1 port 22", "").must_equal(false)
-      # Non-255 exits never enter either guarded tier.
-      Krikri::SSHManager.connection_level_failure?(3, "Connection closed by 127.0.0.1 port 22993\r\n", "").must_equal(false)
     end
   end
 end

@@ -461,6 +461,16 @@ module Krikri
       any_failed = false
       executed_count = 0
       oneline_results = [] of JSON::Any
+      # A looped handler whose host dies at the SSH transport level on any
+      # item is Ansible's UNREACHABLE for the whole handler (the raised
+      # AnsibleConnectionFailure escapes the loop), never a failed item -
+      # same rule execute_handler_internal applies to a non-looped
+      # handler, and the same one the regular looped-task path books. The
+      # first such result supplies the report's ssh detail; the entries
+      # collected here are the aggregate's registered `results`.
+      any_unreachable = false
+      unreachable_result : JSON::Any? = nil
+      unreachable_entries = [] of JSON::Any
 
       # An empty loop: source (e.g. cloudalchemy.cortex's "reload cortex
       # services" handler looping over `cortex_services | dict2items`
@@ -493,6 +503,35 @@ module Krikri
 
         result = execute_handler_plugin_once(handler, host, vars_context)
         merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"), handler)
+        # A transport-level item is ansible's per-item `failed:` line but
+        # UNREACHABLE in shape and booking, never the raw
+        # `_connection_failure` payload shown as a plain FAILED! with
+        # failed=1 (issue #1663). Same rendering execute_looped_task
+        # gives a looped task's unreachable item; the aggregate below
+        # closes the handler with the loop's own UNREACHABLE fatal.
+        if unreachable_task_result?(result)
+          any_unreachable = true
+          unreachable_result ||= result
+          unless Krikri::Oneline.enabled? || resolve_task_no_log(handler, base_vars_context)
+            unreachable_msg = unreachable_loop_item_msg(result, base_vars_context, host)
+            ResultDisplay.flush_task_deprecation_capture_for_display
+            ErrorBlock.emit(ResultDisplay.loop_unreachable_error_node(
+              unreachable_msg,
+              ResultDisplay.error_origin_context(handler),
+              local_origin: PluginManager.local_connection?(host, base_vars_context),
+            ))
+            dump = JSON::Any.new({
+              "ansible_loop_var" => JSON::Any.new(loop_var || "item"),
+              "changed"          => JSON::Any.new(result["changed"]?.try(&.as_bool) || false),
+              "msg"              => JSON::Any.new(unreachable_msg),
+              "unreachable"      => JSON::Any.new(true),
+            })
+            append_loop_item_bindings(handler, dump.as_h, item, idx)
+            puts "failed: [#{host.name}] (item=#{include_item_display_label(handler, item, vars_context, host)}) => #{ResultDisplay.python_json_dump(dump)}".colorize(:red)
+            unreachable_entries << unreachable_loop_entry(dump)
+          end
+          next
+        end
         # The oneline callback's aggregate dump needs every iterated item's
         # result (skipped ones included) - collected here, shaped like the
         # task-loop path's registered entries (private-key strip plus the
@@ -514,6 +553,45 @@ module Krikri
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
         ResultDisplay.display_result(host, result, resolve_task_diff_mode(handler, base_vars_context), item_label: include_item_display_label(handler, item, vars_context, host), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, delegate_target: delegate_display_target(handler, host, base_vars_context), source_task: handler, loop_item: item, loop_var_name: loop_var)
+      end
+
+      # A loop with any transport-level item is the handler's UNREACHABLE
+      # report, shaped like ansible's: the loop aggregate's own fatal
+      # (`msg: "All items completed"`, the converted per-item entries in
+      # `results`, `unreachable: true`) - or, where that closure would
+      # echo what no_log exists to hide (and for the oneline callback,
+      # which renders one line per host), the plain single-task report.
+      # Booking matches execute_handler_internal's own branch, and the
+      # counted marker keeps HandlerRunner's recording step from
+      # displaying and recounting it as ok.
+      if any_unreachable
+        handler_no_log = resolve_task_no_log(handler, base_vars_context)
+        delegate_target = delegate_display_target(handler, host, base_vars_context)
+        if Krikri::Oneline.enabled? || handler_no_log
+          report_unreachable(handler, host, unreachable_result.try(&.["stderr"]?.try(&.as_s?)), no_log: handler_no_log, delegate_target: delegate_target)
+        else
+          fatal_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+          fatal_json = JSON::Any.new({
+            "changed"     => JSON::Any.new(false),
+            "msg"         => JSON::Any.new("All items completed"),
+            "results"     => JSON::Any.new(unreachable_entries),
+            "unreachable" => JSON::Any.new(true),
+          })
+          puts "fatal: [#{fatal_label}]: UNREACHABLE! => #{ResultDisplay.python_json_dump(fatal_json)}".colorize(:red)
+          if handler.ignore_unreachable?
+            @results[host.name]["ok"] += 1
+            @results[host.name]["ignored"] += 1
+            puts "...ignoring".colorize(:cyan)
+          else
+            @results[host.name]["unreachable"] += 1
+            @halted_hosts << host.name
+          end
+        end
+        @unreachable_hosts << host.name unless handler.ignore_unreachable?
+        return JSON.parse({
+          "changed"                     => false,
+          "handler_unreachable_counted" => true,
+        }.to_json)
       end
 
       # A looped handler whose every item was skipped (per-item when:,
