@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - set_fact:
+        a: "{% set n = 5 %}{{ n }}"
+        b: "{% set l = ['a','b'] %}{{ l }}"
+        c: "{{ 5 }}"
+        d: "{{ ['a','b'] }}"
+        e: "{% if true %}{{ 5 }}{% endif %}"
+        f: "{% for i in [1,2] %}{{ i }}{% endfor %}"
+    - debug:
+        msg: "a={{ a | type_debug }} b={{ b | type_debug }} c={{ c | type_debug }} d={{ d | type_debug }} e={{ e | type_debug }} f={{ f | type_debug }}"
+    - debug: msg="loop-test {{ item }}"
+      loop: "{{ b }}"

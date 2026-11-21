@@ -83,6 +83,7 @@ private DIVERGENCE_CASES = [
   {issue: 1660, slug: "deprecation-warnings-disabled"},
   {issue: 1661, slug: "pacman-bool-type-name"},
   {issue: 1662, slug: "swap-when-list-per-item-fact-blocks"},
+  {issue: 1686, slug: "block-tag-native-typing"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -415,6 +416,11 @@ describe "divergence corpus" do
 
   it "replays 1662-swap-when-list-per-item-fact-blocks" do
     expected, actual, report = divergence_transcripts(1662, "swap-when-list-per-item-fact-blocks")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1686-block-tag-native-typing" do
+    expected, actual, report = divergence_transcripts(1686, "block-tag-native-typing")
     assert_equal(expected, actual, report)
   end
 end

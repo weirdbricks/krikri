@@ -33,6 +33,9 @@ module Krikri
       # templating keeps it false, matching ansible-core (its inline
       # lexer doubles backslashes; `when:` expressions decode normally).
       @decode : Bool
+      # When set, every `{{ }}` output node's pre-finalize value of the next
+      # render is recorded here (see #render_capturing_chunks!).
+      @render_chunks : Array(KrikriJinja::AnyValue)?
 
       def initialize(@vars : Hash(String, JSON::Any), @decode : Bool = false)
       end
@@ -109,6 +112,28 @@ module Krikri
         rendered
       end
 
+      # Render *text* while recording each `{{ }}` output node's native value,
+      # in emission order. ansible-core 2.19's native typing is decided by the
+      # template's RUNTIME output chunks (issue #1686, live-verified vs 2.21.5):
+      # a render that emits exactly one chunk keeps that chunk's type - a
+      # `{% set l = ['a','b'] %}{{ l }}` set_fact IS the list - while every
+      # multi-chunk render (`{% for i in [1,2] %}{{ i }}{% endfor %}` -> "12")
+      # and every literal-text chunk finalizes a plain str. Block-local names
+      # (`{% set %}` targets, `for` targets) only exist inside the render, so
+      # the chunk values must be captured during it - the old span-only-render
+      # heuristic (retemplated_loop_source_value) cannot see them at all.
+      # Literal TextNode output carries no chunk (it is already a plain str).
+      def render_capturing_chunks!(text : String) : String
+        @render_chunks = [] of KrikriJinja::AnyValue
+        render!(text)
+      end
+
+      # The chunk values #render_capturing_chunks! recorded (empty for a render
+      # that emitted no `{{ }}` output node - text-only or block-only templates).
+      def captured_chunks : Array(KrikriJinja::AnyValue)
+        @render_chunks || Array(KrikriJinja::AnyValue).new
+      end
+
       private def render_measured!(text : String) : String
         # The lazy variable scope is built once per renderer (@vars is
         # fixed for a renderer's lifetime) and shared with #evaluate_value!;
@@ -130,7 +155,27 @@ module Krikri
         if text.includes?("hostvars")
           VarSubstitutor.emit_template_hostvars_fact_deprecations(template, @vars)
         end
-        rendered = KrikriJinja.default_engine.render_parsed(
+        engine = KrikriJinja.default_engine
+        if chunks = @render_chunks
+          # A render! retry (unknown filter/test registered, then re-rendered)
+          # re-enters render_measured! - the failed attempt's partial chunks
+          # must not survive into the retry's verdict.
+          chunks.clear
+          # A derived engine copy, never the shared default: mutating the
+          # default's finalize would race every concurrent render. The copy
+          # carries the same filters/tests/globals/loader; the finalize hook
+          # records the PRE-finalize chunk (a None chunk stays None, a tuple
+          # stays a tuple - exactly what ansible's native_concat sees) and
+          # then chains the engine's own finalize so the rendered TEXT keeps
+          # its ansible shape (None renders "", tuples render as lists).
+          engine = engine.with_undefined(KrikriJinja::Undefined.new(nil, chainable: true))
+          original = engine.finalize
+          engine.finalize = ->(value : KrikriJinja::AnyValue) {
+            chunks << value
+            original ? original.call(value) : value
+          }
+        end
+        rendered = engine.render_parsed(
           template, {"environment" => KrikriJinja::AnyValue.new(environment)},
           resolver: jinja_resolver, undefined: KrikriJinja::Undefined.new(nil, chainable: true),
           host_context: jinja_host_context
