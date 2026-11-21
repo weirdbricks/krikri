@@ -127,10 +127,18 @@ private def with_htop_policy_shim(&)
   CACHE_SHIM
   File.write(File.join(dir, "stat"), "#!/bin/sh\necho 100\n")
   File.write(File.join(dir, "apt-mark"), "#!/bin/sh\nexit 0\n")
+  # dpkg-query is shimmed too: this host really has htop installed, and a
+  # wildcard pin that fnmatches the INSTALLED version is a no-op with no
+  # apt-get call at all (state=latest's install() probes the installed
+  # version first), so on such a host the spec would see zero install
+  # calls. Real dpkg-query's empty-stdout exit-1 shape for an unknown
+  # name pins the package as not installed on every host.
+  File.write(File.join(dir, "dpkg-query"), "#!/bin/sh\nexit 1\n")
   File.chmod(File.join(dir, "apt-get"), 0o755)
   File.chmod(File.join(dir, "apt-cache"), 0o755)
   File.chmod(File.join(dir, "stat"), 0o755)
   File.chmod(File.join(dir, "apt-mark"), 0o755)
+  File.chmod(File.join(dir, "dpkg-query"), 0o755)
   env = {"PATH" => "#{dir}:/usr/bin:/bin", "KRIKRI_APT_CALLS" => log}.to_json
   yield env, log
 ensure

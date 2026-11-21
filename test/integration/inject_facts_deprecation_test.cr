@@ -590,6 +590,18 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
   # whichever item merely named the fact first collapsed all three
   # Origins onto item 1, and the display's per-Origin dedupe dropped the
   # rest (one block where real prints three).
+  #
+  # The role's own literals (docker/containerd/container) can't be
+  # compared against verbatim here: real short-circuits a when: list at
+  # its first false item (2.21's conditional loop returns on the first
+  # falsy item without templating the rest), so on a host whose gathered
+  # ansible_virtualization_type IS "docker" - CI's job container - only
+  # item 1 would ever be templated and the run would legitimately print
+  # one block. Comparing against values no host's virtualization fact can
+  # take keeps every item truthy (hence every item templated) on every
+  # host; pinning the fact itself as a higher-precedence var is not an
+  # option, because a shadowing var reads untagged and silences the
+  # deprecation altogether.
   it "prints one block per when: item reading the same fact, each at its own item token" do
     stderr = run_playbook(<<-PLAYBOOK)
       - hosts: localhost
@@ -600,17 +612,17 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
             ansible.builtin.command: /bin/true
             changed_when: false
             when:
-              - ansible_virtualization_type != "docker"
-              - ansible_virtualization_type != "containerd"
-              - ansible_virtualization_type != "container"
+              - ansible_virtualization_type != "notdocker"
+              - ansible_virtualization_type != "notcontainerd"
+              - ansible_virtualization_type != "notcontainer"
       PLAYBOOK
 
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(3)
     stderr.must_include(":9:11\n")
     stderr.must_include(":10:11\n")
     stderr.must_include(":11:11\n")
-    stderr.must_include("9         - ansible_virtualization_type != \"docker\"\n")
-    stderr.must_include("11         - ansible_virtualization_type != \"container\"\n")
+    stderr.must_include("9         - ansible_virtualization_type != \"notdocker\"\n")
+    stderr.must_include("11         - ansible_virtualization_type != \"notcontainer\"\n")
     stderr.must_include("            ^ column 11")
   end
 

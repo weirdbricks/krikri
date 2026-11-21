@@ -66,6 +66,11 @@ jobs:
         # and docker.io + docker-compose-v2 for the live docker_compose_v2
         # tests (the runner mounts the host docker socket into job
         # containers, so a client-side install is enough to reach it).
+        # python3-docker (which pulls in python3-requests): the community.docker
+        # modules import the docker SDK's requests at runtime - without it
+        # the docker_* divergence replays and validation specs get Ansible's
+        # "Failed to import the required Python library (requests)" task
+        # failure instead of the behavior they pin.
         run: |
           apt-get update -qq
           apt-get install -y -qq \
@@ -74,7 +79,7 @@ jobs:
             rsync iproute2 libcap2-bin kmod cron \
             python3 python3-pip python3-venv python3-apt python3-debian \
             python3-pexpect python3-lxml python3-passlib python3-psycopg2 \
-            python3-pymysql acl parted lvm2 npm \
+            python3-pymysql python3-docker acl parted lvm2 npm \
             curl zip unzip sudo \
             docker.io docker-compose-v2
 
@@ -83,6 +88,17 @@ jobs:
         # controller's python3 and need it to import the `Ansible`
         # package (the engine degrades to the old undefined/[] behavior
         # without it, which four of those tests fail on by design).
+        #
+        # The ansible-core version has to match the repo's parity target
+        # (ANSIBLE_TARGET_VERSION = 2.21.6, the version every expected
+        # transcript was captured against), not just "a recent core": the
+        # role-local plugin/filter/lookup specs pin the import-time
+        # `ansible.module_utils._text` deprecation ("removed from
+        # ansible-core version 2.24") that the controller's own core emits
+        # when a plugin imports to_bytes/to_text, and 2.19.11's _text.py
+        # carries no deprecation hook at all - on it those specs saw zero
+        # deprecation lines ("Expected 1 but got 0") or flunked the
+        # Skipping-plugin -> hint -> to_bytes -> to_text ordering.
         #
         # The community.general / community.docker collections are
         # installed too, at the versions the specs were live-captured
@@ -109,7 +125,7 @@ jobs:
         # WARNING] - which is what real ansible does on the same controller,
         # so the spec's captured host had both installed.
         run: |
-          pip3 install --break-system-packages ansible-core==2.19.11
+          pip3 install --break-system-packages ansible-core==2.21.6
           ansible-galaxy collection install community.general:12.5.0 community.docker:5.2.1 community.proxmox:1.3.0 community.mysql:5.0.2 community.zabbix:4.1.0 amazon.aws:10.1.1 community.aws:10.0.0
 
       - name: Cache shards
@@ -195,9 +211,19 @@ jobs:
         # facts, git, npm, apt - while the same specs pass in that image run
         # alone. 16 keeps the IO-bound tests overlapped without starving the
         # CPU-bound ones.
+        #
+        # KRIKRI_STALL_SECONDS=600: the per-shard no-output watchdog defaults
+        # to 120s, but the live docker tests this job enables legitimately
+        # run silent for minutes of podman work, so on the default a healthy
+        # shard was reported as stalled ("no output for 122s") and killed
+        # (exit 137) - with the exclusive! specs merely waiting on the rest
+        # of the shard named as the in-flight tests. 600s is the same
+        # ceiling KRIKRI_SLOW_TESTS uses locally, without turning on the
+        # extra slow tests that env var gates.
         env:
           CRYSTAL_CACHE_DIR: /root/.cache/krikri-minitest
           KRIKRI_DOCKER_TESTS: "1"
+          KRIKRI_STALL_SECONDS: "600"
           KRIKRI_TEST_SHARDS: "4"
         run: scripts/minitest.sh -- -p 4
 
