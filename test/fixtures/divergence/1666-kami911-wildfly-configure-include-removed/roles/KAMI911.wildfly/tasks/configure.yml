@@ -1,0 +1,390 @@
+---
+# task file for wildfly
+
+- name: create wildfly etc directory
+  file:
+    path: '{{ wildfly_conf_dir }}'
+    state: directory
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0750'
+
+- name: copy wildfly configuration
+  template:
+    src: wildfly.conf.j2
+    dest: '{{ wildfly_conf_dir }}/{{ wildfly_instance_name }}.conf'
+    owner: root
+    group: root
+    mode: '0640'
+  notify:
+    - restart wildfly
+    - change data mode
+
+- name: copy wildfly domain-controller configuration
+  template:
+    src: wildfly-dc.conf.j2
+    dest: '{{ wildfly_conf_dir }}/{{ wildfly_dc_instance_name }}.conf'
+    owner: root
+    group: root
+    mode: '0640'
+  notify:
+    - restart wildfly services
+    - change data mode
+  when: wildfly_role == 'domain-master-slave'
+
+- name: 'create domain user configuration in: {{ wildfly_base }}/domain/configuration'
+  copy:
+    src: '{{ item }}'
+    dest: '{{ wildfly_base }}/domain/configuration/{{ item }}'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0600'
+    force: false
+  with_items:
+    - application-roles.properties
+    - application-users.properties
+    - mgmt-groups.properties
+    - mgmt-users.properties
+
+- name: 'create domain server configuration in: {{ wildfly_base }}/domain/configuration'
+  copy:
+    src: '{{ wildfly_home }}/domain/configuration/{{ item }}'
+    dest: '{{ wildfly_base }}/domain/configuration/{{ item }}'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '{{ wildfly_file_mode }}'
+    remote_src: true
+    force: '{{ wildfly_config_file_force_overwrite }}'
+  with_items:
+    - default-server-logging.properties
+    - domain.xml
+    - host-master.xml
+    - host-slave.xml
+    - host.xml
+    - logging.properties
+  when: wildfly_mode == 'domain'
+
+# - block:
+#     - name: 'Setting node password for domain members to connect domain-controller for host slaves (1)'
+#       xml:
+#         path: '{{ wildfly_base }}/domain/configuration/host-slave.xml'
+#         xpath: '/h:host/management/security-realms/security-realm'
+#         namespaces:
+#           h: 'urn:jboss:domain:10.0'
+#         attribute: 'name'
+#         value: 'SlaveRealm'
+#     - name: 'Setting node password for domain members to connect domain-controller for host slaves (2)'
+#       xml:
+#         path: '{{ wildfly_base }}/domain/configuration/host-slave.xml'
+#         xpath: '/h:host/management/security-realms/security-realm/server-identities'
+#         namespaces:
+#           h: 'urn:jboss:domain:10.0'
+#         state: present
+#     - name: 'Setting node password for domain members to connect domain-controller for host slaves (3)'
+#       xml:
+#         path: '{{ wildfly_base }}/domain/configuration/host-slave.xml'
+#         xpath: '/h:host/management/security-realms/security-realm/server-identities/secret'
+#         namespaces:
+#           h: 'urn:jboss:domain:10.0'
+#         attribute: 'value'
+#         value: '{{ wildfly_node_password | b64encode }}'
+#   when: wildfly_role in [ 'domain-slave', 'domain-master-slave' ]
+
+- name: configure domain server logging (1)
+  lineinfile:
+    dest: '{{ wildfly_base }}/domain/configuration/logging.properties'
+    regexp: '^handler.BOOT_FILE.properties=.*$'
+    line: 'handler.BOOT_FILE.properties=autoFlush,append,fileName'
+    state: present
+  when: wildfly_mode == 'domain'
+  notify:
+    - restart wildfly services
+
+- name: configure domain server logging (2)
+  lineinfile:
+    dest: '{{ wildfly_base }}/domain/configuration/logging.properties'
+    regexp: '^handler.BOOT_FILE.append=.*$'
+    line: 'handler.BOOT_FILE.append=true'
+    insertafter: 'handler.BOOT_FILE.properties=autoFlush,append,fileName'
+    state: present
+  when: wildfly_mode == 'domain'
+  notify:
+    - restart wildfly services
+
+- name: configure domain-controller server logging (3)
+  lineinfile:
+    dest: '{{ wildfly_base }}/domain/configuration/logging.properties'
+    regexp: '^handler.BOOT_FILE.suffix=.*$'
+    line: 'handler.BOOT_FILE.suffix=.yyyy-MM-dd'
+    insertafter: 'handler.BOOT_FILE.formatter=PATTERN'
+    state: present
+  when: wildfly_mode == 'domain'
+  notify:
+    - restart wildfly services
+
+- name: 'create domain-controller user configuration in: {{ wildfly_base }}/domain-controller/configuration'
+  copy:
+    src: '{{ item }}'
+    dest: '{{ wildfly_base }}/domain-controller/configuration/{{ item }}'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0600'
+    force: false
+  with_items:
+    - application-roles.properties
+    - application-users.properties
+    - mgmt-groups.properties
+    - mgmt-users.properties
+  when: wildfly_role == 'domain-master-slave'
+
+- name: 'create domain-controller server configuration in: {{ wildfly_base }}/domain-controller/configuration'
+  copy:
+    src: '{{ wildfly_home }}/domain/configuration/{{ item }}'
+    dest: '{{ wildfly_base }}/domain-controller/configuration/{{ item }}'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '{{ wildfly_file_mode }}'
+    remote_src: true
+    force: '{{ wildfly_config_file_force_overwrite }}'
+  with_items:
+    - default-server-logging.properties
+    - domain.xml
+    - host-master.xml
+    - logging.properties
+  when: wildfly_role == 'domain-master-slave' or 'domain-master'
+
+# - block:
+#     - name: 'Setting domain-controller to use native port (1)'
+#       xml:
+#         path: '{{ wildfly_base }}/domain-controller/configuration/host-master.xml'
+#         xpath: '/h:host/management/management-interfaces/native-interface'
+#         namespaces:
+#           h: 'urn:jboss:domain:10.0'
+#         attribute: 'security-realm'
+#         value: 'ManagementRealm'
+#     - name: 'Setting domain-controller to use native port (2)'
+#       xml:
+#         path: '{{ wildfly_base }}/domain-controller/configuration/host-master.xml'
+#         xpath: '/h:host/management/management-interfaces/native-interface/socket'
+#         namespaces:
+#           h: 'urn:jboss:domain:10.0'
+#         attribute: 'interface'
+#         value: 'management'
+#     - name: 'Setting domain-controller to use native port (3)'
+#       xml:
+#         path: '{{ wildfly_base }}/domain-controller/configuration/host-master.xml'
+#         xpath: '/h:host/management/management-interfaces/native-interface/socket'
+#         namespaces:
+#           h: 'urn:jboss:domain:10.0'
+#         attribute: 'port'
+#         value: '${jboss.management.native.port:9999}'
+#   when: wildfly_role == 'domain-master-slave' or 'domain-master'
+
+- name: configure domain-controller server logging (1)
+  lineinfile:
+    dest: '{{ wildfly_base }}/domain-controller/configuration/logging.properties'
+    regexp: '^handler.BOOT_FILE.properties=.*$'
+    line: 'handler.BOOT_FILE.properties=autoFlush,append,fileName'
+    state: present
+  when: wildfly_role == 'domain-master-slave'
+  notify:
+    - restart wildfly services
+
+- name: configure domain-controller server logging (2)
+  lineinfile:
+    dest: '{{ wildfly_base }}/domain-controller/configuration/logging.properties'
+    regexp: '^handler.BOOT_FILE.append=.*$'
+    line: 'handler.BOOT_FILE.append=true'
+    insertafter: 'handler.BOOT_FILE.properties=autoFlush,append,fileName'
+    state: present
+  when: wildfly_role == 'domain-master-slave'
+  notify:
+    - restart wildfly services
+
+- name: configure domain-controller server logging (3)
+  lineinfile:
+    dest: '{{ wildfly_base }}/domain-controller/configuration/logging.properties'
+    regexp: '^handler.BOOT_FILE.suffix=.*$'
+    line: 'handler.BOOT_FILE.suffix=.yyyy-MM-dd'
+    insertafter: 'handler.BOOT_FILE.formatter=PATTERN'
+    state: present
+  when: wildfly_role == 'domain-master-slave'
+  notify:
+    - restart wildfly services
+
+- name: 'create standalone user configuration in: {{ wildfly_base }}/standalone/configuration'
+  copy:
+    src: '{{ item }}'
+    dest: '{{ wildfly_base }}/standalone/configuration/{{ item }}'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0600'
+    force: false
+  with_items:
+    - application-roles.properties
+    - application-users.properties
+    - mgmt-groups.properties
+    - mgmt-users.properties
+
+- name: 'create standalone server configuration configuration in: {{ wildfly_base }}/standalone/configuration'
+  copy:
+    src: '{{ wildfly_home }}/standalone/configuration/{{ item }}'
+    dest: '{{ wildfly_base }}/standalone/configuration/{{ item }}'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '{{ wildfly_dir_mode }}'
+    remote_src: true
+    force: '{{ wildfly_config_file_force_overwrite }}'
+  with_items:
+    - logging.properties
+    - standalone-full-ha.xml
+    - standalone-full.xml
+    - standalone-ha.xml
+    - standalone.xml
+  when: wildfly_mode == 'standalone'
+
+- name: copy wildfly domain configuration
+  template:
+    src: domain.conf.j2
+    dest: '{{ wildfly_base }}/domain/configuration/domain.conf'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0640'
+  notify:
+    - restart wildfly
+    - change data mode
+
+- name: copy wildfly domain domain-controller configuration
+  template:
+    src: domain-dc.conf.j2
+    dest: '{{ wildfly_base }}/domain-controller/configuration/domain-dc.conf'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0640'
+  notify:
+    - restart wildfly services
+    - change data mode
+  when: wildfly_role == 'domain-master-slave' or wildfly_role == 'domain-master'
+
+- name: create symlink to /etc/default/wildfly.conf
+  file:
+    state: link
+    src: '{{ wildfly_conf_dir }}/{{ wildfly_instance_name }}.conf'
+    dest: /etc/default/{{ wildfly_instance_name }}.conf
+
+- name: create symlink to /etc/default/wildfly-dc.conf
+  file:
+    state: link
+    src: '{{ wildfly_conf_dir }}/{{ wildfly_dc_instance_name }}.conf'
+    dest: /etc/default/{{ wildfly_dc_instance_name }}.conf
+
+- include: configure-properties.yml
+
+- name: create template to upstream init script
+  template:
+    src: wildfly_init.j2
+    dest: '{{ wildfly_init_dir }}/{{ wildfly_instance_name }}'
+    owner: root
+    group: root
+    mode: '0755'
+    force: true
+  #  when: ansible_service_mgr in ['init', 'upstart']
+  notify:
+    - restart wildfly services
+    - change data mode
+
+- name: create template to upstream domain-controller init script
+  template:
+    src: wildfly-dc_init.j2
+    dest: '{{ wildfly_init_dir }}/{{ wildfly_dc_instance_name }}'
+    owner: root
+    group: root
+    mode: '0755'
+  notify:
+    - restart wildfly services
+    - change data mode
+  when: wildfly_role == 'domain-master-slave' or wildfly_role == 'domain-master'
+
+- block:
+    - name: copy wildfly systemd unit file
+      template: src=wildfly.service.j2 dest={{ wildfly_systemd_dir }}/{{ wildfly_instance_name }}.service owner=root
+                group=root mode=0640
+      notify:
+        - restart wildfly services
+        - change data mode
+    - name: systemd reload
+      systemd:
+        daemon_reload: true
+  when: ansible_service_mgr == 'systemd' and
+        ((ansible_os_family == 'RedHat' and ansible_distribution_major_version|int > 6) or ansible_os_family != 'RedHat')
+
+- block:
+    - name: copy wildfly domain controller systemd unit file
+      template: src=wildfly-dc.service.j2 dest={{ wildfly_systemd_dir }}/{{ wildfly_dc_instance_name }}.service owner=root
+                group=root mode=0640
+      notify:
+        - restart wildfly services
+        - change data mode
+    - name: systemd reload
+      systemd:
+        daemon_reload: true
+  when: wildfly_role == 'domain-master-slave' and ansible_service_mgr == 'systemd' and
+        ((ansible_os_family == 'RedHat' and ansible_distribution_major_version|int  > 6) or ansible_os_family != 'RedHat')
+
+- meta: flush_handlers
+
+- block:
+    - name: enable and start the standalone service
+      service:
+        name: '{{ wildfly_instance_name }}'
+        state: started
+        enabled: '{{ wildfly_service_enabled }}'
+    - name: wait for wildfly to start
+      wait_for:
+        path: '{{ wildfly_console_log }}'
+        search_regex: 'started in'
+      ignore_errors: true
+    - name: cat file
+      command: '{{ wildfly_console_log }}'
+      ignore_errors: true
+  when: wildfly_manage_service and wildfly_mode == 'standalone'
+
+- block:
+    - name: enable and start the domain controller service
+      service:
+        name: '{{ wildfly_dc_instance_name }}'
+        state: started
+        enabled: '{{ wildfly_service_enabled }}'
+    - name: wait for wildfly domain controller to start
+      wait_for:
+        path: '{{ wildfly_console_dc_log }}'
+        search_regex: 'started in'
+      ignore_errors: true
+    - name: cat file
+      command: 'cat {{ wildfly_console_dc_log }}'
+      ignore_errors: true
+  when: wildfly_manage_service and wildfly_mode == 'domain' and
+        ( wildfly_role == 'domain-master-slave' or wildfly_role == 'domain-master')
+
+- block:
+    - name: enable and start the domain service
+      service:
+        name: '{{ wildfly_instance_name }}'
+        state: started
+        enabled: '{{ wildfly_service_enabled }}'
+    - name: wait for wildfly to start
+      wait_for:
+        path: '{{ wildfly_console_log }}'
+        search_regex: 'started in'
+      ignore_errors: true
+    - name: cat file
+      command: 'cat {{ wildfly_console_log }}'
+      ignore_errors: true
+  when: wildfly_manage_service and wildfly_mode == 'domain' and
+        (wildfly_role == 'domain-master-slave' or wildfly_role == 'domain-slave' or wildfly_role == 'domain')
+
+- name: delete wildfly tar file
+  file:
+    path: '{{ wildfly_download_dir }}/{{ wildfly_download_file }}'
+    state: absent
+  when: not wildfly_installer_keep

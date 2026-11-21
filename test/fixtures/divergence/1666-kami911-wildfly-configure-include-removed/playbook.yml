@@ -1,0 +1,10 @@
+---
+# The failing task is KAMI911.wildfly's own `configure Wildfly` include_tasks:
+# (round 29920615, cold and warm). Its file ends with a bare `include:`, an
+# action ansible-core removed; real loads the file at run time and fails the
+# include task itself.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - KAMI911.wildfly

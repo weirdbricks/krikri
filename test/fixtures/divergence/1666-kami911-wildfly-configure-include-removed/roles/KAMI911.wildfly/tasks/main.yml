@@ -1,0 +1,6 @@
+---
+# Trimmed to the round's failing task: the role's real tasks/main.yml runs
+# its install steps first, which would mutate the host. The divergence is
+# this include_tasks: loading configure.yml at run time.
+- name: configure Wildfly
+  include_tasks: configure.yml
