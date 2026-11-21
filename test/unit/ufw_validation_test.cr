@@ -131,7 +131,7 @@ describe "ufw plugin argument validation" do
     result = PluginSpecHelper.run("ufw", {"rule" => "allow", "delete" => "krikri-not-a-bool"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("argument 'delete' is of type <class 'str'> and we were unable to convert to bool: " \
+    result["msg"].as_s.must_include("argument 'delete' is of type str and we were unable to convert to bool: " \
                                     "The value 'krikri-not-a-bool' is not a valid boolean. Valid booleans include: ")
   end
 

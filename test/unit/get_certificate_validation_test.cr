@@ -52,7 +52,7 @@ describe "get_certificate plugin argument validation" do
     result = PluginSpecHelper.run("get_certificate", {"host" => "127.0.0.1", "port" => "443", "get_certificate_chain" => "banana"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("argument 'get_certificate_chain' is of type <class 'str'> and we were unable to convert to bool: " \
+    result["msg"].as_s.must_include("argument 'get_certificate_chain' is of type str and we were unable to convert to bool: " \
                                     "The value 'banana' is not a valid boolean. Valid booleans include: ")
   end
 

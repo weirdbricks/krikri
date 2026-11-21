@@ -42,7 +42,7 @@ describe "lvol plugin argument validation" do
                                            "size" => "4", "force" => "sometimes"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("argument 'force' is of type <class 'str'> and we were unable to convert to bool: " \
+    result["msg"].as_s.must_include("argument 'force' is of type str and we were unable to convert to bool: " \
                                     "The value 'sometimes' is not a valid boolean. Valid booleans include: ")
   end
 

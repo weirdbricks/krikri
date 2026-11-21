@@ -49,7 +49,7 @@ describe "podman_image plugin argument validation" do
     result = PluginSpecHelper.run("podman_image", {"name" => "krikri/img", "force" => "banana"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("argument 'force' is of type <class 'str'> and we were unable to convert to bool: " \
+    result["msg"].as_s.must_include("argument 'force' is of type str and we were unable to convert to bool: " \
                                     "The value 'banana' is not a valid boolean. Valid booleans include: ")
   end
 

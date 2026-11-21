@@ -47,7 +47,7 @@ describe "podman_container plugin argument validation" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include(
-      "argument 'privileged' is of type <class 'str'> and we were unable to convert to bool: " \
+      "argument 'privileged' is of type str and we were unable to convert to bool: " \
       "The value 'banana' is not a valid boolean. Valid booleans include: ")
   end
 
