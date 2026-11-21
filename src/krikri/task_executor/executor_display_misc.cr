@@ -11,7 +11,9 @@ module Krikri
     # as either ignored (ignore_unreachable:) or unreachable, halting
     # the host in the latter case.
     #
-    # *task* is nil for the implicit Gathering Facts task's own report.
+    # *task* is nil for the implicit Gathering Facts task's own report;
+    # *ignore* carries the play-level `ignore_unreachable:` for that case
+    # (ansible's implicit setup task inherits it like any other task).
     # *delegate_target* carries the delegate's name for a delegated task's
     # unreachable - Ansible's default callback stamps `host -> delegate`
     # on every line of a delegated task straight from the task keyword
@@ -22,7 +24,8 @@ module Krikri
     # flush_pending_unreachable): run_task_batch books unreachable hosts
     # BEFORE its abort/halt decisions but must print the report under
     # the task banner, which is decided afterwards.
-    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true, delegate_target : String? = nil) : Nil
+    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true, delegate_target : String? = nil, ignore : Bool = false) : Nil
+      ignored = ignore || task.try(&.ignore_unreachable?) == true
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
       # Ansible embeds the transport's own error text in the msg
       # ("Task failed: Failed to connect to the host via ssh: ssh:
@@ -80,7 +83,7 @@ module Krikri
         end
       end
 
-      if task.try(&.ignore_unreachable?) && !Krikri::Oneline.enabled?
+      if ignored && !Krikri::Oneline.enabled?
         # Ansible prints a bare "...ignoring" line right after the fatal
         # UNREACHABLE! line for an ignored unreachable task
         # (live-verified vs ansible-core 2.21.5, issue #1480).
@@ -94,7 +97,7 @@ module Krikri
       end
 
       stats = @results[host.name]
-      if task.try(&.ignore_unreachable?)
+      if ignored
         # Counted as ok AND ignored, matching Ansible's own recap
         # for an ignored unreachable task.
         stats["ok"] += 1

@@ -314,13 +314,25 @@ module Krikri
         # pass) is a krikri-visible divergence (live-verified vs
         # ansible-core 2.19.11).
         pending_unreachable = [] of Host
+        pending_unreachable_names = Set(String).new
+        ignored_unreachable = [] of Host
         hosts.each do |host|
           next unless @unreachable_hosts.includes?(host.name)
           next if @halted_hosts.includes?(host.name)
 
           report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, print: false)
           pending_unreachable << host
+          pending_unreachable_names << host.name
+          ignored_unreachable << host if task.ignore_unreachable?
         end
+
+        # An ignored unreachable does NOT put the host in ansible's
+        # `_unreachable_hosts` (it only pops a host it had marked), so the
+        # host stays in the play and the NEXT task tries the connection
+        # again: a controller-side task (debug:, set_fact:, ...) then
+        # succeeds, while a connecting one books its own unreachable -
+        # exactly what ansible reports (issue #1680).
+        ignored_unreachable.each { |host| @unreachable_hosts.delete(host.name) }
 
         # any_errors_fatal:/max_fail_percentage: are evaluated BETWEEN
         # tasks: once the threshold is crossed the play stops for every
@@ -332,13 +344,15 @@ module Krikri
         # the halted set: report_unreachable above has already booked the
         # result, and an ignore_unreachable: host stays un-halted on
         # purpose - without this it would fall through to a real SSH
-        # attempt and hang on the connection it is already known to fail.
+        # attempt and hang on the connection it is already known to fail
+        # (for THIS task only - see ignored_unreachable above, which removes
+        # the host from the set for the tasks that follow).
         # meta: end_role rejections are applied SEPARATELY (below), not
         # folded into this set: a role-ended host recovers for every task
         # outside that role, so it must never trip the all-hosts-done
         # break that a genuinely halted play legitimately ends on.
         halt_rejected = hosts.reject do |host|
-          @halted_hosts.includes?(host.name) || @unreachable_hosts.includes?(host.name)
+          @halted_hosts.includes?(host.name) || @unreachable_hosts.includes?(host.name) || pending_unreachable_names.includes?(host.name)
         end
 
         # Once every host in scope is halted/unreachable, Ansible ends

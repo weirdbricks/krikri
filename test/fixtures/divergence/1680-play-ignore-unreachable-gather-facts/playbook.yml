@@ -1,0 +1,5 @@
+- hosts: dead
+  gather_facts: true
+  ignore_unreachable: true
+  tasks:
+    - debug: msg=still-here

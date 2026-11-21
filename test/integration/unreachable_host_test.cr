@@ -167,4 +167,73 @@ describe "ignore_unreachable:" do
       FileUtils.rm_rf(dir) if Dir.exists?(dir)
     end
   end
+
+  # An ignored unreachable must leave the host IN the play: ansible only
+  # marks a host unreachable for a fatal result, so the next task retries
+  # the connection - and a controller-side task (debug: needs no
+  # connection at all) then succeeds. Live-verified vs ansible-core
+  # 2.21.6: bogus recaps `ok=2 unreachable=0 ignored=1`, rc 0; this used
+  # to book the debug as a second unreachable and exit 4 (issue #1680).
+  it "keeps an ignored unreachable host in the play" do
+    dir = File.tempname("ignore-unreachable-stays-in-play")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "inv.ini"), UNREACHABLE)
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: unreachable but tolerated
+            ansible.builtin.ping:
+            ignore_unreachable: true
+          - name: controller-side task
+            ansible.builtin.debug:
+              msg: still-here
+      YAML
+
+    begin
+      stdout_io = IO::Memory.new
+      status = Process.run(BINARY, ["-i", "inv.ini", "-T", "5", "pb.yml"],
+        output: stdout_io, error: stdout_io, chdir: dir)
+      output = stdout_io.to_s
+
+      status.exit_code.must_equal(0)
+      output.must_match(/bogus\s+: ok=2\s+changed=0\s+unreachable=0\s+failed=0\s+skipped=0\s+rescued=0\s+ignored=1/)
+      output.must_include("still-here")
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
+
+  # The implicit Gathering Facts task inherits the play's
+  # ignore_unreachable: (an inherited FieldAttribute, exactly like a real
+  # task), so the dead host's single connection failure is reported
+  # `...ignoring` and counted ok+ignored instead of halting it before any
+  # task runs. Live-verified vs ansible-core 2.21.6: bogus recaps
+  # `ok=2 unreachable=0 ignored=1`, rc 0 (issue #1680).
+  it "applies a play-level ignore_unreachable: to the implicit gather" do
+    dir = File.tempname("play-ignore-unreachable-gather")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "inv.ini"), UNREACHABLE)
+    File.write(File.join(dir, "pb.yml"), <<-YAML)
+      - hosts: all
+        gather_facts: true
+        ignore_unreachable: true
+        tasks:
+          - ansible.builtin.debug:
+              msg: still-here
+      YAML
+
+    begin
+      stdout_io = IO::Memory.new
+      status = Process.run(BINARY, ["-i", "inv.ini", "-T", "5", "pb.yml"],
+        output: stdout_io, error: stdout_io, chdir: dir)
+      output = stdout_io.to_s
+
+      status.exit_code.must_equal(0)
+      output.must_match(/bogus\s+: ok=2\s+changed=0\s+unreachable=0\s+failed=0\s+skipped=0\s+rescued=0\s+ignored=1/)
+      output.must_include("still-here")
+    ensure
+      FileUtils.rm_rf(dir) if Dir.exists?(dir)
+    end
+  end
 end

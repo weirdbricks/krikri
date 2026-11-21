@@ -589,6 +589,11 @@ module Krikri
       # task inherits, and whose dispatch-time conversion real performs
       # (see ThrottleValue).
       @play_throttle_value : ThrottleValue = ThrottleValue::ABSENT,
+      # See Play#ignore_unreachable - an inherited FieldAttribute in
+      # ansible, so the implicit Gathering Facts task carries it too and
+      # an ignored unreachable there leaves the host in the play
+      # (issue #1680).
+      @play_ignore_unreachable : Bool = false,
     )
       # A retry loop cannot share an SSH round trip with anything: its
       # attempts are sequential by nature. With the ignored-strategy
