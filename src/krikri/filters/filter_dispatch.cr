@@ -1126,17 +1126,21 @@ module Krikri
           # the Crinja-side registration remains for real .j2 templates,
           # whose Crinja::Value target must be bridged regardless.
           #
-          # The expression is passed as the raw parsed text (NOT
-          # #resolve_expression) to match the old hand-rolled behavior
-          # exactly: a quoted literal is unwrapped, but a bare variable
-          # name reaches the JMESPath engine verbatim. The
-          # missing-expression guard stays here (a Crinja vararg is a
-          # truthy value even when empty-string). Behavior contract
-          # unchanged and still enforced by test/unit/jmespath_test.cr
-          # (both engines' happy paths plus the invalid-expression task
-          # failure).
-          expr = parse_filter_arg(filter_args)
+          # A quoted literal is the expression in its own right, but a
+          # bare argument is an EXPRESSION Jinja evaluates before the
+          # filter is called: `json_query(query)` hands the filter the
+          # TEXT `query` holds, never the name itself. Passing the name
+          # through verbatim made the engine look up a field called
+          # `query`, get null, and silently succeed, so a following
+          # `first` saw nil instead of the empty sequence Ansible fails
+          # on (islander.alacritty, issue #1671).
+          raw_expr = filter_args.strip
+          expr = parse_filter_arg(raw_expr)
           raise "json_query: missing JMESPath expression" if expr.empty?
+          unless quoted_literal?(raw_expr)
+            resolved = resolve_default_expression(expr)
+            expr = resolved.as_s? || expr
+          end
           Krikri::JMESPath.evaluate_json_query(expr, value)
         when "to_yaml"
           # to_yaml(**kwargs) - Ansible's own filter, a YAML dump
