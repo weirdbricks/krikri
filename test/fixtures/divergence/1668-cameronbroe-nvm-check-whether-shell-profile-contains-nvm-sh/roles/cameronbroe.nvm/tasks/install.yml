@@ -1,0 +1,29 @@
+---
+
+- name: Ensure NVM installation temp path exists
+  file:
+    path: "{{ nvm_tmp_path }}"
+    state: directory
+
+- name: Download NVM installation script
+  get_url:
+    dest: "{{ nvm_tmp_path }}"
+    # yamllint disable-line rule:line-length
+    url: https://raw.githubusercontent.com/{{ nvm_repo }}/{{ nvm_version }}/install.sh
+    checksum: "{{ nvm_install_checksum }}"
+
+- name: Set installation script permissions
+  file:
+    path: "{{ nvm_tmp_path }}/install.sh"
+    mode: 0755
+
+- name: Run NVM installation script
+  command: "bash {{ nvm_tmp_path }}/install.sh"
+  args:
+    chdir: "{{ nvm_tmp_path }}"
+  changed_when: true
+
+- name: Delete NVM installation temp
+  file:
+    path: "{{ nvm_tmp_path }}"
+    state: absent

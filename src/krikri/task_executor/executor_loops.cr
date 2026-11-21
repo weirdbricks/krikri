@@ -2030,10 +2030,18 @@ module Krikri
       # so the blocks dedupe to the same single replay per distinct text:
       # finish_looped_task seeds them at the first item's display.
       item_deprecations = [] of ResultDisplay::PendingDeprecation
+      # Real runs each iteration in its own DeferredWarningContext, so an
+      # item's result carries only the entries THAT iteration raised - the
+      # read of a top-level fact while templating the item's args lands on
+      # the item, which matters as soon as the registered results are
+      # printed or iterated (issue #1668, cameronbroe.nvm). One shared
+      # window covers the pass, so mark its size per iteration and slice
+      # the item's own entries back out after the pass.
+      item_deprecation_ranges = Array(Tuple(Int32, Int32)?).new(rendered_items.size, nil)
       ResultDisplay.begin_task_deprecation_capture
       item_results = begin
         if loop_batch_eligible?(task, host, exec_host, base_vars_context)
-          execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_items, pending_fact_reads)
+          execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_items, pending_fact_reads, item_deprecation_ranges)
         else
           # A running (not re-dup'd-from-base) vars_context
           # carries each iteration's ansible_facts forward
@@ -2058,8 +2066,10 @@ module Krikri
           loop_var = task.loop_var
           index_var = task.index_var
           rendered_items.map_with_index do |item, idx|
+            item_deprecation_start = ResultDisplay.task_deprecation_capture_size
             vars_context = running_vars_context.dup
             VarSubstitutor.loop_item_fact_pending = (pending_fact_reads[idx]? || false)
+            VarSubstitutor.loop_item_fact_index = idx
             # loop_control.loop_var REPLACES "item" -
             # ansible-core binds the item ONLY under the custom
             # name (`item | default('x')` reads unset alongside
@@ -2235,6 +2245,7 @@ module Krikri
                      else
                        execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true, loop_item: item, loop_index: idx, defer_when_chain: true)
                      end
+            item_deprecation_ranges[idx] = {item_deprecation_start, ResultDisplay.task_deprecation_capture_size}
             # A nil from a looped execute_task_once call on an
             # unported module is the arg-finalized unavailable
             # skip (execute_task_once returns nil silently for a
@@ -2269,7 +2280,23 @@ module Krikri
         item_deprecations.concat(ResultDisplay.take_task_deprecation_capture)
       end
 
+      attach_looped_item_result_deprecations(item_results, item_deprecation_ranges, item_deprecations)
       finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_items, pending_fact_reads, item_deprecations)
+    end
+
+    # Files each iteration's own controller-side deprecation entries on that
+    # iteration's result, before the aggregate is built: real runs every
+    # item under its own DeferredWarningContext, so a fact read while
+    # templating the item's args rides the item, and a later task that
+    # prints the registered results (or loops over them) shows it
+    # (issue #1668, cameronbroe.nvm).
+    private def attach_looped_item_result_deprecations(item_results : Array(JSON::Any?), ranges : Array(Tuple(Int32, Int32)?), pending : Array(ResultDisplay::PendingDeprecation)) : Nil
+      ranges.each_with_index do |range, idx|
+        next unless range
+        next unless result = item_results[idx]?
+        entries = ResultDisplay.result_deprecations_in_range(pending, range[0], range[1])
+        ResultDisplay.attach_result_deprecations(result, entries)
+      end
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -2355,6 +2382,7 @@ module Krikri
       loop_items : Array(JSON::Any),
       skipped_items : Hash(Int32, SkippedLoopItem),
       pending_fact_reads : Array(Bool),
+      item_deprecation_ranges : Array(Tuple(Int32, Int32)?),
     ) : Array(JSON::Any?)
       item_results = Array(JSON::Any?).new(loop_items.size, nil)
       item_contexts = Hash(Int32, Hash(String, JSON::Any)).new
@@ -2364,8 +2392,10 @@ module Krikri
       index_var = task.index_var
 
       loop_items.each_with_index do |item, idx|
+        item_deprecation_start = ResultDisplay.task_deprecation_capture_size
         vars_context = base_vars_context.dup
         VarSubstitutor.loop_item_fact_pending = (pending_fact_reads[idx]? || false)
+        VarSubstitutor.loop_item_fact_index = idx
         # Same loop_var-replaces-item rule as the one-at-a-time path above.
         vars_context["item"] = item unless loop_var
         vars_context[loop_var] = item if loop_var
@@ -2473,6 +2503,7 @@ module Krikri
             outcome.module_name, outcome.become_user, outcome.params)
           step_indices << idx
         end
+        item_deprecation_ranges[idx] = {item_deprecation_start, ResultDisplay.task_deprecation_capture_size}
       end
 
       return item_results if steps.empty?
@@ -3005,6 +3036,17 @@ module Krikri
         aggregate["results"] = JSON::Any.new(results)
       else
         aggregate["results"] = JSON::Any.new(results)
+        # Real's build_loop_result extends the aggregate's `deprecations`
+        # from every item's own list, in item order and WITHOUT deduping
+        # (ansible/_internal/_task.py's `_extend_deprecations(item.
+        # deprecations)`): two items that each read a top-level fact leave
+        # two identical entries on the loop's registered result
+        # (live-verified vs 2.21.6, issue #1668).
+        aggregate_deprecations = [] of JSON::Any
+        results.each do |entry|
+          entry["deprecations"]?.try(&.as_a?).try &.each { |deprecation| aggregate_deprecations << deprecation }
+        end
+        aggregate["deprecations"] = JSON::Any.new(aggregate_deprecations) unless aggregate_deprecations.empty?
         # 2.21's UnifiedTaskResult exports `skipped` only when true
         # (`result or None`): a successful loop's aggregate carries no
         # `skipped` key where 2.19 emitted skipped: false (live-verified

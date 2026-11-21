@@ -2732,7 +2732,23 @@ module Krikri
     # so the fiber's rendering site IS the operation identity (issue #964).
     @@tripped_fact_deprecation_ops = Set(String).new
 
+    # Real runs each LOOP ITEM in its own templating context, so the same
+    # args text templated for item N+1 raises a FRESH deprecation the item's
+    # own result carries (build_loop_result extends the aggregate from every
+    # item's list), while Display still prints one block per Origin - the
+    # cameronbroe.nvm round's registered stat: items each hold the entry
+    # (issue #1668). The loop's item index therefore joins the operation
+    # identity; outside a loop pass the identity is unchanged.
     def self.current_fact_deprecation_op : String?
+      base = fact_deprecation_op_base
+      return nil unless base
+      if (state = @@loop_item_fact_states[Fiber.current]?.try(&.last?)) && state.index >= 0
+        return "#{base}:item#{state.index}"
+      end
+      base
+    end
+
+    private def self.fact_deprecation_op_base : String?
       if path = current_template_file
         return "file:#{File.expand_path(path)}"
       end
@@ -2886,8 +2902,11 @@ module Krikri
     class LoopItemFactState
       getter loop_var : String
       property? pending : Bool
+      # The iteration this state belongs to (-1 until the loop executor
+      # binds one), used to keep each item's deprecation entries its own.
+      property index : Int32
 
-      def initialize(@loop_var : String, @pending : Bool = false)
+      def initialize(@loop_var : String, @pending : Bool = false, @index : Int32 = -1)
       end
     end
 
@@ -2908,6 +2927,10 @@ module Krikri
 
     def self.loop_item_fact_pending=(pending : Bool) : Nil
       @@loop_item_fact_states[Fiber.current]?.try(&.last?).try(&.pending = pending)
+    end
+
+    def self.loop_item_fact_index=(index : Int32) : Nil
+      @@loop_item_fact_states[Fiber.current]?.try(&.last?).try(&.index = index)
     end
 
     # Emits the INJECT_FACTS_AS_VARS deprecation for a READ of the loop

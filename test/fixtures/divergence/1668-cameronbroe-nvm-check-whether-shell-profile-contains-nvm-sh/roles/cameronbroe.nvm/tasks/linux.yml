@@ -1,0 +1,8 @@
+---
+
+- name: Ensure Git and cURL are installed
+  become: true
+  package:
+    name:
+      - git
+      - curl

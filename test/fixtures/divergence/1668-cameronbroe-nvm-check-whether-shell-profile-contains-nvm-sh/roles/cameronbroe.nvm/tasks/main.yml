@@ -1,0 +1,56 @@
+---
+
+- name: Load variables for the target system
+  include_vars: "{{ item }}"
+  with_first_found:
+    - files:
+        - "{{ ansible_distribution }}.yml"
+        - "{{ ansible_os_family }}.yml"
+        - "default.yml"
+      paths: vars
+
+- name: Linux dependencies
+  include_tasks: linux.yml
+  when: ansible_system == 'Linux'
+
+- name: macOS dependencies
+  include_tasks: darwin.yml
+  when: ansible_os_family == 'Darwin'
+
+- name: Does NVM directory already exists?
+  stat:
+    path: "{{ nvm_dir }}"
+  register: nvm_st
+  changed_when: false
+
+- name: Get installed NVM revision
+  shell: "git rev-list --tags --max-count=1"  # noqa 303 305
+  args:
+    chdir: "{{ nvm_dir }}"
+  register: nvm_rev
+  when: nvm_st.stat.exists
+  changed_when: false
+
+- name: Get installed NVM version
+  shell: "git describe --tags {{ nvm_rev.stdout }}"  # noqa 303 305
+  args:
+    chdir: "{{ nvm_dir }}"
+  register: nvm_installed_version
+  when: nvm_st.stat.exists
+  changed_when: false
+
+- name: Is NVM running latest version?
+  set_fact:
+    nvm_version_match: "{{ nvm_installed_version.stdout == nvm_version }}"
+  when: nvm_st.stat.exists
+
+- name: Install NVM
+  include_tasks: install.yml
+  when: not nvm_st.stat.exists or not nvm_version_match
+
+- name: Configure shell
+  include_tasks: shell.yml
+  when: nvm_shell_init
+
+- name: Install default Node.js versions
+  include_tasks: versions.yml

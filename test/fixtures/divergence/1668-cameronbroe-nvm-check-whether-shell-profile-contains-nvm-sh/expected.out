@@ -1,0 +1,29 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Find shell profile scripts] **********************************************
+ok: [localhost] => (item=.bashrc)
+ok: [localhost] => (item=.zshrc)
+
+TASK [Check whether shell profile contains /nvm.sh] ****************************
+skipping: [localhost] => (item={'changed': False, 'failed': False, 'deprecations': [{'msg': 'INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change.', 'collection_name': 'ansible.builtin', 'version': '2.24', 'deprecator': {'resolved_name': 'ansible.builtin', 'type': None}}], 'ansible_loop_var': 'item', 'item': '.bashrc', 'stat': {'exists': False}}) 
+skipping: [localhost] => (item={'changed': False, 'failed': False, 'deprecations': [{'msg': 'INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change.', 'collection_name': 'ansible.builtin', 'version': '2.24', 'deprecator': {'resolved_name': 'ansible.builtin', 'type': None}}], 'ansible_loop_var': 'item', 'item': '.zshrc', 'stat': {'exists': False}}) 
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/playbook.yml:14:15
+
+12   gather_facts: true
+13   vars:
+14     nvm_home: "{{ ansible_env.HOME }}"
+                 ^ column 15
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

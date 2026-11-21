@@ -741,29 +741,54 @@ module Krikri
     def self.pending_result_deprecations : Array(JSON::Any)
       return [] of JSON::Any unless frames = @@task_deprecation_captures[Fiber.current]?
       return [] of JSON::Any if frames.empty?
+      result_deprecations_in_range(frames.last, 0, frames.last.size)
+    end
+
+    # How many reads the innermost open window holds right now. Real runs
+    # every loop ITERATION in its own DeferredWarningContext, so each item
+    # result carries only the entries that iteration raised; krikri shares
+    # one window across a looped task's whole pass, so it marks the window's
+    # size before and after each item and slices that item's own entries
+    # back out (issue #1668, cameronbroe.nvm: a stat: loop's registered
+    # items, printed as the NEXT loop's `item`, carried no `deprecations`
+    # at all).
+    def self.task_deprecation_capture_size : Int32
+      return 0 unless frames = @@task_deprecation_captures[Fiber.current]?
+      frames.empty? ? 0 : frames.last.size
+    end
+
+    # The result-shaped entries among *pending*[*from*...*to*], one per
+    # distinct block Origin (see #pending_result_deprecations).
+    def self.result_deprecations_in_range(pending : Array(PendingDeprecation), from : Int32, to : Int32) : Array(JSON::Any)
       seen = Set(String).new
       entries = [] of JSON::Any
-      frames.last.each do |pending|
-        entry = pending.entry
+      upper = Math.min(to, pending.size)
+      lower = Math.min(from, upper)
+      pending[lower...upper].each do |held|
+        entry = held.entry
         next unless entry
-        next unless seen.add?(pending.key)
+        next unless seen.add?(held.key)
         entries << entry
       end
       entries
     end
 
-    # Attaches this task's collected controller-side deprecations to
-    # *result*, where ansible keeps them for `register:` (a fact read in a
-    # when: clause, issue #1351). They go before any entry the module's own
+    # Prepends *entries* to *result*'s `deprecations` list, where ansible
+    # keeps them for `register:`. They go before any entry the module's own
     # payload produced: the controller raised them while it was still
     # templating the task, before the module ran.
-    def self.attach_pending_result_deprecations(result : JSON::Any) : JSON::Any
-      entries = pending_result_deprecations
+    def self.attach_result_deprecations(result : JSON::Any, entries : Array(JSON::Any)) : JSON::Any
       return result if entries.empty?
       hash = result.as_h? || return result
       existing = hash["deprecations"]?.try(&.as_a?) || [] of JSON::Any
       hash["deprecations"] = JSON::Any.new(entries + existing)
       result
+    end
+
+    # Attaches this task's collected controller-side deprecations to
+    # *result* (a fact read in a when: clause, issue #1351).
+    def self.attach_pending_result_deprecations(result : JSON::Any) : JSON::Any
+      attach_result_deprecations(result, pending_result_deprecations)
     end
 
     # Replays and clears whatever the innermost open window has held,

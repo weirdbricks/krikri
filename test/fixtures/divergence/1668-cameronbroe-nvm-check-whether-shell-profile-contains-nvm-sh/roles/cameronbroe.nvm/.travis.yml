@@ -1,0 +1,138 @@
+---
+
+# Run tests against pull requests and main branches only
+if: |
+  type = pull_request OR \
+  branch IN (master, develop)
+
+language: generic
+
+# Install Ansible and Python development packages
+addons:
+  apt:
+    packages:
+      - python-pip
+      - python-dev
+      - shellcheck
+  snaps:
+    - shfmt
+  homebrew:
+    packages:
+      - ansible
+    update: true
+
+cache:
+  directories:
+    - $HOME/.cache/pre-commit/
+
+before_install:
+  # Import new GPG key for RVM when necessary
+  - >
+    if [[ "$RVM_GPG_IMPORT" == "yes" ]]; then
+      command curl -sSL https://rvm.io/mpapis.asc | gpg --import -
+    fi
+
+  # Cleanup existing NVM installation
+  - unset NVM_CD_FLAGS
+  - unset NVM_DIR
+  - unset NVM_BIN
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then rm -rf /Users/travis/.nvm; fi
+  - if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then rm -rf /home/travis/.nvm; fi
+  - rm -rf /etc/profile.d/travis-nvm.sh
+
+install:
+  # Install Ansible with pip on Ubuntu
+  - >
+    if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then
+      if [[ -z "$ANSIBLE_VERSION" ]]; then
+        pip install --user ansible
+      else
+        pip install --user ansible${ANSIBLE_VERSION}
+      fi
+    fi
+
+  # Check Ansible version
+  - ansible --version
+
+  # Create ansible.cfg with correct roles_path
+  - printf '[defaults]\nroles_path=../\n' > ansible.cfg
+
+before_script:
+  # https://github.com/travis-ci/travis-ci/issues/6307
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then rvm get head || true; fi
+
+script:
+  # Basic role syntax check
+  - ansible-playbook tests/test.yml -i tests/inventory --syntax-check
+
+  # Test role run
+  - >
+    ansible-playbook tests/test.yml -i tests/inventory --connection=local
+
+  # Test idempotence
+  - >
+    ansible-playbook tests/test.yml -i tests/inventory --connection=local
+    | grep -q 'changed=0.*failed=0'
+    && (echo 'Idempotence test: pass' && exit 0)
+    || (echo 'Idempotence test: fail' && exit 1)
+
+before_cache:
+  - rm -f $HOME/.cache/pre-commit/pre-commit.log
+
+stages:
+  - validate
+  - test
+
+jobs:
+  include:
+
+    # Run validation stage in Linux with latest Ansible only
+    - stage: validate
+      name: Validate with pre-commit
+      os: linux
+      dist: xenial
+      language: minimal
+      install:
+        # Fix ansible-lint installation issues
+        # https://github.com/ansible/ansible-lint/issues/590
+        - pip install --user virtualenv==16.3.0
+
+        # Install pre-commit with pip
+        - pip install --user pre-commit
+      script:
+        - SKIP=dockerfile_lint pre-commit run -a
+
+    # Run tests
+    - stage: test
+      name: "Ubuntu 16.04 (Xenial) with Ansible 2.6"
+      os: linux
+      dist: xenial
+      env: ANSIBLE_VERSION='<2.7.0'
+    - stage: test
+      name: "Ubuntu 16.04 (Xenial) with Ansible 2.7"
+      os: linux
+      dist: xenial
+      env: ANSIBLE_VERSION='<2.8.0'
+    - stage: test
+      name: "Ubuntu 18.04 (Bionic) with Ansible 2.8"
+      os: linux
+      dist: bionic
+      env: ANSIBLE_VERSION='==2.8.5'
+
+    - stage: test
+      name: "macOS 10.13 (High Sierra) with Xcode 10.1"
+      os: osx
+      osx_image: xcode10.1
+    - stage: test
+      name: "macOS 10.14 (Mojave) with Xcode 11.0"
+      os: osx
+      osx_image: xcode11
+    - stage: test
+      name: "macOS 10.14 (Mojave) with Xcode 11.2"
+      os: osx
+      osx_image: xcode11.2
+
+
+notifications:
+  webhooks:
+    - https://galaxy.ansible.com/api/v1/notifications/
