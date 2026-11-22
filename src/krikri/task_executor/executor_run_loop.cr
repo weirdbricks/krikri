@@ -4086,6 +4086,14 @@ module Krikri
       end
       # Real's remote raw result is what came off the ssh pty, not the
       # pipes the shell plugin captured (see raw_remote_pty_shape).
+      #
+      # An UNREACHABLE result never came off a pty: the ssh transport
+      # failed before the command ran, so its stderr is ssh's own error -
+      # the detail ansible's unreachable msg embeds ("Failed to connect
+      # to the host via ssh: <stderr>"). Synthesizing the pty close
+      # notice over it would report "Shared connection ... closed."
+      # instead of the real "Connection refused" (issue #1697).
+      return JSON::Any.new(shaped) if shaped["unreachable"]?.try(&.as_bool?)
       TaskExecutor.raw_remote_pty_shape(shaped, remote, addr)
       JSON::Any.new(shaped)
     end

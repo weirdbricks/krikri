@@ -459,6 +459,7 @@ module Krikri
     # keep propagating (a missing local file, a staging-dir safety
     # refusal, an engine bug). Message-only, no exit code to gate on.
     def self.connection_level_exception?(ex : Exception) : Bool
+      return true if ex.is_a?(SshTransportFailureError)
       message = ex.message.to_s
       return false if SsmUnreachableMsg.task_failure_text?(message)
       SsmUnreachableMsg.unreachable_text?(message) ||
@@ -801,6 +802,19 @@ module Krikri
       end
     end
 
+    # Raised when the transport itself failed before any remote command
+    # could run, with ssh's own stderr as the message. Ansible books such
+    # a failure UNREACHABLE carrying exactly that stderr
+    # ("Failed to connect to the host via ssh: <stderr>" from its ssh
+    # plugin's _handle_error), so callers that discover it before the
+    # usual exec/upload arbitration (a failed daemon spawn, the staging
+    # listing's first round trip) raise this instead of letting a later
+    # dial's message stand in for it - issue #1697, where a follow-up
+    # dial over the dead master's control socket masked the real
+    # "Connection refused" with "Shared connection ... closed."
+    class SshTransportFailureError < Exception
+    end
+
     # Sends one request and returns the plugin's own JSON result,
     # unwrapped - unlike `exec`/`exec_script`, there is no exit-code-vs-
     # stdout arbitration to do here (that was a one-shot-process
@@ -1021,8 +1035,24 @@ module Krikri
           env: sshpass_env(password),
           input: Process::Redirect::Pipe,
           output: Process::Redirect::Pipe,
-          error: Process::Redirect::Close
+          error: Process::Redirect::Pipe
         )
+      end
+      # A resident daemon's stderr is never shown, but a daemon that
+      # never comes up fails at the SSH transport, and Ansible's
+      # unreachable msg is the failing dial's own stderr (issue #1697).
+      # Drain it into a bounded buffer for the process's whole life: a
+      # pipe nobody reads would fill and block a chatty ssh, and closing
+      # it (the previous `error: Close`) is what lost the real error.
+      daemon_stderr = IO::Memory.new
+      daemon_stderr_drained = Channel(Nil).new(1)
+      spawn do
+        begin
+          drain_daemon_stderr(process.error, daemon_stderr)
+        rescue
+        ensure
+          daemon_stderr_drained.send(nil) rescue nil
+        end
       end
       if sudo_needs_password && become_password
         process.input.print(become_password)
@@ -1040,10 +1070,55 @@ module Krikri
       rescue ex
         terminate_daemon_process(process)
         @@daemon_failures[{host, user, port, become_user, sig}] = MAX_DAEMON_FAILURES
+        # The daemon's ssh died before the handshake: when its stderr is
+        # a transport failure, report THAT (Ansible's own unreachable
+        # detail) and stop here. Falling through to the one-shot path
+        # used to dial over the master socket the failed daemon left
+        # behind and report "Shared connection ... closed." instead of
+        # the real "Connection refused"/"Host key verification failed"
+        # (issue #1697). Any other handshake failure (a missing plugin
+        # binary, a failed sudo) keeps the old fallback.
+        stderr_text = collected_daemon_stderr(daemon_stderr_drained, daemon_stderr)
+        if !stderr_text.empty? && connection_level_exception?(IO::Error.new(stderr_text))
+          File.delete(control_path) if File.exists?(control_path)
+          raise SshTransportFailureError.new(stderr_text)
+        end
         raise ex
       end
       @@daemon_processes[{host, user, port, become_user, sig}] = process
       process
+    end
+
+    # How much of a resident daemon's stderr to keep: ssh's own failure
+    # messages are a few lines, so this only bounds a remote process that
+    # writes unboundedly into a channel nobody displays.
+    DAEMON_STDERR_CAPTURE_LIMIT = 64 * 1024
+
+    private def self.drain_daemon_stderr(io : IO, capture : IO::Memory) : Nil
+      buffer = Bytes.new(4096)
+      loop do
+        read = io.read(buffer)
+        break if read <= 0
+        remaining = DAEMON_STDERR_CAPTURE_LIMIT - capture.size
+        next if remaining <= 0
+        capture.write(buffer[0, Math.min(read, remaining)])
+      end
+    end
+
+    # Waits (briefly) for the drained pipe to close after the daemon
+    # process was terminated, then returns what it collected. The wait
+    # matters: ssh writes its connect failure just before exiting, and
+    # the drain fiber may not have been scheduled yet when the handshake
+    # read sees EOF.
+    private def self.collected_daemon_stderr(drained : Channel(Nil), capture : IO::Memory) : String
+      begin
+        select
+        when drained.receive
+        when timeout(2.seconds)
+        end
+      rescue
+      end
+      String.new(capture.to_slice).strip
     end
 
     # become_user is interpolated into a shell command line here, same
