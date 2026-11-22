@@ -1,0 +1,4 @@
+- hosts: h
+  gather_facts: false
+  tasks:
+    - ping:

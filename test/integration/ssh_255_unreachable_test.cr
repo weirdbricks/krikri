@@ -97,4 +97,43 @@ describe "ssh 255 exit classification (issue #1663)" do
     text, exit_code = ssh_255_run(playbook, inventory, dir)
     ssh_255_assertions(text, exit_code)
   end
+
+  # Issue #1683: ansible's unreachable msg embeds the ssh client's WHOLE
+  # stderr block, not its first line - the reporter's rejected-key
+  # UNREACHABLE lost the "Permission denied" line because only an OpenSSH
+  # warning line ahead of it survived. The wrapper's two stderr lines
+  # stand in for that shape (no sshd needed); both must reach the fatal
+  # msg.
+  it "keeps the ssh stderr's full multi-line text in the unreachable msg" do
+    dir = PluginSpecHelper.tmp_path("ssh255-multiline-#{Random::Secure.hex(4)}")
+    Dir.mkdir_p(dir)
+    wrapper = File.join(dir, "ssh-wrapper")
+    File.write(wrapper, <<-SH)
+      #!/bin/sh
+      echo "warning: some OpenSSH banner line" >&2
+      echo "root@192.0.2.1: Permission denied (publickey)." >&2
+      exit 255
+      SH
+    File.chmod(wrapper, 0o755)
+
+    inventory = File.join(dir, "inv.ini")
+    File.write(inventory,
+      "target ansible_connection=ssh ansible_host=192.0.2.1 ansible_user=root " \
+      "ansible_ssh_executable=#{wrapper} ansible_ssh_common_args='-o ConnectTimeout=1'\n")
+
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ping:
+      YAML
+
+    text, exit_code = ssh_255_run(playbook, inventory, dir)
+    ssh_255_assertions(text, exit_code)
+    text.includes?("warning: some OpenSSH banner line").must_equal(true, text)
+    text.includes?("Permission denied (publickey).").must_equal(true, text)
+    # Both lines ride ONE msg, in order.
+    text.includes?("warning: some OpenSSH banner line\\nroot@192.0.2.1: Permission denied (publickey).").must_equal(true, text)
+  end
 end

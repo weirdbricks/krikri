@@ -806,9 +806,22 @@ module Krikri
             puts %(fatal: [#{host_name}]: FAILED! => #{msg}).colorize(:red)
             next
           end
+          if ex.is_a?(SshCommandNotExecutableError)
+            # Same leave-the-host-in model: the ssh command line cannot be
+            # executed on the controller, which ansible books a per-task
+            # FAILED (exit 2), not an UNREACHABLE (issue #1683) - skipping
+            # the unreachable booking lets the first task's dispatch hit
+            # the same upload failure and produce that shape.
+            next
+          end
           next if unreachable.has_key?(host_name)
           message = ex.message.to_s
-          detail = message[/\bssh: .*$/]?.try(&.lines.first?) || message.lines.first? || ""
+          # The FULL transport error, not its first line: ansible's
+          # unreachable msg embeds the ssh client's whole stderr block
+          # (issue #1683) - the report layer's ssh_transport_detail strips
+          # this pass's own "Failed to upload <local> to <remote>: "
+          # framing and the scp session-close tail from it.
+          detail = message.strip
           unreachable[host_name] = detail
         end
       end
@@ -2046,6 +2059,15 @@ module Krikri
       # runtime (include_tasks:/include_role:) needs an upload the
       # pre-run pass never made.
       JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
+    rescue ex : SshCommandNotExecutableError
+      # Ansible books an un-spawnable ssh command line (the
+      # ansible_ssh_executable binary is missing or not executable) as a
+      # controller error: the task FAILS with the AnsibleError the ssh
+      # plugin raised over its Popen OSError, and the run exits 2 - never
+      # UNREACHABLE/exit 4 (live-verified vs 2.21.6, issue #1683). The
+      # "Task failed: " wrap and the errno cause in the msg mirror the
+      # chain real's callback renders.
+      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.task_failure_msg}.to_json)
     rescue ex
       raise ex unless SSHManager.connection_level_exception?(ex)
       # The FULL transport error, not just its first line: ansible's
@@ -2105,7 +2127,16 @@ module Krikri
       # back out as `ok:`, halting nothing).
       return result if result["unreachable"]?.try(&.as_bool?) == true
       conn = ConnectionSettings.resolve(host, vars)
-      task_end_cleanup_failure_result(result, task_end_remote_cleanup(conn))
+      begin
+        task_end_cleanup_failure_result(result, task_end_remote_cleanup(conn))
+      rescue ex : SshCommandNotExecutableError
+        # The cleanup exec spawns the same ssh command line the task's
+        # dispatch did: an un-spawnable ssh executable fails here exactly
+        # like it failed the dispatch, and ansible's finally-raised
+        # exception is the same controller error (FAILED with the same
+        # msg), not a connection failure (issue #1683).
+        JSON.parse({"changed" => false, "failed" => true, "msg" => ex.task_failure_msg}.to_json)
+      end
     end
 
     # The one ssh exec Ansible's task-end tmpdir cleanup becomes here
