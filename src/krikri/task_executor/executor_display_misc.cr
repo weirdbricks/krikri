@@ -951,13 +951,6 @@ module Krikri
       # never a local-connection vote - an inventory-defined localhost is
       # a plain ssh target), so async dispatch cannot disagree with the
       # synchronous path about where the same task runs.
-      if ConnectionSettings.resolve(exec_host, vars).ssm?
-        return JSON.parse({
-          "changed" => false,
-          "failed"  => true,
-          "msg"     => SsmSettings::ASYNC_UNSUPPORTED_MESSAGE,
-        }.to_json)
-      end
       is_local = PluginManager.local_connection?(exec_host, vars)
       unless is_local
         return execute_remote_async(task, exec_host, config_json, vars, substitutor, substituted_become_user)
@@ -1197,16 +1190,39 @@ module Krikri
       # probe - flaky, older runs won the race). The stub also means a
       # worker killed mid-flight shows as started-but-not-finished
       # instead of not-found, which is what Ansible reports too.
+      #
+      # The worker is detached with setsid when the target has it
+      # (util-linux and busybox both do), and its stdin is /dev/null:
+      # over SSM the launch runs inside the session's pty, so a worker
+      # that kept the pty as stdin would hold the shell op open, and a
+      # worker left in the session's process group could be reaped
+      # whenever the agent closes the channel. A live run on a real
+      # target (issue #1693) showed even a bare `&` child outliving
+      # TerminateSession, so setsid is the belt-and-braces form rather
+      # than a requirement - but it is also what Ansible's own
+      # async_wrapper does (os.setsid in the worker).
+      #
+      # The args file and the become-password wrapper are created under
+      # `umask 077`: the args file carries the full module params
+      # (potentially secrets) and, with a become password, `.run` carries
+      # that password in plaintext. Both are opened by the launch shell
+      # itself (the redirections below), which runs as the session user,
+      # so 0600 does not lock out a become target - the plugin still gets
+      # the config over stdin. The worker is started outside that
+      # subshell, so the module itself keeps the target's normal umask
+      # (Ansible's async_wrapper runs its worker under 022).
       launch = if pw_wrapped
-                 inner = "#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}"
+                 inner = "#{target} < #{dir}/#{jid}.config.json > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}"
                  inner_encoded = Base64.strict_encode(inner)
                  <<-SCRIPT
                    mkdir -p #{dir}
                    printf '#{ASYNC_DIR_MARKER}%s\\n' #{dir}
                    echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
-                   echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
-                   echo '#{inner_encoded}' | base64 -d > #{dir}/#{jid}.run
-                   nohup sh #{dir}/#{jid}.run >/dev/null 2>&1 &
+                   ( umask 077; echo '#{encoded}' | base64 -d > #{dir}/#{jid}.config.json )
+                   ( umask 077; echo '#{inner_encoded}' | base64 -d > #{dir}/#{jid}.run )
+                   detach=""
+                   command -v setsid >/dev/null 2>&1 && detach=setsid
+                   nohup $detach sh #{dir}/#{jid}.run </dev/null >/dev/null 2>&1 &
                    printf '#{ASYNC_CHILD_PID_MARKER}%s\\n' "$!"
                  SCRIPT
                else
@@ -1214,8 +1230,10 @@ module Krikri
                    mkdir -p #{dir}
                    printf '#{ASYNC_DIR_MARKER}%s\\n' #{dir}
                    echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
-                   echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
-                   nohup sh -c '#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' >/dev/null 2>&1 &
+                   ( umask 077; echo '#{encoded}' | base64 -d > #{dir}/#{jid}.config.json )
+                   detach=""
+                   command -v setsid >/dev/null 2>&1 && detach=setsid
+                   nohup $detach sh -c '#{target} < #{dir}/#{jid}.config.json > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' </dev/null >/dev/null 2>&1 &
                    printf '#{ASYNC_CHILD_PID_MARKER}%s\\n' "$!"
                  SCRIPT
                end
@@ -1238,7 +1256,11 @@ module Krikri
       results_file = remote_async_dir ? File.join(remote_async_dir, jid) : AsyncJobs.status_path(jid)
       # The detached worker's own pid, reported the same way - a remote async
       # timeout names it as child_pid, exactly the slot async_wrapper's
-      # timeout record fills with the pid of the module it killed.
+      # timeout record fills with the pid of the module it killed. This is
+      # the `&` job's pid: nohup/setsid exec in place here (the launch runs
+      # in a non-interactive shell, so the child is not a process-group
+      # leader and setsid does not fork); under a job-control shell setsid
+      # would fork and child_pid would name the exiting parent instead.
       remote_child_pid = launched[:stdout].lines.find(&.starts_with?(ASYNC_CHILD_PID_MARKER)).try(&.lchop(ASYNC_CHILD_PID_MARKER).strip).try(&.to_i64?)
 
       poll = task.poll_seconds || 10

@@ -32,9 +32,9 @@ module Krikri
     WINDOWS_UNSUPPORTED_MESSAGE =
       "Windows targets are not supported over aws_ssm (krikri-playbook has no Windows transport)"
 
-    # v1 limits (plan sections 6.6 and 14): both fail cleanly rather than
-    # half-working over a pty session that the agent can reap.
-    ASYNC_UNSUPPORTED_MESSAGE       = "async is not supported over aws_ssm yet"
+    # `synchronize:` builds an rsync-over-ssh argv and an SSM host has no
+    # ssh path, so it fails cleanly instead of half-attempting it (v1
+    # limit, plan section 6.6; async is supported).
     SYNCHRONIZE_UNSUPPORTED_MESSAGE = "synchronize is not supported over aws_ssm yet"
 
     getter target : String

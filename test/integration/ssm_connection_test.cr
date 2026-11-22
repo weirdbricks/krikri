@@ -232,22 +232,102 @@ describe "aws_ssm connection" do
     end
   end
 
-  it "fails an async task cleanly instead of half-working" do
-    with_ssm_gateway do |gateway|
-      status, output = run_ssm_playbook(gateway, <<-YAML)
-        - hosts: ssm-target
-          gather_facts: false
-          tasks:
-            - name: async is unsupported
-              command: sleep 1
-              async: 5
-              poll: 1
-        YAML
+  # Issue #1693: async: works over aws_ssm. The launch is the same one the
+  # ssh path uses (nohup + setsid when the target has it, stdin from
+  # /dev/null, a synchronous started: 1 stub), and the poll reads the
+  # status file back through the same live session. This is safe because a
+  # live run on a real target showed the agent does not reap a detached
+  # child when the session is terminated.
+  it "runs an async task with poll over SSM" do
+    home = PluginSpecHelper.tmp_path("ssm-async-home")
+    Dir.mkdir_p(home)
+    # The fake agent's pty shell needs the same HOME the controller-side
+    # child gets, so ~/.ansible_async is one per-test directory on both
+    # sides of the session instead of the host-wide one.
+    options = KrikriAwsSsm::Testing::FakeAgent::Options.new
+    options.shell_env = {"HOME" => home}
+    playbook = <<-YAML
+      - hosts: ssm-target
+        gather_facts: false
+        tasks:
+          - name: async job over SSM
+            shell: "sleep 2; echo ASYNC-DONE"
+            async: 30
+            poll: 1
+            register: job
+          - name: show the job output
+            debug: {msg: "{{ job.stdout }}"}
+      YAML
 
-      status.success?.must_equal(false)
-      assert_includes output, Krikri::SsmSettings::ASYNC_UNSUPPORTED_MESSAGE
-      assert_includes output, "failed=1"
+    with_ssm_gateway(options) do |gateway|
+      status, output = run_ssm_playbook(gateway, playbook,
+        env: ssm_child_env.merge({"HOME" => home}))
+
+      assert status.success?, output
+      assert_includes output, "ASYNC OK on ssm-target: jid=j"
+      assert_includes output, "ASYNC-DONE"
+      assert_includes output, "ok=2"
+
+      # The args file carries the full module params and the remote
+      # launch creates it under umask 077; a 0644 file here is the
+      # pre-fix leak (module params readable by every user on the
+      # target).
+      jid = output[/ASYNC OK on ssm-target: jid=(\S+)/, 1]
+      refute_nil jid, output
+      config = File.join(home, ".ansible_async", "#{jid}.config.json")
+      assert File.exists?(config), "the launch should leave the job's args file in ~/.ansible_async"
+      assert_equal 0o600, (File.info(config).permissions.value & 0o777)
     end
+  ensure
+    FileUtils.rm_rf(home) if home
+  end
+
+  # The fire-and-forget half: poll: 0 returns at once, the detached worker
+  # keeps running after that task and after the session's shell goes idle,
+  # and a later async_status: task finds it (the ssh semantics, which the
+  # live spike says the agent permits over SSM too).
+  it "keeps a poll: 0 job running for a later async_status task" do
+    home = PluginSpecHelper.tmp_path("ssm-async-home")
+    Dir.mkdir_p(home)
+    options = KrikriAwsSsm::Testing::FakeAgent::Options.new
+    options.shell_env = {"HOME" => home}
+    playbook = <<-YAML
+      - hosts: ssm-target
+        gather_facts: false
+        tasks:
+          - name: launch without waiting
+            shell: "sleep 2; echo ASYNC-LATE"
+            async: 30
+            poll: 0
+            register: launched
+          - name: wait for the job
+            async_status:
+              jid: "{{ launched.ansible_job_id }}"
+            register: job
+            until: job.finished
+            retries: 30
+            delay: 1
+          - name: show the job output
+            debug: {msg: "{{ job.stdout }}"}
+          - name: clean up the job
+            async_status:
+              jid: "{{ launched.ansible_job_id }}"
+              mode: cleanup
+      YAML
+
+    with_ssm_gateway(options) do |gateway|
+      status, output = run_ssm_playbook(gateway, playbook,
+        env: ssm_child_env.merge({"HOME" => home}))
+
+      assert status.success?, output
+      assert_includes output, "ASYNC-LATE"
+      assert_includes output, "ok=4"
+      leftover = Dir.glob(File.join(home, ".ansible_async", "j*"))
+      assert leftover.empty?,
+        "async_status mode: cleanup left #{leftover.inspect} behind on the target\n#{output}"
+    end
+  ensure
+    FileUtils.rm_rf(home) if home
   end
 
   it "refuses synchronize with a documented message" do
@@ -420,5 +500,68 @@ describe "aws_ssm connection" do
     end
   ensure
     FileUtils.rm_rf(fake_bin) if fake_bin
+  end
+
+  # The become-password launch is a different branch of
+  # execute_remote_async: the plugin invocation is written to
+  # ~/.ansible_async/<jid>.run and run through `sh`, and that file holds
+  # the password in plaintext. Pin both that the branch works over the
+  # pty session and that the password file is not world-readable.
+  it "runs an async task with a become password over SSM" do
+    home = PluginSpecHelper.tmp_path("ssm-async-home")
+    fake_bin = PluginSpecHelper.tmp_path("ssm-fakebin-#{Random::Secure.hex(4)}")
+    Dir.mkdir_p(home)
+    Dir.mkdir_p(fake_bin)
+    sudo = File.join(fake_bin, "sudo")
+    File.write(sudo, <<-SH)
+      #!/bin/sh
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          -p|-u) shift 2 ;;
+          -n|-H|-S|-E|--) shift ;;
+          -*) shift ;;
+          *) break ;;
+        esac
+      done
+      exec "$@"
+      SH
+    File.chmod(sudo, 0o755)
+    options = KrikriAwsSsm::Testing::FakeAgent::Options.new
+    options.shell_env = {"PATH" => "#{fake_bin}:#{ENV["PATH"]?}", "HOME" => home}
+    playbook = <<-YAML
+      - hosts: ssm-target
+        gather_facts: false
+        become: true
+        tasks:
+          - name: async job through sudo
+            shell: "sleep 2; echo BECOME-ASYNC-DONE"
+            async: 30
+            poll: 1
+            register: job
+          - name: show the job output
+            debug: {msg: "{{ job.stdout }}"}
+      YAML
+
+    with_ssm_gateway(options) do |gateway|
+      status, output = run_ssm_playbook(gateway, playbook,
+        inventory_vars: "ansible_become_password=ssm-become-secret",
+        env: ssm_child_env.merge({"HOME" => home}))
+
+      assert status.success?, output
+      assert_includes output, "ASYNC OK on ssm-target: jid=j"
+      assert_includes output, "BECOME-ASYNC-DONE"
+      assert_includes output, "ok=2"
+
+      jid = output[/ASYNC OK on ssm-target: jid=(\S+)/, 1]
+      refute_nil jid, output
+      run_file = File.join(home, ".ansible_async", "#{jid}.run")
+      assert File.exists?(run_file), "the become-password launch should write the .run wrapper"
+      assert_equal 0o600, (File.info(run_file).permissions.value & 0o777)
+      assert_equal 0o600,
+        (File.info(File.join(home, ".ansible_async", "#{jid}.config.json")).permissions.value & 0o777)
+    end
+  ensure
+    FileUtils.rm_rf(fake_bin) if fake_bin
+    FileUtils.rm_rf(home) if home
   end
 end

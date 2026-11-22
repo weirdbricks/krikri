@@ -46,8 +46,8 @@ arguing with the note in place.
 `ansible_connection=aws_ssm` (and the `amazon.aws.`/`community.aws.` spellings) is a native
 transport: no AWS CLI, no `session-manager-plugin`, no S3 bucket. The entries below are decided for
 v1, and they are not all the same kind of thing: no S3, no port forwarding and no SSH-over-SSM are
-**non-goals** (the issue exists to avoid them); no Windows/`async:`/`synchronize`
-are **unsupported capabilities** that fail cleanly instead of half-working.
+**non-goals** (the issue exists to avoid them); no Windows and no `synchronize:` are
+**unsupported capabilities** that fail cleanly instead of half-working.
 
 - **S3 is never used, by design - it is not an unimplemented plugin feature.**
   `ansible_aws_ssm_bucket_name`, `ansible_aws_ssm_plugin` and the S3 addressing options are
@@ -60,9 +60,20 @@ are **unsupported capabilities** that fail cleanly instead of half-working.
   `ansible_system` fails before a session is opened; krikri has no winrm/psrp transport either.
 - **No port forwarding, no SSH-over-SSM (`AWS-StartSSHSession`), no smux** - non-goals, not
   missing branches.
-- **`async:` and `synchronize:` fail cleanly** with documented messages (`async is not supported
-  over aws_ssm yet`); there is no resident daemon over SSM, and `synchronize` would build an
-  rsync-over-ssh argv.
+- **`async:` works, with the session as the job's lifetime.** A launched worker is detached
+  (`nohup` + `setsid` when the target has it, stdin `/dev/null`) and writes the usual
+  `~/.ansible_async/<jid>` status file, so `poll:` and a later `async_status:` behave as they do
+  over ssh; `async_status: mode: cleanup` removes the status, args and sidecar files (the args
+  file and a become-password wrapper are created 0600). Verified on a real target (issue #1693):
+  the agent does **not** reap a detached child when the session ends - jobs outlived both an
+  explicit `TerminateSession` and an agent-closed idle session (a bare `&` child survived the
+  terminate run too, though only the nohup/setsid forms are pinned by a test). A job therefore
+  outlives its session and is stopped only by something that kills the process itself (instance
+  stop/reboot, agent restart, OOM, a manual kill). What is *not* implemented is a controller-side
+  kill on `async:`
+  timeout (same as the ssh path): the task reports `Timeout exceeded` and the worker keeps going.
+- **`synchronize:` fails cleanly** with a documented message (`synchronize is not supported over
+  aws_ssm yet`): the action builds an rsync-over-ssh argv and an SSM host has no ssh path.
 - **Credential subset.** Environment statics and web identity, shared profiles (`role_arn` +
   `source_profile`/`credential_source`, `mfa_serial`, `credential_process`, SSO cache), ECS
   container credentials and IMDSv2 are supported. MFA-token AssumeRole reads the one-time code

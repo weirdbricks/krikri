@@ -2768,7 +2768,7 @@ module Krikri
     # inventory var). It is ONE stdin-transparent command fragment, so
     # every caller keeps piping the plugin's config into it exactly as
     # before (`echo <b64> | base64 -d | <target>`, the batch script's
-    # per-step line, async's `< <job>.cfg` redirect) with no structural
+    # per-step line, async's `< <job>.config.json` redirect) with no structural
     # change anywhere.
     #
     # How the password reaches sudo without ever touching argv:
