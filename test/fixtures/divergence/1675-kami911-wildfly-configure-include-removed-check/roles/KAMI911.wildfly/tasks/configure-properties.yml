@@ -1,0 +1,34 @@
+---
+
+- name: create wildfly domain controller server properties directory
+  file:
+    path: '{{ wildfly_base }}/domain-controller/configuration/properties/'
+    state: directory
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0750'
+  when: wildfly_role == 'domain-master' or wildfly_role == 'domain-master-slave'
+
+- name: copy wildfly properties file
+  template:
+    src: wildfly.properties.j2
+    dest: '{{ wildfly_base }}/domain/configuration/wildfly.properties'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0640'
+  notify:
+    - restart wildfly services
+    - change data mode
+  when: wildfly_role == 'domain-slave' or wildfly_role == 'domain-master-slave'
+
+- name: copy wildfly domain controller properties file
+  template:
+    src: wildfly-dc.properties.j2
+    dest: '{{ wildfly_base }}/domain-controller/configuration/properties/wildfly-dc.properties'
+    owner: '{{ wildfly_user }}'
+    group: '{{ wildfly_group }}'
+    mode: '0640'
+  notify:
+    - restart wildfly services
+    - change data mode
+  when: wildfly_role == 'domain-master' or wildfly_role == 'domain-master-slave'
