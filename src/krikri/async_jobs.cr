@@ -6,9 +6,10 @@ module Krikri
   # process by TaskExecutor#execute_async, not a Fiber - so it keeps
   # running even if it outlives the poll loop or the whole playbook run)
   # writes its result here; async_status: (plugins/async_status.cr) reads
-  # it back. Mirrors Ansible's own ~/.ansible_async/<jid> convention,
-  # though only for local connections - see execute_async's own comment
-  # for why remote async isn't implemented.
+  # it back. Mirrors Ansible's own ~/.ansible_async/<jid> convention. The
+  # local path resolves the dir on this controller; the remote path (ssh
+  # and aws_ssm) resolves ~ on the target and reports the absolute path
+  # back as results_file.
   module AsyncJobs
     class InvalidJidError < Exception; end
 
@@ -128,12 +129,19 @@ module Krikri
       end
     end
 
-    # Deletes one job's status + config files (Ansible's own
-    # async_status mode=cleanup for a single jid). Returns true when
-    # anything was removed.
+    # Deletes one job's status, config and launch sidecar files
+    # (`async_status: mode: cleanup` for a single jid). The remote launch
+    # owns four paths beside each other: the status file, the args file
+    # (<jid>.config.json), a become-password wrapper (<jid>.run) and a
+    # transient result (<jid>.tmp); all four are removed so a play that
+    # cleanups its jobs leaves nothing behind. Cleanup is meant for a
+    # finished or abandoned job: removing <jid>.tmp under a still-running
+    # worker drops that job's result rather than keeping it. Returns true
+    # when anything was removed.
     def self.cleanup(jid : String) : Bool
       removed = false
-      [status_path(jid), config_path(jid)].each do |path|
+      status = status_path(jid)
+      [status, config_path(jid), "#{status}.run", "#{status}.tmp"].each do |path|
         next unless File.exists?(path)
         begin
           File.delete(path)

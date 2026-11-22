@@ -57,15 +57,22 @@ describe Krikri::AsyncJobs do
     end
   end
 
-  it "cleanup removes one job's status and config files" do
+  it "cleanup removes one job's status, config and remote sidecar files" do
     in_temp_async_dir do
       jid = Krikri::AsyncJobs.generate_jid
       Krikri::AsyncJobs.write_status(jid, JSON.parse({"finished" => 1}.to_json))
       File.write(Krikri::AsyncJobs.config_path(jid), "{}")
+      # The remote (ssh/aws_ssm) launch writes these next to the job file;
+      # a cleanup that skipped them left the become-password wrapper and a
+      # transient result on the target forever.
+      File.write("#{Krikri::AsyncJobs.status_path(jid)}.run", "#!/bin/sh\n")
+      File.write("#{Krikri::AsyncJobs.status_path(jid)}.tmp", "partial")
 
       Krikri::AsyncJobs.cleanup(jid).must_equal(true)
       File.exists?(Krikri::AsyncJobs.status_path(jid)).must_equal(false)
       File.exists?(Krikri::AsyncJobs.config_path(jid)).must_equal(false)
+      File.exists?("#{Krikri::AsyncJobs.status_path(jid)}.run").must_equal(false)
+      File.exists?("#{Krikri::AsyncJobs.status_path(jid)}.tmp").must_equal(false)
       # Second cleanup finds nothing - reports false, no error.
       Krikri::AsyncJobs.cleanup(jid).must_equal(false)
     end
