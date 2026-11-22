@@ -1,0 +1,17 @@
+
+PLAY [good] ********************************************************************
+
+TASK [command] *****************************************************************
+[ERROR]: Task failed: Data could not be sent to remote host "127.0.0.1". Make sure this host can be reached over ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused
+Origin: <WORK>/playbook.yml:5:7
+
+3   gather_facts: false
+4   tasks:
+5     - command: echo hi
+        ^ column 7
+
+fatal: [good -> dead]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Data could not be sent to remote host \"127.0.0.1\". Make sure this host can be reached over ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused", "unreachable": true}
+
+PLAY RECAP *********************************************************************
+good                       : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+

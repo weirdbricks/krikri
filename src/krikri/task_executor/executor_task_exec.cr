@@ -1688,9 +1688,10 @@ module Krikri
         ResultDisplay.flush_task_deprecation_capture_for_display
         # The fatal line carries the `-> delegate` label for a delegated
         # task (CallbackBase.host_label) even though the unreachable is
-        # booked on the origin host.
-        delegate_target = exec_host.try { |delegate| delegate.name != host.name ? delegate.name : nil }
-        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context), delegate_target: delegate_target)
+        # booked on the origin host, and the msg names the DELEGATE's
+        # connection host, not the origin's (issue #1681).
+        delegate_host = exec_host.try { |delegate| delegate.name != host.name ? delegate : nil }
+        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context), delegate_target: delegate_host.try(&.name), delegate_host: delegate_host)
         # Only a host whose unreachability is FATAL (not
         # ignore_unreachable:'d away) is remembered: an ignored
         # unreachable keeps being retried per task, exactly like
