@@ -1481,6 +1481,63 @@ module Krikri
       end
     end
 
+    # Ansible's load_file_common_arguments reads an explicit YAML null
+    # (`owner:`) as None and skips that setter entirely, while @params
+    # carries the demoted "" for it (see explicit_null_param?). Read the
+    # file-common owner:/group:/mode: args through here wherever the
+    # decision is "is there a value to compare/apply", so a null never
+    # turns into a lookup for the empty name.
+    protected def file_attr_param(key : String) : String?
+      return nil if explicit_null_param?(key)
+      @params[key]?
+    end
+
+    # file.py's check_owner_exists/check_group_exists, which main() runs in
+    # check mode before any state handler: a name that does not resolve is
+    # only WARNED about there (a role may create the user/group later in the
+    # real play), and the fatal lookup failure comes separately from
+    # basic.py's setters. A name and a numeric id get their own text, and an
+    # explicit "" is falsy in Python so it warns nothing at all (it still
+    # fails the real lookup - see resolve_owner_uid above).
+    protected def unknown_owner_group_warnings : Array(String)
+      warnings = [] of String
+      if owner = file_attr_param("owner")
+        if text = unknown_owner_warning(owner)
+          warnings << text
+        end
+      end
+      if group = file_attr_param("group")
+        if text = unknown_group_warning(group)
+          warnings << text
+        end
+      end
+      warnings
+    end
+
+    protected def unknown_owner_warning(owner : String) : String?
+      return nil if owner.empty?
+      if owner.matches?(/\A\d+\z/)
+        uid = owner.to_i
+        return nil unless System::User.find_by?(id: uid.to_s).nil?
+        "failed to look up user with uid #{uid}. Create user up to this point in real play"
+      else
+        return nil unless System::User.find_by?(name: owner).nil?
+        "failed to look up user #{owner}. Create user up to this point in real play"
+      end
+    end
+
+    protected def unknown_group_warning(group : String) : String?
+      return nil if group.empty?
+      if group.matches?(/\A\d+\z/)
+        gid = group.to_i
+        return nil unless System::Group.find_by?(id: gid.to_s).nil?
+        "failed to look up group with gid #{gid}. Create group up to this point in real play"
+      else
+        return nil unless System::Group.find_by?(name: group).nil?
+        "failed to look up group #{group}. Create group up to this point in real play"
+      end
+    end
+
     # Applies owner/group/numeric mode to a single path natively
     # (`File.chown`/`File.chmod`) instead of shelling to
     # `chown`/`chgrp`/`chmod` - shared by plugins (`apt_repository`,
@@ -2030,10 +2087,94 @@ module Krikri
       generate_attribute_diff(before, after)
     end
 
+    # The result copy/template report for an equal-content CHECK run. The
+    # copy action plugin sees the two checksums match and dispatches
+    # ansible.legacy.file with state=file instead of the copy module, and
+    # that module walks basic.py's set_fs_attributes_if_different even in
+    # check mode: the owner:/group: setters skip only the LOOKUP for a
+    # path that does not exist yet, so an unknown name still fails the
+    # task, and a resolvable attribute that differs is still a change.
+    # file.py's check_owner_exists/check_group_exists warn about the
+    # unknown names first. Issue #1678 (gokev.motd-splash check run):
+    # krikri answered a plain `ok` where ansible failed "chgrp failed:
+    # failed to look up group wheel" (so the play stopped there) and never
+    # reported a stale mode/owner/group as changed. Everything here
+    # live-verified against ansible-core 2.21.6.
+    protected def check_mode_attrs_result(path : String, checksum : String, key_order : Array(String)) : PluginResult
+      warnings = unknown_owner_group_warnings
+      failure = nil
+      changed = false
+      diff = nil
+
+      begin
+        if File.exists?(path) && (info = File.info?(path, follow_symlinks: false))
+          changed = check_mode_attrs_differ?(path, info)
+          diff = file_attribute_diff(path) if changed
+        end
+      rescue ex : OwnerLookupFailure
+        # Ansible's fail_json(path=..., msg=...) routes through
+        # add_path_info, so the dest's stat block rides along on the
+        # failure; the copy action then injects its checksum into any
+        # result that lacks one, failed results included.
+        failure = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: ex.message || "owner lookup failed",
+          checksum: checksum,
+          path: path
+        )
+        add_path_info(failure, path)
+      end
+
+      result = failure || PluginResult.new(
+        changed: changed,
+        failed: false,
+        diff: diff,
+        dest: path,
+        checksum: checksum,
+        key_order: key_order
+      )
+      unless failure
+        add_path_info(result, path)
+        result.extra["path"] = JSON::Any.new(path)
+      end
+      unless warnings.empty?
+        result.extra["warnings"] = JSON::Any.new(warnings.map { |text| JSON::Any.new(text) })
+      end
+      result
+    end
+
+    # The "would set_fs_attributes_if_different change anything" half of
+    # #check_mode_attrs_result, in basic.py's own setter order
+    # (secontext, owner, group, mode, attributes). The lookups raise
+    # OwnerLookupFailure for an unresolvable name, exactly as the real
+    # apply does.
+    private def check_mode_attrs_differ?(path : String, info : File::Info) : Bool
+      changed = false
+
+      if owner = file_attr_param("owner")
+        changed = true if info.owner_id.to_i != resolve_owner_uid(owner)
+      end
+
+      if group = file_attr_param("group")
+        changed = true if info.group_id.to_i != resolve_group_gid(group)
+      end
+
+      if mode = file_attr_param("mode")
+        current_bits = info.permissions.value.to_i & 0o7777
+        target_bits = mode =~ /\A0?[0-7]{1,4}\z/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)
+        changed = true if current_bits != target_bits
+      end
+
+      changed = true if attr_changed?(path)
+      changed = true if pending_secontext_change(path)
+      changed
+    end
+
     # set_owner_if_different / set_group_if_different: the raw numeric
     # uid/gid on both sides, and only when the value actually differs.
     private def add_owner_group_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), info : File::Info) : Nil
-      if owner = @params["owner"]?
+      if owner = file_attr_param("owner")
         uid = resolve_owner_uid(owner)
         unless info.owner_id.to_s == uid.to_s
           before["owner"] = JSON::Any.new(info.owner_id.to_i64)
@@ -2041,7 +2182,7 @@ module Krikri
         end
       end
 
-      return unless group = @params["group"]?
+      return unless group = file_attr_param("group")
       gid = resolve_group_gid(group)
       return if info.group_id.to_s == gid.to_s
 
@@ -2053,7 +2194,7 @@ module Krikri
     # the RESOLVED target (a symbolic mode computed against the current
     # stat), not the task's raw string.
     private def add_mode_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), info : File::Info) : Nil
-      return unless mode = @params["mode"]?
+      return unless mode = file_attr_param("mode")
 
       current_bits = info.permissions.value.to_i & 0o7777
       target_bits = mode =~ /\A0?[0-7]{1,4}\z/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)

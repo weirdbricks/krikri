@@ -332,26 +332,17 @@ module Krikri
             diff: diff_data,
             key_order: CHECK_KEY_ORDER
           )
-        else
-          # Ansible's equal-content check run still executes the module
-          # (the early check-mode return in copy's action plugin only
-          # fires on a checksum MISMATCH), so its result carries the
-          # module's dest/checksum echo like the real run does
-          # (live-verified vs 2.19.11 via a registered result). The
-          # changed branch above is the action-level early return: no
-          # dest there.
-          result = PluginResult.new(
-            changed: false,
-            failed: false,
-            diff: diff_data,
-            dest: dest,
-            checksum: content_sha1,
-            key_order: UNCHANGED_KEY_ORDER
-          )
-          add_path_info(result, dest)
-          result.extra["path"] = JSON::Any.new(dest)
-          return result
         end
+        # Ansible's equal-content check run still executes a module (the
+        # early check-mode return in copy's action plugin only fires on a
+        # checksum MISMATCH) - the FILE module, whose owner:/group: lookups
+        # and attribute comparison run in check mode too. So this branch
+        # keeps the module's dest/checksum echo like the real run does
+        # (live-verified vs 2.19.11 via a registered result), and can also
+        # fail an unknown group:/owner: or report a stale attribute as
+        # changed (issue #1678). The changed branch above is the
+        # action-level early return: no dest there.
+        return check_mode_attrs_result(dest, content_sha1, UNCHANGED_KEY_ORDER)
       end
 
       # If content is identical, just update attributes if requested - and

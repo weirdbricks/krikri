@@ -1566,6 +1566,26 @@ module Krikri
           return true if raw.includes?(group_name)
         end
       end
+      # basic.py's set_owner_if_different / set_group_if_different name the
+      # requested owner:/group: in their lookup failure ("chown failed:
+      # failed to look up user <u>" / "chgrp failed: failed to look up
+      # group <g>") and ansible prints the block above the censored fatal
+      # line (issue #1678: gokev.motd-splash's check-mode template task,
+      # recorded with no_log). The name is task data, so - like user's
+      # group-existence check above - the block prints only when that same
+      # name is a literal in the playbook source: the block's own Origin
+      # excerpt already shows it. A templated owner:/group: may carry a
+      # secret and stays suppressed. The "Task failed: Module failed: "
+      # brief is optional for the same reason as the checks above.
+      if source_task && (match = msg.match(/\A(?:Task failed: Module failed: )?(?:chown failed: failed to look up user|chgrp failed: failed to look up group) (.+)\z/))
+        lookup_name = match[1]
+        ["owner", "group"].each do |key|
+          raw = source_task.params[key]?
+          next unless raw
+          next if raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+          return true if raw == lookup_name
+        end
+      end
       # assert's failing fail_msg (issue #1131, ax-bzh.authentik's no_log
       # "Validate required variables" task): real prints the block above
       # the censored fatal with the raw fail_msg - the assert ACTION's

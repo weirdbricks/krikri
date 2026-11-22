@@ -65,4 +65,61 @@ describe "copy plugin - identical-content attribute reconciliation" do
   ensure
     Process.run("rm", ["-rf", dir]) if dir && Dir.exists?(dir)
   end
+
+  # Issue #1678: copy's equal-content branch used to apply the attribute
+  # reconciliation even under --check, mutating the target during a dry
+  # run. Real dispatches the FILE module, which only compares - it still
+  # reports the drift as `changed` and still fails an unknown group
+  # (live-verified against ansible-core 2.21.6).
+  it "reports a stale attribute as changed in check mode without writing it (content: path)" do
+    dest = File.tempname("copy-reconcile-check-content")
+    File.write(dest, "hello")
+    File.chmod(dest, 0o755)
+
+    result = PluginSpecHelper.run("copy", {
+      "content"             => "hello",
+      "dest"                => dest,
+      "mode"                => "0640",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["dest"].as_s.must_equal(dest)
+    result["path"].as_s.must_equal(dest)
+    # The censored copy-module invocation only exists when the copy module
+    # runs (a content MISMATCH); the file module's result has none.
+    result.as_h.has_key?("invocation").must_equal(false)
+    File.info(dest).permissions.value.to_s(8).must_equal("755")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "fails an unknown group in check mode without writing it (src: path)" do
+    src = File.tempname("copy-reconcile-check-src")
+    dest = File.tempname("copy-reconcile-check-dest")
+    File.write(src, "hello")
+    File.write(dest, "hello")
+    File.chmod(dest, 0o755)
+
+    result = PluginSpecHelper.run("copy", {
+      "src"                 => src,
+      "dest"                => dest,
+      "group"               => "no-such-group-krikri-spec",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("chgrp failed: failed to look up group no-such-group-krikri-spec")
+    # The failure carries path and the stat block, no dest (live-verified:
+    # the action's `dest` echo only rides the successful file-module result).
+    result["path"].as_s.must_equal(dest)
+    result["warnings"].as_a.map(&.as_s).must_equal([
+      "failed to look up group no-such-group-krikri-spec. Create group up to this point in real play",
+    ])
+    File.info(dest).permissions.value.to_s(8).must_equal("755")
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
 end

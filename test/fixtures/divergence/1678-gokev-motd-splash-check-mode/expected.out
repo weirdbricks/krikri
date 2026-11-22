@@ -1,0 +1,21 @@
+
+PLAY [gokev.motd-splash check mode] ********************************************
+
+TASK [seed the destination a warm run leaves behind] ***************************
+changed: [localhost]
+
+TASK [motd template] ***********************************************************
+[ERROR]: Task failed: Module failed: chgrp failed: failed to look up group wheel
+Origin: <WORK>/playbook.yml:13:7
+
+11       check_mode: false
+12
+13     - name: motd template
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=1    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: failed to look up group wheel. Create group up to this point in real play
