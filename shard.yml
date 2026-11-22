@@ -35,11 +35,9 @@ dependencies:
   krikri-xml:
     github: weirdbricks/krikri-xml
     tag: v0.3.1
-  # Pinned to a commit until the shard cuts a release tag (issue #1664
-  # phase 11); replace with the tag then.
   krikri-aws-ssm:
     github: weirdbricks/krikri-aws-ssm
-    tag: v0.2.2
+    tag: v0.2.3
 
 development_dependencies:
   ameba:
