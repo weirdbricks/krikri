@@ -73,6 +73,34 @@ are **unsupported capabilities** that fail cleanly instead of half-working.
 - **The controller needs no AWS CLI and no session-manager-plugin** - the improvement over
   Ansible's plugin, which requires both plus a bucket.
 
+### AWS SSM four-way comparison: console parity baseline (issue #1691)
+
+The #1664 live four-way comparison (ansible/krikri over ssh/ssm, same playbook and role) found one
+recap delta: `ansible-playbook` over SSH reported `ok=11` while the other three runs reported
+`ok=12`. It was not a krikri counting defect.
+
+- With the same gathering mode and capture (no TTY color), the exact play is **byte-identical**
+  between ansible-core 2.21.6 and krikri over both local and SSH: 55 identical stdout lines, the
+  same interpreter-discovery warning on stderr, `ok=12 changed=6`. `meta: flush_handlers` is not
+  counted in `ok` by either engine; a notified handler is counted
+  (`test/integration/meta_flush_handler_recap_test.cr` pins this).
+- This box exports `ANSIBLE_GATHERING=smart` and
+  `ANSIBLE_CACHE_PLUGIN=community.general.pickle` with
+  `ANSIBLE_CACHE_PLUGIN_CONNECTION=/tmp/ansible_facts_cache`. Ansible skips the implicit
+  `Gathering Facts` task on a host whose facts are still warm in that cache, even when the play
+  says `gather_facts: true`. krikri implements only the `jsonfile` backend, so it never sees the
+  warm pickle entry and gathers, adding exactly one `ok`. The final ansible/SSH run had a warm
+  `ssh-target` entry; ansible/SSM's `ssm-target` was cold.
+- Four-way runs must be normalized: clear/disable the fact cache (or set
+  `ANSIBLE_CACHE_PLUGIN=memory` and `ANSIBLE_GATHERING=implicit`) and capture both engines without
+  a TTY, or with `ANSIBLE_NOCOLOR=1`. With that, the two consoles match byte for byte for this
+  play.
+- Accepted transport-only tier-3 differences: Ansible's SSM plugin prints its own
+  S3/bucket/session-manager-plugin notices (and requires both), while krikri prints one
+  ignored-bucket warning and moves everything over the session; the Python
+  interpreter-discovery warning appears where a Python interpreter is discovered (native facts
+  over SSM discover none). Neither changes a task result or a recap counter.
+
 ### A non-string `import_tasks:` file value crashes real Ansible; imitated only for play-level tasks and handlers
 
 A static import whose target is not a string, in the mapping form
@@ -697,7 +725,11 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   choice, and the only one worth a from-scratch implementation without a client library to lean on.
   `redis`/`memcached` would need real client libraries this project doesn't carry; the built-in
   `memory` backend needs no support at all (this engine's in-run `@facts` store already IS that).
-  Revisit only if a real role needs a non-jsonfile backend.
+  Revisit only if a real role needs a non-jsonfile backend. Under `ANSIBLE_GATHERING=smart` a
+  configured non-jsonfile backend is invisible here, so krikri gathers while Ansible skips a warm
+  host's `Gathering Facts` - a one-`ok` recap difference with no behavioural cause (the #1691
+  four-way delta; see the SSM console-parity baseline above). Normalize comparison runs with
+  `ANSIBLE_GATHERING=implicit` or a cleared cache.
 
 ### Templating
 
