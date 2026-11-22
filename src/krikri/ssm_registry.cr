@@ -21,6 +21,8 @@ module Krikri
     module SessionHandle
       abstract def write(bytes : Bytes) : Nil
       abstract def write(text : String) : Nil
+      # Binary-safe variant, used by the rsync pipe: no LF-to-CR rewrite.
+      abstract def write_raw(bytes : Bytes) : Nil
       abstract def read? : KrikriAwsSsm::Output?
       abstract def closed? : Bool
       abstract def close_reason : KrikriAwsSsm::CloseReason?

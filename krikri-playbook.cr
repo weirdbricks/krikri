@@ -39,6 +39,7 @@ require "./src/krikri/serial_batches"
 require "./src/krikri/vars_prompt"
 require "./src/krikri/inventory_parser"
 require "./src/krikri/task_executor"
+require "./src/krikri/ssm_rsync_rsh"
 require "./src/krikri/vault"
 require "./src/krikri/vault_cli"
 require "./src/krikri/ansible_config"
@@ -235,6 +236,14 @@ end
 if ARGV[0]? == "vault"
   Krikri::VaultCli.run(ARGV[1..])
   exit
+end
+
+# `krikri-playbook __ssm_rsync_rsh <host> <server args...>` is the rsh rsync
+# spawns for a synchronize: task against an aws_ssm host (see SsmRsyncRsh).
+# Connection settings arrive via the environment the action plugin put on
+# rsync, never on this command line.
+if ARGV[0]? == Krikri::SsmRsyncRsh::ARGV_DISPATCH
+  exit Krikri::SsmRsyncRsh.run(ARGV[1..])
 end
 
 # `krikri-playbook __async_run <module> <config_path> <status_path>` is an

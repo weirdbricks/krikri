@@ -8,6 +8,7 @@ require "../plugin_helpers/synchronize_rsync"
 require "../plugin_helpers/strict_bool_params"
 require "../passwords"
 require "../ssm_settings"
+require "../ssm_rsync_rsh"
 
 module Krikri
   # ansible.posix.synchronize as a controller-side action plugin that
@@ -163,13 +164,23 @@ module Krikri
     # validation follows in execute, matching real's
     # action-plugin-before-module ordering.
     private def pre_dispatch_failure : ActionResult?
-      munging_literal_type_failure || ssm_transport_failure
+      munging_literal_type_failure
     end
 
-    private def ssm_transport_failure : ActionResult?
-      return nil unless ConnectionSettings.resolve(@host, @vars).ssm?
+    # Any delegate_to: shape that leaves rsync dialing the SSM host (or
+    # running on an SSM delegate) is still unsupported: rsync would need an
+    # ssh path to a host that has none, or a controller-side rsync is not
+    # where real Ansible puts it. Kept a clean failure rather than a half
+    # attempt.
+    private def ssm_delegation_failure : ActionResult
+      ssm_pre_dispatch_failure(SsmSettings::SYNCHRONIZE_DELEGATE_UNSUPPORTED_MESSAGE)
+    end
+
+    # Same result shape every action-level SSM refusal uses: the module never
+    # runs, so no cmd/rc and no module deprecation lines.
+    private def ssm_pre_dispatch_failure(message : String) : ActionResult
       ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
-        false, true, SsmSettings::SYNCHRONIZE_UNSUPPORTED_MESSAGE,
+        false, true, message,
         extra: {"_ansible_module_never_ran" => JSON::Any.new(true)},
         key_order: PARAM_FAILURE_KEY_ORDER
       ), PARAM_FAILURE_KEY_ORDER))
@@ -296,10 +307,15 @@ module Krikri
         return failure
       end
 
+      run_rsync(src_param.to_s, dest_param.to_s, use_ssh_args)
+    end
+
+    # Everything after the module-level validation: transport selection and
+    # the argv/exec tail. Kept out of #execute so the validation ladder stays
+    # readable (and within the lint complexity budget).
+    private def run_rsync(src : String, dest : String, use_ssh_args : Bool) : ActionResult
       raw_mode = @params["mode"]?
       mode = (raw_mode || "push").downcase
-      src = src_param.to_s
-      dest = dest_param.to_s
 
       # The rsync rsh key resolves through the same ConnectionSettings
       # ladder as the adjacent password lookup - both key spellings,
@@ -322,6 +338,15 @@ module Krikri
       # half of that join contributes nothing here - the CLI
       # --ssh-common-args/--ssh-extra-args do, via CliOptions.
       apply_ssh_args_param!(use_ssh_args)
+
+      # aws_ssm: there is no ssh for rsync to dial, so the controller-side
+      # rsync runs with this binary as its --rsh and the protocol travels
+      # over an SSM session (SsmRsyncRsh). Delegation shapes still have no
+      # workable rsync placement; delegate_to naming the task's own SSM host
+      # falls through to the existing run-on-the-host branch below.
+      if result = ssm_synchronize_result(src, dest, mode)
+        return result
+      end
 
       # delegate_to: a REMOTE host that is not the task's own host - the
       # case Ansible's use_delegate branch exists for. rsync then runs ON
@@ -455,6 +480,50 @@ module Krikri
       substitute_controller_paths(src, dest)
     end
 
+    # aws_ssm's synchronize: the controller-side rsync is unchanged but its
+    # remote end is this binary's hidden rsh mode (SsmRsyncRsh), so the
+    # mode-dependent path is qualified with the host label and no user (an
+    # SSM host has no login identity for rsync). nil means "not an SSM
+    # shape this plugin handles" - either a non-SSM host or the
+    # self-delegation case the existing run-on-the-host branch owns.
+    private def ssm_synchronize_result(src : String, dest : String, mode : String) : ActionResult?
+      host_ssm = ConnectionSettings.resolve(@host, @vars).ssm
+
+      if task_host = @task_host
+        # delegate_to naming the task's own host: the synchronize module (not
+        # rsync over ssh) runs there and syncs two local paths.
+        return nil if host_ssm && task_host.name == @host.name
+        task_ssm = ConnectionSettings.resolve(task_host, @vars).ssm
+        return ssm_delegation_failure if host_ssm || task_ssm
+        return nil
+      end
+
+      settings = host_ssm || return nil
+      if settings.windows_target?
+        return ssm_pre_dispatch_failure(settings.windows_unsupported_message)
+      end
+      # The SSM session IS the transport; rsync's own --rsh would replace our
+      # hidden rsh and dial ssh to a host that has none.
+      if SynchronizeRsync.parse_list(@params["rsync_opts"]?).any?(&.starts_with?("--rsh"))
+        return ssm_pre_dispatch_failure(SsmSettings::SYNCHRONIZE_CUSTOM_RSH_UNSUPPORTED_MESSAGE)
+      end
+      # A host-qualified remote end (`bastion:/x/`) would make real Ansible
+      # dial that host. The SSM rsh always connects to THIS task's instance,
+      # so accepting it would silently move data to the wrong machine.
+      if (mode == "pull" ? src : dest).includes?(':')
+        return ssm_pre_dispatch_failure(SsmSettings::SYNCHRONIZE_PREQUALIFIED_ENDPOINT_MESSAGE)
+      end
+      if mode == "pull"
+        src = SynchronizeRsync.format_rsh_target(connection_host, src, nil)
+      else
+        dest = SynchronizeRsync.format_rsh_target(connection_host, dest, nil)
+      end
+      src, dest = substitute_controller_paths(src, dest)
+      timeout = @params["rsync_timeout"]?.try(&.strip.to_i?)
+      argv = SynchronizeRsync.build_argv(src, dest, @params, rsh: SsmRsyncRsh.rsh_command)
+      finish(argv, nil, extra_env: SsmRsyncRsh.env_for(settings, timeout))
+    end
+
     # The munged params for the run-on-the-delegate case, handed back to
     # the executor so the synchronize module BINARY executes on the
     # delegate (Ansible's own _execute_module placement). Letting that
@@ -524,7 +593,8 @@ module Krikri
     # binary produces (plugins/synchronize.cr), because Ansible runs the
     # module here too and registers ITS result: exit_json/fail_json's key
     # order plus the controller's failed/changed/exception backfill.
-    private def finish(argv : Array(String), conn_password : String? = nil) : ActionResult
+    private def finish(argv : Array(String), conn_password : String? = nil,
+                       extra_env : Hash(String, String)? = nil) : ActionResult
       # Ansible module: `if '/' not in rsync: rsync = get_bin_path(rsync,
       # required=True)` - the reported cmd carries the RESOLVED path
       # (/usr/bin/rsync), not the bare name, on success and failure alike.
@@ -540,7 +610,9 @@ module Krikri
         ), PARAM_FAILURE_KEY_ORDER))
       end
       argv[0] = rsync_bin
-      result = SynchronizeRsync.run(argv, env: SSHManager.sshpass_env(conn_password))
+      env = SSHManager.sshpass_env(conn_password) || {} of String => String
+      extra_env.try &.each { |key, value| env[key] = value }
+      result = SynchronizeRsync.run(argv, env: env.empty? ? nil : env)
       cmd_str = SynchronizeRsync.cmd_string(argv)
 
       unless result.rc == 0

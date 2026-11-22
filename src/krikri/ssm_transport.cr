@@ -67,6 +67,23 @@ module Krikri
     @@capability_mutex = Mutex.new
     @@capabilities = Hash(UInt64, TransferCapabilities).new
 
+    # Last-progress clock for the pipe's idle cap. Touched by traffic in
+    # both directions (rsync's own --timeout counts reads and writes too).
+    private class PipeProgress
+      def initialize
+        @mutex = Mutex.new
+        @last = Time.monotonic
+      end
+
+      def touch : Nil
+        @mutex.synchronize { @last = Time.monotonic }
+      end
+
+      def idle : Time::Span
+        @mutex.synchronize { Time.monotonic - @last }
+      end
+    end
+
     # --- public operations -------------------------------------------------
 
     def exec(conn : ConnectionSettings, command : String,
@@ -129,6 +146,41 @@ module Krikri
       settings = settings_for(conn)
       raise Error.new(settings.windows_unsupported_message) if settings.windows_target?
       perform_download(conn, settings, remote_path, local_path, timeout, gzip)
+    end
+
+    # Runs the uploaded *remote_script* on the target with its stdin/stdout
+    # moved as a raw byte stream: *input* is fed to the remote command's
+    # stdin and *output* receives its stdout. The script puts the pty in raw
+    # mode and prints one start marker; after that line every byte is
+    # protocol data. The child execs the command, so the agent's ExitCode
+    # payload carries its status when the session closes.
+    #
+    # Returns the remote command's status as Result[:exit_code]; a transport
+    # failure is the usual 255/SsmUnreachableMsg shape. The session is NOT
+    # reused after a pipe (the script has replaced the shell), so the caller
+    # terminates it (see SsmRsyncRsh).
+    def pipe(conn : ConnectionSettings, remote_script : String,
+             input : IO, output : IO, timeout : Int32 = DEFAULT_TIMEOUT) : Result
+      settings = settings_for(conn)
+      if settings.windows_target?
+        return Result.new(exit_code: 255, stdout: "", stderr: settings.windows_unsupported_message)
+      end
+
+      session = SsmRegistry.get_or_open(conn.host_name, settings)
+      SsmRegistry.operation_lock(session).synchronize do
+        SsmRegistry.begin_operation(session)
+        begin
+          raise Error.new(prep_failure[:stderr]) unless prepare_locked(session, settings)
+          result = pipe_locked(session, settings, remote_script, input, output, timeout)
+          SsmRegistry.end_operation(session, false)
+          result
+        rescue ex
+          SsmRegistry.end_operation(session, false)
+          raise ex
+        end
+      end
+    rescue ex
+      failure(ex)
     end
 
     # --- op-locked implementations ----------------------------------------
@@ -285,6 +337,179 @@ module Krikri
       detail = result[:stderr].strip
       detail = "no output" if detail.empty?
       "Failed to download #{remote_path} to #{local_path}: #{detail}"
+    end
+
+    # --- rsync pipe -------------------------------------------------------
+
+    private def self.pipe_locked(session : SsmRegistry::SessionHandle, settings : SsmSettings,
+                                 remote_script : String, input : IO, output : IO,
+                                 timeout : Int32) : Result
+      token = Random::Secure.hex(10)
+      start_head = "!KRIKRI-SSM-PIPE-"
+      start_tail = "START-#{token}"
+      start_marker = start_head + start_tail
+      # The marker's two halves travel separately so an echoed launch line can
+      # never contain the concatenated marker (the same reason Markers prints
+      # READY as two quoted words).
+      line = String.build do |io|
+        io << "KRIKRI_SSM_PIPE_START_A=" << Shell.quote_arg(start_head) << ' '
+        io << "KRIKRI_SSM_PIPE_START_B=" << Shell.quote_arg(start_tail) << ' '
+        io << "exec /bin/bash " << Shell.quote_arg(remote_script)
+      end
+      if line.bytesize > MAX_COMMAND_BYTES
+        raise Error.new("rsync pipe launch line exceeds the pty canonical line limit")
+      end
+      session.write(line + "\n")
+
+      # The runner switches the pty to raw mode and only then prints the
+      # start marker; binary input written before that would sit in the
+      # canonical queue (truncated at MAX_CANON, split at every LF). The
+      # writer therefore waits for the reader to see the marker.
+      started = Channel(Nil).new(1)
+      progress = PipeProgress.new
+      spawn do
+        pipe_input(session, input, started, progress)
+      rescue
+        # The reader reports the pipe's outcome; a write that loses the race
+        # with session termination (the remote command failed early) is
+        # expected and must not take the process down.
+      end
+
+      begin
+        read_pipe_output(session, start_marker, output, started, timeout, progress)
+      ensure
+        started.close unless started.closed?
+      end
+    end
+
+    # *timeout* is an IDLE cap, like rsync's own --timeout: traffic in EITHER
+    # direction resets it. It cannot be a total-transfer cap - the same value
+    # comes from the task's rsync_timeout, and a 30-second idle timeout must
+    # not kill a transfer that is still moving data.
+    private def self.read_pipe_output(session : SsmRegistry::SessionHandle,
+                                      start_marker : String, output : IO,
+                                      started : Channel(Nil), timeout : Int32,
+                                      progress : PipeProgress) : Result
+      done = Channel(Result).new(1)
+      finished = false
+      finished_mutex = Mutex.new
+      timed_out = Atomic(Bool).new(false)
+
+      spawn do
+        result = begin
+          read_pipe_stream(session, start_marker, output, started, progress) ||
+          pipe_closed_result(session)
+        rescue ex
+          Result.new(exit_code: 255, stdout: "",
+            stderr: "#{SsmUnreachableMsg::PREFIX}rsync pipe failed: #{ex.message}")
+        ensure
+          # Mark finished before publishing: the monitor must not turn a clean
+          # completion into a timeout in the window between these two steps.
+          finished_mutex.synchronize { finished = true }
+        end
+        done.send(result)
+      end
+
+      spawn do
+        loop do
+          sleep 1.second
+          break if finished_mutex.synchronize { finished }
+          if timeout > 0 && progress.idle > timeout.seconds
+            timed_out.set(true)
+            session.terminate
+            break
+          end
+        end
+      end
+
+      result = done.receive
+      if timed_out.get
+        return Result.new(exit_code: 255, stdout: "",
+          stderr: "#{SsmUnreachableMsg::PREFIX}rsync pipe timed out after #{timeout} second(s) without output")
+      end
+      result
+    end
+
+    # The runner prints one start-marker line and then execs the remote
+    # command with the pty in raw mode, so every byte after that line is
+    # protocol data: copy it straight to *output* until the session closes.
+    # The command's status arrives as the agent's ExitCode payload.
+    private def self.read_pipe_stream(session : SsmRegistry::SessionHandle,
+                                      start_marker : String, output : IO,
+                                      started_signal : Channel(Nil),
+                                      progress : PipeProgress) : Result?
+      prefix = ""
+      start_seen = false
+
+      while output_item = session.read?
+        progress.touch
+        if output_item.stream == KrikriAwsSsm::Stream::Stderr
+          next
+        end
+
+        if start_seen
+          write_pipe_output(output, output_item.bytes)
+          next
+        end
+
+        prefix += String.new(output_item.bytes)
+        if (index = prefix.index(start_marker))
+          after = index + start_marker.size
+          newline = prefix.index('\n', after)
+          if newline
+            start_seen = true
+            started_signal.send(nil) unless started_signal.closed?
+            remainder = prefix[(newline + 1)..]
+            write_pipe_output(output, remainder.to_slice) unless remainder.empty?
+            prefix = ""
+          end
+        end
+      end
+
+      # The session closed before the bridge started. Whatever the target
+      # wrote (a missing /bin/bash, an exec-format error from a foreign-arch
+      # bridge, ...) is the only diagnostic there is; keep it instead of
+      # reporting just "connection closed".
+      unless start_seen || prefix.empty?
+        detail = prefix.delete('\r').strip
+        detail = detail[0, 4000] if detail.size > 4000
+        return Result.new(exit_code: session.exit_code || 255, stdout: "",
+          stderr: "rsync pipe closed before the target started the bridge: #{detail}")
+      end
+
+      nil
+    end
+
+    # Crystal's STDOUT is buffered when it is a pipe, and this is a live
+    # protocol: rsync waits for these bytes before it says anything else.
+    private def self.write_pipe_output(output : IO, bytes : Bytes) : Nil
+      return if bytes.empty?
+      output.write(bytes)
+      output.flush
+    rescue IO::Error
+      # Local rsync exited first; its own error is the caller's result.
+    end
+
+    private def self.pipe_closed_result(session : SsmRegistry::SessionHandle) : Result
+      if code = session.exit_code
+        return Result.new(exit_code: code, stdout: "", stderr: "")
+      end
+      Result.new(exit_code: 255, stdout: "",
+        stderr: "rsync pipe closed without an exit status (#{session.close_reason || "unknown"})")
+    end
+
+    # Feeds *input* to the remote command verbatim once the runner has put
+    # the pty in raw mode. rsync's server exits on its own protocol
+    # completion, so no end-of-input signal is needed (and raw mode has no
+    # VEOF anyway); the session is discarded after the pipe.
+    private def self.pipe_input(session : SsmRegistry::SessionHandle, input : IO,
+                                started_signal : Channel(Nil), progress : PipeProgress) : Nil
+      started_signal.receive?
+      chunk = Bytes.new(RAW_CHUNK_BYTES)
+      while (count = input.read(chunk)) > 0
+        session.write_raw(chunk[0, count])
+        progress.touch
+      end
     end
 
     private def self.stream_upload_locked(session : SsmRegistry::SessionHandle,

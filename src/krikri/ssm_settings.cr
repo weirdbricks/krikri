@@ -32,10 +32,16 @@ module Krikri
     WINDOWS_UNSUPPORTED_MESSAGE =
       "Windows targets are not supported over aws_ssm (krikri-playbook has no Windows transport)"
 
-    # `synchronize:` builds an rsync-over-ssh argv and an SSM host has no
-    # ssh path, so it fails cleanly instead of half-attempting it (v1
-    # limit, plan section 6.6; async is supported).
-    SYNCHRONIZE_UNSUPPORTED_MESSAGE = "synchronize is not supported over aws_ssm yet"
+    # `synchronize:` runs on the controller with this binary standing in for
+    # rsync's remote shell (see SsmRsyncRsh). A delegate_to: shape still
+    # needs rsync to dial the SSM host over ssh, or to run on another
+    # machine, so it fails cleanly instead of half-attempting it.
+    SYNCHRONIZE_DELEGATE_UNSUPPORTED_MESSAGE =
+      "synchronize over aws_ssm does not support delegate_to: rsync has no ssh path to an SSM host"
+    SYNCHRONIZE_CUSTOM_RSH_UNSUPPORTED_MESSAGE =
+      "synchronize over aws_ssm cannot use a custom --rsh: the SSM session is the transport"
+    SYNCHRONIZE_PREQUALIFIED_ENDPOINT_MESSAGE =
+      "synchronize over aws_ssm syncs only this task's host: a host-qualified src/dest would dial another machine"
 
     getter target : String
     getter region : String

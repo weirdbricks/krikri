@@ -15,6 +15,9 @@ class FakeSsmSession
   def write(text : String) : Nil
   end
 
+  def write_raw(bytes : Bytes) : Nil
+  end
+
   def read? : KrikriAwsSsm::Output?
     nil
   end

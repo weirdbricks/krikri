@@ -715,19 +715,112 @@ describe "SynchronizeActionPlugin missing rsync" do
 end
 
 describe "SynchronizeActionPlugin over SSM" do
-  it "fails cleanly before building an rsync-over-ssh argv" do
+  it "runs rsync with the SSM rsh and the host-qualified path" do
+    dir = File.join(Dir.tempdir, "krikri-ssm-sync-spec-#{Random.rand(1_000_000)}")
+    src = File.join(dir, "src")
+    dest = File.join(dir, "dest")
+    fake_rsh = File.join(dir, "fake-rsh")
+    begin
+      Dir.mkdir_p(src)
+      File.write(File.join(src, "hello.txt"), "hello\n")
+      # Stands in for the SSM transport: rsync invokes it as
+      # "<rsh> <host> rsync --server ...", so dropping the dispatch token and
+      # the host label leaves the server argv to run locally.
+      File.write(fake_rsh, "#!/bin/sh\nshift 2\nexec \"$@\"\n")
+      File.chmod(fake_rsh, 0o755)
+
+      previous = Krikri::SsmRsyncRsh.executable_for_spec
+      begin
+        Krikri::SsmRsyncRsh.executable_for_spec = fake_rsh
+        host = Krikri::Host.new("i-0123456789")
+        host.vars["ansible_connection"] = JSON::Any.new("amazon.aws.aws_ssm")
+
+        result = Krikri::SynchronizeActionPlugin.new(
+          {"src" => "#{src}/", "dest" => "#{dest}/"},
+          {"ansible_connection" => JSON::Any.new("amazon.aws.aws_ssm")},
+          host).execute
+
+        json = result.final_result || raise "expected a final result"
+        json.as_h["failed"].as_bool.must_equal(false)
+        json.as_h["changed"].as_bool.must_equal(true)
+        cmd = json.as_h["cmd"].as_s
+        cmd.must_include("#{fake_rsh} __ssm_rsync_rsh")
+        cmd.must_include("i-0123456789:#{dest}/")
+        cmd.wont_include(" ssh -S none")
+        File.read(File.join(dest, "hello.txt")).must_equal("hello\n")
+      ensure
+        Krikri::SsmRsyncRsh.executable_for_spec = previous
+      end
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "refuses a Windows-flavoured SSM target before opening a session" do
+    host = Krikri::Host.new("i-0123456789")
+    host.vars["ansible_connection"] = JSON::Any.new("amazon.aws.aws_ssm")
+    host.vars["ansible_system"] = JSON::Any.new("Windows")
+
+    result = Krikri::SynchronizeActionPlugin.new(
+      {"src" => "/tmp/sync-src/", "dest" => "/tmp/sync-dest/"},
+      {"ansible_connection" => JSON::Any.new("amazon.aws.aws_ssm"),
+       "ansible_system"     => JSON::Any.new("Windows")},
+      host).execute
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["msg"].as_s.must_equal(Krikri::SsmSettings::WINDOWS_UNSUPPORTED_MESSAGE)
+  end
+
+  it "refuses a custom --rsh in rsync_opts over SSM" do
     host = Krikri::Host.new("i-0123456789")
     host.vars["ansible_connection"] = JSON::Any.new("amazon.aws.aws_ssm")
 
     result = Krikri::SynchronizeActionPlugin.new(
+      {"src" => "/tmp/sync-src/", "dest" => "/tmp/sync-dest/",
+       "rsync_opts" => "--rsh=ssh -J bastion"},
+      {"ansible_connection" => JSON::Any.new("amazon.aws.aws_ssm")},
+      host).execute
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["msg"].as_s.must_equal(Krikri::SsmSettings::SYNCHRONIZE_CUSTOM_RSH_UNSUPPORTED_MESSAGE)
+  end
+
+  it "refuses a host-qualified remote end instead of retargeting it to the SSM host" do
+    host = Krikri::Host.new("i-0123456789")
+    host.vars["ansible_connection"] = JSON::Any.new("amazon.aws.aws_ssm")
+    vars = {"ansible_connection" => JSON::Any.new("amazon.aws.aws_ssm")}
+
+    push = Krikri::SynchronizeActionPlugin.new(
+      {"src" => "/tmp/sync-src/", "dest" => "bastion:/tmp/sync-dest/"}, vars, host).execute
+    push_json = push.final_result || raise "expected a final result"
+    push_json.as_h["failed"].as_bool.must_equal(true)
+    push_json.as_h["msg"].as_s.must_equal(Krikri::SsmSettings::SYNCHRONIZE_PREQUALIFIED_ENDPOINT_MESSAGE)
+
+    pull = Krikri::SynchronizeActionPlugin.new(
+      {"mode" => "pull", "src" => "otherhost:/tmp/sync-src/", "dest" => "/tmp/sync-dest/"},
+      vars, host).execute
+    pull_json = pull.final_result || raise "expected a final result"
+    pull_json.as_h["failed"].as_bool.must_equal(true)
+    pull_json.as_h["msg"].as_s.must_equal(Krikri::SsmSettings::SYNCHRONIZE_PREQUALIFIED_ENDPOINT_MESSAGE)
+  end
+
+  it "refuses delegate_to shapes that would need ssh to the SSM host" do
+    delegate = Krikri::Host.new("i-0123456789")
+    delegate.vars["ansible_connection"] = JSON::Any.new("amazon.aws.aws_ssm")
+    task_host = Krikri::Host.new("other-host")
+    task_host.vars["ansible_host"] = JSON::Any.new("192.0.2.10")
+
+    result = Krikri::SynchronizeActionPlugin.new(
       {"src" => "/tmp/sync-src/", "dest" => "/tmp/sync-dest/"},
       {"ansible_connection" => JSON::Any.new("amazon.aws.aws_ssm")},
-      host, nil, host).execute
+      delegate, nil, task_host).execute
 
     json = result.final_result || raise "expected a final result"
     json.as_h["failed"].as_bool.must_equal(true)
     json.as_h["changed"].as_bool.must_equal(false)
-    json.as_h["msg"].as_s.must_equal(Krikri::SsmSettings::SYNCHRONIZE_UNSUPPORTED_MESSAGE)
+    json.as_h["msg"].as_s.must_equal(Krikri::SsmSettings::SYNCHRONIZE_DELEGATE_UNSUPPORTED_MESSAGE)
     json.as_h.has_key?("cmd").must_equal(false)
   end
 end

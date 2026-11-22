@@ -330,19 +330,95 @@ describe "aws_ssm connection" do
     FileUtils.rm_rf(home) if home
   end
 
-  it "refuses synchronize with a documented message" do
-    with_ssm_gateway do |gateway|
-      status, output = run_ssm_playbook(gateway, <<-YAML)
-        - hosts: ssm-target
-          gather_facts: false
-          tasks:
-            - name: synchronize is unsupported
-              synchronize: {src: /tmp/, dest: /tmp/ssm-sync-dest/}
-        YAML
+  it "syncs files with synchronize: over the SSM session" do
+    dir = PluginSpecHelper.tmp_path("ssm-sync")
+    src = File.join(dir, "src")
+    dest = File.join(dir, "dest")
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "hello.txt"), "hello over ssm\n")
+    binary = Bytes.new(4096) { |index| ((index * 7) & 0xFF).to_u8 }
+    File.write(File.join(src, "binary.bin"), binary)
 
-      status.success?.must_equal(false)
-      assert_includes output, Krikri::SsmSettings::SYNCHRONIZE_UNSUPPORTED_MESSAGE
-      output.wont_include("rsync")
+    begin
+      with_ssm_gateway do |gateway|
+        status, output = run_ssm_playbook(gateway, <<-YAML)
+          - hosts: ssm-target
+            gather_facts: false
+            tasks:
+              - name: push the tree over SSM
+                synchronize:
+                  src: #{src}/
+                  dest: #{dest}/
+                register: sync
+              - name: show the rsync command
+                debug: {msg: "{{ sync.cmd }}"}
+          YAML
+
+        assert status.success?, output
+        assert_equal "hello over ssm\n", File.read(File.join(dest, "hello.txt"))
+        assert_equal binary, File.read(File.join(dest, "binary.bin")).to_slice
+        assert_includes output, "changed=1"
+        assert_includes output, "__ssm_rsync_rsh"
+        refute_includes output, "ssh -S none"
+      end
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "syncs files back with synchronize: over the SSM session" do
+    dir = PluginSpecHelper.tmp_path("ssm-sync-pull")
+    src = File.join(dir, "src")
+    dest = File.join(dir, "dest")
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "back.txt"), "pulled over ssm\n")
+
+    begin
+      with_ssm_gateway do |gateway|
+        status, output = run_ssm_playbook(gateway, <<-YAML)
+          - hosts: ssm-target
+            gather_facts: false
+            tasks:
+              - name: pull the tree over SSM
+                synchronize:
+                  mode: pull
+                  src: #{src}/
+                  dest: #{dest}/
+          YAML
+
+        assert status.success?, output
+        assert_equal "pulled over ssm\n", File.read(File.join(dest, "back.txt"))
+        assert_includes output, "changed=1"
+      end
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "reports a remote-side synchronize failure instead of hanging" do
+    dir = PluginSpecHelper.tmp_path("ssm-sync-fail")
+    src = File.join(dir, "src")
+    Dir.mkdir_p(src)
+    File.write(File.join(src, "f.txt"), "x\n")
+
+    begin
+      with_ssm_gateway do |gateway|
+        status, output = run_ssm_playbook(gateway, <<-YAML)
+          - hosts: ssm-target
+            gather_facts: false
+            tasks:
+              - name: push to an unwritable destination
+                synchronize:
+                  src: #{src}/
+                  dest: /proc/krikri-ssm-no-such-dir/
+          YAML
+
+        refute status.success?, output
+        assert_includes output, "failed=1"
+        assert_includes output, "rsync"
+      end
+    ensure
+      FileUtils.rm_rf(dir)
     end
   end
 

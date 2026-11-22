@@ -739,6 +739,37 @@ else
 fi
 echo ""
 
+# Build krikri-ssm-pipe (the target-side pipe bridge for `synchronize:`
+# over aws_ssm - see src/krikri/ssm_pipe_bridge.cr). Nothing links it into
+# the controller; the hidden __ssm_rsync_rsh mode uploads it to the target
+# once per host, so it must exist next to krikri-playbook in bin/.
+echo -e "${YELLOW}🔨 Building krikri-ssm-pipe...${NC}"
+
+SSM_PIPE_BINARY="$OUTPUT_DIR/krikri-ssm-pipe"
+SSM_PIPE_SOURCE="krikri-ssm-pipe.cr"
+
+NEEDS_BUILD=false
+
+if [ "$FORCE_ALL" = true ]; then
+    NEEDS_BUILD=true
+elif [ ! -f "$SSM_PIPE_BINARY" ]; then
+    NEEDS_BUILD=true
+elif [ "$SSM_PIPE_SOURCE" -nt "$SSM_PIPE_BINARY" ]; then
+    NEEDS_BUILD=true
+elif find src -name '*.cr' -newer "$SSM_PIPE_BINARY" -print -quit | grep -q .; then
+    # It requires src/krikri/ssm_pipe_bridge.cr, so the same all-of-src/ scan
+    # the other binaries use.
+    NEEDS_BUILD=true
+fi
+
+if [ "$NEEDS_BUILD" = true ]; then
+    MAIN_BUILDS+=("krikri-ssm-pipe|$SSM_PIPE_SOURCE|$SSM_PIPE_BINARY")
+else
+    echo -e "   ${BLUE}✓${NC} krikri-ssm-pipe (up to date)"
+    echo -e "${GREEN}✅ krikri-ssm-pipe up to date${NC}"
+fi
+echo ""
+
 # Build differential_fuzz (differential fuzzing harness, see
 # src/krikri/differential_fuzz/). Opt-in: no shipped binary links it, and
 # its fixed-seed slice already runs in the test suite, so a plain
@@ -1202,6 +1233,7 @@ for task in "${MAIN_BUILDS[@]}"; do
         krikri)          echo -e "${GREEN}✅ krikri built: $OUTPUT_DIR/krikri${NC}" ;;
         krikri-lint)     echo -e "${GREEN}✅ krikri-lint built: $OUTPUT_DIR/krikri-lint${NC}" ;;
         krikri-capture-case) echo -e "${GREEN}✅ krikri-capture-case built: $OUTPUT_DIR/krikri-capture-case${NC}" ;;
+        krikri-ssm-pipe) echo -e "${GREEN}✅ krikri-ssm-pipe built: $OUTPUT_DIR/krikri-ssm-pipe${NC}" ;;
     esac
 done
 

@@ -61,7 +61,8 @@ module Krikri
     # the argv or the rsh string.
     def self.build_argv(src : String, dest : String, params : Hash(String, String),
                         private_key : String? = nil, dest_port : Int32? = nil,
-                        password : String? = nil, wrap_rsh_sshpass : Bool = true) : Array(String)
+                        password : String? = nil, wrap_rsh_sshpass : Bool = true,
+                        rsh : String? = nil) : Array(String)
       argv = ["rsync"]
 
       # delay_updates defaults true, compress defaults true (Ansible module
@@ -104,29 +105,35 @@ module Krikri
       link_dest = parse_list(params["link_dest"]?)
 
       if needs_rsh?(src, dest)
-        has_rsh_opt = parse_list(params["rsync_opts"]?).any?(&.includes?("--rsh"))
-        # Ansible module: `ssh -S none` (no multiplexing by default), the
-        # private key, the port, and - unless verify_host: - the same
-        # no-host-key-check pair its own non-interactive runs use.
-        unless has_rsh_opt
-          ssh_cmd = (password && wrap_rsh_sshpass) ? "sshpass -e ssh -S none" : "ssh -S none"
-          ssh_cmd += " -i #{private_key}" if private_key
-          ssh_cmd += " -o Port=#{dest_port}" if dest_port
-          unless bool(params["verify_host"]?)
-            ssh_cmd += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        # A caller-supplied rsh (the SSM transport) replaces the ssh command
+        # wholesale: there is no ssh to configure, so key/port/verify_host
+        # and _ssh_args have nothing to apply to.
+        argv << "--rsh=#{rsh}" if rsh
+        unless rsh
+          has_rsh_opt = parse_list(params["rsync_opts"]?).any?(&.includes?("--rsh"))
+          # Ansible module: `ssh -S none` (no multiplexing by default), the
+          # private key, the port, and - unless verify_host: - the same
+          # no-host-key-check pair its own non-interactive runs use.
+          unless has_rsh_opt
+            ssh_cmd = (password && wrap_rsh_sshpass) ? "sshpass -e ssh -S none" : "ssh -S none"
+            ssh_cmd += " -i #{private_key}" if private_key
+            ssh_cmd += " -o Port=#{dest_port}" if dest_port
+            unless bool(params["verify_host"]?)
+              ssh_cmd += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+            end
+            # ansible.posix's `_ssh_args` - the connection's ssh_args +
+            # ssh_common_args + ssh_extra_args, folded into ONE string by
+            # the action plugin and ONLY when the task sets
+            # use_ssh_args: yes (its own `use_ssh_args and
+            # transport == 'ssh'` gate) - rides along verbatim here,
+            # exactly like the module's own `ssh_cmd_str += ' %s' %
+            # ssh_args`. Absent (the default), the rsh keeps NOT carrying
+            # ansible_ssh_common_args, matching real behavior.
+            if ssh_args = params["_ssh_args"]?.try { |value| value unless value.empty? }
+              ssh_cmd += " #{ssh_args}"
+            end
+            argv << "--rsh=#{ssh_cmd}"
           end
-          # ansible.posix's `_ssh_args` - the connection's ssh_args +
-          # ssh_common_args + ssh_extra_args, folded into ONE string by
-          # the action plugin and ONLY when the task sets
-          # use_ssh_args: yes (its own `use_ssh_args and
-          # transport == 'ssh'` gate) - rides along verbatim here,
-          # exactly like the module's own `ssh_cmd_str += ' %s' %
-          # ssh_args`. Absent (the default), the rsh keeps NOT carrying
-          # ansible_ssh_common_args, matching real behavior.
-          if ssh_args = params["_ssh_args"]?.try { |value| value unless value.empty? }
-            ssh_cmd += " #{ssh_args}"
-          end
-          argv << "--rsh=#{ssh_cmd}"
         end
       end
 

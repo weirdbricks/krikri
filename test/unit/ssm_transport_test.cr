@@ -30,6 +30,10 @@ class FakeSsmShellSession
     end
   end
 
+  def write_raw(bytes : Bytes) : Nil
+    write(bytes)
+  end
+
   def read? : KrikriAwsSsm::Output?
     @outputs.receive?
   end
