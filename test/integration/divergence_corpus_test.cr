@@ -93,6 +93,7 @@ private DIVERGENCE_CASES = [
   {issue: 1683, slug: "bad-ssh-executable"},
   {issue: 1665, slug: "civicactions-ec2-ami-find"},
   {issue: 1666, slug: "kami911-wildfly-configure-include-removed"},
+  {issue: 1675, slug: "kami911-wildfly-configure-include-removed-check"},
   {issue: 1668, slug: "cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh"},
   {issue: 1671, slug: "islander-alacritty-empty-first"},
   {issue: 1679, slug: "onelove-roles-freebsd-consul-template-pkgng-check"},
@@ -478,6 +479,11 @@ describe "divergence corpus" do
 
   it "replays 1666-kami911-wildfly-configure-include-removed" do
     expected, actual, report = divergence_transcripts(1666, "kami911-wildfly-configure-include-removed")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1675-kami911-wildfly-configure-include-removed-check" do
+    expected, actual, report = divergence_transcripts(1675, "kami911-wildfly-configure-include-removed-check")
     assert_equal(expected, actual, report)
   end
 

@@ -1,0 +1,10 @@
+---
+# The failing task is KAMI911.wildfly's own `configure Wildfly` include_tasks:
+# (round 29920615, check phase). Its file ends with a bare `include:`, an
+# action ansible-core removed; real loads the file at run time and fails the
+# include task itself - in check mode exactly as in a real run.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - KAMI911.wildfly

@@ -20,7 +20,7 @@ private REMOVED_TASKS = <<-YAML
       project_src: /tmp/x
   YAML
 
-private def run_removed_include_playbook(files : Hash(String, String)) : {Process::Status, String}
+private def run_removed_include_playbook(files : Hash(String, String), extra_args : Array(String) = [] of String) : {Process::Status, String}
   root = File.tempname("removed-module-include")
   Dir.mkdir_p(root)
   files.each do |rel, content|
@@ -29,7 +29,7 @@ private def run_removed_include_playbook(files : Hash(String, String)) : {Proces
     File.write(path, content)
   end
   captured = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: captured, error: captured, chdir: root)
+  status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"] + extra_args, output: captured, error: captured, chdir: root)
   {status, captured.to_s}
 ensure
   FileUtils.rm_rf(root) if root && Dir.exists?(root)
@@ -79,6 +79,31 @@ describe "removed module reached at run time through a dynamic include" do
         YAML
       "mount.yml" => "---\n- include: \"lookup.yml\"\n",
     })
+    status.exit_code.must_equal(2, output)
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The 'ansible.builtin.include' action plugin has been removed.", output)
+    output.wont_include("<<< caused by >>>", output)
+    output.wont_include("\"reason\"", output)
+    output.must_include("mount.yml:2:3", output)
+    output.must_include("failed=1", output)
+    output.wont_include("Failed to load", output)
+  end
+
+  # --check does not skip LOADING an included file: the include statement is
+  # still resolved so its tasks can be simulated, so a removed bare `include:`
+  # inside it fails the include task in check mode exactly as in a real run
+  # (live-verified vs 2.21.6 on KAMI911.wildfly, issue #1675).
+  it "fails the include_tasks task itself under --check too" do
+    status, output = run_removed_include_playbook({
+      "pb.yml" => <<-YAML,
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: include mount tasks
+              include_tasks: mount.yml
+        YAML
+      "mount.yml" => "---\n- include: \"lookup.yml\"\n",
+    }, ["--check"])
     status.exit_code.must_equal(2, output)
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"The 'ansible.builtin.include' action plugin has been removed.", output)
     output.wont_include("<<< caused by >>>", output)
