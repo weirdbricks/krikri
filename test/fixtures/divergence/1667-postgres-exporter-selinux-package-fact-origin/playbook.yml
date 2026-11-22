@@ -1,0 +1,21 @@
+---
+# antmelekhin.postgres_exporter's tasks/Linux/configure.yml SELinux block
+# (the round's "Linux | Install the required SELinux packages" task), the task
+# whose multi-line `name:` arg reads ansible_python_version. Only two things
+# are adapted to localhost: the gate is `ansible_python_version` instead of the
+# role's `ansible_selinux.status == 'enabled'` (no capturing box has SELinux
+# enabled), and the block's `become: true` is dropped (a case never escalates).
+# `--check` (flags.txt) is what keeps the package task from installing anything.
+- name: postgres_exporter SELinux block
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: 'Linux | Configure SELinux when is already installed'
+      when: ansible_python_version is version('3', '>=')
+      block:
+        - name: 'Linux | Install the required SELinux packages'
+          ansible.builtin.package:
+            name: "{{ ['policycoreutils-python']
+              if ansible_python_version is version('3', '<')
+              else ['policycoreutils-python-utils'] }}"
+            state: 'present'

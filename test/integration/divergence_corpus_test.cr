@@ -99,6 +99,7 @@ private DIVERGENCE_CASES = [
   {issue: 1671, slug: "islander-alacritty-empty-first"},
   {issue: 1677, slug: "chkpnt-mailserver-zypper-check"},
   {issue: 1679, slug: "onelove-roles-freebsd-consul-template-pkgng-check"},
+  {issue: 1667, slug: "postgres-exporter-selinux-package-fact-origin"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -511,6 +512,11 @@ describe "divergence corpus" do
 
   it "replays 1697-mux-close-masks-ssh-stderr" do
     expected, actual, report = divergence_transcripts(1697, "mux-close-masks-ssh-stderr")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1667-postgres-exporter-selinux-package-fact-origin" do
+    expected, actual, report = divergence_transcripts(1667, "postgres-exporter-selinux-package-fact-origin")
     assert_equal(expected, actual, report)
   end
 end

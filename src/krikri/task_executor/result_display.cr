@@ -2620,6 +2620,7 @@ module Krikri
       want = text ? strip_yaml_scalar_quotes(text.strip) : nil
       fallback = nil
       block_hit = nil
+      continuation_hit = nil
       # A param belongs to THIS task's own mapping. Without the stop, a
       # free-form directive (`debug: var=x`) finds no `var:` on its own
       # lines and picks a LATER task's keyed `var:` instead, reporting
@@ -2664,9 +2665,33 @@ module Krikri
            block_sequence_names?(lines, idx, want)
           block_hit = idx
         end
+        # A scalar that CONTINUES on the following lines (a module's
+        # multi-line `name: "{{ ... }}" if ... else ...` arg) never equals
+        # *want* on its own line, so the exact-text check above misses it
+        # and the task's own `name:` - the first key line that qualifies -
+        # won the fallback. Real pins the read on the line OPENING the
+        # value, whose text the parsed value starts with (yaml folds the
+        # continuation into it). The deepest such line wins the same way an
+        # exact match does: the task's `name:` above it is shallower
+        # (issue #1667, antmelekhin.postgres_exporter).
+        if want && scalar_continues?(line[(at + needle.size)..], want) &&
+           (continuation_hit.nil? || line.size - line.lstrip.size > lines[continuation_hit].size - lines[continuation_hit].lstrip.size)
+          continuation_hit = idx
+        end
         fallback ||= idx
       end
-      block_hit || fallback
+      block_hit || continuation_hit || fallback
+    end
+
+    # Whether *rest* - a `<key>:` line's inline text - opens a scalar that
+    # *want*, the value actually being rendered, carries on past. YAML
+    # folds a quoted scalar's continuation lines into the value with single
+    # spaces, so the first line's own text is a prefix of it.
+    private def self.scalar_continues?(rest : String, want : String) : Bool
+      head = rest.strip
+      head = head.size > 1 ? head[1..] : "" if head.starts_with?('"') || head.starts_with?('\'')
+      head = head.strip
+      !head.empty? && want.size > head.size && want.starts_with?(head)
     end
 
     # Whether the block sequence opened by the `<key>:` line at *key_idx*
