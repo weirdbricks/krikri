@@ -139,8 +139,8 @@ module Krikri
     end
 
     # Same dedup and STDERR routing as emit_stderr, for a block already
-    # rendered at its raise site (a RemovedModuleError's render carries
-    # the Origin context the raise site built from the source map).
+    # rendered at its raise site (a meta: task's when: that raised is
+    # strategy-level, so its block never rides a task result).
     def self.emit_rendered_stderr(text : String) : Bool
       return false unless record_displayed(text)
       STDERR.print OutputRouting.normalize_for_display(text)

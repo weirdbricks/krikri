@@ -392,15 +392,14 @@ module Krikri
           # occurrence is, so this must not ride the UnresolvedModuleError
           # bypass below.
           group_hosts.each { |host| replay_include_path_deprecations(held_path_deprecations.delete(host.name)) }
-          fail_include_removed_module(task, group_hosts, ex, include_names[resolved_path]?)
+          fail_include_removed_module(task, group_hosts, ex)
         rescue ex : RemovedActionError
           # A bare `include:` inside the loaded file is the include task's
-          # own fatal failure in Ansible (wrapped three-message STDERR block
-          # + two-key fatal dump, live-verified vs 2.19.x), not the
-          # whole-run refusal a top-level occurrence is. The fatal dump
-          # shows the RENDERED include path, not the `{{ }}` as written.
+          # own fatal failure in Ansible (one [ERROR]+Origin block on
+          # STDOUT, then a changed+msg fatal: line, live-verified vs
+          # 2.21.6), not the whole-run refusal a top-level occurrence is.
           group_hosts.each { |host| replay_include_path_deprecations(held_path_deprecations.delete(host.name)) }
-          fail_include_removed_module(task, group_hosts, ex, include_names[resolved_path]?)
+          fail_include_removed_module(task, group_hosts, ex)
         rescue ex : RoleNotFoundError
           # A static import_role: inside the included file whose role
           # resolves nowhere is the include task's own fatal failure in
@@ -3314,27 +3313,28 @@ module Krikri
       # Same as the batched include path's removed-module rescue above -
       # a tombstone-removed module reached at RUN time through the
       # included file is the include task's own fatal failure in Ansible
-      # (wrapped STDERR block, failed=1, play halts for the host, rc=2),
-      # not a "Failed to load included tasks" degradation. This path only
-      # ever serves LOOPED includes (the no-loop case dispatches to
-      # execute_include_tasks_multi before any host runs), and a looped
-      # include's load failure prints just the STDERR block in Ansible -
-      # no per-item fatal: line (live-verified vs 2.19.11, issue #837) -
-      # so keep the same looped rule fail_include_not_found applies.
+      # ([ERROR]+Origin block on STDOUT, failed=1, play halts for the
+      # host, rc=2), not a "Failed to load included tasks" degradation.
+      # This path only ever serves LOOPED includes (the no-loop case
+      # dispatches to execute_include_tasks_multi before any host runs),
+      # and a looped include's load failure prints just the error block in
+      # Ansible - no per-item fatal: line - so keep the same looped rule
+      # fail_include_not_found applies.
       replay_include_path_deprecations(path_deprecations)
       emit_include_removed_module_block(ex)
-      emit_include_fatal_lines(task, [host], ex.message || "", include_name: file_rel, print_lines: !task_has_loop?(task))
+      emit_include_fatal_lines(task, [host], ex.message || "", print_lines: !task_has_loop?(task))
       :ok
     rescue ex : RemovedActionError
       # Same as the batched include path's removed-`include:` rescue - the
-      # include task's own fatal failure in Ansible (wrapped STDERR block
-      # + two-key fatal dump), not a "Failed to load included tasks"
-      # degradation. Same looped rule as the RemovedModuleError rescue
-      # above: this path only serves looped includes, and a looped
-      # include's load failure prints no per-item fatal: line.
+      # include task's own fatal failure in Ansible (one [ERROR]+Origin
+      # block, then a changed+msg fatal: line), not a "Failed to load
+      # included tasks" degradation. Same looped rule as the
+      # RemovedModuleError rescue above: this path only serves looped
+      # includes, and a looped include's load failure prints no per-item
+      # fatal: line.
       replay_include_path_deprecations(path_deprecations)
       emit_include_removed_module_block(ex)
-      emit_include_fatal_lines(task, [host], ex.message || "", include_name: file_rel, print_lines: !task_has_loop?(task))
+      emit_include_fatal_lines(task, [host], ex.message || "", print_lines: !task_has_loop?(task))
       :ok
     rescue ex : RoleNotFoundError
       # Same include-task-fatal shape as the batched include path's
@@ -3556,21 +3556,20 @@ module Krikri
       Process.exit(4)
     end
 
-    # A tombstone-removed module reached at RUN time through include_tasks:/
-    # include_role: is the include task's own fatal failure in Ansible
-    # (live-verified vs 2.19.x): the [ERROR]+Origin block goes to STDERR
-    # once even with several hosts, then one fatal: line per host -
-    # include_tasks dumps {"changed": false, "include": <as-written>,
-    # "reason": <custom message>}, include_role dumps only
-    # {"changed": false, "reason": ...} - failed=1 in the recap, the play
-    # halts for that host, ignore_errors does NOT apply (rc=2).
-    private def fail_include_removed_module(task : Task, hosts : Array(Host), ex : RemovedModuleError | RemovedActionError, include_name : String? = nil) : Nil
+    # A tombstone-removed module or a removed bare `include:` reached at
+    # RUN time through include_tasks:/include_role: is the include task's
+    # own fatal failure in Ansible (live-verified vs 2.21.6): one
+    # [ERROR]+Origin block on STDOUT even with several hosts, then one
+    # fatal: line per host carrying only changed+msg - failed=1 in the
+    # recap, the play halts for that host, ignore_errors does NOT apply
+    # (rc=2).
+    private def fail_include_removed_module(task : Task, hosts : Array(Host), ex : RemovedModuleError | RemovedActionError) : Nil
       emit_include_removed_module_block(ex)
-      emit_include_fatal_lines(task, hosts, ex.message || "", include_name)
+      emit_include_fatal_lines(task, hosts, ex.message || "")
     end
 
     # The per-host half of an include task's own fatal failure: one
-    # `fatal:` line per host with the include_tasks two-key dump, failed=1
+    # `fatal:` line per host with real's two-key changed+msg dump, failed=1
     # in the recap, and the play halts for that host UNCONDITIONALLY -
     # ignore_errors: does not apply (rc=2). Shared by the removed-module
     # and role-not-found flavors.
@@ -3579,26 +3578,15 @@ module Krikri
     # naming a missing role prints just the error block per item in
     # Ansible (no fatal: line per item, live-verified vs 2.21.6), while
     # the failed count and the unconditional halt are unchanged.
-    # msg_only=true renders the result dump as changed+msg (the
-    # role-not-found shape) instead of changed+include+reason (the
-    # removed-module one).
-    private def emit_include_fatal_lines(task : Task, hosts : Array(Host), message : String, include_name : String? = nil, print_lines : Bool = true, msg_only : Bool = false) : Nil
-      include_native = include_name ? JSON.parse(include_name.to_json) : task.include_file_native
-      include_json = include_native.try(&.to_json) || task.include_file.to_s.to_json
-      result_json = if msg_only
-                      "{\"changed\": false, \"msg\": #{message.to_json}}"
-                    else
-                      "{\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}"
-                    end
+    private def emit_include_fatal_lines(task : Task, hosts : Array(Host), message : String, print_lines : Bool = true) : Nil
       hosts.each do |host|
         if print_lines
           if Krikri::Oneline.enabled?
-            result = msg_only ? {"changed" => false, "msg" => message} : {"changed" => false, "include" => include_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}
-            puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse(result.to_json))}".colorize(:red)
+            puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "msg" => message}.to_json))}".colorize(:red)
           else
             delegate_target = delegate_display_target(task, host)
             fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-            puts "fatal: [#{fatal_host_label}]: FAILED! => #{result_json}".colorize(:red)
+            puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"msg\": #{message.to_json}}".colorize(:red)
           end
         end
         @results[host.name]["failed"] += 1
@@ -3606,29 +3594,16 @@ module Krikri
       end
     end
 
-    # Unlike the load-time refusal (message once, then Origin), the
-    # include task's failure is a wrapped exception, so Ansible prints the
-    # message three times: headline, blank, the message, blank,
-    # "<<< caused by >>>", blank, the message, then the Origin block
-    # (live-verified vs 2.19.x with a pty).
+    # Real prints the block once, straight after the task banner and ahead
+    # of the fatal line, on STDOUT: it is the task result's own exception
+    # block, and display_failed_stderr defaults to false (live-verified vs
+    # 2.21.6). 2.19's stderr three-message "<<< caused by >>>" chain is
+    # gone - the message appears exactly once, then the Origin block.
     private def emit_include_removed_module_block(ex : RemovedModuleError | RemovedActionError) : Nil
-      emit_include_wrapped_error_block(ex.message || "module has been removed", ex.render)
-    end
-
-    # The wrapped STDERR block a removed-module include task's own fatal
-    # failure prints: the message three times (headline, blank, message,
-    # blank, "<<< caused by >>>", blank, message) followed by the raise
-    # site's Origin lines - everything after the rendered error's own
-    # "[ERROR]: msg" headline (live-verified vs 2.19.x with a pty).
-    private def emit_include_wrapped_error_block(message : String, render : String?) : Nil
-      headline = "[ERROR]: #{message}\n"
-      wrapped = "[ERROR]: #{message}\n\n#{message}\n\n<<< caused by >>>\n\n#{message}\n"
-      if render && render.starts_with?(headline)
-        ErrorBlock.emit_rendered_stderr(wrapped + render[headline.size..])
-      elsif render
-        ErrorBlock.emit_rendered_stderr(render)
+      if render = ex.render
+        ErrorBlock.emit_rendered(render)
       else
-        ErrorBlock.emit_rendered_stderr(wrapped + "\n")
+        ErrorBlock.emit(ErrorBlock::Node.new(ex.message || "module has been removed"))
       end
     end
 
@@ -3652,21 +3627,22 @@ module Krikri
       # inside a looped include_tasks:-loaded file prints the error block
       # per item but NO per-host fatal: line in Ansible (live-verified vs
       # 2.21.6) - the failed count and halt stay.
-      emit_include_fatal_lines(task, hosts, ex.message || "", print_lines: !task_has_loop?(task), msg_only: true)
+      emit_include_fatal_lines(task, hosts, ex.message || "", print_lines: !task_has_loop?(task))
     end
 
-    # include_role:'s removed-module fatal carries only changed+reason -
-    # no "include" key (unlike include_tasks above, live-verified vs
-    # 2.19.x); no "Failed to load" text either.
+    # include_role:'s removed-module fatal carries the same changed+msg
+    # dump as include_tasks:'s (live-verified vs 2.21.6); no "Failed to
+    # load" text either.
     private def fail_include_role_removed_module(task : Task, host : Host, ex : RemovedModuleError) : Nil
       emit_include_removed_module_block(ex)
       connection_host = host.name
+      message = ex.message || ""
       if Krikri::Oneline.enabled?
-        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => ex.message || ""}.to_json))}".colorize(:red)
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "msg" => message}.to_json))}".colorize(:red)
       else
         delegate_target = delegate_display_target(task, host)
         fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
-        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"reason\": #{(ex.message || "").to_json}}".colorize(:red)
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"msg\": #{message.to_json}}".colorize(:red)
       end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
@@ -4111,6 +4087,12 @@ module Krikri
         # include_role task's own fatal failure in Ansible, like the
         # role-not-found case below - not the whole-run load refusal.
         fail_include_role_removed_module(task, host, ex)
+        return :ok
+      rescue ex : RemovedActionError
+        # A removed bare `include:` inside the role's own tasks is the
+        # include_role task's own fatal failure too, in the same shape the
+        # include_tasks path above prints (live-verified vs 2.21.6).
+        fail_include_removed_module(task, [host], ex)
         return :ok
       rescue ex : UnresolvedModuleError
         # Same bypass as HandlerNotFoundError's - an include_role:'d

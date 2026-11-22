@@ -1,0 +1,17 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [KAMI911.wildfly : configure Wildfly] *************************************
+[ERROR]: The 'ansible.builtin.include' action plugin has been removed. Use include_tasks or import_tasks instead. This feature was removed from ansible-core in a release after 2023-05-16.
+Origin: <WORK>/roles/KAMI911.wildfly/tasks/configure.yml:281:3
+
+279     dest: /etc/default/{{ wildfly_dc_instance_name }}.conf
+280
+281 - include: configure-properties.yml
+      ^ column 3
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "The 'ansible.builtin.include' action plugin has been removed. Use include_tasks or import_tasks instead. This feature was removed from ansible-core in a release after 2023-05-16."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
