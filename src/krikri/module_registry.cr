@@ -92,6 +92,14 @@ module Krikri
       # engine-limit exit 4, so the play ran on past the point real
       # stopped (see plugins/pacman.cr for the ported surface).
       "community.general.pacman",
+      # pkgng (issue #1679): onelove-roles.freebsd-consul-template calls
+      # it on Ubuntu, where real resolves community.general.pkgng and
+      # fatals on its own get_bin_path("pkg", required=True) probe
+      # (check mode included). Without an entry the task was a graceful
+      # unavailable-module skip plus the engine-limit exit 4, so the
+      # play ran on past the point real stopped (see plugins/pkgng.cr
+      # for the ported surface).
+      "community.general.pkgng",
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",
@@ -678,6 +686,11 @@ module Krikri
       # community.general is already in MODULE_SEARCH_COLLECTIONS.
       "ansible.builtin.pacman" => "community.general.pacman",
       "ansible.legacy.pacman"  => "community.general.pacman",
+      # pkgng has the same pre-collection history as pacman: ansible-core
+      # 2.21.6's own builtin runtime redirects both builtin spellings onto
+      # community.general.pkgng and real runs the module (issue #1679).
+      "ansible.builtin.pkgng" => "community.general.pkgng",
+      "ansible.legacy.pkgng"  => "community.general.pkgng",
       # community.general shipped the docker_* modules before they moved
       # to community.docker, and its own meta/runtime.yml still redirects
       # every one of those pre-2.0 FQCNs to the new collection (only
