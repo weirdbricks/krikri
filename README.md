@@ -93,8 +93,8 @@ with a one-time warning.
 
 `ansible_user`/`remote_user` are not login identities over SSM: the session runs
 as the document's user (`ssm-user` by default), so use `become`/`become_user` to
-switch privileges. Deliberate v1 limits (no Windows, no `synchronize`, no
-port forwarding) are in
+switch privileges. Deliberate v1 limits (no Windows - not planned, no port
+forwarding, `synchronize:` needs `bash` on the target) are in
 [KNOWN_MISSING.md](KNOWN_MISSING.md#aws-ssm-connections-deliberate-v1-limits).
 `async:` works over SSM: a detached worker outlives its session (verified on a
 real target), so `poll:` and a later `async_status:` behave as they do over SSH.

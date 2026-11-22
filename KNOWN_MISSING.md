@@ -46,8 +46,8 @@ arguing with the note in place.
 `ansible_connection=aws_ssm` (and the `amazon.aws.`/`community.aws.` spellings) is a native
 transport: no AWS CLI, no `session-manager-plugin`, no S3 bucket. The entries below are decided for
 v1, and they are not all the same kind of thing: no S3, no port forwarding and no SSH-over-SSM are
-**non-goals** (the issue exists to avoid them); no Windows and no `synchronize:` are
-**unsupported capabilities** that fail cleanly instead of half-working.
+**non-goals** (the issue exists to avoid them), and no Windows is an **unsupported capability**
+that fails cleanly instead of half-working.
 
 - **S3 is never used, by design - it is not an unimplemented plugin feature.**
   `ansible_aws_ssm_bucket_name`, `ansible_aws_ssm_plugin` and the S3 addressing options are
@@ -56,8 +56,12 @@ v1, and they are not all the same kind of thing: no S3, no port forwarding and n
 - **`ansible_user` is not a login user.** The session runs as the SSM document's run-as user
   (`ssm-user` for a standard shell document). `become`/`become_user` is the only way to switch
   privileges, matching Ansible's own plugin note.
-- **Linux shells only.** A PowerShell `ansible_shell_type` or Windows `ansible_os_family`/
-  `ansible_system` fails before a session is opened; krikri has no winrm/psrp transport either.
+- **Linux shells only, and Windows will not be added (not planned, issue #1695).** A PowerShell
+  `ansible_shell_type` or Windows `ansible_os_family`/`ansible_system` fails before a session is
+  opened; krikri has no winrm/psrp transport either. The reference plugin needs a separate
+  PowerShell command executor, S3 staging to avoid pty echo, and a Windows module set - a
+  transport-sized feature with no Linux-fleet user behind it, so it is out of scope rather than
+  pending.
 - **No port forwarding, no SSH-over-SSM (`AWS-StartSSHSession`), no smux** - non-goals, not
   missing branches.
 - **`async:` works, with the session as the job's lifetime.** A launched worker is detached
@@ -72,8 +76,19 @@ v1, and they are not all the same kind of thing: no S3, no port forwarding and n
   stop/reboot, agent restart, OOM, a manual kill). What is *not* implemented is a controller-side
   kill on `async:`
   timeout (same as the ssh path): the task reports `Timeout exceeded` and the worker keeps going.
-- **`synchronize:` fails cleanly** with a documented message (`synchronize is not supported over
-  aws_ssm yet`): the action builds an rsync-over-ssh argv and an SSM host has no ssh path.
+- **`synchronize:` works, push and pull.** The controller's own rsync runs unchanged; its hidden
+  `__ssm_rsync_rsh` mode opens the host's session and starts the target's `rsync --server` under
+  `krikri-ssm-pipe`, a small Crystal bridge uploaded once per host (content-hashed name) that gives
+  the server real pipes. The bridge exists because a raw-mode pty still stalls rsync's binary
+  startup handshake; the pty carries the bytes, the pipes carry the protocol. Limits: the target
+  needs `bash` and a writable, exec-capable `/var/tmp` (the bridge lives in the same hardened
+  per-user staging tree as the plugin binaries, not `/tmp`); the remote rsync's stderr is discarded (errors carried
+  by the rsync protocol still reach the client); ssh-only synchronize options (`private_key`,
+  `dest_port`, `verify_host`, `use_ssh_args`, `ssh_connection_multiplexing`) have no meaning and no
+  effect. A `delegate_to:` shape that would make rsync dial the SSM host over ssh fails cleanly. The
+  bridge is the controller build, so a foreign-arch target is not supported yet: there is no
+  automatic bridge arch selection (the module binaries' `plugins-<arch>/` mechanism has no bridge
+  equivalent), and it fails as an exec-format error rather than a clean message.
 - **Credential subset.** Environment statics and web identity, shared profiles (`role_arn` +
   `source_profile`/`credential_source`, `mfa_serial`, `credential_process`, SSO cache), ECS
   container credentials and IMDSv2 are supported. MFA-token AssumeRole reads the one-time code
