@@ -515,7 +515,7 @@ module Krikri
       # We use /bin/bash instead of /bin/sh for better compatibility
       wrapped_command = "/bin/bash -c #{shell_quote(command)}"
 
-      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, [wrapped_command], password, extra_options: extra_args, ssh_executable: ssh_executable)
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, [wrapped_command], password, extra_options: extra_args, ssh_executable: ssh_executable, host_key_checking: host_key_checking_for(host, user, port, connection))
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -604,7 +604,7 @@ module Krikri
       password = password_for(host, user, port)
       control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password, ssh_executable))
 
-      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, ["bash", "-s"], password, extra_options: extra_args, ssh_executable: ssh_executable)
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, ["bash", "-s"], password, extra_options: extra_args, ssh_executable: ssh_executable, host_key_checking: host_key_checking_for(host, user, port, connection))
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -847,6 +847,7 @@ module Krikri
       daemon_scope : String? = nil,
       ssh_executable : String? = nil,
       term : String? = nil,
+      connection : ConnectionSettings? = nil,
     ) : JSON::Any
       init
       key = {host, user, port, become_user, daemon_key_sig(connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable), daemon_scope)}
@@ -854,7 +855,7 @@ module Krikri
       # response is classified (see the read rescue).
       fresh_spawn = @@daemon_processes[key]?.nil?
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable, term)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable, term, connection)
 
       request = {"module" => module_name, "config" => config}.to_json
 
@@ -934,11 +935,12 @@ module Krikri
       extra_args : Array(String) = [] of String,
       ssh_executable : String? = nil,
       term : String? = nil,
+      connection : ConnectionSettings? = nil,
     ) : Hash(Int32, JSON::Any)
       init
       key = {host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port), ssh_executable)}
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable, term)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4], ssh_executable, term, connection)
 
       payload = steps.map do |step|
         {
@@ -989,7 +991,7 @@ module Krikri
     # otherwise it spawns `sudo -S -p ''` and the password line is
     # written into this process's stdin pipe BEFORE any frame, where
     # sudo reads it and nothing else ever sees it.
-    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil, extra_args : Array(String) = [] of String, sig : String = "", ssh_executable : String? = nil, term : String? = nil) : Process
+    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil, extra_args : Array(String) = [] of String, sig : String = "", ssh_executable : String? = nil, term : String? = nil, connection : ConnectionSettings? = nil) : Process
       control_path = get_control_path(host, user, port, sig)
       password = password_for(host, user, port)
 
@@ -1002,13 +1004,15 @@ module Krikri
           timeout: 60,
           identity_file: identity_file,
           extra_args: extra_args,
-          ssh_executable: ssh_executable
+          ssh_executable: ssh_executable,
+          connection: connection
         )
         sudo_needs_password = probe[:exit_code] != 0
       end
 
       ssh_cmd = ssh_argv(control_path, identity_file, port, user, host,
-        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password, term)], password, extra_options: extra_args, ssh_executable: ssh_executable)
+        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password, term)], password, extra_options: extra_args, ssh_executable: ssh_executable,
+        host_key_checking: host_key_checking_for(host, user, port, connection))
 
       process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
         Process.new(
@@ -1254,7 +1258,8 @@ module Krikri
 
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = scp_argv(control_path, identity_file, port, user, host,
-        [local_path, "#{user}@#{host}:#{remote_path}"], recursive: recursive, connect_timeout: true, password: password, extra_options: extra_args, ssh_executable: ssh_executable)
+        [local_path, "#{user}@#{host}:#{remote_path}"], recursive: recursive, connect_timeout: true, password: password, extra_options: extra_args, ssh_executable: ssh_executable,
+        host_key_checking: host_key_checking_for(host, user, port, connection))
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -1320,7 +1325,8 @@ module Krikri
 
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = scp_argv(control_path, identity_file, port, user, host,
-        ["#{user}@#{host}:#{remote_path}", local_path], recursive: false, connect_timeout: false, password: password, extra_options: extra_args, ssh_executable: ssh_executable)
+        ["#{user}@#{host}:#{remote_path}", local_path], recursive: false, connect_timeout: false, password: password, extra_options: extra_args, ssh_executable: ssh_executable,
+        host_key_checking: host_key_checking_for(host, user, port, connection))
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -1408,7 +1414,7 @@ module Krikri
         "rsync",
         "-az",                     # archive mode, compress
         "--chmod=#{mode.to_s(8)}", # set permissions
-        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args, ssh_executable),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args, ssh_executable, host_key_checking_for(host, user, port, connection)),
         local_path,
         "#{user}@#{host}:#{remote_path}",
       ]
@@ -1455,6 +1461,7 @@ module Krikri
       extra_args : Array(String) = [] of String,
       mode : Int32 = 0o755,
       ssh_executable : String? = nil,
+      host_key_checking : Bool? = nil,
     ) : Array(String)
       [
         "rsync",
@@ -1462,7 +1469,7 @@ module Krikri
         "--no-o",
         "--no-g",
         "--chmod=#{mode.to_s(8)}",
-        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args, ssh_executable),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args, ssh_executable, host_key_checking),
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
     end
 
@@ -1495,7 +1502,8 @@ module Krikri
       # batch instead of one per file.
       rsync_cmd = rsync_upload_argv(
         control_path, identity_file, port, user, host, local_files,
-        remote_dir, password: password, extra_args: extra_args, mode: mode, ssh_executable: ssh_executable
+        remote_dir, password: password, extra_args: extra_args, mode: mode, ssh_executable: ssh_executable,
+        host_key_checking: host_key_checking_for(host, user, port, connection)
       )
 
       result = TimingProfile.measure("transport.rsync", "transport") do
@@ -1615,24 +1623,76 @@ module Krikri
     # making this the one place a CLI-supplied ssh argument has to be
     # added, rather than five.
     # StrictHostKeyChecking value for every ssh/rsync invocation in this
-    # file. Defaults to "accept-new" (auto-trust a NEW host key, but
-    # still refuse a CHANGED one) - safe for non-interactive use without
-    # silently masking a real MITM/key-rotation surprise. Ansible's
-    # `host_key_checking = False` (ansible.cfg `[defaults]`, or the
-    # ANSIBLE_HOST_KEY_CHECKING/ANSIBLE_SSH_HOST_KEY_CHECKING env vars -
-    # verified in ansible-core's own ssh.py connection plugin:
-    # `if self.get_option('host_key_checking') is False: b_args = (b"-o",
-    # b"StrictHostKeyChecking=no")`) is explicitly MORE permissive than
-    # this engine's own default - it accepts a CHANGED key too, which
-    # matters for exactly the scenario that surfaced this: an ephemeral
-    # cloud host whose IP got reused with a different host key from an
-    # earlier run still in this machine's known_hosts. AnsibleConfig reads
-    # only inventory/roles_path/library/remote_user/ssh_args out of
-    # ansible.cfg, so `host_key_checking` stays env-only here.
-    private def self.strict_host_key_checking : String
-      value = ENV["ANSIBLE_HOST_KEY_CHECKING"]? || ENV["ANSIBLE_SSH_HOST_KEY_CHECKING"]?
-      return "accept-new" unless value
-      ["no", "false", "0", "off"].includes?(value.downcase) ? "no" : "accept-new"
+    # file - resolved per dial by #strict_host_key_checking below. The
+    # variable layer of ansible's host_key_checking option (the ssh
+    # plugin's vars entries ansible_host_key_checking /
+    # ansible_ssh_host_key_checking, resolved by ConnectionSettings) is
+    # registered here by every transport call that carries a resolved
+    # ConnectionSettings - the same flow that registers connection
+    # passwords - so connection-less later calls for the same triple (the
+    # daemon spawner) reuse it. Missing entry = no variable set anywhere;
+    # env, ansible.cfg and the True default then decide (issue #1682).
+    @@host_key_checkings = Hash({String, String, Int32?}, Bool?).new
+
+    def self.register_host_key_checking(host : String, user : String, port : Int32?, value : Bool?) : Nil
+      return unless value
+      @@host_key_checkings[{host, user, port}] = value
+    end
+
+    # Spec seam - the registry is process-global, so tests clear it
+    # between specs (the connection-password registry's own pattern).
+    def self.clear_host_key_checkings_for_spec : Nil
+      @@host_key_checkings.clear
+    end
+
+    # The per-host host_key_checking variable for one transport call: the
+    # resolved connection's own value (registered for the triple), or
+    # whatever a previous call for the same triple registered, else nil.
+    private def self.host_key_checking_for(host : String, user : String, port : Int32?, connection : ConnectionSettings?) : Bool?
+      if conn = connection
+        register_host_key_checking(host, user, port, conn.host_key_checking)
+        return conn.host_key_checking
+      end
+      @@host_key_checkings[{host, user, port}]?
+    end
+
+    # The `-o StrictHostKeyChecking=` argv pair, only present when host
+    # key checking is DISABLED: ansible-core's ssh connection plugin adds
+    # an option exclusively in that branch (`if
+    # self.get_option('host_key_checking') is False: b_args = (b"-o",
+    # b"StrictHostKeyChecking=no")`). When checking is enabled it adds
+    # NOTHING, so ssh's own default (`ask`) governs - which
+    # non-interactively refuses an unknown AND a changed host key ("Host
+    # key verification failed", exit 255 -> UNREACHABLE) and writes
+    # nothing to known_hosts. krikri used to always dial with accept-new
+    # here, silently auto-trusting NEW keys where ansible refuses them
+    # (issue #1682).
+    private def self.strict_host_key_args(host_setting : Bool?) : Array(String)
+      if host_key_checking_disabled?(host_setting)
+        ["-o", "StrictHostKeyChecking=no"]
+      else
+        [] of String
+      end
+    end
+
+    # The full resolution behind #strict_host_key_args - ansible's
+    # host_key_checking ladder, each layer only when the one above left
+    # it unset: the per-host variable (nil = unset), then
+    # ANSIBLE_SSH_HOST_KEY_CHECKING/ANSIBLE_HOST_KEY_CHECKING
+    # (ConfigManager._loop_entries keeps the LAST listed env entry found,
+    # so the ssh-spelled one outranks the plain one; an empty value is
+    # unset, like ANSIBLE_DEPRECATION_WARNINGS's verified behavior), then
+    # ansible.cfg ([ssh_connection] outranks [defaults] the same way),
+    # then the True default - strict, like ansible.
+    private def self.host_key_checking_disabled?(host_setting : Bool?) : Bool
+      return !host_setting unless host_setting.nil?
+      if raw = ENV["ANSIBLE_SSH_HOST_KEY_CHECKING"]?.presence || ENV["ANSIBLE_HOST_KEY_CHECKING"]?.presence
+        return !AnsibleConfig.boolean(raw)
+      end
+      if (ini = AnsibleConfig.host_key_checking) != nil
+        return !ini
+      end
+      false
     end
 
     private def self.identity_args(identity_file : String?) : Array(String)
@@ -1684,6 +1744,7 @@ module Krikri
       password : String? = nil,
       extra_options : Array(String) = [] of String,
       ssh_executable : String? = nil,
+      host_key_checking : Bool? = nil,
     ) : Array(String)
       sshpass_prefix(password) + [
         ssh_executable || "ssh",
@@ -1693,8 +1754,7 @@ module Krikri
         "-o", "ConnectTimeout=#{CliOptions.timeout}",
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
-        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + no_password_auth_args(password) + askpass_args(password) + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + extra_options + [
+      ] + strict_host_key_args(host_key_checking) + no_password_auth_args(password) + askpass_args(password) + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + extra_options + [
         "#{user}@#{host}",
       ] + remote_args
     end
@@ -1721,6 +1781,7 @@ module Krikri
       password : String? = nil,
       extra_options : Array(String) = [] of String,
       ssh_executable : String? = nil,
+      host_key_checking : Bool? = nil,
     ) : Array(String)
       sshpass_prefix(password) + [
         "scp",
@@ -1728,9 +1789,9 @@ module Krikri
         "-o", "ControlMaster=auto",
         "-o", "ControlPath=#{control_path}",
         "-o", "ControlPersist=600",
-      ] + (connect_timeout ? ["-o", "ConnectTimeout=#{CliOptions.timeout}"] : [] of String) + [
-        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + no_password_auth_args(password) + askpass_args(password) + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
+      ] + (connect_timeout ? ["-o", "ConnectTimeout=#{CliOptions.timeout}"] : [] of String) +
+        strict_host_key_args(host_key_checking) +
+        no_password_auth_args(password) + askpass_args(password) + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
         (port ? ["-P", port.to_s] : [] of String) + extra_options +
         CliOptions.extra_scp_args + local_args
     end
@@ -1747,9 +1808,10 @@ module Krikri
     # the same single-prompt bound the other builders carry. The program
     # it names is *ssh_executable* when the connection sets one, else
     # plain `ssh`. Public as a spec seam.
-    def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil, extra_args : Array(String) = [] of String, ssh_executable : String? = nil) : String
+    def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil, extra_args : Array(String) = [] of String, ssh_executable : String? = nil, host_key_checking : Bool? = nil) : String
       base = "#{ssh_executable ? shell_quote(ssh_executable) : "ssh"} -o ControlMaster=auto -o ControlPath=#{shell_quote(control_path)} -o ControlPersist=600" \
-             " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}"
+             " -o ConnectTimeout=#{CliOptions.timeout}"
+      strict_host_key_args(host_key_checking).each { |arg| base += " #{arg}" }
       base = "sshpass -e #{base}" if password && sshpass_available?
       base += " -o NumberOfPasswordPrompts=1" if password && !sshpass_available?
       no_password_auth_args(password).each { |arg| base += " #{arg}" }

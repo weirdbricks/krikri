@@ -2481,7 +2481,8 @@ module Krikri
           become_password: Passwords.become(vars, host),
           extra_args: conn.ssh_extra_options,
           ssh_executable: conn.ssh_executable,
-          term: PluginManager.remote_term_forwarding(vars)
+          term: PluginManager.remote_term_forwarding(vars),
+          connection: conn
         )
         # Same normalization the script transport applies one frame up in
         # interpret_batch_script: the daemon's parsed response is a raw

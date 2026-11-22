@@ -2504,7 +2504,8 @@ module Krikri
           extra_args: extra_args,
           daemon_scope: daemon_scope,
           ssh_executable: conn.ssh_executable,
-          term: remote_term_forwarding(vars)
+          term: remote_term_forwarding(vars),
+          connection: conn
         )
       rescue ex : SSHManager::DaemonDispatchUnknownError
         # The request reached the daemon but its response did not come
