@@ -1201,6 +1201,16 @@ module Krikri
               "a local user appears to have planted it (foreign-owned or symlinked). " \
               "Remove it manually after verifying, then re-run."
       end
+      # This listing is the task's FIRST remote operation (Ansible's
+      # equivalent is the tmpdir creation exec), so a transport failure
+      # here is the connection error Ansible reports - its unreachable
+      # msg embeds this dial's own stderr (issue #1697). Carrying on to
+      # rsync/scp instead lost it: those dials race the dead master's
+      # control socket and answer "Shared connection ... closed.".
+      if SSHManager.connection_level_failure?(list_result[:exit_code], list_result[:stderr], list_result[:stdout])
+        detail = {list_result[:stderr], list_result[:stdout]}.map(&.strip).find { |text| !text.empty? } || "connection lost"
+        raise SSHManager::SshTransportFailureError.new(detail)
+      end
       target_arch : String? = nil
       target_os = ""
       list_result[:stdout]
@@ -2516,7 +2526,13 @@ module Krikri
         # changed_when: from reinterpreting a result no module actually
         # produced (see apply_changed_failed_when).
         daemon_dispatch_unknown_result(ex, SSHUnreachableMsg.pipelining_enabled?(vars), host.connection_host)
-      rescue
+      rescue ex
+        # A daemon whose own ssh could not reach the host carries ssh's
+        # stderr (SSHManager#spawn_daemon). That is Ansible's unreachable
+        # detail, so let the caller book it instead of falling back: the
+        # fallback dial would attach to the dead master's control socket
+        # and report "Shared connection ... closed." (issue #1697).
+        raise ex if SSHManager.connection_level_exception?(ex)
         # Nothing provably dispatched - the caller's per-task fallback.
         nil
       end

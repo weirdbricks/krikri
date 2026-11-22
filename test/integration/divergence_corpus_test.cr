@@ -88,6 +88,7 @@ private DIVERGENCE_CASES = [
   {issue: 1688, slug: "delegated-loop-unreachable-msg-host"},
   {issue: 1680, slug: "ignore-unreachable-stays-in-play"},
   {issue: 1680, slug: "play-ignore-unreachable-gather-facts"},
+  {issue: 1697, slug: "mux-close-masks-ssh-stderr"},
   {issue: 1690, slug: "become-password-not-a-var"},
   {issue: 1681, slug: "delegated-unreachable-msg-host"},
   {issue: 1683, slug: "bad-ssh-executable"},
@@ -505,6 +506,11 @@ describe "divergence corpus" do
 
   it "replays 1679-onelove-roles-freebsd-consul-template-pkgng-check" do
     expected, actual, report = divergence_transcripts(1679, "onelove-roles-freebsd-consul-template-pkgng-check")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1697-mux-close-masks-ssh-stderr" do
+    expected, actual, report = divergence_transcripts(1697, "mux-close-masks-ssh-stderr")
     assert_equal(expected, actual, report)
   end
 end

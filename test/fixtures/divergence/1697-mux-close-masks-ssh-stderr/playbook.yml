@@ -1,0 +1,7 @@
+# Issue #1697's repro verbatim: the failing task is raw, and its only
+# remote operation is the first dial to the dead delegate.
+- hosts: good
+  gather_facts: false
+  tasks:
+    - raw: echo hi
+      delegate_to: deadx

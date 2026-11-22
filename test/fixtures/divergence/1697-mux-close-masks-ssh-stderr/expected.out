@@ -1,0 +1,17 @@
+
+PLAY [good] ********************************************************************
+
+TASK [raw] *********************************************************************
+[ERROR]: Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused
+Origin: <WORK>/playbook.yml:6:7
+
+4   gather_facts: false
+5   tasks:
+6     - raw: echo hi
+        ^ column 7
+
+fatal: [good -> deadx]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused", "unreachable": true}
+
+PLAY RECAP *********************************************************************
+good                       : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+
