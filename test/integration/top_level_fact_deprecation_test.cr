@@ -682,6 +682,35 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.wont_include(":5:13\n")
   end
 
+  it "attributes a multi-line module name: value read to that value, not the task name" do
+    # Issue #1667, antmelekhin.postgres_exporter: the role's
+    # `package: name:` arg is a folded multi-line scalar, so its own line can
+    # never equal the value being rendered and the task's `name:` above it
+    # won the key-line fallback - krikri reported the task name's value token
+    # where real reports the argument's (live-verified against 2.21.6; the
+    # role's own package task is pinned verbatim by
+    # test/fixtures/divergence/1667-postgres-exporter-selinux-package-fact-origin).
+    # debug here only because it needs no package database: the task fails on
+    # its unsupported `name:` afterwards, which is not what this pins.
+    stdout, stderr, dir = run_files({"play.yml" => <<-PLAYBOOK})
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: install the SELinux packages
+            ansible.builtin.debug:
+              name: "{{ ['policycoreutils-python']
+                if ansible_python_version is version('3', '<')
+                else ['policycoreutils-python-utils'] }}"
+      PLAYBOOK
+
+    stdout.must_include("TASK [install the SELinux packages]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{File.join(dir, "play.yml")}:7:15\n")
+    stderr.must_include("                ^ column 15")
+    stderr.wont_include(":5:13\n")
+  end
+
   it "attributes an include_vars path read to that argument's own value" do
     # Issue #974, nycrecords.nginx: `include_vars: "{{ ansible_os_family
     # }}.yml"` reads the fact while the executor templates the path, not
