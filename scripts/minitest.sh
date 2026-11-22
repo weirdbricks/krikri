@@ -462,7 +462,14 @@ if [ "$shards" -ge 2 ]; then
       export TMPDIR="$RUN_TMP/s$i"
       mkdir -p "$TMPDIR"
       export MINITEST_SLICE_MAP="$slice_map" MINITEST_SLICE_INDEX="$i" MINITEST_SLICE_COUNT="$shards"
-      exec timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@"
+      # 9>&-: the compile lock lives on fd 9 and an inherited copy would
+      # outlive this run inside any test-spawned process (the fake-agent
+      # pty shells are long-lived), pinning the lock until that process
+      # dies - three orphaned `sh` were enough to block every later suite
+      # for hours. Close it for the test binary; its children cannot leak
+      # what it never had. The parent shell keeps its own fd 9, so the
+      # lock is still held for this run.
+      exec timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@" 9>&-
     ) >"$s_log" 2>&1 &
     shard_pids[$i]=$!
   done
@@ -525,6 +532,6 @@ build_test_binary || exit 1
 
 # Not exec: the EXIT trap has to run after the suite to remove its TMPDIR.
 rc=0
-timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@" || rc=$?
+timeout -k 5 "${MINITEST_TIMEOUT:-600}" "$BINARY" "$@" 9>&- || rc=$?
 compact_timings
 exit "$rc"
