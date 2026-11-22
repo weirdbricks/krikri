@@ -1,0 +1,23 @@
+---
+# islander.alacritty's failing tasks, adapted to localhost: the uri fetch of
+# GitHub's latest-release JSON is replaced by a set_fact carrying the same
+# shape (assets with no `amd64.deb` entry, so the query matches nothing).
+# The failing task itself is copied verbatim from tasks/main.yml.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    alacritty_pkg_arch: amd64
+    alacritty_latest:
+      json:
+        assets:
+          - name: alacritty.1.gz
+            browser_download_url: https://example.invalid/alacritty.1.gz
+          - name: alacritty.yml
+            browser_download_url: https://example.invalid/alacritty.yml
+  tasks:
+    - name: Parse alacritty deb url
+      set_fact:
+        alacritty_deb_url: "{{ alacritty_latest.json  | to_json | from_json | json_query(query) | first }}"
+      vars:
+        query: "assets[?ends_with(name, `{{ alacritty_pkg_arch }}.deb`)].browser_download_url"

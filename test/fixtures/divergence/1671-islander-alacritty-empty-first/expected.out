@@ -1,0 +1,47 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Parse alacritty deb url] *************************************************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'alacritty_deb_url': No first item, sequence was empty.
+
+Task failed.
+Origin: <WORK>/playbook.yml:19:7
+
+17             browser_download_url: https://example.invalid/alacritty.yml
+18   tasks:
+19     - name: Parse alacritty deb url
+         ^ column 7
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.set_fact' failed.
+Origin: <WORK>/playbook.yml:20:7
+
+18   tasks:
+19     - name: Parse alacritty deb url
+20       set_fact:
+         ^ column 7
+
+<<< caused by >>>
+
+Error while resolving value for 'alacritty_deb_url': No first item, sequence was empty.
+Origin: <WORK>/playbook.yml:21:28
+
+19     - name: Parse alacritty deb url
+20       set_fact:
+21         alacritty_deb_url: "{{ alacritty_latest.json  | to_json | from_json | json_query(query) | first }}"
+                              ^ column 28
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'alacritty_deb_url': No first item, sequence was empty."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Found variable using reserved name 'query'.
+Origin: <WORK>/playbook.yml:23:9
+
+21         alacritty_deb_url: "{{ alacritty_latest.json  | to_json | from_json | json_query(query) | first }}"
+22       vars:
+23         query: "assets[?ends_with(name, `{{ alacritty_pkg_arch }}.deb`)].browser_download_url"
+           ^ column 9
+

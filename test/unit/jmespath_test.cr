@@ -210,6 +210,20 @@ describe "json_query filter (FilterEngine / Crinja)" do
     result.as_a.map(&.as_s).must_equal(["nginx", "vim"])
   end
 
+  it "resolves a bare variable argument to the JMESPath expression (issue #1671)" do
+    # Ansible/Jinja evaluates a filter's arguments before the filter runs, so
+    # `json_query(query)` receives the text `query` holds. Treating the bare
+    # name as the expression made the engine look up a field called `query`,
+    # return null, and let a following `first` succeed where ansible fails
+    # on the empty match (islander.alacritty's deb/yml URL tasks).
+    vars = Hash(String, JSON::Any).new
+    vars["query"] = JSON::Any.new("assets[?ends_with(name, `amd64.deb`)].browser_download_url")
+    scoped_engine = Krikri::VariableSubstitutor::FilterEngine.new(vars)
+    data = JSON.parse(%({"assets": [{"name": "alacritty.1.gz", "browser_download_url": "man"}, {"name": "alacritty_0.17.0_amd64.deb", "browser_download_url": "deb"}]}))
+
+    scoped_engine.apply(data, %(json_query(query))).as_a.map(&.as_s).must_equal(["deb"])
+  end
+
   it "is registered as a template filter too (the itigoag.packages shape)" do
     rendered = krikri_jinja_render(%({{ packages | json_query(query) }}), {
       "packages" => [{"name" => "htop", "state" => "present"}, {"name" => "curl", "state" => "absent"}],

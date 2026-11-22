@@ -94,6 +94,7 @@ private DIVERGENCE_CASES = [
   {issue: 1665, slug: "civicactions-ec2-ami-find"},
   {issue: 1666, slug: "kami911-wildfly-configure-include-removed"},
   {issue: 1668, slug: "cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh"},
+  {issue: 1671, slug: "islander-alacritty-empty-first"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -481,6 +482,11 @@ describe "divergence corpus" do
 
   it "replays 1668-cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh" do
     expected, actual, report = divergence_transcripts(1668, "cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1671-islander-alacritty-empty-first" do
+    expected, actual, report = divergence_transcripts(1671, "islander-alacritty-empty-first")
     assert_equal(expected, actual, report)
   end
 end
