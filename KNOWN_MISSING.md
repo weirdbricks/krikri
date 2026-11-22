@@ -46,7 +46,7 @@ arguing with the note in place.
 `ansible_connection=aws_ssm` (and the `amazon.aws.`/`community.aws.` spellings) is a native
 transport: no AWS CLI, no `session-manager-plugin`, no S3 bucket. The entries below are decided for
 v1, and they are not all the same kind of thing: no S3, no port forwarding and no SSH-over-SSM are
-**non-goals** (the issue exists to avoid them); no Windows/`async:`/`synchronize` and the MFA gap
+**non-goals** (the issue exists to avoid them); no Windows/`async:`/`synchronize`
 are **unsupported capabilities** that fail cleanly instead of half-working.
 
 - **S3 is never used, by design - it is not an unimplemented plugin feature.**
@@ -64,9 +64,10 @@ are **unsupported capabilities** that fail cleanly instead of half-working.
   over aws_ssm yet`); there is no resident daemon over SSM, and `synchronize` would build an
   rsync-over-ssh argv.
 - **Credential subset.** Environment statics and web identity, shared profiles (`role_arn` +
-  `source_profile`/`credential_source`, `credential_process`, SSO cache), ECS container credentials
-  and IMDSv2 are supported. An interactive MFA-token AssumeRole is not; it fails with a clear
-  error.
+  `source_profile`/`credential_source`, `mfa_serial`, `credential_process`, SSO cache), ECS
+  container credentials and IMDSv2 are supported. MFA-token AssumeRole reads the one-time code
+  from the terminal (echo suppressed) or from an injected token provider; a non-interactive run
+  with neither fails with a clear error.
 - **Session lifetime.** Amazon's idle timeout and one-hour session cap still apply. A session that
   dies mid-command fails the task rather than re-running it, because the remote state is unknown.
 - **The controller needs no AWS CLI and no session-manager-plugin** - the improvement over

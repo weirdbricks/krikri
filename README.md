@@ -94,7 +94,7 @@ with a one-time warning.
 `ansible_user`/`remote_user` are not login identities over SSM: the session runs
 as the document's user (`ssm-user` by default), so use `become`/`become_user` to
 switch privileges. Deliberate v1 limits (no Windows, no `async:`, no
-`synchronize`, no port forwarding, no interactive MFA AssumeRole) are in
+`synchronize`, no port forwarding) are in
 [KNOWN_MISSING.md](KNOWN_MISSING.md#aws-ssm-connections-deliberate-v1-limits).
 
 ---
