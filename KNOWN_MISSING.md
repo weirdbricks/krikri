@@ -80,9 +80,17 @@ that fails cleanly instead of half-working.
   `__ssm_rsync_rsh` mode opens the host's session and starts the target's `rsync --server` under
   `krikri-ssm-pipe`, a small Crystal bridge uploaded once per host (content-hashed name) that gives
   the server real pipes. The bridge exists because a raw-mode pty still stalls rsync's binary
-  startup handshake; the pty carries the bytes, the pipes carry the protocol. Limits: the target
+  startup handshake; the pty carries the bytes, the pipes carry the protocol. Both directions are
+  length-framed: the helper's input to the bridge carries an explicit end-of-input frame (a pty has
+  no EOF to send, and rsync's server waits for its stdin to close), and the bridge pads its output
+  frames because the real agent's output path holds back a chunk tail of at most three bytes that
+  starts with a high byte (`>= 0x80`) and loses it at stream end - exactly the shape of rsync's
+  handshake messages, which would otherwise stall the transfer. The remote exit status is read
+  from a status file the runner's EXIT trap writes, picked up over a fresh session (the agent
+  delivers no `ExitCode` payload for every session). Limits: the target
   needs `bash` and a writable, exec-capable `/var/tmp` (the bridge lives in the same hardened
-  per-user staging tree as the plugin binaries, not `/tmp`); the remote rsync's stderr is discarded (errors carried
+  per-user staging tree as the plugin binaries, not `/tmp`); the remote rsync's stderr is captured
+  to the staging tree and echoed on failure only (errors carried
   by the rsync protocol still reach the client); ssh-only synchronize options (`private_key`,
   `dest_port`, `verify_host`, `use_ssh_args`, `ssh_connection_multiplexing`) have no meaning and no
   effect. A `delegate_to:` shape that would make rsync dial the SSM host over ssh fails cleanly. The

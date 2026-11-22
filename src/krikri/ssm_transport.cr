@@ -6,6 +6,7 @@ require "./shell"
 require "./connection_settings"
 require "./ssm_settings"
 require "./ssm_registry"
+require "./ssm_pipe_frame"
 require "./ssm_unreachable_msg"
 
 module Krikri
@@ -152,15 +153,19 @@ module Krikri
     # moved as a raw byte stream: *input* is fed to the remote command's
     # stdin and *output* receives its stdout. The script puts the pty in raw
     # mode and prints one start marker; after that line every byte is
-    # protocol data. The child execs the command, so the agent's ExitCode
-    # payload carries its status when the session closes.
+    # protocol data.
     #
-    # Returns the remote command's status as Result[:exit_code]; a transport
-    # failure is the usual 255/SsmUnreachableMsg shape. The session is NOT
-    # reused after a pipe (the script has replaced the shell), so the caller
-    # terminates it (see SsmRsyncRsh).
-    def pipe(conn : ConnectionSettings, remote_script : String,
-             input : IO, output : IO, timeout : Int32 = DEFAULT_TIMEOUT) : Result
+    # The command's status is not taken from the agent's ExitCode (the real
+    # agent does not deliver one for every session): the runner writes it to
+    # *status_path*, which the caller reads over a fresh session after this
+    # returns. Result[:exit_code] is only a fallback.
+    #
+    # A transport failure is the usual 255/SsmUnreachableMsg shape. The
+    # session is NOT reused after a pipe (the script has replaced the shell),
+    # so the caller terminates it (see SsmRsyncRsh).
+    def pipe(conn : ConnectionSettings, remote_script : String, status_path : String,
+             stderr_path : String, input : IO, output : IO,
+             timeout : Int32 = DEFAULT_TIMEOUT) : Result
       settings = settings_for(conn)
       if settings.windows_target?
         return Result.new(exit_code: 255, stdout: "", stderr: settings.windows_unsupported_message)
@@ -171,7 +176,8 @@ module Krikri
         SsmRegistry.begin_operation(session)
         begin
           raise Error.new(prep_failure[:stderr]) unless prepare_locked(session, settings)
-          result = pipe_locked(session, settings, remote_script, input, output, timeout)
+          result = pipe_locked(session, settings, remote_script, status_path, stderr_path,
+            input, output, timeout)
           SsmRegistry.end_operation(session, false)
           result
         rescue ex
@@ -342,8 +348,8 @@ module Krikri
     # --- rsync pipe -------------------------------------------------------
 
     private def self.pipe_locked(session : SsmRegistry::SessionHandle, settings : SsmSettings,
-                                 remote_script : String, input : IO, output : IO,
-                                 timeout : Int32) : Result
+                                 remote_script : String, status_path : String, stderr_path : String,
+                                 input : IO, output : IO, timeout : Int32) : Result
       token = Random::Secure.hex(10)
       start_head = "!KRIKRI-SSM-PIPE-"
       start_tail = "START-#{token}"
@@ -354,6 +360,8 @@ module Krikri
       line = String.build do |io|
         io << "KRIKRI_SSM_PIPE_START_A=" << Shell.quote_arg(start_head) << ' '
         io << "KRIKRI_SSM_PIPE_START_B=" << Shell.quote_arg(start_tail) << ' '
+        io << "KRIKRI_SSM_PIPE_STATUS=" << Shell.quote_arg(status_path) << ' '
+        io << "KRIKRI_SSM_PIPE_STDERR=" << Shell.quote_arg(stderr_path) << ' '
         io << "exec /bin/bash " << Shell.quote_arg(remote_script)
       end
       if line.bytesize > MAX_COMMAND_BYTES
@@ -424,7 +432,10 @@ module Krikri
 
       result = done.receive
       if timed_out.get
-        return Result.new(exit_code: 255, stdout: "",
+        # 124 (timeout(1)) lets the caller tell a stalled pipe from the
+        # ordinary "no ExitCode from the agent" close, where the status file
+        # still has the answer.
+        return Result.new(exit_code: 124, stdout: "",
           stderr: "#{SsmUnreachableMsg::PREFIX}rsync pipe timed out after #{timeout} second(s) without output")
       end
       result
@@ -432,35 +443,35 @@ module Krikri
 
     # The runner prints one start-marker line and then execs the remote
     # command with the pty in raw mode, so every byte after that line is
-    # protocol data: copy it straight to *output* until the session closes.
-    # The command's status arrives as the agent's ExitCode payload.
+    # protocol data: the bridge frames it (SsmPipeFrame), so decode the
+    # frames and copy the payloads to *output* until the session closes.
+    # The command's status comes from the runner's status file, not from the
+    # agent's ExitCode.
     private def self.read_pipe_stream(session : SsmRegistry::SessionHandle,
                                       start_marker : String, output : IO,
                                       started_signal : Channel(Nil),
                                       progress : PipeProgress) : Result?
       prefix = ""
       start_seen = false
+      decoder = SsmPipeFrame::Decoder.new
 
       while output_item = session.read?
         progress.touch
-        if output_item.stream == KrikriAwsSsm::Stream::Stderr
-          next
-        end
+        next if output_item.stream == KrikriAwsSsm::Stream::Stderr
 
         if start_seen
-          write_pipe_output(output, output_item.bytes)
+          drain_pipe_frames(decoder, output_item.bytes, output)
           next
         end
 
         prefix += String.new(output_item.bytes)
         if (index = prefix.index(start_marker))
           after = index + start_marker.size
-          newline = prefix.index('\n', after)
-          if newline
+          if (newline = prefix.index('\n', after))
             start_seen = true
             started_signal.send(nil) unless started_signal.closed?
             remainder = prefix[(newline + 1)..]
-            write_pipe_output(output, remainder.to_slice) unless remainder.empty?
+            drain_pipe_frames(decoder, remainder.to_slice, output) unless remainder.empty?
             prefix = ""
           end
         end
@@ -480,6 +491,16 @@ module Krikri
       nil
     end
 
+    # Pushes *bytes* into *decoder* and forwards every completed frame's
+    # payload to *output*.
+    private def self.drain_pipe_frames(decoder : SsmPipeFrame::Decoder,
+                                       bytes : Bytes, output : IO) : Nil
+      decoder.push(bytes)
+      while payload = decoder.next_payload
+        write_pipe_output(output, payload)
+      end
+    end
+
     # Crystal's STDOUT is buffered when it is a pipe, and this is a live
     # protocol: rsync waits for these bytes before it says anything else.
     private def self.write_pipe_output(output : IO, bytes : Bytes) : Nil
@@ -490,26 +511,30 @@ module Krikri
       # Local rsync exited first; its own error is the caller's result.
     end
 
+    # No message: the caller has the runner's status file and reports a
+    # problem itself only when that is missing too.
     private def self.pipe_closed_result(session : SsmRegistry::SessionHandle) : Result
-      if code = session.exit_code
-        return Result.new(exit_code: code, stdout: "", stderr: "")
-      end
-      Result.new(exit_code: 255, stdout: "",
-        stderr: "rsync pipe closed without an exit status (#{session.close_reason || "unknown"})")
+      Result.new(exit_code: session.exit_code || 255, stdout: "", stderr: "")
     end
 
-    # Feeds *input* to the remote command verbatim once the runner has put
-    # the pty in raw mode. rsync's server exits on its own protocol
-    # completion, so no end-of-input signal is needed (and raw mode has no
-    # VEOF anyway); the session is discarded after the pipe.
+    # Feeds *input* to the bridge once the runner has put the pty in raw
+    # mode. Each chunk is framed with a 4-byte big-endian length and a
+    # zero-length frame marks end of input: the bridge closes the command's
+    # stdin on it, which is how rsync's server learns the client is done (a
+    # pty has no EOF to send).
     private def self.pipe_input(session : SsmRegistry::SessionHandle, input : IO,
                                 started_signal : Channel(Nil), progress : PipeProgress) : Nil
       started_signal.receive?
       chunk = Bytes.new(RAW_CHUNK_BYTES)
+      header = Bytes.new(4)
       while (count = input.read(chunk)) > 0
+        IO::ByteFormat::BigEndian.encode(count.to_u32, header)
+        session.write_raw(header)
         session.write_raw(chunk[0, count])
         progress.touch
       end
+      IO::ByteFormat::BigEndian.encode(0_u32, header)
+      session.write_raw(header)
     end
 
     private def self.stream_upload_locked(session : SsmRegistry::SessionHandle,

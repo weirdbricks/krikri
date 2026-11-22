@@ -128,11 +128,12 @@ module Krikri
         # Same hardened staging tree as the bridge and the plugin binaries -
         # /tmp is unreliable (and often remounted) on hardened targets.
         remote_script = File.join(File.dirname(remote_bridge), "krikri-ssm-rsync-#{Random::Secure.hex(8)}.sh")
+        status_path = File.join(File.dirname(remote_bridge), "krikri-ssm-rsync-status-#{Random::Secure.hex(8)}.txt")
+        stderr_path = File.join(File.dirname(remote_bridge), "krikri-ssm-rsync-stderr-#{Random::Secure.hex(8)}.txt")
         File.write(local_script, remote_script_body(command, remote_bridge))
         SsmTransport.upload(conn, local_script, remote_script, mode: 0o700)
-        result = SsmTransport.pipe(conn, remote_script, input, output, timeout)
-        error.puts(result[:stderr]) unless result[:stderr].empty?
-        result[:exit_code]
+        result = SsmTransport.pipe(conn, remote_script, status_path, stderr_path, input, output, timeout)
+        pipe_status(conn, settings, result, status_path, stderr_path, error)
       ensure
         File.delete(local_script) if File.exists?(local_script)
         # The pipe replaced the session's shell, so the session cannot serve
@@ -153,6 +154,14 @@ module Krikri
     def remote_script_body(command : String, bridge : String) : String
       q_bridge = Shell.quote_arg(bridge)
       String.build do |io|
+        # The bridge's status goes to a file, not to the pty: the agent does
+        # not deliver an ExitCode payload for every session (verified against
+        # a real agent), and an in-band marker would sit in front of rsync's
+        # binary protocol. The EXIT trap covers probe/stty failures too; the
+        # helper reads this file over a fresh session afterwards.
+        # The trap's own failures (a full disk, a replaced file) must never
+        # print into the protocol stream, so the redirect runs silenced.
+        io << %q(trap 'rc=$?; (umask 077; printf "%d\n" "$rc" > "$KRIKRI_SSM_PIPE_STATUS") 2>/dev/null' EXIT) << '\n'
         io << "rm -f \"$0\"\n"
         io << "BRIDGE=" << q_bridge << "\n"
         # Probe the bridge before the marker: an exec-format or loader error
@@ -167,10 +176,13 @@ module Krikri
         # into a still-canonical terminal.
         io << "stty raw -echo 2>/dev/null || exit 125\n"
         io << "printf '\\n%s%s\\n' \"$KRIKRI_SSM_PIPE_START_A\" \"$KRIKRI_SSM_PIPE_START_B\"\n"
-        # The bridge discards the command's stderr (it would corrupt the
-        # protocol); rsync's own errors travel over the protocol, and the
-        # exit status reaches the client through the agent's ExitCode.
-        io << "exec \"$BRIDGE\" " << command << " 2>/dev/null\n"
+        # Not exec'd: the shell must survive to run the EXIT trap. The launch
+        # line execs this script, so the session closes when it finishes.
+        io << "\"$BRIDGE\" " << command << " 2>/dev/null\n"
+        # Give the agent a moment to drain the pty after the command exits
+        # (a pull lost its tail when the session closed immediately), then
+        # exit with the command's status so the EXIT trap records it.
+        io << "rc=$?; sleep 1; exit $rc\n"
       end
     end
 
@@ -206,8 +218,10 @@ module Krikri
     # unsafe. Every component - both directories AND the bridge file itself -
     # is checked for symlinks/foreign ownership; `test -x` alone would follow
     # a planted symlink. Files older than an hour are pruned (a concurrent run
-    # may still have a fresh one staged; deleting a running binary is safe).
-    private def self.staging_check_script(dir : String, remote : String) : String
+    # may still have a fresh one staged; deleting a running binary is safe),
+    # including the rsync runner's status and stderr files, which only a
+    # successful run removes itself.
+    def staging_check_script(dir : String, remote : String) : String
       base = File.dirname(dir)
       q_base = Shell.quote_arg(base)
       q_dir = Shell.quote_arg(dir)
@@ -224,7 +238,7 @@ module Krikri
         io << "if [ \"$(stat -c %u \"$D\")\" != \"$(id -u)\" ]; then "
         io << "echo " << changed << " >&2; exit #{UNSAFE_STAGING_EXIT}; fi; "
         io << "chmod 711 \"$D\"; done; "
-        io << "for F in " << q_dir << "/krikri-ssm-pipe-* " << q_dir << "/krikri-ssm-rsync-*.sh; do "
+        io << "for F in " << q_dir << "/krikri-ssm-pipe-* " << q_dir << "/krikri-ssm-rsync-*; do "
         io << "[ \"$F\" = " << q_remote << " ] && continue; "
         io << "[ -n \"$(find \"$F\" -maxdepth 0 -mmin +60 2>/dev/null)\" ] && rm -f \"$F\"; done; "
         io << "if [ -e " << q_remote << " ]; then "
@@ -232,6 +246,67 @@ module Krikri
         io << "echo " << unsafe_file << " >&2; exit #{UNSAFE_STAGING_EXIT}; fi; "
         io << "exit 0; fi; exit 1"
       end
+    end
+
+    # Turns the pipe's fallback result into the command's exit status. The
+    # runner's status file is authoritative (the agent delivers no ExitCode
+    # payload for every session); the pipe's own verdict stands only for a
+    # timeout or when the file is missing.
+    private def self.pipe_status(conn : ConnectionSettings, settings : SsmSettings,
+                                 result : SsmTransport::Result, status_path : String,
+                                 stderr_path : String, error : IO) : Int32
+      # A timeout is the pipe's own verdict (the timeout result always
+      # carries its message); never override it with a status file the dying
+      # shell may have written with a stale code. A command that merely
+      # exited 124 keeps the ordinary status-file path.
+      if result[:exit_code] == 124 && !result[:stderr].empty?
+        error.puts(result[:stderr])
+        return result[:exit_code]
+      end
+      if status = read_status(conn, settings, status_path)
+        # A non-empty pipe stderr here is the pre-start diagnostic (a
+        # failed probe, a missing shell), which is worth showing even
+        # though the status file supplied the code.
+        error.puts(result[:stderr]) unless result[:stderr].empty?
+        remote_stderr = read_remote_text(conn, stderr_path)
+        error.puts remote_stderr unless remote_stderr.empty? || status == 0
+        return status
+      end
+      # No status file: report whatever the pipe had (target diagnostics or
+      # the close reason). The causes are distinct but all end here: the
+      # session died before the trap ran, the file held something that is
+      # not a number, or the follow-up session never opened.
+      if result[:stderr].empty?
+        error.puts "rsync pipe closed without a readable exit status (the runner's status file was missing or unreadable, or the follow-up session failed)"
+      else
+        error.puts(result[:stderr])
+      end
+      result[:exit_code]
+    end
+
+    # The runner writes the command's status to *path* (same staging dir) and
+    # the session closes when it exits; reading it needs a fresh session
+    # because the pipe's shell is gone. A missing file (the session was
+    # terminated, or /bin/bash never started) leaves the caller's fallback.
+    private def self.read_status(conn : ConnectionSettings, settings : SsmSettings,
+                                 path : String) : Int32?
+      SsmRegistry.close_connection(conn.host_name, settings.target)
+      result = SsmTransport.exec(conn, take_file_script(path), 60)
+      return nil unless result[:exit_code] == 0
+      result[:stdout].strip.to_i?
+    end
+
+    private def self.read_remote_text(conn : ConnectionSettings, path : String) : String
+      result = SsmTransport.exec(conn, take_file_script(path), 60)
+      result[:exit_code] == 0 ? result[:stdout].strip : ""
+    end
+
+    private def self.take_file_script(path : String) : String
+      q = Shell.quote_arg(path)
+      # Remove only after a successful cat: a read that failed at the
+      # transport level may still have consumed the file, and the next
+      # attempt should find it rather than nothing at all.
+      "cat #{q} 2>/dev/null && rm -f #{q}"
     end
 
     private def self.connection_for(settings : SsmSettings) : ConnectionSettings

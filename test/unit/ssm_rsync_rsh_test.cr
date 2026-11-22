@@ -63,7 +63,18 @@ describe "Krikri::SsmRsyncRsh" do
     Krikri::SsmRegistry.session_factory = nil
   end
 
-  it "uploads a raw-mode runner that execs the bridge" do
+  it "prunes stale runner scripts, status files and stderr files" do
+    script = Krikri::SsmRsyncRsh.staging_check_script(
+      "/var/tmp/.krikri-staging/plugins", "/var/tmp/.krikri-staging/plugins/krikri-ssm-pipe-abc123")
+
+    # Only a successful run consumes the runner's status/stderr files, so
+    # the stale sweep must cover every krikri-ssm-rsync-* shape (the old
+    # .sh-only glob leaked krikri-ssm-rsync-status-*.txt forever).
+    script.must_include("for F in /var/tmp/.krikri-staging/plugins/krikri-ssm-pipe-* /var/tmp/.krikri-staging/plugins/krikri-ssm-rsync-*; do ")
+    script.wont_include("krikri-ssm-rsync-*.sh")
+  end
+
+  it "uploads a raw-mode runner that runs the bridge under a status trap" do
     script = Krikri::SsmRsyncRsh.remote_script_body(
       "rsync --server -logDtpre.iLsfxC . /tmp/dest/", "/tmp/krikri-ssm-pipe-abc123")
 
@@ -77,9 +88,13 @@ describe "Krikri::SsmRsyncRsh" do
     # reach the client as text.
     script.must_include("BRIDGE=/tmp/krikri-ssm-pipe-abc123\n")
     script.must_include("if ! OUT=$(\"$BRIDGE\" --probe 2>&1); then")
-    # The bridge gives the command real pipes; exec replaces the session's
-    # shell, so the agent's ExitCode carries the command's status.
-    script.must_include("exec \"$BRIDGE\" rsync --server -logDtpre.iLsfxC . /tmp/dest/ 2>/dev/null\n")
+    # The real agent does not deliver an ExitCode payload for every session,
+    # so an EXIT trap writes the bridge's status to a file the helper reads
+    # over a fresh session.
+    script.must_include("trap 'rc=$?; (umask 077; printf \"%d\\n\" \"$rc\" > \"$KRIKRI_SSM_PIPE_STATUS\") 2>/dev/null' EXIT")
+    # The bridge gives the command real pipes; it is NOT exec'd, so the
+    # shell survives to run the trap.
+    script.must_include("\"$BRIDGE\" rsync --server -logDtpre.iLsfxC . /tmp/dest/ 2>/dev/null\n")
   end
 
   it "moves a binary stream through the pty and returns the command's status" do
@@ -109,6 +124,48 @@ describe "Krikri::SsmRsyncRsh" do
     ensure
       Krikri::SsmRsyncRsh.bridge_for_spec = previous_bridge
       Krikri::SsmRegistry.close_all
+      gateway.close
+    end
+  end
+
+  it "falls back to the pipe's verdict when the status file cannot be read" do
+    gateway = KrikriAwsSsm::Testing::FakeGateway.new(SSM_RSH_CREDS)
+    drain_ssm_rsh_agent_input(gateway)
+    path_file = File.tempname("krikri-spec-status-path")
+    previous_bridge = Krikri::SsmRsyncRsh.bridge_for_spec
+    begin
+      settings = ssm_rsh_settings(gateway)
+      Krikri::SsmRegistry.session_factory =
+        ->(_settings : Krikri::SsmSettings) : Krikri::SsmRegistry::SessionHandle {
+          Krikri::SsmTransport.open_session(settings)
+        }
+      Krikri::SsmRsyncRsh.bridge_for_spec = File.expand_path("../../bin/krikri-ssm-pipe", __DIR__)
+      input = IO::Memory.new
+      output = IO::Memory.new
+      error = IO::Memory.new
+
+      # The command replaces the status file with a directory, so the EXIT
+      # trap's redirect fails however privileged the user is and the helper
+      # cannot learn the command's status at all - the pipe's own verdict is
+      # all that is left.
+      command = %(sh -c 'printf "%s" "$KRIKRI_SSM_PIPE_STATUS" > #{path_file}; rm -f "$KRIKRI_SSM_PIPE_STATUS"; mkdir "$KRIKRI_SSM_PIPE_STATUS"; exit 3')
+      status = with_ssm_rsh_env(Krikri::SsmRsyncRsh.env_for(settings, 20)) do
+        Krikri::SsmRsyncRsh.run(["i-0123456789", command], input, output, error)
+      end
+
+      # The pipe's own verdict is all that is left: the fake agent reports
+      # the runner's exit code here, while a real agent delivers none and
+      # the fallback becomes 255.
+      status.must_equal(3)
+      error.to_s.must_include("rsync pipe closed without a readable exit status")
+    ensure
+      Krikri::SsmRsyncRsh.bridge_for_spec = previous_bridge
+      Krikri::SsmRegistry.close_all
+      if File.exists?(path_file)
+        status_path = File.read(path_file).strip
+        Dir.delete(status_path) if Dir.exists?(status_path)
+        File.delete(path_file)
+      end
       gateway.close
     end
   end
@@ -191,7 +248,7 @@ describe "Krikri::SsmRsyncRsh" do
         Krikri::SsmRsyncRsh.run(["i-0123456789", "sleep 30"], IO::Memory.new, output, error)
       end
 
-      status.must_equal(255)
+      status.must_equal(124)
       error.to_s.must_include("without output")
     ensure
       Krikri::SsmRsyncRsh.bridge_for_spec = previous_bridge
@@ -222,7 +279,9 @@ describe "Krikri::SsmRsyncRsh" do
 
       status.must_equal(3)
       output.to_s.must_equal("")
-      error.to_s.must_equal("")
+      # The command's stderr now travels in the runner's stderr file and is
+      # forwarded to the helper's stderr.
+      error.to_s.must_include("boom")
     ensure
       Krikri::SsmRsyncRsh.bridge_for_spec = previous_bridge
       Krikri::SsmRegistry.close_all
