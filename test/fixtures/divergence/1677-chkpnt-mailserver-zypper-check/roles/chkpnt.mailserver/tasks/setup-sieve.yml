@@ -1,0 +1,44 @@
+---
+- name: Ensure directory for global Sieve scripts and companion executables exists
+  ansible.builtin.file:
+    path: /srv/mail/.sieve/bin
+    recurse: true
+    state: directory
+    owner: vmail
+    group: vmail
+    mode: "0755"
+
+- name: Ensure directory for trace logs of global Sieve scripts exists
+  ansible.builtin.file:
+    path: /srv/mail/.sieve/logs
+    state: directory
+    owner: vmail
+    group: vmail
+    mode: "0700"
+
+# We do not need to compile the scripts or to remove the compilation,
+# as they are compiled automatically on demand:
+# > Debug: sieve: file script: Sieve binary `/srv/mail/.sieve/learn-spam.svbin' is not newer than the Sieve script `/srv/mail/.sieve/learn-spam.sieve'
+# > Debug: sieve: binary up-to-date: script metadata indicates that binary /srv/mail/.sieve/learn-spam.svbin is not up-to-date
+# > Debug: sieve: Script binary /srv/mail/.sieve/learn-spam.svbin is not up-to-date
+# > Debug: sieve: Script `learn-spam' from /srv/mail/.sieve/learn-spam.sieve successfully compiled
+- name: Copy global Sieve scripts
+  ansible.builtin.copy:
+    src: srv/mail/.sieve/{{ item }}
+    dest: /srv/mail/.sieve/{{ item }}
+    owner: vmail
+    group: vmail
+    mode: "0644"
+  with_items:
+    - learn-ham.sieve
+    - learn-spam.sieve
+    - learn-spam-or-ham-due-to-flags.sieve
+    - playground.sieve
+
+- name: Copy rspamc wrapper script
+  ansible.builtin.copy:
+    src: srv/mail/.sieve/bin/rspamc
+    dest: /srv/mail/.sieve/bin/rspamc
+    owner: vmail
+    group: vmail
+    mode: "0755"
