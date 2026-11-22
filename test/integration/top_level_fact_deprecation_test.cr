@@ -1393,6 +1393,67 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "files a looped module's read on each item's own result" do
+    # Issue #1668, cameronbroe.nvm: real runs every loop ITERATION in its
+    # own DeferredWarningContext, so a fact read while templating an item's
+    # args rides THAT item's result - a registered loop's items then carry
+    # the entry when a later task prints or iterates them (the role's own
+    # `with_items: "{{ stat_loop.results }}"` printed items without it).
+    # The loop aggregate extends its own list from every item's, so the
+    # printed result holds one entry per item twice over, while Display
+    # still prints one block per Origin (live-verified vs 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: looped reads
+            command: echo {{ item }}{{ ansible_os_family[:0] }}
+            changed_when: false
+            with_items:
+              - one
+              - two
+            register: looped_reads
+
+          - name: print the looped result
+            debug:
+              var: looped_reads
+      PLAYBOOK
+
+    stdout.must_include("TASK [print the looped result]")
+    stdout.scan(/"msg": "#{Regex.escape(FACT_DEPRECATION_MSG)}"/).size.must_equal(4)
+    stdout.scan(/"version": "2.24"/).size.must_equal(4)
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "files a looped controller-side action's read on each item's own result" do
+    # Same per-item filing for the one-at-a-time path (an action the loop
+    # executor never batches): the read is raised while the item's own args
+    # template, so each of the two items holds one entry and the aggregate
+    # extends to two more.
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: looped reads
+            debug:
+              msg: "{{ item }}-{{ ansible_os_family[:0] }}"
+            with_items:
+              - one
+              - two
+            register: looped_reads
+
+          - name: print the looped result
+            debug:
+              var: looped_reads
+      PLAYBOOK
+
+    stdout.must_include("TASK [print the looped result]")
+    stdout.scan(/"msg": "#{Regex.escape(FACT_DEPRECATION_MSG)}"/).size.must_equal(4)
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "leaves the deprecations key out of a -vvv result dump" do
     # CallbackBase._handle_warnings pops `warnings`/`deprecations` off the
     # result before `_dump_results`, at EVERY verbosity - so a -vvv dump

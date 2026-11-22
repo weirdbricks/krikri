@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+# Print error into STDERR
+error() {
+    echo "$@" 1>&2
+}
+
+# Get latest release for a GitHub repository
+get_latest_release() {
+    local repository=$1
+    local url="https://api.github.com/repos/${repository}/releases/latest"
+    if test "$(uname)" = "Darwin"; then
+        curl --silent "${url}" |
+            grep '"tag_name":' |
+            sed -E 's/.*"([^"]+)".*/\1/'
+    else
+        curl --silent "${url}" |
+            grep '"tag_name":' |
+            sed -r 's/.*"([^"]+)".*/\1/'
+    fi
+}
+
+# Get checksum for the install.sh script
+get_install_checksum() {
+    local repository=nvm-sh/nvm
+    local release=$1
+    local url="https://raw.githubusercontent.com/${repository}/${release}"
+    url="${url}/install.sh"
+    curl --silent "${url}" | sha256sum | awk '{ print $1 }'
+}
+
+# Update version
+update_version() {
+    local release=$1
+    local checksum=""
+    checksum=$(get_install_checksum "${release}")
+    [ -z "${checksum}" ] && {
+        error "Failed to get checksum for ${release}"
+        return 1
+    }
+    update_ansible_vars "${release}" "${checksum}"
+}
+
+# Update nvm_version and nvm_install_checksum variables in defaults/main.yml
+update_ansible_vars() {
+    local version=$1
+    local checksum=$2
+    local vars_file=defaults/main.yml
+
+    # Update variables
+    echo "Updating variables in ${vars_file}"
+    if test "$(uname)" = "Darwin"; then
+        sed -i.save \
+            -E "s/^(nvm_version):.*$/\1: \"${version}\"/" \
+            ${vars_file}
+        sed -i.save \
+            -E "s/^(nvm_install_checksum):.*$/\1: \"sha256:${checksum}\"/" \
+            ${vars_file}
+    else
+        sed -i.save \
+            -r "s/^(nvm_version):.*$/\1: \"${version}\"/" \
+            ${vars_file}
+        sed -i.save \
+            -r "s/^(nvm_install_checksum):.*$/\1: \"sha256:${checksum}\"/" \
+            ${vars_file}
+    fi
+    rm ${vars_file}.save
+}
+
+# Get latest NVM version
+latest_nvm_version() {
+    local latest_release=""
+    latest_release=$(get_latest_release nvm-sh/nvm)
+    [ -z "${latest_release}" ] && {
+        error "Failed to get latest release from GitHub"
+        return 1
+    }
+    echo "${latest_release}"
+}
+
+# Update NVN version to the latest release
+update_nvm_release() {
+    local nvm_version
+    nvm_version=$(latest_nvm_version)
+    echo "Latest NVM release is ${nvm_version}"
+    update_version "${nvm_version}"
+}
+
+set -e
+
+update_nvm_release

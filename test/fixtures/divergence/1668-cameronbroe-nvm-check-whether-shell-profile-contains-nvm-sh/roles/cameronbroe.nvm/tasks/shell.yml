@@ -1,0 +1,64 @@
+---
+
+- name: Updating shell scripts with Ansible version 2.8.6 is not supported
+  assert:
+    that:
+      - ansible_version.full != '2.8.6'
+    msg: >-
+      Updating shell scripts with Ansible version 2.8.6 is not supported,
+      please set nvm_shell_init=false or downgrade to 2.8.5"
+
+- name: Find shell profile scripts
+  stat:
+    path: "{{ nvm_home }}/{{ item }}"
+  with_items: "{{ nvm_shell_profile_scripts }}"
+  register: nvm_shell_profile_st
+
+- name: Check whether shell profile contains /nvm.sh
+  command: grep -qc '/nvm.sh' "{{ nvm_home }}/{{ item.item }}"
+  register: nvm_shell_profile_source
+  with_items: "{{ nvm_shell_profile_st.results }}"
+  when: item.stat.exists
+  check_mode: false
+  ignore_errors: true
+  changed_when: false
+
+- name: Set NVM_DIR in shell profiles
+  lineinfile:
+    path: "{{ nvm_home }}/{{ item.item.item }}"
+    line: 'export NVM_DIR="$HOME/.nvm"'
+    regexp: '^export NVM_DIR='
+    insertafter: EOF
+  with_items: "{{ nvm_shell_profile_source.results }}"
+  when: item.item.stat.exists and item.rc == 1
+
+- name: Source nvm.sh in shell profiles
+  lineinfile:
+    path: "{{ nvm_home }}/{{ item.item.item }}"
+    line: '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm'
+    insertafter: '^export NVM_DIR='
+    regexp: '/nvm\.sh'
+  with_items: "{{ nvm_shell_profile_source.results }}"
+  when: item.item.stat.exists and item.rc == 1
+
+- name: Check whether shell profile contains $NVM_DIR/bash_completion
+  command: grep -qc '$NVM_DIR/bash_completion' "{{ nvm_home }}/{{ item.item }}"
+  register: nvm_shell_profile_bash_completion
+  with_items: "{{ nvm_shell_profile_st.results }}"
+  when: >-
+    item.stat.exists
+    and (item.item == ".bashrc"
+         or item.item == ".zshrc"
+         or item.item == ".bash_profile")
+  check_mode: false
+  ignore_errors: true
+  changed_when: false
+
+- name: Source bash_completion in shell profiles
+  lineinfile:
+    path: "{{ nvm_home }}/{{ item.item.item }}"
+    # yamllint disable-line rule:line-length
+    line: '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" # This loads nvm bash_completion'
+    insertafter: '/nvm\.sh'
+  with_items: "{{ nvm_shell_profile_bash_completion.results }}"
+  when: item.item.stat.exists and item.rc == 1

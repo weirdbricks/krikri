@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT=$(dirname "$DIR")
+
+ROLE_NAME="$(basename "$PROJECT_ROOT")"
+TEST_HOME=/home/test
+
+# Print error into STDERR
+error() {
+    echo "$@" 1>&2
+}
+
+# Detect Windows Subsystem for Linux
+detect_wsl() {
+    is_wsl=0
+    if [ -e "/proc/version" ]; then
+        if grep -q Microsoft /proc/version; then
+            echo "*** Windows Subsystem for Linux detected"
+            is_wsl=1
+        fi
+    fi
+}
+
+# Stop all containers
+finish() {
+    local containers=""
+    containers=$(docker ps -q --filter=name="${ROLE_NAME}")
+    if [ -n "${containers}" ]; then
+        echo "*** Stop all test containers"
+        # shellcheck disable=SC2086
+        docker stop ${containers}
+    fi
+}
+
+# Stop container
+stop() {
+    local image=$1
+    local container_name="${ROLE_NAME}-${image}-tests"
+    echo "*** Stop containers"
+    docker stop "${container_name}"
+}
+
+# Build image
+build() {
+    local image=$1
+    local image_name="${ROLE_NAME}-${image}"
+    echo "*** Build image"
+    docker build -t "${image_name}" "./tests/${image}"
+}
+
+# Start container in the background
+start() {
+    local image=$1
+    local image_name="${ROLE_NAME}-${image}"
+    local container_name="${ROLE_NAME}-${image}-tests"
+    echo "*** Start container"
+    docker run --rm -it -d \
+        -v "${MOUNT_ROOT}:${TEST_HOME}/${ROLE_NAME}" \
+        --name "${container_name}" \
+        "${image_name}"
+}
+
+# Run tests in the container
+run_tests() {
+    local image=$1
+    local container_name="${ROLE_NAME}-${image}-tests"
+    echo "*** Run tests"
+    docker exec -it \
+        --user test \
+        "${container_name}" \
+        "${TEST_HOME}/${ROLE_NAME}/tests/run-tests-docker"
+}
+
+# Check if Docker is installed
+command -v docker >/dev/null || {
+    error "docker not found"
+    exit 1
+}
+
+trap finish EXIT
+
+detect_wsl
+
+cd "${DIR}"
+
+# Use image name from command line parameters
+images=("$@")
+
+# Find all Docker images if desired image is not specified
+if [ ${#images[@]} -eq 0 ]; then
+    images=(*/Dockerfile)
+    images=("${images[@]/\/Dockerfile/}")
+fi
+
+cd "${PROJECT_ROOT}"
+
+# Update mount root path if running on WSL
+if [ "${is_wsl}" == "1" ]; then
+    MOUNT_ROOT="$(pwd -P | sed 's~/mnt/c/~c:/~')"
+else
+    MOUNT_ROOT="$(pwd -P)"
+fi
+
+set -e
+
+# Build all Docker images
+for i in "${images[@]}"; do
+    build "$i"
+done
+
+# Run all tests
+for i in "${images[@]}"; do
+    start "$i"
+    run_tests "$i"
+    stop "$i"
+done

@@ -1,0 +1,8 @@
+---
+
+- name: Installing global NPM packages
+  npm:
+    name: "{{ item }}"
+    executable: "{{ nvm_dir }}/versions/node/{{ nvm_node_version }}/bin/npm"
+    global: true
+  with_items: "{{ nvm_npm_global_packages }}"

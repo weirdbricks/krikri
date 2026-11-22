@@ -1,0 +1,10 @@
+# Autodetect text files
+* text=auto
+
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+run-tests text eol=lf
+run-tests-docker text eol=lf
+travis-debug text eol=lf
+update-release text eol=lf

@@ -1,0 +1,31 @@
+---
+# The cameronbroe.nvm task that diverged (issue #1668), with the task it
+# loops over kept so the registered results are real: the round's block was
+# this task printing `nvm_shell_profile_st.results` items, which had lost the
+# deprecation entries ansible files on each iteration. `nvm_home` is the
+# role's own vars/main.yml value, so the args read a top-level fact exactly
+# as the role does. Both profile files are absent, which keeps every stat
+# result the deterministic `{'exists': False}` (a present path's result
+# carries inode/atime and cannot be replayed byte for byte).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    nvm_home: "{{ ansible_env.HOME }}"
+  tasks:
+    - name: Find shell profile scripts
+      stat:
+        path: "{{ nvm_home }}/{{ item }}"
+      with_items:
+        - .bashrc
+        - .zshrc
+      register: nvm_shell_profile_st
+
+    - name: Check whether shell profile contains /nvm.sh
+      command: grep -qc '/nvm.sh' "{{ nvm_home }}/{{ item.item }}"
+      register: nvm_shell_profile_source
+      with_items: "{{ nvm_shell_profile_st.results }}"
+      when: item.stat.exists
+      check_mode: false
+      ignore_errors: true
+      changed_when: false

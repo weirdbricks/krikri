@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: nvm
+  author: Marko Samuli Kirves
+  description: NVM and Node.js installer
+  license: MIT
+  min_ansible_version: 2.6
+  platforms:
+    - name: MacOSX
+      versions:
+        - '10.13'
+        - '10.14'
+    - name: Ubuntu
+      versions:
+        - xenial
+        - bionic
+  galaxy_tags:
+    - nvm
+    - nodejs
+    - development
+dependencies: []
