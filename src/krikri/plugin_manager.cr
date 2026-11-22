@@ -5,6 +5,7 @@ require "digest/md5"
 require "colorize"
 require "file_utils"
 require "./bigint_json"
+require "./remote_staging"
 require "./ssh_manager"
 require "./local_plugin_daemon"
 require "./local_executor"
@@ -63,8 +64,7 @@ module Krikri
     # traversable (a `become_user:` exec needs to reach the binary through
     # them) but never listable or writable by anyone else.
     def self.remote_plugin_dir(remote_user : String?) : String
-      user = remote_user.presence || "root"
-      "/var/tmp/.krikri-playbook-#{staging_dir_tag(user)}/plugins"
+      RemoteStaging.plugin_dir(remote_user)
     end
 
     # Stable, collision-proof directory-name tag for a connecting user:
@@ -74,8 +74,7 @@ module Krikri
     # per-user batch parent, so the two remote staging trees always agree
     # on one user -> one directory.
     def self.staging_dir_tag(user : String) : String
-      safe = user.gsub(/[^a-zA-Z0-9._-]/, "-")
-      "#{safe}-#{Digest::SHA1.hexdigest(user)[0, 8]}"
+      RemoteStaging.dir_tag(user)
     end
 
     # Issue #1 (arch awareness) - krikri's modules are COMPILED BINARIES

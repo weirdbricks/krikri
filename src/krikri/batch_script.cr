@@ -1,5 +1,6 @@
 require "base64"
 
+require "./remote_staging"
 require "./plugin_manager"
 require "./shell"
 
@@ -33,7 +34,7 @@ module Krikri
     # why (some hardening roles remount `/tmp` as a fresh, empty tmpfs
     # mid-play, which would silently wipe this batch's own per-step
     # output files out from under it).
-    REMOTE_DIR_BASE = "/var/tmp/.krikri-playbook"
+    REMOTE_DIR_BASE = RemoteStaging::BASE
 
     # Per-connecting-user parent for batch working dirs, sharing the
     # plugin staging dir's `<user>-<hash>` tag (PluginManager.staging_dir_tag):
