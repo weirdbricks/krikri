@@ -1,5 +1,6 @@
 require "http/client"
 require "uri"
+require "./ansible_config"
 
 module Krikri
   # Controller-side lookup plugin helpers shared by every template engine
@@ -39,9 +40,30 @@ module Krikri
     # role paths" msg interpolates it).
     private PATHSPEC_CONFIG_OPTIONS = ["DEFAULT_ROLES_PATH"]
 
+    # Options ansible's config manager declares BOOLEAN, mapped to the
+    # declared default real answers with when ANSIBLE_<OPTION> is unset
+    # (this helper reads the env layer only, like the tables above - no
+    # ansible.cfg parser). The config lookup must hand back the
+    # cast value, not the option's text: real 2.21.6 renders
+    # `lookup('config', 'HOST_KEY_CHECKING')` as the BOOLEAN False under
+    # ANSIBLE_HOST_KEY_CHECKING=False, while krikri returned the string
+    # "False" - truthy in a `when:` clause. gzm55.local_ssh_known_hosts
+    # builds its known-hosts gate from two such lookups
+    # (`inv_conn_native_ssh_host_key_cheking or
+    # inv_conn_paramiko_ssh_host_key_cheking`), so real ansible skipped
+    # the block where krikri failed it with "Conditional result (True)
+    # was derived from value of type 'str'" (issue #1730).
+    private BOOLEAN_CONFIG_DEFAULTS = {"HOST_KEY_CHECKING" => true}
+
+    # Same for the INTEGER-typed options this helper serves: real's
+    # config lookup returns Python ints (DEFAULT_FORKS 5, DEFAULT_TIMEOUT
+    # 10), which keeps `| int`-less comparisons and arithmetic working.
+    private INTEGER_CONFIG_OPTIONS = ["DEFAULT_FORKS", "DEFAULT_TIMEOUT"]
+
     # The config lookup's value with ansible's own TYPE casting applied:
-    # pathspec options come back as a real JSON array, everything else as
-    # the plain string. *plugin_kwargs carries the call's `key=value`
+    # pathspec options come back as a real JSON array, boolean ones as a
+    # real Bool, integer ones as a number, everything else as the plain
+    # string. *plugin_kwargs carries the call's `key=value`
     # keyword arguments (strings already unquoted) - `remote_tmp` is only
     # resolvable as a plugin-scoped option (plugin_type/plugin_name), so a
     # bare `lookup('config', 'remote_tmp')` with no plugin kwargs stays on
@@ -65,6 +87,10 @@ module Krikri
       raw = (default_colors[key]? || default_general[key]?) || ENV["ANSIBLE_#{key}"]? || ""
       if PATHSPEC_CONFIG_OPTIONS.includes?(key)
         JSON::Any.new(raw.split(':').reject(&.empty?).map { |part| JSON::Any.new(expand_home(part.strip)) })
+      elsif (boolean_default = BOOLEAN_CONFIG_DEFAULTS[key]?)
+        JSON::Any.new(raw.empty? ? boolean_default : AnsibleConfig.boolean(raw))
+      elsif INTEGER_CONFIG_OPTIONS.includes?(key) && (int = raw.strip.to_i64?)
+        JSON::Any.new(int)
       else
         JSON::Any.new(raw)
       end
