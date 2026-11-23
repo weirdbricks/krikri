@@ -1,0 +1,11 @@
+# Issue #1745's loop guard: a task with ANY loop form must be handed to the
+# executor, never probed item-less and then have its stored verdict consumed
+# by the first item. `with_sequence:` is the generic with_<lookup> form that
+# historically slipped a narrower loop check; `always-fail` stands in for the
+# dead ssh endpoint.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - ping:
+      with_sequence: start=1 end=2
+      when: item == '1'

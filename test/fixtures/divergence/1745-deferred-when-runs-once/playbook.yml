@@ -1,0 +1,15 @@
+# Issue #1745's repro: the eager pre-upload probe evaluated this deferred
+# task's when: once and execute_task evaluated it again, so the
+# side-effectful pipe lookup ran twice where ansible runs it once.
+# `always-fail` stands in for the dead ssh endpoint.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - ping:
+      when: lookup('pipe', 'echo run >> counter; echo no') == 'yes'
+
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "lookup ran {{ lookup('pipe', 'wc -l < counter') | trim }} time(s)"

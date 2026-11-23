@@ -1,0 +1,19 @@
+
+PLAY [target] ******************************************************************
+
+TASK [ping] ********************************************************************
+[ERROR]: Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.
+Origin: <WORK>/playbook.yml:9:7
+
+7   gather_facts: false
+8   tasks:
+9     - ping:
+        ^ column 7
+
+failed: [target] (item=1) => {"ansible_loop_var": "item", "changed": false, "item": "1", "msg": "Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+skipping: [target] => (item=2) 
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "All items completed", "results": [{"ansible_loop_var": "item", "changed": false, "exception": "(traceback unavailable)", "item": "1", "msg": "Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}, {"ansible_loop_var": "item", "changed": false, "false_condition": "item == '1'", "item": "2", "skip_reason": "Conditional result was False"}], "unreachable": true}
+
+PLAY RECAP *********************************************************************
+target                     : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+

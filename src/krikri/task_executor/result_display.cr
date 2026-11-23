@@ -261,6 +261,35 @@ module Krikri
       end
     end
 
+    # #CapturedStderr#replay_into_current_context' two halves: an
+    # already-formatted part goes back through the innermost active
+    # window (a batch build's stderr capture, else the console), and a
+    # held deprecation is routed the same way before falling back to the
+    # claim-and-print replay. Text keeps its own newlines, so it is
+    # appended verbatim rather than through the #emit_warning_stderr
+    # funnel.
+    def self.replay_captured_warning(text : String) : Nil
+      if frames = @@stderr_warning_captures[Fiber.current]?
+        frames.last.parts << text
+      else
+        STDERR.print text
+      end
+    end
+
+    def self.replay_captured_deprecation(pending : PendingDeprecation) : Nil
+      if frames = @@stderr_warning_captures[Fiber.current]?
+        frames.last.parts << pending
+        return
+      end
+      if frames = @@task_deprecation_captures[Fiber.current]?
+        unless frames.empty?
+          frames.last << pending
+          return
+        end
+      end
+      replay_deprecation(pending)
+    end
+
     # Serializes "claim the dedupe key, then print" across the fibers of a
     # --forks run: the claim is the Display-level dedupe every emitter
     # shares, and a replayed block claims late.
@@ -326,6 +355,21 @@ module Krikri
 
       def pending_deprecations : Array(PendingDeprecation)
         capture.parts.select(PendingDeprecation)
+      end
+
+      # Re-emits this capture into whatever window is active NOW instead
+      # of printing outright: the pre-upload probe's own `when:`
+      # evaluation is carried to the task's display point, where the
+      # batch build's stderr capture or the task's deprecation window
+      # must receive it exactly as the evaluation would have raised it
+      # there (issue #1745).
+      def replay_into_current_context : Nil
+        capture.parts.each do |part|
+          case part
+          when PendingDeprecation then ResultDisplay.replay_captured_deprecation(part)
+          else                         ResultDisplay.replay_captured_warning(part)
+          end
+        end
       end
 
       def text : String

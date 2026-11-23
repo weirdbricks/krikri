@@ -381,6 +381,15 @@ module Krikri
     # is consumed; leftovers for never-reached tasks are never printed, and
     # a held-back deprecation only claims its dedupe key if it prints.
     @batch_captured_warnings : Hash(String, Hash(Task, ResultDisplay::CapturedStderr))
+    # The eager pre-upload probe's already-evaluated `when:` verdicts for
+    # the CURRENT task's deferred hosts, keyed by host name (issue #1745:
+    # re-evaluating the clause ran a side-effectful lookup twice and
+    # printed its warning class ahead of the task banner).
+    # @probe_verdict_task guards the map so a leftover from an earlier
+    # task (or the same Task object reused by a handler) is never
+    # applied to a different pass; run_task_batch clears both per task.
+    @probe_when_verdicts : Hash(String, ProbeWhenVerdict)
+    @probe_verdict_task : Task?
     # Max hosts run concurrently per task via the --forks flag; defaults
     # to 5, matching ansible-playbook's own default (--forks 1
     # restores the original one-host-at-a-time behavior). Only tasks
@@ -632,6 +641,8 @@ module Krikri
       @grouped_lists = Set(UInt64).new
       @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new
       @batch_captured_warnings = Hash(String, Hash(Task, ResultDisplay::CapturedStderr)).new
+      @probe_when_verdicts = Hash(String, ProbeWhenVerdict).new
+      @probe_verdict_task = nil
       @batch_groups_run = Set({String, UInt64}).new
       @included_vars = Hash(String, Hash(String, JSON::Any)).new
       @included_var_origins = Hash(String, Hash(String, VarOrigin)).new

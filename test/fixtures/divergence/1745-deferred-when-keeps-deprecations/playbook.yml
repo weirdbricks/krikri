@@ -1,0 +1,17 @@
+# Issue #1745's second consequence: carrying the probe's verdict must not
+# lose what the evaluation produced. This deferred when: reads the internal
+# `vars` dictionary, so its deprecation block must still print under the
+# task banner and land on the skipped task's registered result.
+# `always-fail` stands in for the dead ssh endpoint.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - ping:
+      when: vars.nope is defined
+      register: skipped_ping
+
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        var: hostvars['target']['skipped_ping'].deprecations

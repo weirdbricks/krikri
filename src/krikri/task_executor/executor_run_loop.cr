@@ -343,30 +343,131 @@ module Krikri
     # A plain `when:` verdict comes from the executor's own condition path
     # (build_vars_context + evaluate_when_items), never a second
     # evaluator: a `when:` that RAISES is a task ansible fails before
-    # connecting, so the raise is swallowed here and the booking dropped,
-    # handing the host to execute_task - which reports the failure ONCE
-    # (a probe that reported it too would print it twice). The rescue set
-    # is execute_task's own outward surface for the same two calls (see
-    # its build_vars_context rescue); anything else would crash the run
-    # where execute_task degrades to one failed task, so keep them in
-    # step.
+    # connecting, so the raise is not reported here - the booking is
+    # dropped and the host handed to execute_task, which reports the
+    # failure ONCE (a probe that reported it too would print it twice).
+    # The rescue set is execute_task's own outward surface for the same
+    # two calls (see its build_vars_context rescue); anything else would
+    # crash the run where execute_task degrades to one failed task, so
+    # keep them in step.
     #
-    # A deferred host re-evaluates its `when:` inside execute_task, so
-    # the probe's own stderr - deprecation blocks included - is captured
-    # by the caller and dropped for it (see run_task_batch): emitting it
-    # here would print ahead of the task's banner and spend the dedupe
-    # key the real evaluation needs, which also drops the block from the
-    # task's registered result (live-verified vs 2.21.6).
-    private def task_may_not_dial?(task : Task, host : Host) : Bool
-      return true if task_has_loop_source?(task)
-      return true if task.run_once?
-      return false unless task.when_condition
+    # A `when:` the probe DID evaluate is not evaluated again inside
+    # execute_task: its verdict (and everything the evaluation emitted)
+    # rides a #ProbeWhenVerdict that when_passes? consumes, so a
+    # side-effectful `lookup()` in the clause runs once, exactly where
+    # ansible runs it, and the clause's warnings/deprecations print
+    # there too rather than ahead of the task banner (issue #1745).
+
+    # What the eager pre-upload probe decided for one (task, host):
+    # *deferred* drops the booking and hands the host to execute_task,
+    # while *evaluated* marks a real `when:` verdict to carry over (see
+    # ProbeWhenVerdict). A loop source, `run_once:` and a failing
+    # build_vars_context defer without a clause verdict.
+    record ProbeOutcome,
+      deferred : Bool,
+      evaluated : Bool = false,
+      passes : Bool = false,
+      error : WhenEvaluationError? = nil,
+      false_condition : String? = nil,
+      failed_when_clause : String? = nil
+
+    # A `when:` verdict the pre-upload probe already reached, carried to
+    # the task's own when_passes? call (issue #1745). *captured* and
+    # *held* are what that evaluation emitted, replayed at the task's
+    # display point because the probe claimed the warning dedupe keys and
+    # held the deprecation blocks unclaimed for exactly this replay.
+    record ProbeWhenVerdict,
+      passes : Bool,
+      error : WhenEvaluationError?,
+      false_condition : String?,
+      failed_when_clause : String?,
+      captured : ResultDisplay::CapturedStderr,
+      held : Array(Proc(Nil))
+
+    private def task_may_not_dial?(task : Task, host : Host) : ProbeOutcome
+      return ProbeOutcome.new(deferred: true) if task_has_any_loop?(task)
+      return ProbeOutcome.new(deferred: true) if task.run_once?
+      return ProbeOutcome.new(deferred: false) unless task.when_condition
 
       begin
         vars_context = build_vars_context(task, host)
-        !evaluate_when_items(task, vars_context, host)
-      rescue WhenEvaluationError | VariableSubstitutor::FilterEngine::UnknownFilterError
-        true
+        if evaluate_when_items(task, vars_context, host)
+          ProbeOutcome.new(deferred: false, evaluated: true, passes: true)
+        else
+          ProbeOutcome.new(deferred: true, evaluated: true, false_condition: @last_false_condition)
+        end
+      rescue ex : WhenEvaluationError
+        ProbeOutcome.new(deferred: true, evaluated: true, error: ex,
+          failed_when_clause: @last_failed_when_clause)
+      rescue VariableSubstitutor::FilterEngine::UnknownFilterError
+        # build_vars_context's own failure carries no clause verdict -
+        # execute_task rebuilds it and degrades to the same clean failed
+        # task, so the host is still handed over.
+        ProbeOutcome.new(deferred: true)
+      end
+    end
+
+    # Hands the probe's verdict for a deferred (task, host) to that
+    # task's when_passes? call. The output rides along because the probe
+    # claimed its literal warnings' dedupe keys and left its deprecation
+    # blocks unclaimed, so only this replay can still print them.
+    private def store_probe_when_verdict(task : Task, host : Host, outcome : ProbeOutcome,
+                                         captured : ResultDisplay::CapturedStderr,
+                                         held : Array(Proc(Nil))) : Nil
+      @probe_verdict_task = task
+      @probe_when_verdicts[host.name] = ProbeWhenVerdict.new(
+        passes: outcome.passes,
+        error: outcome.error,
+        false_condition: outcome.false_condition,
+        failed_when_clause: outcome.failed_when_clause,
+        captured: captured,
+        held: held,
+      )
+    end
+
+    # The probe's verdict for this (task, host), consumed once: a second
+    # evaluation (a loop item, a re-entered task) must run on its own.
+    private def take_probe_when_verdict(task : Task, host : Host) : ProbeWhenVerdict?
+      return nil unless current = @probe_verdict_task
+      return nil unless current.same?(task)
+      @probe_when_verdicts.delete(host.name)
+    end
+
+    # Applies a verdict the probe already reached (issue #1745): the
+    # evaluation's captured output is replayed where the real one would
+    # have raised it, and the verdict stands in for a second evaluation -
+    # so a side-effectful `lookup()` in the clause runs once.
+    #
+    # The probe loops over every host, so @last_false_condition/
+    # @last_failed_when_clause hold whichever host was probed last; this
+    # host's own values ride the verdict and are restored here before the
+    # skip/raise bookkeeping reads them.
+    private def apply_probe_when_verdict(task : Task, host : Host, verdict : ProbeWhenVerdict,
+                                         vars_context : Hash(String, JSON::Any), item_label : String?,
+                                         defer_stats : Bool, defer_display : Bool, item : JSON::Any?) : Bool
+      @last_false_condition = verdict.false_condition
+      @last_failed_when_clause = verdict.failed_when_clause
+      verdict.captured.replay_into_current_context
+      verdict.held.each(&.call)
+      if error = verdict.error
+        raise error
+      end
+      return true if verdict.passes
+
+      if item_label.nil? && task.no_log_expr && !defer_display
+        resolve_task_no_log(task, vars_context)
+      end
+      perform_skip(task, host, item_label, defer_stats, defer_display, item)
+      false
+    end
+
+    # What the probe emitted for hosts the eager pass booked, printed
+    # under the task's banner ahead of their unreachable report - the
+    # point ansible's own evaluation raises it (issue #1745).
+    private def flush_pending_probe_output(pending : Array({ResultDisplay::CapturedStderr, Array(Proc(Nil))})) : Nil
+      pending.each do |captured, held|
+        captured.emit
+        held.each(&.call)
       end
     end
 
@@ -377,6 +478,11 @@ module Krikri
       ensure_grouped(tasks)
 
       tasks.each do |task|
+        # A verdict belongs to the pass that produced it and the task it
+        # was probed for: anything still here was never consumed (the
+        # task was dropped before execute_task saw it).
+        @probe_when_verdicts.clear
+        @probe_verdict_task = nil
         next unless step_allows?(task)
 
         # A host known to be unreachable produces an unreachable result
@@ -431,47 +537,49 @@ module Krikri
         # 2.21.6). Collected per host and released below, exactly like a
         # controller-side task's booking.
         deferred_hosts = Set(String).new
+        # What the probe emitted for hosts it BOOKED. It prints under the
+        # task's banner, ahead of their unreachable reports, where
+        # ansible's own evaluation raises it - printing it at probe time
+        # put the block above the banner, even above the PLAY banner for
+        # the first task (issue #1745).
+        pending_probe_output = [] of {ResultDisplay::CapturedStderr, Array(Proc(Nil))}
         hosts.each do |host|
           next unless @unreachable_hosts.includes?(host.name)
           next if @halted_hosts.includes?(host.name)
           next if delegated_away || descends || controller_side
           # The probe evaluates this host's `when:` ahead of the task, so
-          # everything that evaluation emits is held: a deferred host's
-          # execute_task re-evaluates the clause, and printing it here
-          # would surface it ahead of the task's banner and spend the
-          # dedupe key the real evaluation needs - which also drops the
-          # block from the task's registered result (live-verified vs
-          # 2.21.6). The fact/vars-dict blocks need the deferral scope
-          # too: their emitter claims the clause's operation record
-          # BEFORE the stderr funnel, so a capture alone would silence the
-          # real evaluation instead of holding it. A host booked here
-          # never reaches execute_task, so its held output is emitted
-          # instead, as it was before the probe existed.
-          may_not_dial = false
+          # everything that evaluation emits is held. The fact/vars-dict
+          # blocks need the deferral scope too: their emitter claims the
+          # clause's operation record BEFORE the stderr funnel, so a
+          # capture alone would silence the real evaluation instead of
+          # holding it. A deferred host's output rides its verdict into
+          # execute_task; a booked host's is emitted under the banner.
+          outcome = ProbeOutcome.new(deferred: false)
           held = [] of Proc(Nil)
           probe_capture = ResultDisplay.capture_stderr do
             ResultDisplay.begin_deferred_fact_deprecations
             begin
-              may_not_dial = task_may_not_dial?(task, host)
+              outcome = task_may_not_dial?(task, host)
             ensure
               held = ResultDisplay.take_deferred_fact_deprecations
             end
           end
-          if may_not_dial
+          if outcome.deferred
             deferred_hosts << host.name
-            # The literal warnings claim their run-wide dedupe where they
-            # are emitted, so the re-evaluation cannot print them again -
-            # replay them here (ahead of the banner: warning ORDER is
-            # outside the parity bar) rather than lose them. The held
-            # deprecation blocks are dropped instead: their claims happen
-            # at replay, and execute_task's own evaluation prints them
-            # under the task's banner and files them on the result's
-            # `deprecations`.
-            probe_capture.emit_warnings_only
+            if outcome.evaluated
+              store_probe_when_verdict(task, host, outcome, probe_capture, held)
+            else
+              # No clause verdict to carry (a loop source, run_once:, or
+              # build_vars_context's own failure). The literal warnings
+              # claim their run-wide dedupe where they are emitted, so a
+              # re-run cannot print them again - replay them rather than
+              # lose them; a held deprecation block claims at replay and
+              # the path execute_task takes re-raises it unclaimed.
+              probe_capture.emit_warnings_only
+            end
             next
           end
-          probe_capture.emit
-          held.each(&.call)
+          pending_probe_output << {probe_capture, held}
 
           report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, print: false)
           pending_unreachable << host
@@ -574,6 +682,7 @@ module Krikri
               Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]")
               print_task_path(task)
             end
+            flush_pending_probe_output(pending_probe_output)
             flush_pending_unreachable(pending_unreachable)
           end
           next
@@ -582,12 +691,14 @@ module Krikri
         render_strategy_action_reads(task, active_hosts.first? || hosts.first)
 
         if task.block?
+          flush_pending_probe_output(pending_probe_output)
           flush_pending_unreachable(pending_unreachable)
           execute_block_multi(task, active_hosts)
           next
         end
 
         if task.include_tasks? && !task.run_once?
+          flush_pending_probe_output(pending_probe_output)
           flush_pending_unreachable(pending_unreachable)
           if task_has_loop?(task)
             execute_include_tasks_looped_multi(task, active_hosts)
@@ -629,7 +740,10 @@ module Krikri
         # The buffered unreachable reports go under the banner, before
         # the reachable hosts' results - a refused connection completes
         # long before a real task does, so ansible's result order puts
-        # the fatal line first (live-verified vs 2.19.11).
+        # the fatal line first (live-verified vs 2.19.11). The probe's
+        # warnings/deprecation block for those hosts print first, exactly
+        # where ansible's own evaluation raises them (issue #1745).
+        flush_pending_probe_output(pending_probe_output)
         flush_pending_unreachable(pending_unreachable)
 
         # `throttle:` is converted by the strategy as it queues a task for
@@ -1392,6 +1506,17 @@ module Krikri
         !!task.loop_nested_sources || !!task.loop_together_sources || !!task.loop_subelements_list || !!task.loop_filetree
     end
 
+    # Every loop form, for decisions that must treat a looped task as
+    # looped no matter which source produced it. #task_has_loop? and
+    # #task_has_loop_source? each miss one form the other lists (the
+    # generic `with_<lookup>:` plugin and a deferred `with_dict:` source,
+    # respectively), and the pre-upload probe must hand over ALL of them:
+    # evaluating a looped task's `when:` item-less and then letting the
+    # first item consume that verdict would skip it where ansible runs it.
+    private def task_has_any_loop?(task : Task) : Bool
+      task_has_loop?(task) || task_has_loop_source?(task) || !task.loop_dict_terms.nil?
+    end
+
     # run_once: on every host after the first, skip execution outright but
     # still copy over whatever the first host's run registered, so a later
     # task on this host referencing it doesn't see an undefined variable.
@@ -1722,6 +1847,15 @@ module Krikri
     # at parse time only for a literal with_items: array, never for
     # loop:, which has no such behavior).
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false, item : JSON::Any? = nil, defer_unavailable_module : Bool = false) : Bool
+      # The eager pre-upload probe may already have evaluated this exact
+      # clause for this host (issue #1745): consume its verdict instead
+      # of running the clause - and any side-effectful lookup in it - a
+      # second time.
+      if verdict = take_probe_when_verdict(task, host)
+        return apply_probe_when_verdict(task, host, verdict, vars_context, item_label,
+          defer_stats, defer_display, item)
+      end
+
       # Ansible evaluates a non-looped task's `when:` BEFORE it ever
       # attempts to resolve the task's module - so a `when:` that itself
       # raises (an undefined variable, a bad attribute access) is a fatal
