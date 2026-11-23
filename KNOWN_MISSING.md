@@ -919,6 +919,24 @@ because anyone intends to fix them.
   write the timestamped block, adds nothing itself, and skips the add for an already-locked
   package).
 
+- **The kpg state oracle's `#ports` section sees the guest's own transient UDP sockets (kpg
+  check-mode cases, issue #1721).** The snapshot reads `/proc/net/udp` and keeps every socket in
+  state `07`, which covers an unconnected outbound socket a boot-time service has open (an NTP or
+  DNS query from `systemd-timesyncd`/`systemd-resolved` sits at `0.0.0.0:<ephemeral>` until its
+  reply arrives) as well as a real listener. Only the before/after DELTA is compared, so such a
+  socket closing during one engine's window reads as `port removed` on that side alone even though
+  the engine did nothing: the two VMs boot at different moments, so only one snapshot can catch it.
+  The generator's own `--control` noise check (real `ansible-playbook` on both hosts, same playbook
+  and check mode) reports the same class of line - that replay's was `port added /proc/net/udp
+  00000000:<ephemeral>`, the issue's `port removed` - while stdout, stderr and the recap stay
+  identical, so two real Ansible runs disagree here the same way and this is not a krikri gap. The
+  generator must stop treating a wildcard-bound ephemeral-port UDP entry as host state (or let the
+  guest settle before the before-snapshot) before that half of the oracle is trusted on a freshly
+  booted host. Everything this playbook does exercise already matches: the rendered list `name`,
+  the handlers/retries/delegation around it, and zypper.py's AnsibleModule validation -
+  `test/unit/zypper_test.cr` pins that a wrong-typed bool is reported before `get_cmd()`'s probe
+  even under `--check`, which is the whole failure real prints for this task.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is
