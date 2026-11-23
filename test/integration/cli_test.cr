@@ -3483,3 +3483,20 @@ describe "include_vars: with register:" do
     output.must_include("single_ansible_facts_port=80")
   end
 end
+
+describe "krikri-playbook --help connection documentation" do
+  # Issue #1748: -c never listed the accepted connection types, so aws_ssm
+  # was discoverable only through the README, and -T read as ssh-only
+  # without saying where the SSM timeout comes from instead.
+  it "names the connection types and where the SSM timeout comes from" do
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["--help"], output: output, error: output)
+    text = output.to_s
+
+    status.success?.must_equal(true)
+    text.must_include("aws_ssm")
+    text.must_include("ansible.builtin.local")
+    text.must_include("amazon.aws.aws_ssm")
+    text.must_include("ansible_aws_ssm_timeout")
+  end
+end

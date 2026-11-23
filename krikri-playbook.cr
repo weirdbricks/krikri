@@ -552,7 +552,7 @@ begin
     parser.on("--private-key=FILE", "--key-file=FILE", "SSH private key to connect with (sets ansible_ssh_private_key_file)") do |fval|
       private_key_file = fval
     end
-    parser.on("-c TYPE", "--connection=TYPE", "Connection type to use (sets ansible_connection)") do |itm|
+    parser.on("-c TYPE", "--connection=TYPE", "Connection type to use (sets ansible_connection): ssh (the default), local, or aws_ssm (also accepted: ansible.builtin.local, amazon.aws.aws_ssm, community.aws.aws_ssm - see README's AWS SSM Session Manager section)") do |itm|
       connection_override = itm
     end
     parser.on("-b", "--become", "Run operations with become") do
@@ -564,7 +564,7 @@ begin
     parser.on("--become-method=METHOD", "Privilege escalation method to use") do |mat|
       become_method_override = mat
     end
-    parser.on("-T SECONDS", "--timeout=SECONDS", "SSH connection timeout in seconds (default 10)") do |tval|
+    parser.on("-T SECONDS", "--timeout=SECONDS", "Connection timeout in seconds (default 10), applied to ssh as ConnectTimeout; aws_ssm connections take their timeout from ansible_aws_ssm_timeout instead") do |tval|
       Krikri::CliOptions.timeout = tval.to_i? || 10
     end
     parser.on("--ssh-common-args=ARGS", "Extra arguments appended to every ssh invocation") do |aval|

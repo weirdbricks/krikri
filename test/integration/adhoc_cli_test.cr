@@ -43,6 +43,17 @@ describe "krikri ad-hoc CLI" do
     end
   end
 
+  # Issue #1748: --help never named aws_ssm, so the only way to discover the
+  # connection type was the README.
+  it "--help names the connection types and which flag sets the SSM timeout" do
+    _, output = run_adhoc(["--help"])
+
+    output.must_include("aws_ssm")
+    output.must_include("ansible.builtin.local")
+    output.must_include("amazon.aws.aws_ssm")
+    output.must_include("ansible_aws_ssm_timeout")
+  end
+
   it "--list-hosts lists matched hosts and exits 0, without executing" do
     status, output = run_adhoc(["all", "-i", TWO_HOSTS, "--list-hosts", "-m", "ping"])
 

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.3057-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.3058-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.21.6-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -89,7 +89,8 @@ Supported options use Ansible's names and precedence: the target comes from
 `_endpoint_url`, `_access_key_id`, `_secret_access_key`, `_session_token`, and
 `ansible_shell_type` (Linux shells only). `ansible_aws_ssm_bucket_name`,
 `ansible_aws_ssm_plugin` and the S3 addressing options are accepted and ignored
-with a one-time warning.
+with a one-time warning. `-T/--timeout` is an ssh `ConnectTimeout` and does not
+apply to SSM sessions; use `ansible_aws_ssm_timeout` for those.
 
 `ansible_user`/`remote_user` are not login identities over SSM: the session runs
 as the document's user (`ssm-user` by default), so use `become`/`become_user` to
