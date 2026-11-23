@@ -1,0 +1,9 @@
+
+PLAY [xenial bootstrap] ********************************************************
+
+TASK [Install python 2.7 on xenial] ********************************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
