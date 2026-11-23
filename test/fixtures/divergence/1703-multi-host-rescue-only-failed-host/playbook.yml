@@ -1,0 +1,15 @@
+# One host is lost at the transport, the other fails normally: rescue: and
+# always: must serve the failed host only.
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - copy:
+            src: /nonexistent/krikri-1703-source
+            dest: /tmp/krikri-1703-copy
+      rescue:
+        - debug:
+            msg: rescued
+      always:
+        - debug:
+            msg: always

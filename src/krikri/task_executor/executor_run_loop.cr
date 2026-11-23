@@ -323,17 +323,26 @@ module Krikri
         # NOT delegate - a play whose only remote module sat in a handler
         # lost its `delegate_to: localhost` task to a pre-upload failure
         # printed under that task's banner (issue #1687). Only
-        # `delegate_to:` is exempted here, not "everything that does not
-        # really dial": a controller-only task (debug:, set_fact:) and a
-        # block: task still get the report a step early, which issue
-        # #1703 covers. The booking stays: the host is still unreachable
-        # for every task that connects, and the recap/exit code count it
-        # as soon as one fails.
+        # `delegate_to:` is exempted here, not a controller-only task
+        # (debug:, set_fact:), which still gets the report a step early -
+        # that is issue #1706, a different classification problem.
+        # The booking stays: the host is still unreachable for every task
+        # that connects, and the recap/exit code count it as soon as one
+        # fails.
         delegated_away = !task.delegate_to.nil?
+        # A task that only expands into other tasks - block:,
+        # include_tasks:, include_role: - never dials the host itself.
+        # ansible has no eager upload pass, so it runs the expansion and
+        # loses the host at the first CHILD that actually connects:
+        # booking the pre-upload failure here reported it under the
+        # wrapper's banner and dropped every child, including ones that
+        # delegate away (issue #1703). The children run this same short
+        # circuit; the host stays booked either way.
+        descends = task.block? || task.include_tasks? || task.include_role?
         hosts.each do |host|
           next unless @unreachable_hosts.includes?(host.name)
           next if @halted_hosts.includes?(host.name)
-          next if delegated_away
+          next if delegated_away || descends
 
           report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, print: false)
           pending_unreachable << host
@@ -362,15 +371,19 @@ module Krikri
         # attempt and hang on the connection it is already known to fail
         # (for THIS task only - see ignored_unreachable above, which removes
         # the host from the set for the tasks that follow).
-        # A delegated task (delegated_away above) is the exception: it
-        # executes on its delegate's connection, so the origin's known
-        # unreachability must not drop it from this set either.
+        # A delegated task (delegated_away above) and a descending one
+        # (descends above) are the exceptions: the former executes on its
+        # delegate's connection, the latter hands the host down to its
+        # children - so the origin's known unreachability must not drop
+        # either from this set. A host that already FAILED an earlier
+        # child is in @halted_hosts and stays excluded.
         # meta: end_role rejections are applied SEPARATELY (below), not
         # folded into this set: a role-ended host recovers for every task
         # outside that role, so it must never trip the all-hosts-done
         # break that a genuinely halted play legitimately ends on.
+        untouched_by_this_task = delegated_away || descends
         halt_rejected = hosts.reject do |host|
-          @halted_hosts.includes?(host.name) || (@unreachable_hosts.includes?(host.name) && !delegated_away) || pending_unreachable_names.includes?(host.name)
+          @halted_hosts.includes?(host.name) || (@unreachable_hosts.includes?(host.name) && !untouched_by_this_task) || pending_unreachable_names.includes?(host.name)
         end
 
         # Once every host in scope is halted/unreachable, Ansible ends

@@ -1,0 +1,11 @@
+# ignore_errors: covers a FAILED task, never a lost transport (that is
+# ignore_unreachable:). The host is out of the play at the child, so the
+# task after the block prints nothing.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - block:
+        - command: "true"
+      ignore_errors: true
+    - debug:
+        msg: after

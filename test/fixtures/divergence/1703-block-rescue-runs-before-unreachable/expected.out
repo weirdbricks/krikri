@@ -1,0 +1,38 @@
+
+PLAY [target] ******************************************************************
+
+TASK [fail] ********************************************************************
+[ERROR]: Task failed: Action failed: boom
+Origin: <WORK>/playbook.yml:10:11
+
+ 8   tasks:
+ 9     - block:
+10         - fail:
+             ^ column 11
+
+fatal: [target -> localhost]: FAILED! => {"changed": false, "msg": "boom"}
+
+TASK [debug] *******************************************************************
+ok: [target -> localhost] => {
+    "msg": "rescued"
+}
+
+TASK [debug] *******************************************************************
+ok: [target -> localhost] => {
+    "msg": "always"
+}
+
+TASK [ping] ********************************************************************
+[ERROR]: Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.
+Origin: <WORK>/playbook.yml:20:7
+
+18         - debug: msg=always
+19           delegate_to: localhost
+20     - ping:
+         ^ column 7
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+
+PLAY RECAP *********************************************************************
+target                     : ok=2    changed=0    unreachable=1    failed=0    skipped=0    rescued=1    ignored=0   
+

@@ -1,0 +1,7 @@
+# The included file's own dialing child is where the eager pass's
+# UNREACHABLE is booked - not the include task that loaded it.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - include_tasks: tasks/inner.yml
+    - ping:

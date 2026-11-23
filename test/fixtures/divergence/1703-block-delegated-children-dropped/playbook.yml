@@ -1,0 +1,17 @@
+# Issue #1703's second repro: a block whose only child delegates to
+# localhost, then a task that really dials the host (which is what makes
+# the eager pre-upload pass dial it at all). The handler is the issue's
+# block-level `notify:` target - it must never run, since the host is out
+# of the play by then.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - block:
+        - command: "true"
+          delegate_to: localhost
+      notify: h
+    - command: "false"
+  handlers:
+    - name: h
+      debug:
+        msg: hi

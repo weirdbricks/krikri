@@ -1,0 +1,8 @@
+# A role's own block: is dispatched one host at a time (single-host
+# execute_block), and must apply the same rules as a play-level block:.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: rb
+    - ping:

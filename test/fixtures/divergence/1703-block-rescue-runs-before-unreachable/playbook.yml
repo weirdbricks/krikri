@@ -1,0 +1,20 @@
+# A host the eager pass booked UNREACHABLE whose block body only delegates
+# never lost a connection, so a delegated failure there still unwinds
+# through rescue:/always: - the trailing ping: is the task that finally
+# dials and loses the host. Every task delegates, the way a play that never
+# touches its own host would write them.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+            msg: boom
+          delegate_to: localhost
+      rescue:
+        - debug:
+            msg: rescued
+          delegate_to: localhost
+      always:
+        - debug: msg=always
+          delegate_to: localhost
+    - ping:

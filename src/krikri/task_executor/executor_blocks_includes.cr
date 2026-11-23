@@ -88,6 +88,12 @@ module Krikri
 
       failed_before = Hash(String, Int32).new
       run_hosts.each { |host| failed_before[host.name] = @results[host.name]["failed"] }
+      # A host can already be booked UNREACHABLE by the eager pre-upload
+      # pass (or by an earlier task) without having lost a connection
+      # here: only a body task that actually reports one takes the host
+      # out of the play (see chain_hosts below).
+      unreachable_before = Hash(String, Int32).new
+      run_hosts.each { |host| unreachable_before[host.name] = @results[host.name]["unreachable"] }
       # Same block-level notify: tracking as execute_block's own
       # changed_before - see that method's comment.
       changed_before = Hash(String, Int32).new
@@ -107,8 +113,19 @@ module Krikri
       block_failed = Hash(String, Bool).new
       run_hosts.each { |host| block_failed[host.name] = @halted_hosts.includes?(host.name) }
 
-      if (rescue_tasks = task.rescue_tasks) && block_failed.any? { |_, failed| failed }
-        rescue_hosts = run_hosts.select { |host| block_failed[host.name] }
+      # A host that became UNREACHABLE in the body is out of the play
+      # entirely: ansible runs neither rescue: nor always: for it
+      # (live-verified vs 2.21.6 on the #1703 corpus case), and entering
+      # either would only report the same unreachable a second time. A
+      # host the pre-upload pass booked but whose body only delegated
+      # never lost its connection, so it stays in the chain. The same
+      # applies to a rescue: task that dials and loses the host, so the
+      # always: section recomputes the set below.
+      lost_here = ->(host : Host) { @results[host.name]["unreachable"] > unreachable_before[host.name] }
+      chain_hosts = run_hosts.reject { |host| lost_here.call(host) }
+
+      if (rescue_tasks = task.rescue_tasks) && chain_hosts.any? { |host| block_failed[host.name] }
+        rescue_hosts = chain_hosts.select { |host| block_failed[host.name] }
         rescue_hosts.each { |host| @halted_hosts.delete(host.name) }
 
         # Same as execute_block's single-host path: the block-body
@@ -141,20 +158,29 @@ module Krikri
       end
 
       if always_tasks = task.always_tasks
-        run_hosts.each { |host| @halted_hosts.delete(host.name) }
+        # A rescue: that lost the connection took the host out of the
+        # play too, so recompute rather than reusing chain_hosts.
+        always_hosts = run_hosts.reject { |host| lost_here.call(host) }
+        always_hosts.each { |host| @halted_hosts.delete(host.name) }
         propagate_role_context(task, always_tasks)
-        run_task_batch(always_tasks, run_hosts)
+        run_task_batch(always_tasks, always_hosts)
         run_hosts.each { |host| block_failed[host.name] ||= @halted_hosts.includes?(host.name) }
       end
 
       notify_hosts_if_changed(task, run_hosts, changed_before)
 
       run_hosts.each do |host|
+        lost = lost_here.call(host)
         @halted_hosts.delete(host.name)
         # new_failure: false - this re-books the halt the chain's own
         # failure already earned; its @chain_pending_failures
         # classification must survive.
-        halt_if_failed(task, host, block_failed[host.name], new_failure: false)
+        # force_halt for a host the transport lost: that is not a failed
+        # task, so the block's own ignore_errors: must not un-halt it -
+        # ansible only has ignore_unreachable: for that, and leaving it
+        # un-halted made every later task report the same unreachable
+        # again (live-verified vs 2.21.6).
+        halt_if_failed(task, host, block_failed[host.name] || lost, force_halt: lost, new_failure: false)
       end
     end
 
@@ -2340,6 +2366,10 @@ module Krikri
       end
 
       failed_before = @results[host.name]["failed"]
+      # Same snapshot as execute_block_multi's own: a host already booked
+      # UNREACHABLE by the eager pass has not lost anything HERE unless
+      # this block's own tasks raised the count.
+      unreachable_before = @results[host.name]["unreachable"]
       # A block:'s own notify: (as opposed to notify: on one of its
       # nested tasks) fires once if ANY task inside the block/rescue/
       # always actually changed - Ansible's own block-level notify
@@ -2356,9 +2386,14 @@ module Krikri
       else
         run_task_list(task.block_tasks || [] of Task, host)
       end
+      lost_in_body = @results[host.name]["unreachable"] > unreachable_before
       block_failed = @halted_hosts.includes?(host.name)
 
-      if block_failed && (rescue_tasks = task.rescue_tasks)
+      # A host the transport lost is out of the play: ansible runs neither
+      # rescue: nor always: for it (issue #1703), and the block's own
+      # failure bookkeeping must not un-halt it (see the end of this
+      # method).
+      if block_failed && !lost_in_body && (rescue_tasks = task.rescue_tasks)
         @halted_hosts.delete(host.name)
 
         # The block-body failures move into "rescued" as soon as rescue:
@@ -2388,18 +2423,25 @@ module Krikri
       end
 
       if always_tasks = task.always_tasks
-        @halted_hosts.delete(host.name)
-        propagate_role_context(task, always_tasks)
-        run_task_list(always_tasks, host)
-        block_failed ||= @halted_hosts.includes?(host.name)
+        # A rescue: may have lost the connection too, so re-read the
+        # count rather than trusting the body's snapshot.
+        unless @results[host.name]["unreachable"] > unreachable_before
+          @halted_hosts.delete(host.name)
+          propagate_role_context(task, always_tasks)
+          run_task_list(always_tasks, host)
+          block_failed ||= @halted_hosts.includes?(host.name)
+        end
       end
 
       notify_hosts_if_changed(task, [host], {host.name => changed_before})
 
+      lost = @results[host.name]["unreachable"] > unreachable_before
       @halted_hosts.delete(host.name)
       # new_failure: false - re-books the chain's own failure; see
-      # execute_block_multi's end.
-      halt_if_failed(task, host, block_failed, new_failure: false)
+      # execute_block_multi's end. force_halt for a lost host: the
+      # block's ignore_errors: covers failed tasks, never a transport
+      # loss (only ignore_unreachable: does).
+      halt_if_failed(task, host, block_failed || lost, force_halt: lost, new_failure: false)
     end
 
     # Copy the *enclosing* task's role context (defaults/vars/dirs) into each

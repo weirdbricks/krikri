@@ -1,0 +1,13 @@
+# Issue #1703's descending-task shape with the two unwind sections attached:
+# a host the block body loses at the transport is out of the play, so
+# neither rescue: nor always: runs for it.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - block:
+        - command: "true"
+      rescue:
+        - debug:
+            msg: rescued
+      always:
+        - debug: msg=always
