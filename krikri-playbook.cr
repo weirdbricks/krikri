@@ -885,13 +885,13 @@ begin
   # unimplemented plugin: x"), but the run still ended "Playbook
   # execution complete" with exit 0 - a green light to CI for what
   # ansible-playbook refuses outright with rc=4. Accumulated from each
-  # play's own executor (TaskExecutor#reachable_unavailable_modules)
-  # after it runs, NOT a static whole-playbook scan - see that getter's
-  # own comment for why: a module referenced only inside a branch
-  # that's unreached on every host must not count, matching
-  # Ansible's own lazy (only-if-about-to-run) module resolution. Acted
-  # on at the end of the run, below.
-  unavailable_modules_found = Set(String).new
+  # play's own executor (TaskExecutor#reachable_unavailable_module_tasks:
+  # a {task name, module name} pair per skipped task) after it runs, NOT a
+  # static whole-playbook scan - see that getter's own comment for why: a
+  # module referenced only inside a branch that's unreached on every host
+  # must not count, matching Ansible's own lazy (only-if-about-to-run)
+  # module resolution. Acted on at the end of the run, below.
+  unavailable_modules_found = Set(Tuple(String, String)).new
 
   # Show warnings. Suppressed in the listing modes: ansible-playbook
   # emits only the listing plus its inventory/pattern warnings there, and
@@ -1828,7 +1828,7 @@ playbook.plays.each_with_index do |play, _play_index|
       STDERR.print ex.render
       exit 4
     end
-    unavailable_modules_found.concat(executor.reachable_unavailable_modules)
+    unavailable_modules_found.concat(executor.reachable_unavailable_module_tasks)
 
     # Carry any host that hard-failed in this play forward - excluded from
     # every remaining play too, not just the rest of this one. halted_hosts
@@ -1991,9 +1991,13 @@ end
 unless unavailable_modules_found.empty?
   # Same wording as the parse-time check, so tooling that reads the log (the
   # role tester's COMMUNITY_MODULE_MISSING reclassification) sees which
-  # modules this run skipped. The parse-time warning skips these modules.
-  unavailable_modules_found.to_a.sort.each do |module_name|
-    puts "uses unimplemented plugin: #{module_name}"
+  # TASK was dropped and for which module. The parse-time warning skips
+  # these modules, so this line is the only place they show up; naming the
+  # task (not just the module) is what lets the reclassification tie the
+  # warning to the divergent block it explains. Sorted by module, then
+  # task, so one module used by several tasks prints its lines together.
+  unavailable_modules_found.to_a.sort_by { |(task_name, module_name)| {module_name, task_name} }.each do |(task_name, module_name)|
+    puts "Task '#{task_name}' uses unimplemented plugin: #{module_name}"
   end
   exit 4
 end

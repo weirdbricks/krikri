@@ -144,10 +144,18 @@ fi
 LOCK="${KRIKRI_COMPILE_LOCK:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-compile.lock}"
 mkdir -p "$(dirname "$LOCK")"
 exec 9>"$LOCK"
+LOCK_WAIT_START=$SECONDS
 if ! flock -n 9; then
   echo "test: another compile or suite run holds $LOCK - waiting ..." >&2
   flock 9
 fi
+LOCK_WAIT=$((SECONDS - LOCK_WAIT_START))
+# The queue time is part of the step's own wall clock: fix-issues parses this line to
+# record it beside the step's duration (a suite that waited 20 minutes for the lock
+# otherwise reads as a slow suite), so it goes to both streams like the harness
+# scripts' inline locks print it.
+echo "compile-lock wait: ${LOCK_WAIT}s"
+echo "compile-lock wait: ${LOCK_WAIT}s" >&2
 
 # The entrypoint has to live inside the project: `crystal run` only resolves
 # relative requires against the entrypoint's own directory, and absolute

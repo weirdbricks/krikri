@@ -1,11 +1,13 @@
 require "../minitest_helper"
 
 # A task whose module krikri doesn't implement is skipped and the run exits 4.
-# The exit-4 run also names each skipped module in the same "uses unimplemented
-# plugin: <module>" form as the parse-time warning, so the role tester can tell a
-# divergence caused by an untracked community module (COMMUNITY_MODULE_MISSING)
-# from a real gap. The parse-time warning skips unavailable modules, so this
-# line is the only place the name shows up.
+# The exit-4 run also names each skipped task and module in the same
+# "Task '<name>' uses unimplemented plugin: <module>" form as the parse-time
+# warning, so the role tester can tell a divergence caused by an untracked
+# community module (COMMUNITY_MODULE_MISSING) from a real gap - and can tie the
+# warning to the divergent block it explains, because the task name is what its
+# diff carries. The parse-time warning skips unavailable modules, so this line
+# is the only place they show up.
 #
 # The controller collection fixture makes the name resolve as in
 # unavailable_module_args_finalization_test.cr, so the result does not depend on
@@ -37,7 +39,11 @@ describe "unavailable module report" do
       env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_root})
 
     status.exit_code.must_equal(4)
-    output.to_s.lines.count(&.includes?("uses unimplemented plugin: community.general.redhat_subscription")).must_equal(1)
+    # One line per TASK+module: the two tasks share a module but keep their own
+    # names, so the log says which task was dropped, not just which module.
+    output.to_s.lines.count(&.includes?("uses unimplemented plugin: community.general.redhat_subscription")).must_equal(2)
+    output.to_s.must_include("Task 'subscribe' uses unimplemented plugin: community.general.redhat_subscription")
+    output.to_s.must_include("Task 'subscribe again' uses unimplemented plugin: community.general.redhat_subscription")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
     FileUtils.rm_r(fixture_root) if fixture_root && Dir.exists?(fixture_root)
@@ -70,6 +76,7 @@ describe "unavailable module report" do
     status.exit_code.must_equal(4)
     output.to_s.must_include("failed=1")
     output.to_s.lines.count(&.includes?("uses unimplemented plugin: portage")).must_equal(1)
+    output.to_s.must_include("Task 'install docker' uses unimplemented plugin: portage")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
@@ -116,6 +123,8 @@ describe "unavailable module report" do
     check_output.to_s.must_include("skipped=2")
     real_status.exit_code.must_equal(4)
     real_output.to_s.must_include("uses unimplemented plugin: community.general.consul")
+    real_output.to_s.must_include(
+      "Task 'Register Elasticsearch service with the local consul agent' uses unimplemented plugin: community.general.consul")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
     FileUtils.rm_rf(fixture_root) if fixture_root && Dir.exists?(fixture_root)

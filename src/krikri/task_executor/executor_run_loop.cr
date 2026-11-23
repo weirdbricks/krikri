@@ -4780,6 +4780,19 @@ module Krikri
       "community.general.consul",
     }
 
+    # The same accounting as reachable_unavailable_modules, but keeping the
+    # TASK name beside the module. The end-of-run report names both, in the
+    # wording playbook_parser.cr's validate() already uses for its
+    # parse-time warning - "Task '<name>' uses unimplemented plugin:
+    # <module>" - so whoever reads the log can tell WHICH task was dropped.
+    # The role tester's COMMUNITY_MODULE_MISSING reclassification matches a
+    # divergent diff block against those names (Summary.warned_tasks).
+    # Keyed per {task, module}: a loop's N items over one task report once,
+    # while two differently-named tasks over one module report twice - the
+    # module-only set above cannot tell those apart. The name keeps exactly
+    # the spelling the task wrote, like the plain set.
+    getter reachable_unavailable_module_tasks = Set(Tuple(String, String)).new
+
     # Records an unavailable module for the end-of-run exit-4 accounting,
     # except where real answers the task with a plain check-mode skip and
     # nothing else (see UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE).
@@ -4787,6 +4800,7 @@ module Krikri
       name = task.unavailable_module || return
       return if resolve_task_check_mode(task, vars_context) && UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE.includes?(name)
       reachable_unavailable_modules << name
+      reachable_unavailable_module_tasks << {task.name, name}
     end
 
     # The runtime counterpart of collection_index.local_action_plugin?:
