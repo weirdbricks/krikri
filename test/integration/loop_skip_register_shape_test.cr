@@ -26,9 +26,9 @@ end
 # line: Python's repr of the dict, not JSON - single quotes, capitalized
 # booleans. Spelled out rather than derived from skipped_item so the
 # rendering under test is pinned literally, not through a rewriter.
-private def skipped_item_repr(item : String) : String
+private def skipped_item_repr(item : String, false_condition : String = "False") : String
   %({'changed': False, 'failed': False, 'skipped': True, 'skip_reason': 'Conditional result was False', ) +
-    %('false_condition': False, 'ansible_loop_var': 'item', 'item': '#{item}'})
+    %('false_condition': #{false_condition}, 'ansible_loop_var': 'item', 'item': '#{item}'})
 end
 
 # Runs a playbook whose final task writes `{{ r | to_json }}` to a file
@@ -200,6 +200,134 @@ describe "non-looped skipped task register shape" do
                 {{ r | to_json }}
               dest: KRIKRI_DUMP_PATH
     YAML
+  end
+end
+
+describe "looped task register shape under a when:-false block" do
+  # A block's when: is inherited per item, so a looped child still resolves
+  # its source and records every item - the aggregate above, not the flat
+  # conditional-skip dict an undefined source keeps (issue #1733: the role's
+  # `with_items: "{{ kvm_emulator_result.results }}"` loop printed one bare
+  # skipping line where real printed one per item, because the register it
+  # looped over had no `results`).
+  it "registers every item of the resolved loop and reports All items skipped" do
+    expected = %({"changed": false, "failed": false, "skipped": true, "msg": "All items skipped", ) +
+               %("results": [#{skipped_item("a", %("engine == 'kvm'"))}, #{skipped_item("b", %("engine == 'kvm'"))}]})
+    run_registered_dump(<<-YAML).must_equal(expected)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          engine: qemu
+        tasks:
+          - block:
+              - name: never
+                ansible.builtin.debug:
+                  msg: "{{ item }}"
+                loop: [a, b]
+                register: r
+            when: engine == 'kvm'
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+  end
+
+  it "registers the No items in the list aggregate for an empty loop" do
+    expected = %({"changed": false, "failed": false, "skipped": true, "skip_reason": "No items in the list", "skipped_reason": "No items in the list", "results": []})
+    run_registered_dump(<<-YAML).must_equal(expected)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - block:
+              - name: nothing
+                ansible.builtin.debug:
+                  msg: "{{ item }}"
+                loop: []
+                register: r
+            when: false
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+  end
+
+  it "records only the failing clause of a nested block's merged condition" do
+    # A block's when: is prepended to its children's condition LIST, and
+    # real evaluates that list clause by clause, so the false_condition it
+    # reports is the first False one - never the merged "(parent) and
+    # (child)" string, which names text the playbook never wrote.
+    expected = %({"changed": false, "failed": false, "skipped": true, "msg": "All items skipped", ) +
+               %("results": [#{skipped_item("a", %("engine == 'kvm'"))}]})
+    run_registered_dump(<<-YAML).must_equal(expected)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          engine: qemu
+          emulator:
+        tasks:
+          - block:
+              - block:
+                  - name: never
+                    ansible.builtin.debug:
+                      msg: "{{ item }}"
+                    loop: [a]
+                    register: r
+                when: engine == 'kvm'
+            when: emulator is none or emulator | length == 0
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+  end
+
+  it "iterates the block-skipped loop's results, one skipping line per item" do
+    playbook = File.tempname("block-skip-then-iterate", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          engine: qemu
+        tasks:
+          - block:
+              - name: never
+                ansible.builtin.debug:
+                  msg: "{{ item }}"
+                loop: [a, b]
+                register: r
+              - name: iterate the skips
+                ansible.builtin.set_fact:
+                  x: "{{ item.item }}"
+                loop: "{{ r.results }}"
+                when: item.stat.exists
+            when: engine == 'kvm'
+    YAML
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.exit_code.must_equal(0)
+    # Only the SECOND task's lines: the first (all-skipped) loop prints its
+    # own two item lines plus its bare trailing one.
+    body = output.to_s.lines.map(&.chomp)
+    lines = body[(body.rindex { |line| line.starts_with?("TASK [") } || 0)..].select { |line| line.starts_with?("skipping:") }
+    lines.size.must_equal(3)
+    lines[0].must_include("item=" + skipped_item_repr("a", %("engine == 'kvm'")))
+    lines[1].must_include("item=" + skipped_item_repr("b", %("engine == 'kvm'")))
+    lines[2].must_equal("skipping: [localhost]")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
 

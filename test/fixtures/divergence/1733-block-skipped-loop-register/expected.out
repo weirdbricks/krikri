@@ -1,0 +1,18 @@
+
+PLAY [t2d.ansible_role_libvirt_vm autodetect emulator] *************************
+
+TASK [Detect the KVM emulator binary path] *************************************
+skipping: [localhost] => (item=/usr/bin/kvm) 
+skipping: [localhost] => (item=/usr/bin/qemu-kvm) 
+skipping: [localhost] => (item=/usr/libexec/qemu-kvm) 
+skipping: [localhost]
+
+TASK [Set a fact containing the KVM emulator binary path] **********************
+skipping: [localhost] => (item={'changed': False, 'failed': False, 'skipped': True, 'skip_reason': 'Conditional result was False', 'false_condition': "libvirt_vm_engine == 'kvm'", 'ansible_loop_var': 'item', 'item': '/usr/bin/kvm'}) 
+skipping: [localhost] => (item={'changed': False, 'failed': False, 'skipped': True, 'skip_reason': 'Conditional result was False', 'false_condition': "libvirt_vm_engine == 'kvm'", 'ansible_loop_var': 'item', 'item': '/usr/bin/qemu-kvm'}) 
+skipping: [localhost] => (item={'changed': False, 'failed': False, 'skipped': True, 'skip_reason': 'Conditional result was False', 'false_condition': "libvirt_vm_engine == 'kvm'", 'ansible_loop_var': 'item', 'item': '/usr/libexec/qemu-kvm'}) 
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+
