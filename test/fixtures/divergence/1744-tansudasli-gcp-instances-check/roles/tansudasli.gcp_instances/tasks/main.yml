@@ -1,0 +1,87 @@
+---
+# tasks file for role-gcp-instances
+
+- name: create boot-disk
+  gcp_compute_disk:
+    name: "{{ item.1.disk.name }}"
+    size_gb: "{{ item.1.disk.size }}"
+    source_image: "{{ item.1.disk.image }}"
+    zone: "{{ item.0.zone }}"
+
+    project: "{{ general.project }}"
+    auth_kind: "{{ general.auth_kind }}"
+    service_account_file: "{{ general.service_account_file }}"
+    scopes: "{{ scopes }}"
+    state: present
+  with_subelements: 
+  - "{{ nodes }}"    
+  - boot_disk
+  register: bootdisk
+
+- name: create non-boot-disks
+  gcp_compute_disk:
+    name: "{{ item.1.disk.name }}"
+    size_gb: "{{ item.1.disk.size }}"
+    zone: "{{ item.0.zone }}"
+
+    project: "{{ general.project }}"
+    auth_kind: "{{ general.auth_kind }}"
+    service_account_file: "{{ general.service_account_file }}"
+    scopes: "{{ scopes }}"
+    state: present
+  with_subelements: 
+  - "{{ nodes }}"    
+  - additional_disks
+  register: other_disks
+
+- name: create a static-IP address
+  gcp_compute_address:
+    state: present
+    name: "{{ item.1.nic.name }}"
+    
+    project: "{{ general.project }}"
+    region: "{{ general.region }}"
+    auth_kind: "{{ general.auth_kind }}"
+    service_account_file: "{{ general.service_account_file }}"
+    scopes: "{{ scopes }}"
+  with_subelements: 
+  - "{{ nodes }}"    
+  - ips        
+  register: address
+
+
+- name: create an instance
+  gcp_compute_instance:
+    state: present
+    name: "{{ item.name }}"
+    machine_type: "{{ item.machine_type }}"
+
+    deletion_protection: false
+    disks:
+      - auto_delete: true
+        boot: true
+        source: "{{ bootdisk.results.0 }}"
+      - auto_delete: true
+        boot: false
+        source: "{{ other_disks.results.0 }}"
+      - auto_delete: true
+        boot: false
+        source: "{{ other_disks.results.1 }}"             
+    network_interfaces:
+        - access_configs:
+          - name: EXTERNAL_NAT
+            nat_ip: "{{ address }}"
+            type: ONE_TO_ONE_NAT
+  
+    zone: "{{ item.zone }}"
+    project: "{{ general.project }}"
+    auth_kind: "{{ general.auth_kind }}"
+    service_account_file: "{{ general.service_account_file }}"
+    scopes: "{{ scopes }}"
+  with_items: 
+  - "{{ nodes }}"        
+  register: instance
+
+
+# - debug: 
+#   msg: "{{ bootdisk }}"  

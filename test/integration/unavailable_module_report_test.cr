@@ -129,4 +129,66 @@ describe "unavailable module report" do
     File.delete(playbook) if playbook && File.exists?(playbook)
     FileUtils.rm_rf(fixture_root) if fixture_root && Dir.exists?(fixture_root)
   end
+
+  # tansudasli.gcp_instances' gcp_compute_* tasks (issue #1744): google.cloud
+  # generates every module from GcpModule without passing
+  # supports_check_mode, and only the read-only `_info` readers opt in - so a
+  # --check run of a mutating `gcp_*` task is a plain skip in real (exit 0),
+  # while an `_info` reader really runs there and keeps the exit-4 report.
+  # Both spellings a task can carry are checked (bare short name and FQCN).
+  # Outside --check every one of them keeps its report.
+  it "does not report google.cloud modules real skips under --check" do
+    playbook = File.tempname("unavailable-module-gcp-check", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: create boot-disk
+            gcp_compute_disk:
+              name: boot-disk-01
+              zone: europe-west4-a
+              project: sandbox
+              auth_kind: serviceaccount
+              scopes:
+                - https://www.googleapis.com/auth/compute
+              state: present
+          - name: create a static-IP address
+            google.cloud.gcp_compute_address:
+              state: present
+              name: ip-01
+              project: sandbox
+              region: europe-west4
+              auth_kind: serviceaccount
+          - name: list instances
+            google.cloud.gcp_compute_instance_info:
+              zone: europe-west4-a
+              project: sandbox
+              auth_kind: serviceaccount
+      YAML
+    fixture_root = File.tempname("unavailable-module-gcp-collections")
+    module_dir = File.join(fixture_root, "ansible_collections", "google", "cloud", "plugins", "modules")
+    FileUtils.mkdir_p(module_dir)
+    {"gcp_compute_disk", "gcp_compute_address", "gcp_compute_instance_info"}.each do |module_name|
+      File.write(File.join(module_dir, "#{module_name}.py"), "#!/usr/bin/python\n")
+    end
+    check_output = IO::Memory.new
+    check_status = Process.run(BINARY, ["-i", INVENTORY, "--check", playbook], output: check_output, error: check_output,
+      env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_root})
+    real_output = IO::Memory.new
+    real_status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: real_output, error: real_output,
+      env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_root})
+
+    check_output.to_s.wont_include("uses unimplemented plugin: gcp_compute_disk")
+    check_output.to_s.wont_include("uses unimplemented plugin: google.cloud.gcp_compute_address")
+    check_output.to_s.must_include("Task 'list instances' uses unimplemented plugin: google.cloud.gcp_compute_instance_info")
+    check_status.exit_code.must_equal(4)
+    real_output.to_s.must_include("Task 'create boot-disk' uses unimplemented plugin: gcp_compute_disk")
+    real_output.to_s.must_include("Task 'create a static-IP address' uses unimplemented plugin: google.cloud.gcp_compute_address")
+    real_output.to_s.must_include("Task 'list instances' uses unimplemented plugin: google.cloud.gcp_compute_instance_info")
+    real_status.exit_code.must_equal(4)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    FileUtils.rm_rf(fixture_root) if fixture_root && Dir.exists?(fixture_root)
+  end
 end

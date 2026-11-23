@@ -1,0 +1,26 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [tansudasli.gcp_instances : create boot-disk] *****************************
+skipping: [localhost] => (item=[{'name': 'standalone-node', 'zone': 'europe-west4-a', 'machine_type': 'f1-micro', 'ips': [{'nic': {'name': 'ip-01'}}], 'tags': 'hadoop', 'labels': {'type': 'hdfs', 'name': 'master'}, 'additional_disks': [{'disk': {'name': 'data-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}, {'disk': {'name': 'log-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}]}, {'disk': {'name': 'boot-disk-01', 'size': 100, 'image': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts', 'auto_delete': True, 'boot': True}}]) 
+skipping: [localhost]
+
+TASK [tansudasli.gcp_instances : create non-boot-disks] ************************
+skipping: [localhost] => (item=[{'name': 'standalone-node', 'zone': 'europe-west4-a', 'machine_type': 'f1-micro', 'ips': [{'nic': {'name': 'ip-01'}}], 'tags': 'hadoop', 'labels': {'type': 'hdfs', 'name': 'master'}, 'boot_disk': [{'disk': {'name': 'boot-disk-01', 'size': 100, 'image': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts', 'auto_delete': True, 'boot': True}}]}, {'disk': {'name': 'data-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}]) 
+skipping: [localhost] => (item=[{'name': 'standalone-node', 'zone': 'europe-west4-a', 'machine_type': 'f1-micro', 'ips': [{'nic': {'name': 'ip-01'}}], 'tags': 'hadoop', 'labels': {'type': 'hdfs', 'name': 'master'}, 'boot_disk': [{'disk': {'name': 'boot-disk-01', 'size': 100, 'image': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts', 'auto_delete': True, 'boot': True}}]}, {'disk': {'name': 'log-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}]) 
+skipping: [localhost]
+
+TASK [tansudasli.gcp_instances : create a static-IP address] *******************
+skipping: [localhost] => (item=[{'name': 'standalone-node', 'zone': 'europe-west4-a', 'machine_type': 'f1-micro', 'tags': 'hadoop', 'labels': {'type': 'hdfs', 'name': 'master'}, 'boot_disk': [{'disk': {'name': 'boot-disk-01', 'size': 100, 'image': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts', 'auto_delete': True, 'boot': True}}], 'additional_disks': [{'disk': {'name': 'data-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}, {'disk': {'name': 'log-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}]}, {'nic': {'name': 'ip-01'}}]) 
+skipping: [localhost]
+
+TASK [tansudasli.gcp_instances : create an instance] ***************************
+skipping: [localhost] => (item={'name': 'standalone-node', 'zone': 'europe-west4-a', 'machine_type': 'f1-micro', 'ips': [{'nic': {'name': 'ip-01'}}], 'tags': 'hadoop', 'labels': {'type': 'hdfs', 'name': 'master'}, 'boot_disk': [{'disk': {'name': 'boot-disk-01', 'size': 100, 'image': 'projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts', 'auto_delete': True, 'boot': True}}], 'additional_disks': [{'disk': {'name': 'data-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}, {'disk': {'name': 'log-disk-01', 'size': 300, 'auto_delete': True, 'boot': False}}]}) 
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0   
+
