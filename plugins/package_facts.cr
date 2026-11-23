@@ -3,7 +3,6 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/python_apt_probe"
-require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # PackageFacts Plugin - populate the ansible_facts.packages dict with the
@@ -165,17 +164,22 @@ module Krikri
         next if seen.includes?(canonical)
         seen << canonical
 
-        # Real's rpm gatherer treats the manager as usable only when the
-        # target's python can `import rpm` (package_facts.py's
-        # missing_required_lib gate, issue #597, ovirt.engine-setup);
-        # when it can't, the manager is skipped like any other unusable
-        # one - `manager: dnf` fails with its own ['dnf'] list there -
-        # while real's "Requested package manager ... was not usable"
-        # warn text names only the manager the user literally wrote
-        # (live-verified: `auto` and `dnf` on an apt-capable host print
-        # no rpm warning).
-        if canonical == "rpm" && (gate = Krikri.missing_python_library("rpm", "rpm"))
-          warnings << "Requested package manager rpm was not usable by this module: #{gate[:msg]}" if requested.includes?("rpm")
+        # ansible-core 2.21.6's RPM manager is a CLIMgr: usable whenever
+        # the `rpm` binary is on the target's PATH (get_bin_path), with
+        # no python3-rpm requirement - that binding was the 2.9-era
+        # LibMgr. A Rocky 9 target has the CLI but not python3-rpm for
+        # the interpreter ansible-core discovers there, so requiring the
+        # import skipped the only usable manager and failed "Gather the
+        # package facts" where real gathered them (issue #1724,
+        # anssi_bp28_intermediary).
+        if canonical == "rpm" && !rpm_available?
+          # is_available(handle_exceptions=False) lets get_bin_path's
+          # ValueError out, and real only warns when the CANONICAL name
+          # 'rpm' is literally in the requested list - so `auto` and an
+          # alias like `dnf` fail silently while `manager: rpm` warns.
+          if requested.includes?("rpm")
+            warnings << "Requested package manager rpm was not usable by this module: #{missing_executable_message("rpm")}"
+          end
           next
         end
 
@@ -237,8 +241,16 @@ module Krikri
       raw.split(",").map(&.strip).reject(&.empty?)
     end
 
-    private def command_available?(cmd : String) : Bool
-      !Process.find_executable(cmd).nil?
+    # The rpm manager's CLIMgr availability check (get_bin_path), which
+    # searches the same list. Empty PATH entries are skipped, as real
+    # skips them.
+    private def rpm_available? : Bool
+      missing_executable_search_paths.each do |dir|
+        next if dir.empty?
+        candidate = File.join(dir, "rpm")
+        return true if File.file?(candidate) && File.executable?(candidate)
+      end
+      false
     end
 
     # Ansible's found==0 failure, phrased with real code's own

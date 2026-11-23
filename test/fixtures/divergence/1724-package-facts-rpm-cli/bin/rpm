@@ -1,0 +1,15 @@
+#!/bin/sh
+# Stand-in for an EL host's rpm CLI, which is present even when python3-rpm
+# is not. Emits the exact qf format the caller asked for: real ansible-core
+# 2.21.6 asks for %{NAME}|%{VERSION}|%{RELEASE}|%{EPOCH}|%{ARCH}, this
+# engine asks for tab-separated name/epoch/version/release/arch.
+case "$*" in
+  *'%{NAME}|%{VERSION}|%{RELEASE}|%{EPOCH}|%{ARCH}'*)
+    printf 'aide|0.16|1.el9|(none)|x86_64\n'
+    printf 'kernel-core|5.14.0|284.el9|(none)|x86_64\n'
+    ;;
+  *)
+    printf 'aide\t(none)\t0.16\t1.el9\tx86_64\n'
+    printf 'kernel-core\t(none)\t5.14.0\t284.el9\tx86_64\n'
+    ;;
+esac

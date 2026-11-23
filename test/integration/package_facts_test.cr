@@ -39,22 +39,49 @@ describe "package_facts plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  it "attaches real's unusable-rpm warning to the failed result (issue #597)" do
-    # Real (ansible-core 2.19) warns before the failure when the target's
-    # python can't `import rpm` - the message the no_log ovirt.engine-setup
-    # run hides its [ERROR] block around. The warning text is real's
-    # missing_required_lib wording, composed by the same gate helper the
-    # plugin calls; on a dev box whose python DOES import rpm the gate
-    # can't fire, so skip rather than fail on the environment.
-    gate = Krikri.missing_python_library("rpm", "rpm")
-    skip "python on this host can import rpm" if gate.nil?
+  it "attaches real's unusable-rpm warning when the rpm CLI is missing (issue #597)" do
+    # ansible-core 2.21.6's rpm manager is a CLIMgr: with no `rpm` binary
+    # on PATH, is_available(handle_exceptions=False) raises get_bin_path's
+    # ValueError and the module warns with that exact text before the
+    # found==0 failure. The warning names the whole search list, so only
+    # its fixed prefix is asserted here; the 2.21.6 recording of
+    # `manager: rpm` on an rpm-less host is what it was verified against.
+    skip "rpm binary on this host's PATH" unless Process.find_executable("rpm").nil?
 
     result = PluginSpecHelper.run("package_facts", {"manager" => "rpm"})
 
     result["failed"].as_bool.must_equal(true)
-    result["warnings"].as_a.map(&.as_s).must_equal(
-      ["Requested package manager rpm was not usable by this module: #{gate[:msg]}"]
-    )
+    warnings = result["warnings"].as_a.map(&.as_s)
+    warnings.size.must_equal(1)
+    warnings.first.starts_with?(
+      "Requested package manager rpm was not usable by this module: " \
+      "Failed to find required executable \"rpm\" in paths: ").must_equal(true)
+    (ENV["PATH"]? || "").split(':').each do |dir|
+      warnings.first.must_include(dir) unless dir.empty?
+    end
+  end
+
+  it "gathers through the rpm CLI even when python cannot import rpm (issue #1724)" do
+    # The Rocky 9 trigger: rpm installed, python3-rpm absent for the
+    # interpreter ansible-core discovers. Real 2.21.6 gathers through the
+    # CLI (ok); this plugin used to gate rpm on `import rpm` and fail the
+    # role's first "Gather the package facts". The stub stands in for the
+    # binary so the CLI path runs on any spec host.
+    dir = PluginSpecHelper.tmp_path("rpm-cli")
+    Dir.mkdir_p(dir)
+    rpm = File.join(dir, "rpm")
+    File.write(rpm, "#!/bin/sh\nprintf 'aide\\t(none)\\t0.16\\t1.el9\\tx86_64\\n'\n")
+    File.chmod(rpm, 0o755)
+
+    result = PluginSpecHelper.run("package_facts", {"manager" => "rpm"},
+      env: {"PATH" => "#{dir}:#{ENV["PATH"]? || "/usr/bin:/bin"}"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    entry = result["ansible_facts"]["packages"]["aide"].as_a.first.as_h
+    entry["version"].as_s.must_equal("0.16")
+    entry["release"].as_s.must_equal("1.el9")
+    entry["epoch"].as_s.must_equal("None")
+    entry["source"].as_s.must_equal("rpm")
   end
 
   it "accepts manager: apt (Ansible's own distinct, python-apt-backed value), not just auto/dpkg" do
