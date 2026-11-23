@@ -102,10 +102,13 @@ module Krikri
     # CallbackBase.host_label reads the task keyword for handlers too -
     # live-verified, issue #1245); HandlerRunner has no variable context
     # of its own to resolve it against.
-    # *halted_hosts* - hosts a prior task already failed on (unrescued,
-    # no ignore_errors:) for this run. Ansible never runs a
-    # halted host's own notified handlers at the end-of-play flush -
-    # once a host is out, it's out entirely, handlers included.
+    # *halted_hosts* - hosts to skip this flush for: a prior task failed
+    # on (unrescued, no ignore_errors:) or the connection was lost. Once
+    # a host is out, it's out entirely, handlers included - and
+    # --force-handlers only rescues the FAILED half (it lifts the halt,
+    # never the unreachability: without the unreachable hosts in this set
+    # an unreachable host's handler dialled the dead endpoint again and
+    # booked a second unreachable in the recap, issue #1704).
     # Previously unfiltered: @hosts.each below ran unconditionally, so
     # a host whose LAST regular task failed (round 83's
     # robertdebock.keepalived: "Start keepalived" times out and halts

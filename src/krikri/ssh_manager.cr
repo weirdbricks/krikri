@@ -631,8 +631,21 @@ module Krikri
           spawned = true
 
           run_with_timeout(process, timeout) do |proc|
-            proc.input.print(script)
-            proc.input.close
+            # A dead endpoint's ssh can exit before reading its script
+            # (ansible_ssh_executable stubs that fail the dial, or a
+            # transport dying on connect), which closes the pipe under
+            # this write and raises EPIPE. That is not the command's
+            # outcome: ssh's own stderr and exit status are, and they are
+            # read below as usual. Losing that race reported "SSH
+            # execution failed: write ... Broken pipe" instead of ssh's
+            # own error, intermittently depending on scheduling (issue
+            # #1705; the same race py_module's args write hit in #1188).
+            begin
+              proc.input.print(script)
+            rescue IO::Error
+            ensure
+              proc.input.close rescue nil
+            end
 
             status = proc.wait
             {
