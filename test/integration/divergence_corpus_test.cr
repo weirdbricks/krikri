@@ -124,6 +124,7 @@ private DIVERGENCE_CASES = [
   {issue: 1724, slug: "package-facts-rpm-cli"},
   {issue: 1731, slug: "lotusnoir-apps-snoopy-vars-lookup-fact-deprecation"},
   {issue: 1730, slug: "gzm55-local-ssh-known-hosts-config-lookup-boolean"},
+  {issue: 1744, slug: "tansudasli-gcp-instances-check"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -661,6 +662,11 @@ describe "divergence corpus" do
 
   it "replays 1730-gzm55-local-ssh-known-hosts-config-lookup-boolean" do
     expected, actual, report = divergence_transcripts(1730, "gzm55-local-ssh-known-hosts-config-lookup-boolean")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1744-tansudasli-gcp-instances-check" do
+    expected, actual, report = divergence_transcripts(1744, "tansudasli-gcp-instances-check")
     assert_equal(expected, actual, report)
   end
 end

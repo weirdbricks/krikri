@@ -4859,6 +4859,27 @@ module Krikri
       "community.general.consul",
     }
 
+    # Whole families whose unported modules real never runs under --check.
+    # google.cloud generates every module from GcpModule, which passes no
+    # supports_check_mode, and only the read-only `_info` readers opt in with
+    # `GcpModule(..., supports_check_mode=True)` - so a mutating `gcp_*`
+    # module is skipped by real before its body does anything, exactly like
+    # the explicit names above. Keyed on the name the task wrote (bare short
+    # form or the FQCN): listing single modules leaves the next GCP role to
+    # diverge the same way (issue #1744: tansudasli.gcp_instances'
+    # gcp_compute_disk/gcp_compute_address/gcp_compute_instance tasks on
+    # rocky, where real's --check run skipped them all and exited 0 while
+    # krikri reported all three modules and exited 4).
+    private def unavailable_module_without_check_mode?(name : String) : Bool
+      return true if UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE.includes?(name)
+      short = name.starts_with?("google.cloud.") ? name.lchop("google.cloud.") : name
+      return false unless short.starts_with?("gcp_")
+      # `_info` readers run a real --check query against GCP (the deprecated
+      # `_facts` spelling routes to them), so their exit-4 accounting stays the
+      # triage signal it is for every other module.
+      !short.ends_with?("_info") && !short.ends_with?("_facts")
+    end
+
     # The same accounting as reachable_unavailable_modules, but keeping the
     # TASK name beside the module. The end-of-run report names both, in the
     # wording playbook_parser.cr's validate() already uses for its
@@ -4874,10 +4895,10 @@ module Krikri
 
     # Records an unavailable module for the end-of-run exit-4 accounting,
     # except where real answers the task with a plain check-mode skip and
-    # nothing else (see UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE).
+    # nothing else (see unavailable_module_without_check_mode?).
     private def register_unavailable_module(task : Task, vars_context : Hash(String, JSON::Any)) : Nil
       name = task.unavailable_module || return
-      return if resolve_task_check_mode(task, vars_context) && UNAVAILABLE_MODULES_WITHOUT_CHECK_MODE.includes?(name)
+      return if resolve_task_check_mode(task, vars_context) && unavailable_module_without_check_mode?(name)
       reachable_unavailable_modules << name
       reachable_unavailable_module_tasks << {task.name, name}
     end

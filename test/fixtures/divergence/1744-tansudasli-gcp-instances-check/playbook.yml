@@ -1,0 +1,10 @@
+---
+# The play krikri-role-tester runs for the role; only the inventory and the
+# local connection differ (the round's testhost was reached over ssh and ran
+# the role as root, which a localhost capture cannot sudo - the gcp tasks
+# themselves need no root).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - tansudasli.gcp_instances

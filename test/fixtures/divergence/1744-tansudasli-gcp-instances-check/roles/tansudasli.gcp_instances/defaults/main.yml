@@ -1,0 +1,43 @@
+---
+# defaults file for role-gcp-instances
+
+
+# GCP project
+general:
+    project: sandbox-236618       #gcp project ID 
+    region: europe-west4          #gcp region
+    auth_kind: serviceaccount     
+    service_account_file: ~/.ssh/ansible.json
+scopes:
+    - https://www.googleapis.com/auth/compute
+
+# design your infrastructure architecture
+nodes:
+  - name: standalone-node    #node-name such as standalone-node/name-node/secondary-name-node/data-node1/data-node2 ..
+    zone: europe-west4-a     #choose close regions, distribute to other nodes
+    machine_type: f1-micro   #increase when needed
+    ips:
+        - nic: 
+            name: "ip-01"
+    tags: hadoop             #network tags used by FW rules! Use the tool name like hadoop, elasticsearch ...
+    labels:                  #filtering! Use the tool name as type + master/worker as name
+        type: hdfs
+        name: master
+    boot_disk:
+        - disk:
+            name: "boot-disk-01"
+            size: 100
+            image: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2004-lts"
+            auto_delete: true
+            boot: true
+    additional_disks:
+        - disk: 
+            name: "data-disk-01"
+            size: 300
+            auto_delete: true     #false is better for production usecases
+            boot: false
+        - disk: 
+            name: "log-disk-01"
+            size: 300
+            auto_delete: true     #false is better for production usecases
+            boot: false

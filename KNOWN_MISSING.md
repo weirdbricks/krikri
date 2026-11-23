@@ -547,7 +547,9 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
     is reported with a `uses unimplemented plugin` line and the run exits 4 at the end (except under
     `--check` for the unported modules real itself skips there - the ones whose Ansible module
     declares `supports_check_mode=False`: real does no work either, so krikri reports nothing and
-    keeps real's exit 0, issue #1647). So a playbook using a collection nobody has installed, or a
+    keeps real's exit 0, issues #1647 and #1744; that covers every mutating google.cloud `gcp_*`
+    module, whose generator never opts in, while the collection's `_info` readers do and keep the
+    report). So a playbook using a collection nobody has installed, or a
     name real cannot resolve either, runs
     (and usually skips) under krikri where real refuses it at load. This also means the
     `ansible.mariadb.mariadb_db`-style aliases are unconditional (real resolves those only where
