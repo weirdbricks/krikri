@@ -1,0 +1,11 @@
+# Issue #1707's raising half: a `when:` that raises fails the task BEFORE the
+# connection is opened, so ansible reports the condition failure (failed=1)
+# and never the host's unreachability. The verdict is reached by the
+# executor's own condition path, so the failure must print exactly once.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - ping:
+      when: nonexistent_var
+    - debug:
+        msg: hi
