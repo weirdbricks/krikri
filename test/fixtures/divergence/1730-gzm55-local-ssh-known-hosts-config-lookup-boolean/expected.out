@@ -1,0 +1,18 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Check openssh support for accept-new option] *****************************
+skipping: [localhost]
+
+TASK [Use accept-new option for openssh >= 7.6] ********************************
+skipping: [localhost]
+
+TASK [Search ssh fingerprints] *************************************************
+skipping: [localhost]
+
+TASK [Collect hosts for ssh-keyscan] *******************************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0   
+

@@ -1,0 +1,89 @@
+---
+# gzm55.local_ssh_known_hosts' known-hosts block, verbatim from the role's
+# tasks/main.yml:13-89 (round29923826's failing task), with the two
+# connection facts the role's `Save context` action plugin supplies inlined:
+# in-process the play connects with ansible_connection=local, while the round
+# ran against an ssh host, and the block's gate is about a remote ssh target.
+- hosts: localhost
+  gather_facts: false
+  vars:
+    current_connection: ssh
+    inv_conn_is_ssh: "{{ current_connection in ['ssh', 'paramiko'] }}"
+    inv_conn_is_native_ssh: "{{ current_connection == 'ssh' }}"
+  tasks:
+    - name: All tasks run locally for necessary hosts
+      delegate_to: localhost
+
+      vars:
+        ansible_become: False
+        inv_host: "127.0.0.1"
+        inv_port: "22"
+        inv_port_is_22: "{{ inv_port | int == 22 }}"
+        inv_conn_is_ssh: "{{ current_connection in ['ssh', 'paramiko'] }}"
+        inv_conn_is_native_ssh: "{{ current_connection == 'ssh' }}"
+        inv_conn_native_ssh_host_key_cheking: >-
+          {{ inv_conn_is_native_ssh and ansible_host_key_checking
+             | d(ansible_ssh_host_key_checking)
+             | d(lookup('ansible.builtin.config', 'HOST_KEY_CHECKING')) }}
+        inv_conn_paramiko_ssh_host_key_cheking: >-
+          {{ not inv_conn_is_native_ssh and ansible_host_key_checking
+                 | d(ansible_ssh_host_key_checking)
+                 | d(ansible_paramiko_host_key_checking)
+                 | d(lookup('ansible.builtin.config', 'HOST_KEY_CHECKING')) }}
+        inv_ssh_executrable: >-
+          {{ ansible_ssh_executable
+             | d(lookup('ansible.builtin.config', 'ssh_executable', plugin_type="connection", plugin_name="ssh", on_missing='skip'))
+             | d('ssh') }}
+
+      when:
+      - inv_conn_is_ssh
+      - inv_conn_native_ssh_host_key_cheking or inv_conn_paramiko_ssh_host_key_cheking
+      - inv_conn_is_native_ssh or not lookup('ansible.builtin.config', 'PARAMIKO_HOST_KEY_AUTO_ADD')
+
+      block:
+      - name: Check openssh support for accept-new option
+        when: inv_conn_is_native_ssh
+        ansible.builtin.set_fact:
+          ssh_support_accept_new_hostkey: >-
+            {{ lookup('pipe', (inv_ssh_executrable | quote)
+                              + ' -oStrictHostKeyChecking=accept-new -V 2>&1 || echo FAIL')
+               is not search('FAIL') }}
+
+      - name: Use accept-new option for openssh >= 7.6
+        vars:
+          original_ansible_ssh_common_args: "{{ ansible_ssh_common_args | d(lookup('env', 'ANSIBLE_SSH_COMMON_ARGS')) | d('') }}"
+        when:
+        - ssh_support_accept_new_hostkey | d
+        ansible.builtin.set_fact:
+          ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new {{ original_ansible_ssh_common_args }}"
+
+      - name: Search ssh fingerprints
+        register: local_keygen
+        when:
+        - not ssh_support_accept_new_hostkey | d
+        - not local_keygen | d or not local_keygen.rc # if found, break the loop
+        loop: "{{ ['~/.ssh/known_hosts' | expanduser, '/etc/ssh/ssh_known_hosts'] | select('exists') | list }}"
+        ansible.builtin.raw: >-
+          ssh-keygen
+          -F {{ [ inv_port_is_22 | ternary('', '['),
+                  inv_host,
+                  inv_port_is_22 | ternary('', ']:'),
+                  inv_port_is_22 | ternary('', inv_port)
+                ] | join('') | quote }} \
+          -f {{ item | quote }}
+        failed_when: local_keygen.stderr
+        changed_when: False
+
+      - name: Collect hosts for ssh-keyscan
+        when:
+        - not ssh_support_accept_new_hostkey | d
+        - not local_keygen.results
+              | d([])
+              | reject('skipped')
+              | map(attribute='rc')
+              | select('defined')
+              | difference([1])
+        ansible.builtin.set_fact:
+          ssh_keyscan_args:
+            h: "{{ inv_host }}"
+            p: "{{ inv_port }}"

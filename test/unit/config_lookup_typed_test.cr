@@ -29,6 +29,22 @@ end
 # 'remote_tmp' only exists as a connection/shell PLUGIN option (default
 # '~/.ansible/tmp'), not a global one.
 describe "lookup('config', ...) typed values" do
+  serial! # pins process-wide ENV for the boolean-typed options
+
+  private def with_env(pairs : Hash(String, String?), &)
+    previous = pairs.keys.to_h { |key| {key, ENV[key]?} }
+    begin
+      pairs.each do |key, value|
+        value ? (ENV[key] = value) : ENV.delete(key)
+      end
+      yield
+    ensure
+      previous.each do |key, value|
+        value ? (ENV[key] = value) : ENV.delete(key)
+      end
+    end
+  end
+
   def expected_roles_path_entries : Array(String)
     home = ENV["HOME"]?
     first = home && !home.empty? ? File.join(home, ".ansible/roles") : "~/.ansible/roles"
@@ -81,6 +97,34 @@ describe "lookup('config', ...) typed values" do
     evaluator.evaluate("lookup('config', 'DEFAULT_FORKS')").must_equal("5")
     evaluator.evaluate("lookup('config', 'COLOR_OK', 'COLOR_CHANGED', wantlist=True)")
       .must_equal("[\"green\",\"yellow\"]")
+  end
+
+  # Issue #1730 (gzm55.local_ssh_known_hosts, round29923826): the config
+  # lookup handed back HOST_KEY_CHECKING as the STRING "False". A `when:`
+  # clause then saw a truthy str (`inv_conn_native_ssh_host_key_cheking or
+  # inv_conn_paramiko_ssh_host_key_cheking`, both built from that lookup)
+  # and krikri failed the strict conditional check where real ansible
+  # skipped the block with the option's real bool.
+  it "casts a boolean-typed config option to a real Bool" do
+    with_env({"ANSIBLE_HOST_KEY_CHECKING" => "False"}) do
+      Krikri::LookupPlugins.ansible_config_typed_value("HOST_KEY_CHECKING").as_bool?.must_equal(false)
+      renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
+      renderer.evaluate_value!("lookup('config', 'HOST_KEY_CHECKING')").try(&.raw).as?(Bool).must_equal(false)
+    end
+  end
+
+  it "defaults an unset boolean-typed config option to ansible's own True" do
+    with_env({"ANSIBLE_HOST_KEY_CHECKING" => nil}) do
+      Krikri::LookupPlugins.ansible_config_typed_value("HOST_KEY_CHECKING").as_bool?.must_equal(true)
+      renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
+      renderer.evaluate_value!("lookup('config', 'HOST_KEY_CHECKING')").try(&.raw).as?(Bool).must_equal(true)
+    end
+  end
+
+  it "casts an integer-typed config option to a real number" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new({} of String => JSON::Any)
+    renderer.evaluate_value!("lookup('config', 'DEFAULT_FORKS')").try(&.as_i64?).must_equal(5_i64)
+    renderer.evaluate_value!("lookup('config', 'DEFAULT_TIMEOUT')").try(&.as_i64?).must_equal(10_i64)
   end
 
   it "prints the buluma.multi msgs byte-identically end to end" do
