@@ -6507,7 +6507,13 @@ module Krikri
           header: JINJA_CONST_TEMPLATE_WARNING_HEADER, footer: JINJA_CONST_TEMPLATE_WARNING_FOOTER)
         return if text.empty?
         return unless @@conditional_deprecation_seen.add?(text)
-        STDERR.puts text
+        # Through the stderr funnel like every other warning block: a
+        # batch build evaluates its members' when: up front, and so does
+        # run_task_batch's pre-upload probe (issue #1707), so a plain
+        # STDERR.puts here would place the block ahead of the task's own
+        # banner - and spend the dedupe key the task's real evaluation
+        # needs.
+        text.chomp.split('\n').each { |line| ResultDisplay.emit_warning_stderr(line) }
       end
       return unless whole_delimiters_span
       inner = conditional[2...-2].strip
@@ -6518,15 +6524,15 @@ module Krikri
       return unless value
       return if value.as_s?
 
-      # DEPRECATION_WARNINGS off silences this block; the constant-template
-      # [WARNING] above is a warning, not a deprecation, and stays.
-      return unless DeprecationHint.enabled?
       text = conditional_deprecation_text(task, key, raw, that_index,
         footer: DELIMITERS_DEPRECATION_FOOTER)
       return if text.empty?
-      return unless @@conditional_deprecation_seen.add?(text)
-      DeprecationHint.print_hint_once
-      STDERR.puts text
+      # Same funnel as the [WARNING] above (the ENV kill-switch and the
+      # one-time hint are the funnel's own): an early when: evaluation -
+      # the batch build's, run_task_batch's pre-upload probe - holds the
+      # block instead of printing it ahead of the task's banner.
+      lines = text.chomp.split('\n')
+      ResultDisplay.emit_or_defer_deprecation(@@conditional_deprecation_seen, text, lines)
     end
 
     # Ansible warns for every `that:` item it EVALUATED - all of them on

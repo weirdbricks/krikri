@@ -1,0 +1,11 @@
+# Issue #1707's repro verbatim: a `when:`-false remote task, then the task
+# that really dials. The eager pre-upload pass books the host before either
+# runs, and the skipped ping: must stay a skip - ansible evaluates the
+# condition before it ever connects.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - ping:
+      when: false
+    - debug:
+        msg: hi

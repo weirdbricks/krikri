@@ -1,0 +1,29 @@
+
+PLAY [target] ******************************************************************
+
+TASK [ping] ********************************************************************
+[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: 'nonexistent_var' is undefined
+
+Task failed.
+Origin: <WORK>/playbook.yml:8:7
+
+6   gather_facts: false
+7   tasks:
+8     - ping:
+        ^ column 7
+
+<<< caused by >>>
+
+A 'when' expression failed: Error while evaluating conditional: 'nonexistent_var' is undefined
+Origin: <WORK>/playbook.yml:9:13
+
+7   tasks:
+8     - ping:
+9       when: nonexistent_var
+              ^ column 13
+
+fatal: [target]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Error while evaluating conditional: 'nonexistent_var' is undefined"}
+
+PLAY RECAP *********************************************************************
+target                     : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

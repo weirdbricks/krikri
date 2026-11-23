@@ -3122,12 +3122,20 @@ module Krikri
             # ("All items completed", even with skipped entries in the
             # mix), and the registered per-item entries inside, with
             # "exception": "(traceback unavailable)" per converted item
-            # and no `skipped` key.
+            # and no `skipped` key - a register keeps that key on a
+            # when:-skipped item, this dump drops it (live-verified vs
+            # 2.21.6: `loop: [1, 2]` with `when: item == 2` on a dead
+            # endpoint, issue #1707's looped shape).
             fatal_label = (delegate = task.delegate_to) && !delegate.empty? ? "#{host.name} -> #{delegate}" : host.name
+            fatal_results = results.map do |entry|
+              hash = entry.as_h?
+              next entry unless hash && hash.has_key?("skipped")
+              JSON::Any.new(hash.reject { |key, _| key == "skipped" })
+            end
             fatal_json = JSON::Any.new({
               "changed"     => JSON::Any.new(false),
               "msg"         => JSON::Any.new("All items completed"),
-              "results"     => JSON::Any.new(results),
+              "results"     => JSON::Any.new(fatal_results),
               "unreachable" => JSON::Any.new(true),
             })
             puts "fatal: [#{fatal_label}]: UNREACHABLE! => #{ResultDisplay.python_json_dump(fatal_json)}".colorize(:red)

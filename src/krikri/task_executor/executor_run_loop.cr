@@ -319,6 +319,57 @@ module Krikri
       CONTROLLER_SIDE_MODULES.includes?(task.module_name.split('.').last)
     end
 
+    # Whether run_task_batch must hand *task* to execute_task instead of
+    # booking the eager pre-upload failure against *host* - true whenever
+    # the task does not CERTAINLY connect. ansible evaluates a task's
+    # keyword gates before it connects, so it runs (or fails) a task the
+    # eager pass already killed; booking that reported the host's death
+    # under a task's own banner and lost the recap's skipped=1 (issue
+    # #1707; a per-host, per-TASK verdict, which the module-level
+    # exemptions of #1687/#1703/#1706 cannot express).
+    #
+    # Two gate classes are decided by execute_task and cannot be settled
+    # here, so they defer unconditionally:
+    #   - a loop source: a lookup source must not run twice, and a
+    #     `when:` over a loop is evaluated per ITEM with that item bound.
+    #     Handing the task over costs at most the one real attempt ansible
+    #     itself makes, after which the failed connection books the host
+    #     for the tasks that follow as before.
+    #   - `run_once:`: real elects one host in the strategy, so the other
+    #     hosts print NOTHING for the task - execute_task's own election
+    #     (shared with its copy_run_once_register handling) decides, and a
+    #     non-elected host never dials.
+    #
+    # A plain `when:` verdict comes from the executor's own condition path
+    # (build_vars_context + evaluate_when_items), never a second
+    # evaluator: a `when:` that RAISES is a task ansible fails before
+    # connecting, so the raise is swallowed here and the booking dropped,
+    # handing the host to execute_task - which reports the failure ONCE
+    # (a probe that reported it too would print it twice). The rescue set
+    # is execute_task's own outward surface for the same two calls (see
+    # its build_vars_context rescue); anything else would crash the run
+    # where execute_task degrades to one failed task, so keep them in
+    # step.
+    #
+    # A deferred host re-evaluates its `when:` inside execute_task, so
+    # the probe's own stderr - deprecation blocks included - is captured
+    # by the caller and dropped for it (see run_task_batch): emitting it
+    # here would print ahead of the task's banner and spend the dedupe
+    # key the real evaluation needs, which also drops the block from the
+    # task's registered result (live-verified vs 2.21.6).
+    private def task_may_not_dial?(task : Task, host : Host) : Bool
+      return true if task_has_loop_source?(task)
+      return true if task.run_once?
+      return false unless task.when_condition
+
+      begin
+        vars_context = build_vars_context(task, host)
+        !evaluate_when_items(task, vars_context, host)
+      rescue WhenEvaluationError | VariableSubstitutor::FilterEngine::UnknownFilterError
+        true
+      end
+    end
+
     # Emits Ansible's UNREACHABLE! line for *host* and books it as
     # either ignored (ignore_unreachable:) or unreachable, halting the
     # host in the latter case.
@@ -371,10 +422,56 @@ module Krikri
         # delegate away (issue #1703). The children run this same short
         # circuit; the host stays booked either way.
         descends = task.block? || task.include_tasks? || task.include_role?
+        # A task ansible may skip before it ever connects - `when:` false,
+        # or a loop with no item - must not be booked: the executor
+        # evaluates the condition/loop source BEFORE the connection is
+        # opened, so booking the pre-upload failure here reported
+        # UNREACHABLE! under a task ansible prints `skipping:` for and
+        # lost the recap's skipped=1 (issue #1707, live-verified vs
+        # 2.21.6). Collected per host and released below, exactly like a
+        # controller-side task's booking.
+        deferred_hosts = Set(String).new
         hosts.each do |host|
           next unless @unreachable_hosts.includes?(host.name)
           next if @halted_hosts.includes?(host.name)
           next if delegated_away || descends || controller_side
+          # The probe evaluates this host's `when:` ahead of the task, so
+          # everything that evaluation emits is held: a deferred host's
+          # execute_task re-evaluates the clause, and printing it here
+          # would surface it ahead of the task's banner and spend the
+          # dedupe key the real evaluation needs - which also drops the
+          # block from the task's registered result (live-verified vs
+          # 2.21.6). The fact/vars-dict blocks need the deferral scope
+          # too: their emitter claims the clause's operation record
+          # BEFORE the stderr funnel, so a capture alone would silence the
+          # real evaluation instead of holding it. A host booked here
+          # never reaches execute_task, so its held output is emitted
+          # instead, as it was before the probe existed.
+          may_not_dial = false
+          held = [] of Proc(Nil)
+          probe_capture = ResultDisplay.capture_stderr do
+            ResultDisplay.begin_deferred_fact_deprecations
+            begin
+              may_not_dial = task_may_not_dial?(task, host)
+            ensure
+              held = ResultDisplay.take_deferred_fact_deprecations
+            end
+          end
+          if may_not_dial
+            deferred_hosts << host.name
+            # The literal warnings claim their run-wide dedupe where they
+            # are emitted, so the re-evaluation cannot print them again -
+            # replay them here (ahead of the banner: warning ORDER is
+            # outside the parity bar) rather than lose them. The held
+            # deprecation blocks are dropped instead: their claims happen
+            # at replay, and execute_task's own evaluation prints them
+            # under the task's banner and files them on the result's
+            # `deprecations`.
+            probe_capture.emit_warnings_only
+            next
+          end
+          probe_capture.emit
+          held.each(&.call)
 
           report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, print: false)
           pending_unreachable << host
@@ -402,6 +499,14 @@ module Krikri
             next if @halted_hosts.includes?(host.name)
             @unreachable_hosts.delete(host.name)
           end
+        end
+        # A probe-deferred host releases it for the same reason: the
+        # booking exists only because krikri dialed ahead of ansible, and
+        # ansible keeps the host in the play until some task actually
+        # connects (issue #1707). A host whose task then really dials
+        # books itself again the moment that attempt fails.
+        deferred_hosts.each do |name|
+          @unreachable_hosts.delete(name) unless @halted_hosts.includes?(name)
         end
 
         # any_errors_fatal:/max_fail_percentage: are evaluated BETWEEN

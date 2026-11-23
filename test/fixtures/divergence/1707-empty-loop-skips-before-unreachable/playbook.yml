@@ -1,0 +1,11 @@
+# Issue #1707's "empty loop" half: a remote task whose loop source yields no
+# item never runs, so ansible prints `skipping:` (skipped=1) instead of ever
+# connecting. The eager pre-upload pass booked the host before the loop was
+# even resolved, so krikri reported UNREACHABLE! here instead.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - ping:
+      loop: []
+    - debug:
+        msg: hi
