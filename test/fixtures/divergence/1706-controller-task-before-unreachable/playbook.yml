@@ -1,0 +1,10 @@
+# Issue #1706's repro verbatim: a controller-side task first, then the task
+# that really dials. The eager pre-upload pass books the host before either
+# runs, and the debug: must still execute - ansible only loses the host at
+# the ping:.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: hi
+    - ping:

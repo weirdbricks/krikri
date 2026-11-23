@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "Connection to 192.0.2.1 closed by remote host." >&2
+exit 255

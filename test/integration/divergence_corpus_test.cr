@@ -116,6 +116,9 @@ private DIVERGENCE_CASES = [
   {issue: 1703, slug: "nested-block-inner-unreachable"},
   {issue: 1703, slug: "rescue-unreachable-with-block-ignore-errors"},
   {issue: 1703, slug: "multi-host-rescue-only-failed-host"},
+  {issue: 1706, slug: "controller-task-before-unreachable"},
+  {issue: 1706, slug: "controller-task-releases-booking"},
+  {issue: 1706, slug: "set-fact-assert-include-vars-run"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -613,6 +616,21 @@ describe "divergence corpus" do
 
   it "replays 1703-multi-host-rescue-only-failed-host" do
     expected, actual, report = divergence_transcripts(1703, "multi-host-rescue-only-failed-host")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1706-controller-task-before-unreachable" do
+    expected, actual, report = divergence_transcripts(1706, "controller-task-before-unreachable")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1706-controller-task-releases-booking" do
+    expected, actual, report = divergence_transcripts(1706, "controller-task-releases-booking")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1706-set-fact-assert-include-vars-run" do
+    expected, actual, report = divergence_transcripts(1706, "set-fact-assert-include-vars-run")
     assert_equal(expected, actual, report)
   end
 end
