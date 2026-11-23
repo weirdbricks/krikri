@@ -2993,7 +2993,7 @@ module Krikri
         return
       end
       if op = current_fact_deprecation_op
-        return unless @@tripped_fact_deprecation_ops.add?(op)
+        return unless ResultDisplay.claim_dedupe(@@tripped_fact_deprecation_ops, op)
       end
       ResultDisplay.emit_top_level_fact_deprecation(origin)
     end
@@ -3312,7 +3312,7 @@ module Krikri
         return
       end
       if op = current_fact_deprecation_op
-        return unless @@tripped_vars_dict_deprecation_ops.add?(op)
+        return unless ResultDisplay.claim_dedupe(@@tripped_vars_dict_deprecation_ops, op)
       end
       ResultDisplay.emit_vars_dict_deprecation(origin)
     end

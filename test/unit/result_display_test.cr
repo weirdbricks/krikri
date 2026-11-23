@@ -95,6 +95,47 @@ describe Krikri::ResultDisplay do
     end
   end
 
+  # Issue #1746: the display's dedupe keys are claimed through
+  # ResultDisplay.claim_dedupe, under the same mutex the print it licenses
+  # takes - a bare `Set#add?` ahead of the print would let two worker
+  # fibers of a --forks run both win one key and each print the block where
+  # ansible prints once.
+  describe ".claim_dedupe" do
+    it "claims a key once and loses every later claim of it" do
+      dedupe = Set(String).new
+      Krikri::ResultDisplay.claim_dedupe(dedupe, "claim-once-test").must_equal(true)
+      Krikri::ResultDisplay.claim_dedupe(dedupe, "claim-once-test").must_equal(false)
+    end
+
+    it "holds the claim mutex across the whole block, not just the add" do
+      dedupe = Set(String).new
+      order = [] of String
+      holding = Channel(Nil).new
+      release = Channel(Nil).new
+      second_done = Channel(Nil).new
+      spawn do
+        Krikri::ResultDisplay.claim_dedupe(dedupe, "claim-held-a") do
+          order << "a-start"
+          holding.send(nil)
+          release.receive
+          order << "a-end"
+        end
+      end
+      holding.receive
+      spawn do
+        Krikri::ResultDisplay.claim_dedupe(dedupe, "claim-held-b") do
+          order << "b-start"
+        end
+        second_done.send(nil)
+      end
+      Fiber.yield
+      order << "while-held"
+      release.send(nil)
+      second_done.receive
+      order.must_equal(["a-start", "while-held", "a-end", "b-start"])
+    end
+  end
+
   describe ".display_diff" do
     # lineinfile's no-change wire result (state=absent with no match,
     # or an idempotent re-run) carries a diff LIST whose content entry

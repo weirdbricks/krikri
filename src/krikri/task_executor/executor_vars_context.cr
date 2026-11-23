@@ -6506,14 +6506,19 @@ module Krikri
         text = conditional_deprecation_text(task, key, raw, that_index,
           header: JINJA_CONST_TEMPLATE_WARNING_HEADER, footer: JINJA_CONST_TEMPLATE_WARNING_FOOTER)
         return if text.empty?
-        return unless @@conditional_deprecation_seen.add?(text)
-        # Through the stderr funnel like every other warning block: a
-        # batch build evaluates its members' when: up front, and so does
-        # run_task_batch's pre-upload probe (issue #1707), so a plain
-        # STDERR.puts here would place the block ahead of the task's own
-        # banner - and spend the dedupe key the task's real evaluation
-        # needs.
-        text.chomp.split('\n').each { |line| ResultDisplay.emit_warning_stderr(line) }
+        # Through the display's claim funnel, but NOT through
+        # emit_or_defer_deprecation: that one is the deprecation funnel (its
+        # one-time disable hint, its DEPRECATION_WARNINGS gate), which a
+        # plain [WARNING] must not inherit (issue #1746).
+        ResultDisplay.claim_dedupe(@@conditional_deprecation_seen, text) do
+          # Through the stderr funnel like every other warning block: a
+          # batch build evaluates its members' when: up front, and so does
+          # run_task_batch's pre-upload probe (issue #1707), so a plain
+          # STDERR.puts here would place the block ahead of the task's own
+          # banner - and spend the dedupe key the task's real evaluation
+          # needs.
+          text.chomp.split('\n').each { |line| ResultDisplay.emit_warning_stderr(line) }
+        end
       end
       return unless whole_delimiters_span
       inner = conditional[2...-2].strip

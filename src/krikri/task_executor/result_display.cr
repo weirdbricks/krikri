@@ -202,9 +202,10 @@ module Krikri
     # byte-verified against 2.19.11.
     def self.emit_display_warning(text : String) : Nil
       line = "[WARNING]: #{text.strip}"
-      return unless @@warned_texts.add?(line)
-      emit_warning_stderr(line.colorize(:light_magenta).to_s)
-      emit_warning_stderr("") if text.strip.includes?('\n')
+      claim_dedupe(@@warned_texts, line) do
+        emit_warning_stderr(line.colorize(:light_magenta).to_s)
+        emit_warning_stderr("") if text.strip.includes?('\n')
+      end
     end
 
     # One deprecation block a capture held back instead of printing it: the
@@ -291,9 +292,32 @@ module Krikri
     end
 
     # Serializes "claim the dedupe key, then print" across the fibers of a
-    # --forks run: the claim is the Display-level dedupe every emitter
-    # shares, and a replayed block claims late.
-    DEPRECATION_CLAIM_MUTEX = Mutex.new
+    # --forks run for every dedupe this display claims - deprecation
+    # blocks, core deprecations and plain [WARNING] blocks alike - and a
+    # replayed block claims late.
+    DISPLAY_DEDUPE_MUTEX = Mutex.new
+
+    # Claims one run-wide display dedupe key under DISPLAY_DEDUPE_MUTEX, so
+    # no emitter can claim a key outside the critical section its print
+    # takes: a bare `Set#add?` ahead of the print lets two fibers of a
+    # --forks run both win one key and each print the block, where real
+    # prints once (issue #1746). The block form is for a key whose block
+    # prints right here, so claim and print stay one critical section; the
+    # bool form is for a key whose print later claims a second key through
+    # this same mutex, now or at replay - never wrap a path that takes the
+    # mutex itself, Crystal's Mutex is not reentrant. The executor's other
+    # warning sets (module/loop error chains, handler warnings) still claim
+    # with a bare `add?`; route them here too when their races matter.
+    def self.claim_dedupe(dedupe : Set(String), key : String) : Bool
+      DISPLAY_DEDUPE_MUTEX.synchronize { dedupe.add?(key) }
+    end
+
+    def self.claim_dedupe(dedupe : Set(String), key : String, & : -> _) : Nil
+      DISPLAY_DEDUPE_MUTEX.synchronize do
+        next unless dedupe.add?(key)
+        yield
+      end
+    end
 
     # The deprecation counterpart of the funnel above: with a capture active
     # the block is held back (see PendingDeprecation), otherwise it claims
@@ -308,8 +332,7 @@ module Krikri
       # where it is captured: the capture above still carries *entry*, so a
       # task's `register:` keeps the deprecation real also keeps.
       return unless Krikri::DeprecationHint.enabled?
-      DEPRECATION_CLAIM_MUTEX.synchronize do
-        return unless dedupe.add?(key)
+      claim_dedupe(dedupe, key) do
         emit_deprecation_hint
         lines.each { |line| emit_warning_stderr(line) }
       end
@@ -320,8 +343,7 @@ module Krikri
     # still free to print for the read that really happens.
     def self.replay_deprecation(pending : PendingDeprecation) : Nil
       return unless Krikri::DeprecationHint.enabled?
-      DEPRECATION_CLAIM_MUTEX.synchronize do
-        next unless pending.dedupe.add?(pending.key)
+      claim_dedupe(pending.dedupe, pending.key) do
         emit_deprecation_hint
         pending.lines.each { |line| emit_warning_stderr(line) }
       end
@@ -443,14 +465,15 @@ module Krikri
       return unless Krikri::DeprecationHint.enabled?
       line = "[DEPRECATION WARNING]: #{text}"
       key = payload ? "#{line}\n#{origin}\n#{payload}" : "#{line}\n#{origin}"
-      return unless @@deprecation_texts.add?(key)
-      emit_deprecation_hint
-      STDERR.puts line.colorize(:light_magenta)
-      STDERR.puts "Origin: #{origin}".colorize(:light_magenta)
-      STDERR.puts
-      if payload
-        STDERR.puts payload.colorize(:light_magenta)
+      claim_dedupe(@@deprecation_texts, key) do
+        emit_deprecation_hint
+        STDERR.puts line.colorize(:light_magenta)
+        STDERR.puts "Origin: #{origin}".colorize(:light_magenta)
         STDERR.puts
+        if payload
+          STDERR.puts payload.colorize(:light_magenta)
+          STDERR.puts
+        end
       end
     end
 
@@ -913,11 +936,12 @@ module Krikri
         # (the bare mysql_db spelling, issue #973; the ansible.legacy.
         # apt_repository block).
         if origin
-          return unless @@deprecation_texts.add?("#{text}\n#{origin}")
-          emit_deprecation_hint
-          STDERR.puts "[DEPRECATION WARNING]: #{text}".colorize(:light_magenta)
-          STDERR.puts origin.colorize(:light_magenta)
-          STDERR.puts
+          claim_dedupe(@@deprecation_texts, "#{text}\n#{origin}") do
+            emit_deprecation_hint
+            STDERR.puts "[DEPRECATION WARNING]: #{text}".colorize(:light_magenta)
+            STDERR.puts origin.colorize(:light_magenta)
+            STDERR.puts
+          end
         else
           emit_core_deprecation(text)
         end
