@@ -185,6 +185,51 @@ module Krikri
         )
       end
 
+      # A transaction test that fails (the resolved packages' files
+      # conflict with what is already installed) reaches ansible's dnf
+      # module as a libdnf exception, never as CLI text: its embedded
+      # backend script (module_utils/_embed/dnf.py) lets the exception
+      # escape its own error handlers into the blanket `except Exception`,
+      # which reports str(e) verbatim as the msg. That text is
+      # "Transaction test error:" plus one indented "file ... conflicts
+      # with file from package ..." line per conflict - the CLI's own
+      # block with the "Error: " prefix and nothing else (issue #1729,
+      # ekultails.ansible_role_wine's openldap.i686 against the installed
+      # openldap.x86_64 on Rocky 9). The `dnf ... || yum ...` compound
+      # prints the block once per binary, so only the first copy is what
+      # real reports.
+      def transaction_test_failure_msg(output : String) : String?
+        lines = output.lines(chomp: false)
+        start = lines.index { |line| line.strip.starts_with?("Error: Transaction test error:") }
+        return nil unless start
+        # The exception's str() keeps the trailing newline its last conflict
+        # line carries, and ansible forwards it verbatim - keep the line
+        # terminators instead of re-joining trimmed lines.
+        block = [lines[start].sub(/\AError: /, "")]
+        lines[(start + 1)..].each do |line|
+          break if line.lstrip.starts_with?("Error:") || line.strip.empty?
+          block << line
+        end
+        block.join
+      end
+
+      # The registered result for that failure, matching the same embedded
+      # script's blanket handler: results [], rc 1 and NO failures key
+      # (its dict carries `failures: []`, which the module wrapper only
+      # forwards when non-empty), so the shape is the ordinary
+      # changed/msg/rc/results one.
+      def transaction_test_failure_result(output : String, rc : Int32) : PluginResult?
+        msg = transaction_test_failure_msg(output) || return nil
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: msg,
+          results: [] of String,
+          rc: rc,
+          key_order: DNF_METADATA_FAILURE_ORDER
+        )
+      end
+
       # Ansible's dnf module resolves a requested GROUP spec (a leading
       # `@`) against the comps data BEFORE any transaction and, when the
       # group/environment is unknown, raises its own "No group <spec>

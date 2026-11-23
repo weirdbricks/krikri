@@ -1410,6 +1410,14 @@ module Krikri
         if group_msg = group_not_available_msg(result[:stdout] + "\n" + result[:stderr])
           return PluginResult.new(changed: false, failed: true, msg: group_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)
         end
+        # A failed transaction test (the resolved packages' files conflict
+        # with what is already installed) matches none of the parsers above
+        # and used to reach the raw-dump fallback: real reports libdnf's own
+        # error text once, without the CLI's "Error: " prefix (issue #1729).
+        if transaction_failure = transaction_test_failure_result(
+             result[:stdout] + "\n" + result[:stderr], result[:exit_code])
+          return transaction_failure
+        end
         if failures = parse_dnf_install_failures(result[:stdout], result[:stderr], @requested_names)
           # Ansible's module marks the missing specs into `failures`
           # first and then STILL depsolves the survivors (issue #321)
@@ -1855,6 +1863,12 @@ module Krikri
           # shape run_install_batch already reports for this (issue #267).
           if metadata_msg = repo_metadata_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: metadata_msg, results: [] of String, rc: result[:exit_code], key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER)}
+          end
+          # An update transaction can fail its test the same way an install
+          # can (issue #1729): same libdnf exception text as the msg.
+          if transaction_failure = transaction_test_failure_result(
+               result[:stdout] + "\n" + result[:stderr], result[:exit_code])
+            return {changed: false, message: nil, output: result[:stdout], failure: transaction_failure}
           end
           if failure = unknown_error_failure(result)
             return {changed: false, message: nil, output: result[:stdout], failure: failure}
