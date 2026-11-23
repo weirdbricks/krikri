@@ -1217,3 +1217,54 @@ describe "dnf failed-install results carry the resolved transaction (issue 1020)
     end
   end
 end
+
+# Issue #1729 (ekultails.ansible_role_wine, Rocky 9): installing
+# openldap.i686 next to the installed openldap.x86_64 fails dnf's
+# TRANSACTION TEST - a libdnf exception ansible's dnf module reports as
+# its own str(e), "Transaction test error:" plus one indented file
+# conflict line each (results [], rc 1, no failures/stderr key). The CLI
+# prints the same block behind an "Error: " prefix, and `package:`'s
+# `dnf ... || yum ...` compound prints it twice, one copy per binary -
+# neither of which real ansible's msg carries. Taken verbatim from the
+# issue's real-ansible fatal.
+TX_TEST_MSG = "Transaction test error:\n" \
+              "  file /usr/share/doc/openldap/ANNOUNCEMENT from install of openldap-2.6.13-1.el9.i686 conflicts with file from package openldap-2.6.3-1.el9.x86_64\n" \
+              "  file /usr/share/doc/openldap/CHANGES from install of openldap-2.6.13-1.el9.i686 conflicts with file from package openldap-2.6.3-1.el9.x86_64\n"
+TX_TEST_STDERR = "Error: #{TX_TEST_MSG}\n"
+
+describe "dnf/yum transaction test failure - libdnf's own error text (issue 1729)" do
+  serial!
+
+  it "reports the CLI block without its Error: prefix (dnf)" do
+    with_failing_dnf_shim("", TX_TEST_STDERR) do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "openldap.i686", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(TX_TEST_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+
+  it "keeps only the first block of package:'s dnf/yum compound (package)" do
+    with_failing_dnf_shim("", TX_TEST_STDERR + TX_TEST_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "openldap.i686", "state" => "present", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(TX_TEST_MSG)
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["changed", "msg", "rc", "results", "failed"])
+    end
+  end
+end

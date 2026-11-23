@@ -925,6 +925,14 @@ module Krikri
           key_order: PluginHelpers::DnfInstallFailures::DNF_METADATA_FAILURE_ORDER
         )
       end
+      # A failed transaction test names the conflicting files rather than
+      # a missing spec, and ansible reports libdnf's own error text once,
+      # with neither the CLI's "Error: " prefix nor the compound's second
+      # copy (issue #1729).
+      if transaction_failure = transaction_test_failure_result(
+           install_result[:stdout] + "\n" + install_result[:stderr], install_result[:exit_code])
+        return transaction_failure
+      end
       if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
         # Ansible checks the unresolvable specs off into `failures` and
         # STILL depsolves the survivors, so this failure carries the
