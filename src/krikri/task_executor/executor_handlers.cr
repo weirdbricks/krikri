@@ -244,13 +244,23 @@ module Krikri
         end
       end
 
-      # Passing nil instead of @halted_hosts is what --force-handlers
-      # means: HandlerRunner skips a notified handler for any host in
-      # that set, so withholding it lets a failed host still flush its
-      # handlers. Ansible keeps failed=1 and rc=2 either way - the
-      # flag only decides whether the handler runs.
+      # Withholding @halted_hosts is what --force-handlers means:
+      # HandlerRunner skips a notified handler for any host in the set it
+      # gets, so leaving them out lets a FAILED host still flush its
+      # handlers. Ansible keeps failed=1 and rc=2 either way - the flag
+      # only decides whether the handler runs.
+      #
+      # It never rescues an UNREACHABLE host, though: ansible's
+      # force_handlers lifts the skip for _failed_hosts only, and a host
+      # the connection lost is out of the play entirely, so its handlers
+      # never flush even under the flag (live-verified vs 2.21.6,
+      # issue #1704). Keeping @unreachable_hosts in the skip set always
+      # is what says so - without it the handler dials the dead host a
+      # second time and books a SECOND unreachable in the recap
+      # (unreachable=2 where ansible recaps 1).
+      skipped_handler_hosts = @force_handlers ? @unreachable_hosts : (@halted_hosts | @unreachable_hosts)
       @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
-        @force_handlers ? nil : @halted_hosts, unusable_handlers, ignore_errors_resolver,
+        skipped_handler_hosts, unusable_handlers, ignore_errors_resolver,
         delegate_resolver, @debugger, debug_strategy?)
     end
 

@@ -526,16 +526,22 @@ module Krikri
 
         collect_required_plugins(play.tasks, required_plugins)
 
-        # Real crash found benchmarking geerlingguy.jenkins: its own
-        # "restart jenkins" handler is `include_tasks: tasks/restart.yml`
-        # - a pseudo-module ("_include_tasks", no corresponding plugin
-        # binary) exactly like the block:/include_tasks:/include_role:
-        # cases #collect_required_plugins above already guards against
-        # for regular tasks:, but this separate handlers loop had no such
-        # guard at all, so it went straight to get_local_plugin_path and
-        # crashed the whole process outright for any playbook with a
-        # handler written this way and a real (non-local) target host.
-        collect_required_plugins(play.handlers, required_plugins)
+        # Handlers are deliberately NOT collected here, unlike tasks:.
+        # They run at the end of the play (or at a `meta: flush_handlers`),
+        # and every remote dispatch uploads its own binary lazily through
+        # ensure_uploaded, so eager collection buys at most one round trip
+        # per module that ONLY a handler uses. What it costs is a real
+        # divergence: a handler using a remote-only module (ping:) made
+        # this pass ssh to a play host whose every task delegates away,
+        # book that host UNREACHABLE before any task ran, and swallow the
+        # delegated task ansible-playbook runs happily - ansible only
+        # dials the host at the handler, and fails the handler there
+        # (issue #1687). The handler's own dispatch now does exactly
+        # that: an unreachable host fails the handler, with the handler's
+        # banner and the handler's Origin block. It also keeps a handler's
+        # pseudo-modules (`include_tasks:`, `block:`, ...) out of
+        # get_local_plugin_path entirely - walking them is what crashed
+        # outright for geerlingguy.jenkins's own include_tasks: handler.
       end
 
       # Add facts plugin if any play needs it

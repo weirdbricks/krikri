@@ -100,6 +100,8 @@ private DIVERGENCE_CASES = [
   {issue: 1677, slug: "chkpnt-mailserver-zypper-check"},
   {issue: 1679, slug: "onelove-roles-freebsd-consul-template-pkgng-check"},
   {issue: 1667, slug: "postgres-exporter-selinux-package-fact-origin"},
+  {issue: 1687, slug: "handler-remote-module-before-delegated-task"},
+  {issue: 1704, slug: "force-handlers-skips-unreachable-host"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -517,6 +519,16 @@ describe "divergence corpus" do
 
   it "replays 1667-postgres-exporter-selinux-package-fact-origin" do
     expected, actual, report = divergence_transcripts(1667, "postgres-exporter-selinux-package-fact-origin")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1687-handler-remote-module-before-delegated-task" do
+    expected, actual, report = divergence_transcripts(1687, "handler-remote-module-before-delegated-task")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1704-force-handlers-skips-unreachable-host" do
+    expected, actual, report = divergence_transcripts(1704, "force-handlers-skips-unreachable-host")
     assert_equal(expected, actual, report)
   end
 end

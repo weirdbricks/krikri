@@ -1,0 +1,13 @@
+# Issue #1687's repro verbatim: the play's only remote-only module sits in
+# a handler, while its only task delegates to localhost. `always-fail`
+# stands in for the dead ssh endpoint (stderr detail + exit 255), so no
+# real host is involved - ansible never dials it until the handler.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - command: "true"
+      delegate_to: localhost
+      notify: h
+  handlers:
+    - name: h
+      ping:

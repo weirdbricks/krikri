@@ -16,17 +16,25 @@ trigger than the role hit - which is why closed divergences kept coming back
   playbook.yml     entry playbook; the failing task YAML is the real role's,
                    copied verbatim and only adapted to run against localhost
   roles/           the role (or the trimmed part of it) the YAML came from
-  inventory.ini    optional; pins the interpreter on the [local] host
+  inventory.ini    optional; pins the interpreter on the [local] host (a
+                   multi-host issue inventory pins it on every host that runs
+                   modules, e.g. 1687/1704)
   flags.txt        optional, one CLI flag per line (e.g. --check)
   env.txt          optional, one NAME=value per line; overrides the harness
                    environment for a case that depends on the RUNNING
                    process's own variables (e.g. a PATH with no rsync)
+  always-fail      optional stub transport: an inventory points a dead ssh
+                   host's ansible_ssh_executable at it (1681/1687/1688/1704)
   expected.out     real ansible-playbook's transcript, `<WORK>`-normalized
   NOTES.md         issue URL, role, what diverged and why
 ```
 
-`playbook.yml` + `roles/` are the case's *input*; everything else must be
-regenerated from real ansible, never from krikri's own output.
+`playbook.yml` + `roles/` are the case's *input*, and so is a helper script
+like `always-fail` (a case may not need a live service to reproduce a
+transport failure). Everything else must be regenerated from real ansible,
+never from krikri's own output. A helper is addressed from the inventory
+with a case-relative path (`./always-fail`): the replay and the capture
+tool both run the playbook from inside the case's scratch directory.
 
 ## Capturing `expected.out`
 

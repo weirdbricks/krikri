@@ -1,0 +1,16 @@
+# Issue #1704's repro: a delegated task notifies a handler, then a task
+# dials the dead ssh host and fails UNREACHABLE. `--force-handlers` (see
+# flags.txt) must NOT flush the handler for that host - ansible's flag
+# rescues failed hosts only - and krikri used to dial the dead endpoint a
+# second time and recap `unreachable=2`. `always-fail` stands in for the
+# dead endpoint, so no real host is involved.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - command: "true"
+      delegate_to: localhost
+      notify: h
+    - ping:
+  handlers:
+    - name: h
+      ping:
