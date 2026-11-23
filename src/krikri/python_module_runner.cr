@@ -488,6 +488,61 @@ module Krikri
         PYTHON
     end
 
+    # The same gate for `community.libvirt.virt`. The module imports
+    # `libvirt` (then `lxml`) at MODULE level and fails the task with its
+    # own "<library> module is not importable" text before it touches a
+    # domain, under --check too because it declares
+    # supports_check_mode=True (siavashoutadi.virt_guest, issue #1742:
+    # real failed its define task with that message and halted the play,
+    # this engine skipped it as an unported module, ran on to skip the
+    # next virt task and exited 4 where real exited 2). The checks run in
+    # virt.py's own order (libvirt before lxml, each with its own text),
+    # and the deprecated `to_native` import that closes the module's
+    # import block is reproduced so the run prints real's
+    # [DEPRECATION WARNING] line. When both libraries import, the module
+    # would go on to talk to a libvirt daemon this engine does not
+    # implement, so the caller falls back to the designed
+    # unavailable-module skip.
+    def self.libvirt_import_gate_source : String
+      <<-PYTHON
+        #!/usr/bin/python3
+        try:
+            import libvirt
+            from libvirt import libvirtError
+            HAS_VIRT = True
+        except ImportError:
+            HAS_VIRT = False
+
+        try:
+            from lxml import etree
+            HAS_XML = True
+        except ImportError:
+            HAS_XML = False
+
+        from ansible.module_utils.basic import AnsibleModule
+        from ansible.module_utils._text import to_native
+
+
+        def main():
+            # virt.py declares supports_check_mode=True (real runs it under
+            # --check, which is where its import failure shows), so the
+            # shim's own supports_check_mode gate must not skip the body.
+            module = AnsibleModule(argument_spec={}, supports_check_mode=True)
+            if not HAS_VIRT:
+                module.fail_json(
+                    msg='The `libvirt` module is not importable. Check the requirements.'
+                )
+            if not HAS_XML:
+                module.fail_json(
+                    msg='The `lxml` module is not importable. Check the requirements.'
+                )
+            module.exit_json(changed=False, _krikri_libvirt_libs_present=True)
+
+
+        main()
+        PYTHON
+    end
+
     # Ansible refuses to ship a module payload whose first line is
     # not a `#!` interpreter line: ActionBase._execute_module's
     # `if not module_shebang and module_style != 'binary'` guard raises

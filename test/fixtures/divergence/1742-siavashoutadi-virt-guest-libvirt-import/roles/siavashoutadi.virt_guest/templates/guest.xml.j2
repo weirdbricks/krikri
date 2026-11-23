@@ -1,0 +1,55 @@
+
+<domain type='kvm'>
+  <name>{{ virt_guest_name }}</name>
+{% if virt_guest_memory_unit == 'GB' %}
+  <memory unit='GB'>{{ virt_guest_memory | int }}</memory>
+{% else %}
+  <memory unit='MB'>{{ virt_guest_memory | int * 1024 }}</memory>
+{% endif %}
+  <vcpu>{{ virt_guest_vcpus }}</vcpu>
+  <os>
+    <type arch='x86_64'>hvm</type>
+    <boot dev='hd'/>
+    <boot dev='cdrom'/>
+  </os>
+
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+
+  <devices>
+{% for disk in virt_guest_disks %}
+    <disk type='block' device='disk'>
+      <driver name='qemu' type='qcow2' cache='writeback'/>
+      <source dev='{{ disk.path }}/{{ virt_guest_name }}_{{ loop.index0 }}.qcow2'/>
+      <target dev='vd{{ 'abcdefghijklmnopqrstuvwxyz'[loop.index0] }}' bus='virtio'/>
+    </disk>
+{% endfor %}
+{% for net in virt_guest_networks %}
+    <interface type='network'>
+      <source network='{{ net }}'/>
+      <model type='virtio'/>
+    </interface>
+{% endfor %}
+
+{% if virt_guest_iso != '' %}
+    <disk type='file' device='cdrom'>
+        <driver name='qemu' type='raw'/>
+        <source file='{{ virt_guest_iso }}'/>
+        <target dev='hdc' bus='ide'/>
+        <readonly/>
+    </disk>
+{% endif %}
+
+    <serial type='pty'>
+       <target port='0'/>
+     </serial>
+
+     <console type='pty'>
+       <target type='serial' port='0'/>
+     </console>
+
+    <graphics type='spice' port='-1' autoport='yes'/>
+
+  </devices>
+</domain>
