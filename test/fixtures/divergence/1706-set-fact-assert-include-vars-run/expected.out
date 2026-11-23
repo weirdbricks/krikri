@@ -1,0 +1,34 @@
+
+PLAY [target] ******************************************************************
+
+TASK [set_fact] ****************************************************************
+ok: [target]
+
+TASK [assert] ******************************************************************
+ok: [target] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [include_vars] ************************************************************
+ok: [target]
+
+TASK [debug] *******************************************************************
+ok: [target] => {
+    "msg": "from-file"
+}
+
+TASK [ping] ********************************************************************
+[ERROR]: Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.
+Origin: <WORK>/playbook.yml:14:7
+
+12     - debug:
+13         msg: "{{ extra_value }}"
+14     - ping:
+         ^ column 7
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+
+PLAY RECAP *********************************************************************
+target                     : ok=4    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+

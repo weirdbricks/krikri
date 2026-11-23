@@ -1,0 +1,12 @@
+# Issue #1706's passing half: the only task after the controller-side one is
+# skipped, so ansible never dials the host at all and the recap has no
+# unreachable. The eager pre-upload pass booked it anyway, so the booking has
+# to be released (not just ignored) when the debug: runs - otherwise the
+# skipped task reports an UNREACHABLE! ansible never reaches.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: hi
+    - ping:
+      when: false

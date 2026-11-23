@@ -1,0 +1,14 @@
+# Issue #1706's wider module class: set_fact:, assert: and include_vars: all
+# run on the controller, so the host the eager pre-upload pass booked must
+# still run every one of them and be lost only at the ping:.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - set_fact:
+        added: 1
+    - assert:
+        that: added == 1
+    - include_vars: extra.yml
+    - debug:
+        msg: "{{ extra_value }}"
+    - ping:
