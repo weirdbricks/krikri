@@ -1,6 +1,10 @@
 require "../minitest_helper"
 require "../../src/krikri/divergence_transcript"
 
+# One `it` per case, in its own file: a branch capturing a case adds a file
+# instead of editing this one, so concurrent branches never conflict here.
+require "./divergence_cases/*"
+
 # The divergence regression corpus: one `it` per case under
 # test/fixtures/divergence/<issue>-<slug>/, each asserting that
 # krikri-playbook's FULL transcript (stdout followed by stderr, after the
@@ -25,107 +29,23 @@ require "../../src/krikri/divergence_transcript"
 private DIVERGENCE_ROOT   = File.expand_path("../fixtures/divergence", __DIR__)
 private DIVERGENCE_BINARY = File.expand_path("../../bin/krikri-playbook", __DIR__)
 
-# Every corpus case, in capture order. Adding a directory without listing it
-# here fails "lists every case directory" below, so a case can never be
-# silently skipped.
-private DIVERGENCE_CASES = [
-  {issue: 1581, slug: "jedimt-vcenter-ovf-ova-index"},
-  {issue: 1570, slug: "philnewm-foreman-include-requirements"},
-  {issue: 1573, slug: "freebsd-ports-default-fact"},
-  {issue: 1572, slug: "mailman3-no-log-loop"},
-  {issue: 1568, slug: "el-k3s-slurp-tilde"},
-  {issue: 1521, slug: "k8sworker-yaml-parse-case"},
-  {issue: 1522, slug: "syncthing-double-slash-include"},
-  {issue: 1525, slug: "kasm-server-failed-when"},
-  {issue: 1526, slug: "sudo-pair-env-deprecation"},
-  {issue: 1528, slug: "reverse-proxy-mandatory"},
-  {issue: 1562, slug: "ubuntu-sunjava-action-conflict"},
-  {issue: 1569, slug: "juju4-lxdconfigure-debug-ansible-facts-env"},
-  {issue: 1575, slug: "amtega-gitlab-fork-get-projects-info"},
-  {issue: 1583, slug: "jpedrodelacerda-yay-check-for-base-devel-packages"},
-  {issue: 1584, slug: "juju4-lxdconfigure-debug-env-pwd"},
-  {issue: 1588, slug: "elk-backup-elasticsearch-plugin"},
-  {issue: 1587, slug: "rooland-provisioning-atom-editor-install-atom-editor"},
-  {issue: 1592, slug: "aplyca-deployab-ec2-elb-facts"},
-  {issue: 1591, slug: "anthony25-postfix-ipwrap"},
-  {issue: 1595, slug: "jedimt-customize-vms-hostvars-when"},
-  {issue: 1594, slug: "ivansible-cert-cloudflare-reserved-vars"},
-  {issue: 1597, slug: "mickengland-ldap-auth-client-debconf-dict"},
-  {issue: 1596, slug: "jedimt-haproxy-hostvars-fact"},
-  {issue: 1610, slug: "juju4-vivisect-pip-check-executable"},
-  {issue: 1602, slug: "wasilak-centos-docker-loop-item-fact"},
-  {issue: 1599, slug: "opendevshop-users-bare-fact-defined"},
-  {issue: 1593, slug: "dorancemc-ansible-nagioscore-install-rrdtool-packages"},
-  {issue: 1600, slug: "stafwag-ntpd-combine-with-provider-defaults"},
-  {issue: 1609, slug: "jedimt-haproxy-check-hostvars-fact"},
-  {issue: 1603, slug: "anthony25-postfix-generate-postfix-configuration"},
-  {issue: 1616, slug: "wabumike-k3s-check-set-fact-parenthesized-filter"},
-  {issue: 1606, slug: "dorancemc-nagioscore-nested-defaults"},
-  {issue: 1611, slug: "lexa-uw-mailserver-create-volumes-for-mail-data"},
-  {issue: 1624, slug: "authorized-key-diff"},
-  {issue: 1630, slug: "synchronize-delegate-nonstring-dest"},
-  {issue: 1634, slug: "openssl-publickey-malformed-key"},
-  {issue: 1633, slug: "openssl-publickey-check-mode"},
-  {issue: 1635, slug: "docker-image-api-version-vs-host"},
-  {issue: 1637, slug: "docker-network-info-tls-config-vs-api-version"},
-  {issue: 1640, slug: "cpanm-name-from-path-mutually-exclusive"},
-  {issue: 1640, slug: "cpanm-check-mode-skip"},
-  {issue: 1642, slug: "ipr-cnrs-arpwatch-install-recommends"},
-  {issue: 1643, slug: "palvarez89-easyrsa3-synchronize-rsync-missing"},
-  {issue: 1644, slug: "pgkehle-nvm-reserved-tagnames"},
-  {issue: 1645, slug: "standardtech-substrate-assert-chain"},
-  {issue: 1647, slug: "artem-shestakov-elasticsearch-exporter-consul-check"},
-  {issue: 1648, slug: "hesidoryn-python-coreos-install-python-and-packages"},
-  {issue: 1651, slug: "pgkehle-nvm-reserved-tag"},
-  {issue: 1646, slug: "command-with-missing-interpreter"},
-  {issue: 1641, slug: "hesidoryn-python-coreos-install-python-and-packages"},
-  {issue: 1657, slug: "strategy-plugin-retry-fallback"},
-  {issue: 1660, slug: "deprecation-warnings-disabled"},
-  {issue: 1661, slug: "pacman-bool-type-name"},
-  {issue: 1662, slug: "swap-when-list-per-item-fact-blocks"},
-  {issue: 1685, slug: "set-then-for-iterable"},
-  {issue: 1686, slug: "block-tag-native-typing"},
-  {issue: 1688, slug: "delegated-loop-unreachable-msg-host"},
-  {issue: 1680, slug: "ignore-unreachable-stays-in-play"},
-  {issue: 1680, slug: "play-ignore-unreachable-gather-facts"},
-  {issue: 1697, slug: "mux-close-masks-ssh-stderr"},
-  {issue: 1690, slug: "become-password-not-a-var"},
-  {issue: 1681, slug: "delegated-unreachable-msg-host"},
-  {issue: 1683, slug: "bad-ssh-executable"},
-  {issue: 1665, slug: "civicactions-ec2-ami-find"},
-  {issue: 1666, slug: "kami911-wildfly-configure-include-removed"},
-  {issue: 1675, slug: "kami911-wildfly-configure-include-removed-check"},
-  {issue: 1668, slug: "cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh"},
-  {issue: 1671, slug: "islander-alacritty-empty-first"},
-  {issue: 1677, slug: "chkpnt-mailserver-zypper-check"},
-  {issue: 1679, slug: "onelove-roles-freebsd-consul-template-pkgng-check"},
-  {issue: 1667, slug: "postgres-exporter-selinux-package-fact-origin"},
-  {issue: 1687, slug: "handler-remote-module-before-delegated-task"},
-  {issue: 1704, slug: "force-handlers-skips-unreachable-host"},
-  {issue: 1703, slug: "pre-upload-unreachable-booked-at-block"},
-  {issue: 1703, slug: "block-delegated-children-dropped"},
-  {issue: 1703, slug: "unreachable-skips-block-rescue-and-always"},
-  {issue: 1703, slug: "block-rescue-runs-before-unreachable"},
-  {issue: 1703, slug: "include-tasks-descends-before-unreachable"},
-  {issue: 1703, slug: "include-role-descends-before-unreachable"},
-  {issue: 1703, slug: "ignore-errors-does-not-unhalt-unreachable"},
-  {issue: 1703, slug: "rescue-unreachable-skips-always"},
-  {issue: 1703, slug: "include-role-block-descends"},
-  {issue: 1703, slug: "include-tasks-nondelegated-child"},
-  {issue: 1703, slug: "multi-host-block-rescue"},
-  {issue: 1703, slug: "nested-block-inner-unreachable"},
-  {issue: 1703, slug: "rescue-unreachable-with-block-ignore-errors"},
-  {issue: 1703, slug: "multi-host-rescue-only-failed-host"},
-  {issue: 1706, slug: "controller-task-before-unreachable"},
-  {issue: 1706, slug: "controller-task-releases-booking"},
-  {issue: 1706, slug: "set-fact-assert-include-vars-run"},
-  {issue: 1678, slug: "gokev-motd-splash-check-mode"},
-  {issue: 1725, slug: "turgon37-apt-unattended-upgrades-dead-branch"},
-  {issue: 1724, slug: "package-facts-rpm-cli"},
-  {issue: 1731, slug: "lotusnoir-apps-snoopy-vars-lookup-fact-deprecation"},
-  {issue: 1730, slug: "gzm55-local-ssh-known-hosts-config-lookup-boolean"},
-  {issue: 1744, slug: "tansudasli-gcp-instances-check"},
-]
+# Every corpus case, derived from the fixtures themselves: a `<issue>-<slug>`
+# directory with a playbook.yml under test/fixtures/divergence/ is a case, and
+# a directory without one is not. This used to be a hand-kept list, so every
+# fix branch that captured a case appended to this same array and to an `it`
+# below it: branches landing together then conflicted on this file at rebase
+# time and their fixes were lost (issue #1726, #1727, #1738, #1733 in one
+# night). The directory is the listing; the guard below still refuses a
+# directory that is not named like a case.
+private DIVERGENCE_CASES = Dir.children(DIVERGENCE_ROOT)
+  .select { |entry| File.directory?(File.join(DIVERGENCE_ROOT, entry)) }
+  .reject { |entry| entry == "live" }
+  .select { |entry| File.exists?(File.join(DIVERGENCE_ROOT, entry, "playbook.yml")) }
+  .map do |entry|
+    issue, slug = entry.split('-', 2)
+    {issue: issue.to_i, slug: slug}
+  end
+  .sort_by { |kase| {kase[:issue], kase[:slug]} }
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
   "#{issue}-#{slug}"
@@ -170,7 +90,9 @@ end
 # recorded and replayed transcripts plus the failure report, which each `it`
 # hands to assert_equal (minitest's assertions are only available inside a
 # spec).
-private def divergence_transcripts(issue : Int32, slug : String) : {String, String, String}
+# Public because each case's `it` lives in its own required file, and a
+# private top-level def is only visible in the file that defines it.
+def divergence_transcripts(issue : Int32, slug : String) : {String, String, String}
   name = divergence_case_dir(issue, slug)
   expected = File.read(File.join(DIVERGENCE_ROOT, name, "expected.out"))
   actual = replay_divergence_case(issue, slug)
@@ -178,495 +100,33 @@ private def divergence_transcripts(issue : Int32, slug : String) : {String, Stri
 end
 
 describe "divergence corpus" do
-  it "lists every case directory" do
-    on_disk = Dir.children(DIVERGENCE_ROOT)
+  it "replays every case directory exactly once" do
+    replayed = Dir.children(File.join(__DIR__, "divergence_cases"))
+      .select { |entry| entry.ends_with?(".cr") }
+      .map { |entry| entry.rchop(".cr") }
+    expected = DIVERGENCE_CASES.map { |kase| divergence_case_dir(kase[:issue], kase[:slug]) }
+    replayed.sort.must_equal(expected.sort)
+    # The file name alone is not enough: the gate selects a case by its test
+    # method name, and a replay run that matches no test exits 0 - a hand-written
+    # file with a misspelled `it` would pass the gate without replaying anything.
+    replayed.each do |name|
+      body = File.read(File.join(__DIR__, "divergence_cases", "#{name}.cr"))
+      body.scan(/it "replays [^"]+"/).size.must_equal(1, "divergence_cases/#{name}.cr must declare exactly one replay")
+      body.must_include(%(it "replays #{name}" do))
+    end
+    # Two slugs that fold to the same minitest method would silently drop one.
+    methods = replayed.map { |name| name.strip.gsub(/[^\p{L}\p{N}]+/, "_") }
+    methods.uniq.size.must_equal(methods.size, "two cases fold to the same test method name")
+  end
+
+  it "names every case directory <issue>-<slug> and ships its playbook" do
+    Dir.children(DIVERGENCE_ROOT)
       .select { |entry| File.directory?(File.join(DIVERGENCE_ROOT, entry)) }
       .reject { |entry| entry == "live" }
-      .select { |entry| File.exists?(File.join(DIVERGENCE_ROOT, entry, "playbook.yml")) }
-    on_disk.sort!
-
-    listed = DIVERGENCE_CASES.map { |kase| divergence_case_dir(kase[:issue], kase[:slug]) }
-    listed.sort!
-    on_disk.must_equal(listed)
-  end
-
-  it "replays 1581-jedimt-vcenter-ovf-ova-index" do
-    expected, actual, report = divergence_transcripts(1581, "jedimt-vcenter-ovf-ova-index")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1688-delegated-loop-unreachable-msg-host" do
-    expected, actual, report = divergence_transcripts(1688, "delegated-loop-unreachable-msg-host")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1690-become-password-not-a-var" do
-    expected, actual, report = divergence_transcripts(1690, "become-password-not-a-var")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1680-ignore-unreachable-stays-in-play" do
-    expected, actual, report = divergence_transcripts(1680, "ignore-unreachable-stays-in-play")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1680-play-ignore-unreachable-gather-facts" do
-    expected, actual, report = divergence_transcripts(1680, "play-ignore-unreachable-gather-facts")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1681-delegated-unreachable-msg-host" do
-    expected, actual, report = divergence_transcripts(1681, "delegated-unreachable-msg-host")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1683-bad-ssh-executable" do
-    expected, actual, report = divergence_transcripts(1683, "bad-ssh-executable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1570-philnewm-foreman-include-requirements" do
-    expected, actual, report = divergence_transcripts(1570, "philnewm-foreman-include-requirements")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1573-freebsd-ports-default-fact" do
-    expected, actual, report = divergence_transcripts(1573, "freebsd-ports-default-fact")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1572-mailman3-no-log-loop" do
-    expected, actual, report = divergence_transcripts(1572, "mailman3-no-log-loop")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1568-el-k3s-slurp-tilde" do
-    expected, actual, report = divergence_transcripts(1568, "el-k3s-slurp-tilde")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1521-k8sworker-yaml-parse-case" do
-    expected, actual, report = divergence_transcripts(1521, "k8sworker-yaml-parse-case")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1522-syncthing-double-slash-include" do
-    expected, actual, report = divergence_transcripts(1522, "syncthing-double-slash-include")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1525-kasm-server-failed-when" do
-    expected, actual, report = divergence_transcripts(1525, "kasm-server-failed-when")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1526-sudo-pair-env-deprecation" do
-    expected, actual, report = divergence_transcripts(1526, "sudo-pair-env-deprecation")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1528-reverse-proxy-mandatory" do
-    expected, actual, report = divergence_transcripts(1528, "reverse-proxy-mandatory")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1562-ubuntu-sunjava-action-conflict" do
-    expected, actual, report = divergence_transcripts(1562, "ubuntu-sunjava-action-conflict")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1569-juju4-lxdconfigure-debug-ansible-facts-env" do
-    expected, actual, report = divergence_transcripts(1569, "juju4-lxdconfigure-debug-ansible-facts-env")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1575-amtega-gitlab-fork-get-projects-info" do
-    expected, actual, report = divergence_transcripts(1575, "amtega-gitlab-fork-get-projects-info")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1583-jpedrodelacerda-yay-check-for-base-devel-packages" do
-    expected, actual, report = divergence_transcripts(1583, "jpedrodelacerda-yay-check-for-base-devel-packages")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1584-juju4-lxdconfigure-debug-env-pwd" do
-    expected, actual, report = divergence_transcripts(1584, "juju4-lxdconfigure-debug-env-pwd")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1588-elk-backup-elasticsearch-plugin" do
-    expected, actual, report = divergence_transcripts(1588, "elk-backup-elasticsearch-plugin")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1587-rooland-provisioning-atom-editor-install-atom-editor" do
-    expected, actual, report = divergence_transcripts(1587, "rooland-provisioning-atom-editor-install-atom-editor")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1592-aplyca-deployab-ec2-elb-facts" do
-    expected, actual, report = divergence_transcripts(1592, "aplyca-deployab-ec2-elb-facts")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1591-anthony25-postfix-ipwrap" do
-    expected, actual, report = divergence_transcripts(1591, "anthony25-postfix-ipwrap")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1595-jedimt-customize-vms-hostvars-when" do
-    expected, actual, report = divergence_transcripts(1595, "jedimt-customize-vms-hostvars-when")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1594-ivansible-cert-cloudflare-reserved-vars" do
-    expected, actual, report = divergence_transcripts(1594, "ivansible-cert-cloudflare-reserved-vars")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1597-mickengland-ldap-auth-client-debconf-dict" do
-    expected, actual, report = divergence_transcripts(1597, "mickengland-ldap-auth-client-debconf-dict")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1596-jedimt-haproxy-hostvars-fact" do
-    expected, actual, report = divergence_transcripts(1596, "jedimt-haproxy-hostvars-fact")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1610-juju4-vivisect-pip-check-executable" do
-    expected, actual, report = divergence_transcripts(1610, "juju4-vivisect-pip-check-executable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1602-wasilak-centos-docker-loop-item-fact" do
-    expected, actual, report = divergence_transcripts(1602, "wasilak-centos-docker-loop-item-fact")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1599-opendevshop-users-bare-fact-defined" do
-    expected, actual, report = divergence_transcripts(1599, "opendevshop-users-bare-fact-defined")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1593-dorancemc-ansible-nagioscore-install-rrdtool-packages" do
-    expected, actual, report = divergence_transcripts(1593, "dorancemc-ansible-nagioscore-install-rrdtool-packages")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1600-stafwag-ntpd-combine-with-provider-defaults" do
-    expected, actual, report = divergence_transcripts(1600, "stafwag-ntpd-combine-with-provider-defaults")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1609-jedimt-haproxy-check-hostvars-fact" do
-    expected, actual, report = divergence_transcripts(1609, "jedimt-haproxy-check-hostvars-fact")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1603-anthony25-postfix-generate-postfix-configuration" do
-    expected, actual, report = divergence_transcripts(1603, "anthony25-postfix-generate-postfix-configuration")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1616-wabumike-k3s-check-set-fact-parenthesized-filter" do
-    expected, actual, report = divergence_transcripts(1616, "wabumike-k3s-check-set-fact-parenthesized-filter")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1606-dorancemc-nagioscore-nested-defaults" do
-    expected, actual, report = divergence_transcripts(1606, "dorancemc-nagioscore-nested-defaults")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1611-lexa-uw-mailserver-create-volumes-for-mail-data" do
-    expected, actual, report = divergence_transcripts(1611, "lexa-uw-mailserver-create-volumes-for-mail-data")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1624-authorized-key-diff" do
-    expected, actual, report = divergence_transcripts(1624, "authorized-key-diff")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1630-synchronize-delegate-nonstring-dest" do
-    expected, actual, report = divergence_transcripts(1630, "synchronize-delegate-nonstring-dest")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1634-openssl-publickey-malformed-key" do
-    expected, actual, report = divergence_transcripts(1634, "openssl-publickey-malformed-key")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1633-openssl-publickey-check-mode" do
-    expected, actual, report = divergence_transcripts(1633, "openssl-publickey-check-mode")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1635-docker-image-api-version-vs-host" do
-    expected, actual, report = divergence_transcripts(1635, "docker-image-api-version-vs-host")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1637-docker-network-info-tls-config-vs-api-version" do
-    expected, actual, report = divergence_transcripts(1637, "docker-network-info-tls-config-vs-api-version")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1640-cpanm-name-from-path-mutually-exclusive" do
-    expected, actual, report = divergence_transcripts(1640, "cpanm-name-from-path-mutually-exclusive")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1640-cpanm-check-mode-skip" do
-    expected, actual, report = divergence_transcripts(1640, "cpanm-check-mode-skip")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1642-ipr-cnrs-arpwatch-install-recommends" do
-    expected, actual, report = divergence_transcripts(1642, "ipr-cnrs-arpwatch-install-recommends")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1643-palvarez89-easyrsa3-synchronize-rsync-missing" do
-    expected, actual, report = divergence_transcripts(1643, "palvarez89-easyrsa3-synchronize-rsync-missing")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1644-pgkehle-nvm-reserved-tagnames" do
-    expected, actual, report = divergence_transcripts(1644, "pgkehle-nvm-reserved-tagnames")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1645-standardtech-substrate-assert-chain" do
-    expected, actual, report = divergence_transcripts(1645, "standardtech-substrate-assert-chain")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1647-artem-shestakov-elasticsearch-exporter-consul-check" do
-    expected, actual, report = divergence_transcripts(1647, "artem-shestakov-elasticsearch-exporter-consul-check")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1648-hesidoryn-python-coreos-install-python-and-packages" do
-    expected, actual, report = divergence_transcripts(1648, "hesidoryn-python-coreos-install-python-and-packages")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1651-pgkehle-nvm-reserved-tag" do
-    expected, actual, report = divergence_transcripts(1651, "pgkehle-nvm-reserved-tag")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1646-command-with-missing-interpreter" do
-    expected, actual, report = divergence_transcripts(1646, "command-with-missing-interpreter")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1641-hesidoryn-python-coreos-install-python-and-packages" do
-    expected, actual, report = divergence_transcripts(1641, "hesidoryn-python-coreos-install-python-and-packages")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1657-strategy-plugin-retry-fallback" do
-    expected, actual, report = divergence_transcripts(1657, "strategy-plugin-retry-fallback")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1660-deprecation-warnings-disabled" do
-    expected, actual, report = divergence_transcripts(1660, "deprecation-warnings-disabled")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1661-pacman-bool-type-name" do
-    expected, actual, report = divergence_transcripts(1661, "pacman-bool-type-name")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1662-swap-when-list-per-item-fact-blocks" do
-    expected, actual, report = divergence_transcripts(1662, "swap-when-list-per-item-fact-blocks")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1685-set-then-for-iterable" do
-    expected, actual, report = divergence_transcripts(1685, "set-then-for-iterable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1686-block-tag-native-typing" do
-    expected, actual, report = divergence_transcripts(1686, "block-tag-native-typing")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1665-civicactions-ec2-ami-find" do
-    expected, actual, report = divergence_transcripts(1665, "civicactions-ec2-ami-find")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1666-kami911-wildfly-configure-include-removed" do
-    expected, actual, report = divergence_transcripts(1666, "kami911-wildfly-configure-include-removed")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1675-kami911-wildfly-configure-include-removed-check" do
-    expected, actual, report = divergence_transcripts(1675, "kami911-wildfly-configure-include-removed-check")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1668-cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh" do
-    expected, actual, report = divergence_transcripts(1668, "cameronbroe-nvm-check-whether-shell-profile-contains-nvm-sh")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1671-islander-alacritty-empty-first" do
-    expected, actual, report = divergence_transcripts(1671, "islander-alacritty-empty-first")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1677-chkpnt-mailserver-zypper-check" do
-    expected, actual, report = divergence_transcripts(1677, "chkpnt-mailserver-zypper-check")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1679-onelove-roles-freebsd-consul-template-pkgng-check" do
-    expected, actual, report = divergence_transcripts(1679, "onelove-roles-freebsd-consul-template-pkgng-check")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1697-mux-close-masks-ssh-stderr" do
-    expected, actual, report = divergence_transcripts(1697, "mux-close-masks-ssh-stderr")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1667-postgres-exporter-selinux-package-fact-origin" do
-    expected, actual, report = divergence_transcripts(1667, "postgres-exporter-selinux-package-fact-origin")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1687-handler-remote-module-before-delegated-task" do
-    expected, actual, report = divergence_transcripts(1687, "handler-remote-module-before-delegated-task")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1704-force-handlers-skips-unreachable-host" do
-    expected, actual, report = divergence_transcripts(1704, "force-handlers-skips-unreachable-host")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-pre-upload-unreachable-booked-at-block" do
-    expected, actual, report = divergence_transcripts(1703, "pre-upload-unreachable-booked-at-block")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-block-delegated-children-dropped" do
-    expected, actual, report = divergence_transcripts(1703, "block-delegated-children-dropped")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-unreachable-skips-block-rescue-and-always" do
-    expected, actual, report = divergence_transcripts(1703, "unreachable-skips-block-rescue-and-always")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-block-rescue-runs-before-unreachable" do
-    expected, actual, report = divergence_transcripts(1703, "block-rescue-runs-before-unreachable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-include-tasks-descends-before-unreachable" do
-    expected, actual, report = divergence_transcripts(1703, "include-tasks-descends-before-unreachable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-include-role-descends-before-unreachable" do
-    expected, actual, report = divergence_transcripts(1703, "include-role-descends-before-unreachable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-ignore-errors-does-not-unhalt-unreachable" do
-    expected, actual, report = divergence_transcripts(1703, "ignore-errors-does-not-unhalt-unreachable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-rescue-unreachable-skips-always" do
-    expected, actual, report = divergence_transcripts(1703, "rescue-unreachable-skips-always")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-include-role-block-descends" do
-    expected, actual, report = divergence_transcripts(1703, "include-role-block-descends")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-include-tasks-nondelegated-child" do
-    expected, actual, report = divergence_transcripts(1703, "include-tasks-nondelegated-child")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-multi-host-block-rescue" do
-    expected, actual, report = divergence_transcripts(1703, "multi-host-block-rescue")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-nested-block-inner-unreachable" do
-    expected, actual, report = divergence_transcripts(1703, "nested-block-inner-unreachable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-rescue-unreachable-with-block-ignore-errors" do
-    expected, actual, report = divergence_transcripts(1703, "rescue-unreachable-with-block-ignore-errors")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1703-multi-host-rescue-only-failed-host" do
-    expected, actual, report = divergence_transcripts(1703, "multi-host-rescue-only-failed-host")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1706-controller-task-before-unreachable" do
-    expected, actual, report = divergence_transcripts(1706, "controller-task-before-unreachable")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1706-controller-task-releases-booking" do
-    expected, actual, report = divergence_transcripts(1706, "controller-task-releases-booking")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1706-set-fact-assert-include-vars-run" do
-    expected, actual, report = divergence_transcripts(1706, "set-fact-assert-include-vars-run")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1678-gokev-motd-splash-check-mode" do
-    expected, actual, report = divergence_transcripts(1678, "gokev-motd-splash-check-mode")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1725-turgon37-apt-unattended-upgrades-dead-branch" do
-    expected, actual, report = divergence_transcripts(1725, "turgon37-apt-unattended-upgrades-dead-branch")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1724-package-facts-rpm-cli" do
-    expected, actual, report = divergence_transcripts(1724, "package-facts-rpm-cli")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1731-lotusnoir-apps-snoopy-vars-lookup-fact-deprecation" do
-    expected, actual, report = divergence_transcripts(1731, "lotusnoir-apps-snoopy-vars-lookup-fact-deprecation")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1730-gzm55-local-ssh-known-hosts-config-lookup-boolean" do
-    expected, actual, report = divergence_transcripts(1730, "gzm55-local-ssh-known-hosts-config-lookup-boolean")
-    assert_equal(expected, actual, report)
-  end
-
-  it "replays 1744-tansudasli-gcp-instances-check" do
-    expected, actual, report = divergence_transcripts(1744, "tansudasli-gcp-instances-check")
-    assert_equal(expected, actual, report)
+      .each do |entry|
+        entry.matches?(/\A\d+-\S+\z/).must_equal(true, "#{entry} is not named <issue>-<slug>")
+        File.exists?(File.join(DIVERGENCE_ROOT, entry, "playbook.yml"))
+          .must_equal(true, "#{entry} has no playbook.yml, so the corpus would silently skip it")
+      end
   end
 end

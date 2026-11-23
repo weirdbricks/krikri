@@ -304,7 +304,8 @@ skill's first step is to ask for it, and it documents the layout.
    `test/fixtures/divergence/<issue>-<slug>/`: the round's failing task YAML copied verbatim,
    `NOTES.md` with the issue link, `expected.out` captured from pinned real ansible-core 2.21.6
    (a case asserting krikri's own output as "expected" is wrong). The replay test
-   (`test/integration/divergence_corpus_test.cr`) compares exactly, so extra output fails like
+   (`test/integration/divergence_corpus_test.cr`, with the replay `it` of each case in
+   its own file under `test/integration/divergence_cases/`) compares exactly, so extra output fails like
    missing output. Real package/service/crontab/pip mutation can't run in-process: those go in
    `test/fixtures/divergence/live/cases.txt` for a real-host round, and only a repro truly
    inexpressible there gets a plain regression test instead. Bump `VERSION` per logical fix or

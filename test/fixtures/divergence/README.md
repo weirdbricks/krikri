@@ -117,9 +117,10 @@ gather only reads host vars and role defaults).
 1. Reproduce the issue locally against real ansible.
 2. Copy the role's failing YAML in verbatim (`roles/` + the play that runs it),
    changing only what localhost/scratch paths require.
-3. `bin/krikri-capture-case` it, add `NOTES.md`, then add the case
-   to `DIVERGENCE_CASES` *and* its own `it` in
-   `test/integration/divergence_corpus_test.cr` (`it` needs a literal name, so
-   each case gets one explicit block). The suite also fails when a case
-   directory is not listed, so nothing is silently skipped.
+3. `bin/krikri-capture-case` it, add `NOTES.md`, then add its replay `it` in
+   its own file, `test/integration/divergence_cases/<issue>-<slug>.cr`. The
+   suite requires that directory by glob, so one case is one file: a branch
+   capturing a case never edits a shared list, and two branches landing
+   together cannot conflict on it. The suite fails when a case directory has
+   no such file or a file names no directory, so nothing is silently skipped.
 4. Run `scripts/minitest.sh test/integration/divergence_corpus_test.cr`.
