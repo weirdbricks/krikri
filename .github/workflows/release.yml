@@ -117,6 +117,14 @@ jobs:
             # ~400M instead of the real ~50-70M.
             mkdir -p 'dist/${PKG}'
             cp -al bin/* 'dist/${PKG}/'
+            # krikri-capture-case is the maintainer-only divergence-corpus
+            # capture tool: it needs a pinned real ansible-core and nothing
+            # shipped (nor any Homebrew formula) runs it, so it must not ride
+            # along just because bin/ is staged wholesale (issue #1698). Drop
+            # it after the copy rather than narrowing the copy, so nothing
+            # else silently falls out of the tarball. krikri-ssm-pipe stays:
+            # SsmRsyncRsh uploads it to targets, so it is a runtime artifact.
+            rm -f 'dist/${PKG}/krikri-capture-case'
             tar -C dist -czf 'dist/${PKG}.tar.gz' '${PKG}'
             ls -lh 'dist/${PKG}.tar.gz'
           "
@@ -176,6 +184,9 @@ jobs:
           # bin/plugins/.fat-plugin is hardlinked under 96 plugin names
           # sharing one inode. BSD cp (macOS) supports -l the same as GNU.
           cp -al bin/* "dist/${PKG}/"
+          # Maintainer-only tool, not a shipped artifact - see the Linux
+          # job's own comment above (issue #1698).
+          rm -f "dist/${PKG}/krikri-capture-case"
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
           ls -lh "dist/${PKG}.tar.gz"
 
