@@ -10,7 +10,7 @@ authors:
 dependencies:
   krikri-jinja:
     github: weirdbricks/krikri-jinja
-    tag: v0.4.38
+    tag: v1.0.0
   docr:
     github: weirdbricks/docr
     commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
@@ -31,13 +31,13 @@ dependencies:
     version: 0.1.0
   krikri-aws-signer:
     github: weirdbricks/krikri-aws-signer
-    tag: v0.3.0
+    tag: v1.0.0
   krikri-xml:
     github: weirdbricks/krikri-xml
-    tag: v0.3.1
+    tag: v1.0.0
   krikri-aws-ssm:
     github: weirdbricks/krikri-aws-ssm
-    tag: v1.0.0
+    tag: v1.0.1
 
 development_dependencies:
   ameba:

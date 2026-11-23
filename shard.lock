@@ -22,19 +22,19 @@ shards:
 
   krikri-aws-signer:
     git: https://github.com/weirdbricks/krikri-aws-signer.git
-    version: 0.3.0+git.commit.1dab322121cfa43790899fccde91d1651d001e2c
+    version: 1.0.0+git.commit.82fd59dc9d1a4fb168f95b2996ac036e663e7e21
 
   krikri-aws-ssm:
     git: https://github.com/weirdbricks/krikri-aws-ssm.git
-    version: 1.0.0+git.commit.6dce4f93d07405ca34bbe8d4107dfdd14e2e49e8
+    version: 1.0.1+git.commit.dfa06ec318a95d73b73372ee9d387cd592bd8c4a
 
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git
-    version: 0.4.38+git.commit.a92ac19bac8d117ddee2796f8a209b5a01e771e2
+    version: 1.0.0+git.commit.fa292c4e0ab48c5b2387fa0543decdee66523a9c
 
   krikri-xml:
     git: https://github.com/weirdbricks/krikri-xml.git
-    version: 0.3.1+git.commit.bdb21ad6daf17e624c3758a3dbbd8e8ed8782338
+    version: 1.0.0+git.commit.7805c124d375c8317d0d2d9b6a35cfa686c9429e
 
   minitest:
     git: https://github.com/weirdbricks/minitest.cr.git
