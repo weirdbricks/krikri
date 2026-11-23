@@ -120,6 +120,7 @@ private DIVERGENCE_CASES = [
   {issue: 1706, slug: "controller-task-releases-booking"},
   {issue: 1706, slug: "set-fact-assert-include-vars-run"},
   {issue: 1678, slug: "gokev-motd-splash-check-mode"},
+  {issue: 1725, slug: "turgon37-apt-unattended-upgrades-dead-branch"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -637,6 +638,11 @@ describe "divergence corpus" do
 
   it "replays 1678-gokev-motd-splash-check-mode" do
     expected, actual, report = divergence_transcripts(1678, "gokev-motd-splash-check-mode")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1725-turgon37-apt-unattended-upgrades-dead-branch" do
+    expected, actual, report = divergence_transcripts(1725, "turgon37-apt-unattended-upgrades-dead-branch")
     assert_equal(expected, actual, report)
   end
 end

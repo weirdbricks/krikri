@@ -1,0 +1,6 @@
+{{ ansible_managed|comment(decoration='// ') }}
+
+// this key prevent purge from ansible apt role
+{{ apt__ansible_managed_key|string|comment(decoration='//') }}
+
+{{ apt__setting.content }}

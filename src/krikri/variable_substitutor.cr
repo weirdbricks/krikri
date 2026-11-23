@@ -3074,6 +3074,72 @@ module Krikri
       emit_template_hostvars_fact_deprecations(template, vars)
     end
 
+    # The reads jinja2 makes as a TEMPLATE's root frame opens: its compiler
+    # hoists one `resolve()` per name the frame loads to the frame's start
+    # (jinja2's CodeGenerator#enter_frame), so a `{{ ansible_fqdn }}` inside
+    # a `{% if %}` branch the render never enters is still READ, and its
+    # block prints at the reference's own Origin even though the branch's
+    # output is discarded. Turgon37.apt's `50unattended-upgrades` content
+    # keeps `{{ apt__unattended_upgrades_mail_sender }}` in an
+    # `apt__unattended_upgrades_mail is defined` branch that is false on
+    # every host, and real still reads the mail_sender default's own
+    # `ansible_fqdn` - printing the block at defaults/main.yml's
+    # `apt__unattended_upgrades_mail_sender` line (issue #1725,
+    # live-verified against 2.21.6).
+    #
+    # Only the ROOT frame hoists this way: `{% for %}`, `{% macro %}`,
+    # `{% block %}`, `{% call %}`/`{% filter %}`/`{% with %}` bodies and an
+    # inline `{% set x %}...{% endset %}` body each open a frame of their
+    # own, resolved when entered - a fact named only in an unentered loop
+    # body stays silent in real (live-verified, same session), so the walk
+    # below stops at those bodies while still taking the expressions they
+    # evaluate in the enclosing frame (a for's iterable and filter, a
+    # with's bindings).
+    def self.emit_template_frame_open_reads(template : KrikriJinja::Nodes::TemplateNode, vars : Hash(String, JSON::Any), resolver : VariableSubstitutor::JinjaVarResolver? = nil) : Nil
+      return if VariableSubstitutor::JinjaVarResolver.materializing_vars?
+      exprs = [] of KrikriJinja::Nodes::ExprNode
+      collect_root_frame_exprs(template.body, exprs)
+      names = [] of String
+      exprs.each { |expr| names.concat(ConditionalEvaluator.referenced_names_in(expr)) }
+      # A name loads once per frame however many expressions mention it.
+      names.uniq!.each { |name| emit_frame_open_read(name, vars, resolver) }
+    end
+
+    private def self.collect_root_frame_exprs(nodes : Array(KrikriJinja::Nodes::Node), exprs : Array(KrikriJinja::Nodes::ExprNode)) : Nil
+      nodes.each do |node|
+        case node
+        when KrikriJinja::Nodes::TemplateNode, KrikriJinja::Nodes::AutoescapeNode
+          collect_root_frame_exprs(node.body, exprs)
+        when KrikriJinja::Nodes::OutputNode, KrikriJinja::Nodes::DoNode
+          exprs << node.expr
+        when KrikriJinja::Nodes::IfNode
+          node.branches.each do |(test, body)|
+            exprs << test
+            collect_root_frame_exprs(body, exprs)
+          end
+          node.orelse.try { |orelse| collect_root_frame_exprs(orelse, exprs) }
+        when KrikriJinja::Nodes::ForNode
+          exprs << node.iter
+          node.test.try { |test| exprs << test }
+        when KrikriJinja::Nodes::SetNode
+          exprs << node.expr
+          node.attr_target.try { |target| exprs << target }
+          node.filter_args.each { |arg| exprs << arg }
+          node.filter_kwargs.each { |kwarg| exprs << kwarg[1] }
+        when KrikriJinja::Nodes::WithNode
+          node.bindings.each { |binding| exprs << binding[1] }
+        when KrikriJinja::Nodes::CallNode
+          exprs << node.macro_expr
+          node.args.each { |arg| exprs << arg }
+          node.kwargs.each { |kwarg| exprs << kwarg[1] }
+        when KrikriJinja::Nodes::FilterBlockNode
+          exprs << node.filter
+        when KrikriJinja::Nodes::IncludeNode, KrikriJinja::Nodes::ExtendsNode, KrikriJinja::Nodes::ImportNode
+          exprs << node.template
+        end
+      end
+    end
+
     private def self.collect_template_exprs(nodes : Array(KrikriJinja::Nodes::Node), exprs : Array(KrikriJinja::Nodes::ExprNode)) : Nil
       nodes.each do |node|
         case node

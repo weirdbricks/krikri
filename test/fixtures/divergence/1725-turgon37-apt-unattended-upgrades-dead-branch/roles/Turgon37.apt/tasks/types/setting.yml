@@ -1,0 +1,29 @@
+---
+
+- name: 'Check prerequisites for setting {{ apt__setting.name }}'
+  assert:
+    that:
+      - apt__setting is defined
+      - apt__setting.name is defined and apt__setting.name is match('^[0-9]{2}[a-zA-Z0-9_-]*[a-zA-Z0-9]$')
+      - apt__setting.content is defined
+      - apt__setting.state|d('present') in ['present', 'absent']
+    msg: >
+      apt__setting must be defined with specifications
+  tags: ['always']
+
+- name: 'Create apt setting {{ apt__setting.name }}'
+  template:
+    src: setting.conf.j2
+    dest: '{{ apt__configuration_include_directory }}/{{ apt__setting.name }}'
+    owner: root
+    group: root
+    mode: 0644
+  when: apt__setting.state|d('present') == 'present'
+  tags: ['apt', 'apt-configure', 'apt-setting']
+
+- name: 'Remove apt setting {{ apt__setting.name }}'
+  file:
+    path: '{{ apt__configuration_include_directory }}/{{ apt__setting.name }}'
+    state: absent
+  when: apt__setting.state|d('present') != 'present'
+  tags: ['apt', 'apt-configure', 'apt-setting']

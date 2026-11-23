@@ -1592,6 +1592,45 @@ describe "INJECT_FACTS_AS_VARS deprecation and a template's unentered frames" do
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
     stderr.must_include("Origin: ")
   end
+
+  # A role default's VALUE is a template of its own, rendered where the task
+  # param consuming it asks for the value - and the same root-frame hoisting
+  # applies there. Turgon37.apt's `50unattended-upgrades` content names
+  # `apt__unattended_upgrades_mail_sender` only inside an
+  # `apt__unattended_upgrades_mail is defined` branch that is false on every
+  # host; real still reads the mail_sender default's `ansible_fqdn` and
+  # prints the block at that default's own declaration (issue #1725,
+  # live-verified against 2.21.6).
+  it "warns at the default's own line for a root-frame read in a branch that never runs" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-default-frame-#{Random::Secure.hex(4)}")
+    role = File.join(dir, "roles", "dflt")
+    FileUtils.mkdir_p(File.join(role, "defaults"))
+    FileUtils.mkdir_p(File.join(role, "tasks"))
+    File.write(File.join(role, "defaults", "main.yml"), <<-DEFAULTS)
+      conf: |-
+        {% if unset_mail is defined %}
+        mail "{{ mail_sender }}";
+        {% endif %}
+      mail_sender: 'root@{{ ansible_fqdn }}'
+      DEFAULTS
+    File.write(File.join(role, "tasks", "main.yml"),
+      "---\n- name: render the default\n  ansible.builtin.debug:\n    msg: \"{{ conf }}\"\n")
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - dflt
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(role, "defaults", "main.yml")}:5:14")
+  end
 end
 
 # ansible-core tags the deprecated fact's VALUE, not just its name, and a

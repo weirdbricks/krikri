@@ -1,0 +1,23 @@
+---
+# The role's own tasks/configure-settings.yml, run against a scratch
+# directory so the setting templates write inside the case instead of
+# /etc/apt/apt.conf.d; captured in --check mode (the real role's round does
+# not need the writes, only the rendering that trips the deprecation).
+- hosts: localhost
+  gather_facts: true
+  vars:
+    apt__configuration_include_directory: '{{ playbook_dir }}/apt.conf.d'
+  tasks:
+    - name: Create the scratch apt conf directory
+      file:
+        path: '{{ apt__configuration_include_directory }}'
+        state: directory
+      # --check still has to make the scratch directory the role's find: and
+      # template: tasks address, or the find's "not a directory" warning joins
+      # the transcript.
+      check_mode: false
+
+    - name: Create apt settings
+      include_role:
+        name: Turgon37.apt
+        tasks_from: configure-settings.yml

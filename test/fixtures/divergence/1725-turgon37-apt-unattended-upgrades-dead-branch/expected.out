@@ -1,0 +1,220 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Create the scratch apt conf directory] ***********************************
+changed: [localhost]
+
+TASK [Create apt settings] *****************************************************
+included: Turgon37.apt for localhost
+
+TASK [Turgon37.apt : List installed apt confs] *********************************
+ok: [localhost]
+
+TASK [Turgon37.apt : List ansible managed apt confs] ***************************
+ok: [localhost]
+
+TASK [Turgon37.apt : Remove unknown installed apt confs] ***********************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Create apt settings] **************************************
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '00cdrom', 'value': {'content': 'Acquire::cdrom {\n  mount "/media/cdrom";\n};\nDir::Media::MountPath "/media/cdrom";\nAPT::Authentication::TrustCDROM "true";'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '01autoremove', 'value': {'content': 'APT::NeverAutoRemove {\n  "^firmware-linux.*";\n  "^linux-firmware$";\n  "^linux-image-[a-z0-9]*$";\n  "^linux-image-[a-z0-9]*-[a-z0-9]*$";\n};\n\nAPT::VersionedKernelPackages {\n  # linux kernels\n  "linux-image";\n  "linux-headers";\n  "linux-image-extra";\n  "linux-signed-image";\n  # kfreebsd kernels\n  "kfreebsd-image";\n  "kfreebsd-headers";\n  # hurd kernels\n  "gnumach-image";\n  # (out-of-tree) modules\n  ".*-modules";\n  ".*-kernel";\n  "linux-backports-modules-.*";\n  # tools\n  "linux-tools";\n};\n\nAPT::Never-MarkAuto-Sections {\n  "metapackages";\n  "contrib/metapackages";\n  "non-free/metapackages";\n  "restricted/metapackages";\n  "universe/metapackages";\n  "multiverse/metapackages";\n};\n\nAPT::Move-Autobit-Sections {\n  "oldlibs";\n  "contrib/oldlibs";\n  "non-free/oldlibs";\n  "restricted/oldlibs";\n  "universe/oldlibs";\n  "multiverse/oldlibs";\n};'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '01network', 'value': {'content': None}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '01proxy', 'value': {'content': None}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '02periodic', 'value': {'content': 'APT::Periodic::Enable "1";\nAPT::Periodic::Verbose "0";\nAPT::Periodic::RandomSleep "0";\nAPT::Periodic::MaxAge "0";\nAPT::Periodic::MinAge "2";\nAPT::Periodic::MaxSize "0";\nAPT::Periodic::AutocleanInterval "30";\nAPT::Periodic::CleanInterval "0";'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '02periodic-backup', 'value': {'content': 'APT::Periodic::BackupArchiveInterval "0";\nAPT::Periodic::BackupLevel "3";'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '15update-stamp', 'value': {'content': 'APT::Update::Post-Invoke-Success {"touch /var/lib/apt/periodic/update-success-stamp 2>/dev/null || true";};'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '15update-packages-lists', 'value': {'content': 'APT::Update::Post-Invoke-Success {"/opt/apt-scripts/update-packages-lists.sh || true";};\n'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '20auto-upgrades', 'value': {'content': 'APT::Periodic::Update-Package-Lists "0";\nAPT::Periodic::Unattended-Upgrade "0";\nAPT::Periodic::Download-Upgradeable-Packages "0";'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '20listchanges', 'value': {'content': None}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '50unattended-upgrades', 'value': {'content': 'Unattended-Upgrade::Origins-Pattern {\n  "origin=Debian,codename=${distro_codename},label=Debian-Security";\n};\n\nUnattended-Upgrade::AutoFixInterruptedDpkg "true";\nUnattended-Upgrade::MinimalSteps "true";\nUnattended-Upgrade::InstallOnShutdown "false";\n\nUnattended-Upgrade::MailOnlyOnError "false";\n\nUnattended-Upgrade::Remove-Unused-Dependencies "false";\nUnattended-Upgrade::Automatic-Reboot "false";\nUnattended-Upgrade::Automatic-Reboot-WithUsers "false";\nUnattended-Upgrade::Automatic-Reboot-Time "now";\nUnattended-Upgrade::SyslogEnable "false";\nUnattended-Upgrade::SyslogFacility "daemon";'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '50unattended-upgrades-whitelist', 'value': {'content': 'Unattended-Upgrade::Package-Whitelist-Strict "true";\nUnattended-Upgrade::Package-Whitelist {\n};'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '50unattended-upgrades-blacklist', 'value': {'content': 'Unattended-Upgrade::Package-Blacklist {\n};'}})
+included: <WORK>/roles/Turgon37.apt/tasks/types/setting.yml for localhost => (item={'key': '70debconf', 'value': {'content': 'DPkg::Pre-Install-Pkgs {"/usr/sbin/dpkg-preconfigure --apt || true";};'}})
+
+TASK [Turgon37.apt : Check prerequisites for setting 00cdrom] ******************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 00cdrom] *******************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 00cdrom] *******************************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 01autoremove] *************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 01autoremove] **************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 01autoremove] **************************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 01network] ****************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 01network] *****************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 01network] *****************************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 01proxy] ******************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 01proxy] *******************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 01proxy] *******************************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 02periodic] ***************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 02periodic] ****************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 02periodic] ****************************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 02periodic-backup] ********
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 02periodic-backup] *********************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 02periodic-backup] *********************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 15update-stamp] ***********
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 15update-stamp] ************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 15update-stamp] ************************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 15update-packages-lists] ***
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 15update-packages-lists] ***************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 15update-packages-lists] ***************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 20auto-upgrades] **********
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 20auto-upgrades] ***********************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 20auto-upgrades] ***********************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 20listchanges] ************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 20listchanges] *************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 20listchanges] *************************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 50unattended-upgrades] ****
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 50unattended-upgrades] *****************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 50unattended-upgrades] *****************
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 50unattended-upgrades-whitelist] ***
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 50unattended-upgrades-whitelist] *******
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 50unattended-upgrades-whitelist] *******
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 50unattended-upgrades-blacklist] ***
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 50unattended-upgrades-blacklist] *******
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 50unattended-upgrades-blacklist] *******
+skipping: [localhost]
+
+TASK [Turgon37.apt : Check prerequisites for setting 70debconf] ****************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Turgon37.apt : Create apt setting 70debconf] *****************************
+changed: [localhost]
+
+TASK [Turgon37.apt : Remove apt setting 70debconf] *****************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=47   changed=15   unreachable=0    failed=0    skipped=15   rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: The `bool` filter coerced invalid value 'alse' (str) to False. This feature will be removed from ansible-core version 2.23.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/Turgon37.apt/defaults/main.yml:377:39
+
+375
+376 # Use the specified value in the "From" field of outgoing mails.
+377 apt__unattended_upgrades_mail_sender: 'root@{{ ansible_fqdn }}'
+                                          ^ column 39
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

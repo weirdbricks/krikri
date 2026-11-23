@@ -1,0 +1,501 @@
+---
+# defaults file for apt
+
+# Enable facts deploiement
+apt__facts: true
+
+# Choose the monitoring backend to configure (if available)
+# apt__monitoring:
+
+
+### INSTALL CONFIGURATION
+# ---------------------------------------
+# List of dependencies packages
+apt__packages_names:
+  - apt-listchanges
+  - debian-keyring
+  - 'python{{ python__version_major|d(3) }}-apt'
+  - unattended-upgrades
+
+
+### APT CONFIGURATION
+# ---------------------------------------
+# This key is put into each included configuration file
+# to means that this role manage it
+# if purge (see below) is enable this key will be used to
+# exclude managed files from purge
+apt__ansible_managed_key: __ANSIBLE__APT__
+
+# Set to true to purge unwanted included conf files
+apt__configurations_purge: false
+
+# List of configuration filenames to exclude from purge
+apt__configurations_purge_whitelist_default:
+  - 01autoremove-kernels
+
+# This dict is intended to be used at global inventory level
+apt__configurations_purge_whitelist_global: []
+
+# This dict is intended to be used at hostgroup inventory level
+apt__configurations_purge_whitelist_group: []
+
+# This dict is intended to be used at host inventory level
+apt__configurations_purge_whitelist_host: []
+
+# Merged dict of configurations
+apt__configurations_purge_whitelist: '{{
+    apt__configurations_purge_whitelist_default
+    |union(apt__configurations_purge_whitelist_global)
+    |union(apt__configurations_purge_whitelist_group)
+    |union(apt__configurations_purge_whitelist_host)
+    |unique|list
+  }}'
+
+# Set to true to purge unwanted included preferences files
+apt__preferences_purge: false
+
+# Configuration file for APT
+apt__configuration_directory: /etc/apt
+
+# Main configuration file
+apt__configuration_file: '{{ apt__configuration_directory }}/apt.conf'
+
+# Include directory for configuration
+apt__configuration_include_directory: '{{ apt__configuration_directory }}/apt.conf.d'
+
+# Where to place APT custom scripts
+apt__custom_scripts_directory: /opt/apt-scripts
+
+# Sources file
+apt__sources_list: '{{ apt__configuration_directory }}/sources.list'
+# Sources iists directory
+apt__sources_list_directory: '{{ apt__configuration_directory }}/sources.list.d'
+
+# Preferences file
+apt__preferences: '{{ apt__configuration_directory }}/preferences'
+
+# Preferences directory
+apt__preferences_directory: '{{ apt__configuration_directory }}/preferences.d'
+
+# Directory which contains variable files
+apt__variable_directory: /var/lib/apt
+
+# Directory which contains cache files
+apt__cache_directory: /var/cache/apt
+
+# Directory where apt store cache backups
+apt__backup_directory: '{{ apt__cache_directory }}/backups'
+
+
+### APT ITEMS
+# ---------------------------------------
+# List of GPG Keys to include
+apt__keys: []
+
+# List of custom APT configurations
+
+# Default configurations for APT
+apt__configurations_default:
+  00cdrom:
+    content: |-
+      Acquire::cdrom {
+        mount "/media/cdrom";
+      };
+      Dir::Media::MountPath "/media/cdrom";
+      APT::Authentication::TrustCDROM "true";
+  01autoremove:
+    content: |-
+      APT::NeverAutoRemove {
+        "^firmware-linux.*";
+        "^linux-firmware$";
+        "^linux-image-[a-z0-9]*$";
+        "^linux-image-[a-z0-9]*-[a-z0-9]*$";
+      };
+
+      APT::VersionedKernelPackages {
+        # linux kernels
+        "linux-image";
+        "linux-headers";
+        "linux-image-extra";
+        "linux-signed-image";
+        # kfreebsd kernels
+        "kfreebsd-image";
+        "kfreebsd-headers";
+        # hurd kernels
+        "gnumach-image";
+        # (out-of-tree) modules
+        ".*-modules";
+        ".*-kernel";
+        "linux-backports-modules-.*";
+        # tools
+        "linux-tools";
+      };
+
+      APT::Never-MarkAuto-Sections {
+        "metapackages";
+        "contrib/metapackages";
+        "non-free/metapackages";
+        "restricted/metapackages";
+        "universe/metapackages";
+        "multiverse/metapackages";
+      };
+
+      APT::Move-Autobit-Sections {
+        "oldlibs";
+        "contrib/oldlibs";
+        "non-free/oldlibs";
+        "restricted/oldlibs";
+        "universe/oldlibs";
+        "multiverse/oldlibs";
+      };
+  01network:
+    content: |-
+      {% if apt__http_download_limit is defined %}
+      Acquire::http::Dl-Limit "{{ apt__http_download_limit|int }}";
+      {% endif %}
+  01proxy:
+    content: |-
+      {% if apt__proxy is defined %}
+      {%   set proxy = ('https' if apt__proxy['https']|d(False)|bool else 'http')~'://'~apt__proxy['host']~':'~apt__proxy['port']|d(3128)~'/' %}
+      Acquire::https::Proxy "{{ proxy }}";
+      Acquire::http::Proxy "{{ proxy }}";
+      Acquire::ftp::Proxy "{{ proxy }}";
+      {% endif %}
+  02periodic:
+    content: |-
+      APT::Periodic::Enable "{{ apt__periodic_enabled|bool|ternary('1', '0') }}";
+      APT::Periodic::Verbose "{{ apt__periodic_verbose }}";
+      APT::Periodic::RandomSleep "{{ apt__periodic_random_sleep|int }}";
+      APT::Periodic::MaxAge "{{ apt__periodic_max_age|int }}";
+      APT::Periodic::MinAge "{{ apt__periodic_min_age|int }}";
+      APT::Periodic::MaxSize "{{ apt__periodic_max_size|int }}";
+      APT::Periodic::AutocleanInterval "{{ apt__periodic_autoclean_interval|int }}";
+      APT::Periodic::CleanInterval "{{ apt__periodic_clean_interval|int }}";
+  02periodic-backup:
+    content: |-
+      APT::Periodic::BackupArchiveInterval "{{ apt__periodic_backup_interval|int }}";
+      APT::Periodic::BackupLevel "{{ apt__periodic_backup_level|int }}";
+  15update-stamp:
+    content: |-
+      APT::Update::Post-Invoke-Success {"touch {{ apt__update_stamp_file }} 2>/dev/null || true";};
+  15update-packages-lists:
+    content: |-
+      {% if apt__use_cached_updates_list|bool %}
+      APT::Update::Post-Invoke-Success {"{{ apt__custom_scripts_directory }}/update-packages-lists.sh || true";};
+      {% endif %}
+  20auto-upgrades:
+    content: |-
+      APT::Periodic::Update-Package-Lists "{{ apt__periodic_update_package_lists|int }}";
+      APT::Periodic::Unattended-Upgrade "{{ apt__periodic_unattended_upgrade|int }}";
+      APT::Periodic::Download-Upgradeable-Packages "{{ apt__periodic_download_upgradeable_packages|int }}";
+  20listchanges:
+    content: |-
+      {% if apt__listchanges_enabled|bool %}
+      DPkg::Pre-Install-Pkgs { "/usr/bin/apt-listchanges --apt || test $? -lt 10"; };
+      DPkg::Tools::Options::/usr/bin/apt-listchanges::Version "2";
+      DPkg::Tools::Options::/usr/bin/apt-listchanges::InfoFD "20";
+      {% endif %}
+  50unattended-upgrades:
+    content: |-
+      Unattended-Upgrade::Origins-Pattern {
+      {% for pattern in apt__unattended_upgrades_origins_patterns|list %}
+        "{{ pattern }}";
+      {% endfor %}
+      };
+
+      Unattended-Upgrade::AutoFixInterruptedDpkg "{{ apt__unattended_upgrades_auto_fix_interrupted_dpkg|bool|ternary('true', 'false') }}";
+      Unattended-Upgrade::MinimalSteps "{{ apt__unattended_upgrades_minimal_steps|bool|ternary('true', 'false') }}";
+      Unattended-Upgrade::InstallOnShutdown "{{ apt__unattended_upgrades_install_on_shutdown|bool|ternary('true', 'false') }}";
+
+      {% if apt__unattended_upgrades_mail is defined %}
+      Unattended-Upgrade::Mail "{{ apt__unattended_upgrades_mail }}";
+      Unattended-Upgrade::Sender "{{ apt__unattended_upgrades_mail_sender }}";
+      {% endif %}
+      Unattended-Upgrade::MailOnlyOnError "{{ apt__unattended_upgrades_mail_only_on_error|bool|ternary('true', 'false') }}";
+
+      Unattended-Upgrade::Remove-Unused-Dependencies "{{ apt__unattended_upgrades_remove_unused_dependencies|bool|ternary('true', 'false') }}";
+      Unattended-Upgrade::Automatic-Reboot "{{ apt__unattended_upgrades_automatic_reboot|bool|ternary('true', 'false') }}";
+      Unattended-Upgrade::Automatic-Reboot-WithUsers "{{ apt__unattended_upgrades_automatic_reboot_withusers|bool|ternary('true', 'false') }}";
+      Unattended-Upgrade::Automatic-Reboot-Time "{{ apt__unattended_upgrades_automatic_reboot_time }}";
+      Unattended-Upgrade::SyslogEnable "{{ apt__unattended_upgrades_syslog_enabled|bool|ternary('true', 'false') }}";
+      Unattended-Upgrade::SyslogFacility "{{ apt__unattended_upgrades_syslog_facility }}";
+  50unattended-upgrades-whitelist:
+    content: |-
+      Unattended-Upgrade::Package-Whitelist-Strict "{{ apt__unattended_upgrades_package_whitelist_strict|bool|ternary('true', 'false') }}";
+      Unattended-Upgrade::Package-Whitelist {
+      {% for package in apt__unattended_upgrades_package_whitelist|list %}
+        "{{ package }}";
+      {% endfor %}
+      };
+  50unattended-upgrades-blacklist:
+    content: |-
+      Unattended-Upgrade::Package-Blacklist {
+      {% for package in apt__unattended_upgrades_package_blacklist|list %}
+        "{{ package }}";
+      {% endfor %}
+      };
+  70debconf:
+    content: |-
+      DPkg::Pre-Install-Pkgs {"/usr/sbin/dpkg-preconfigure --apt || true";};
+
+
+# This dict is intended to be used at global inventory level
+apt__configurations_global: {}
+
+# This dict is intended to be used at hostgroup inventory level
+apt__configurations_group: {}
+
+# This dict is intended to be used at host inventory level
+apt__configurations_host: {}
+
+# Merged dict of configurations
+apt__configurations: '{{
+    apt__configurations_default
+    |combine(apt__configurations_global)
+    |combine(apt__configurations_group)
+    |combine(apt__configurations_host)
+  }}'
+
+
+# Set to true to purge unwanted repositories files
+apt__repositories_purge: false
+
+# List of repositories to configure
+
+# This list is intended to be used at global inventory level
+apt__repositories_global: []
+
+# This list is intended to be used at hostgroup inventory level
+apt__repositories_group: []
+
+# This list is intended to be used at host inventory level
+apt__repositories_host: []
+
+# Merged list of repositories
+apt__repositories: '{{
+    apt__repositories_global
+    |union(apt__repositories_group)
+    |union(apt__repositories_host)
+  }}'
+
+
+# List of packages pinings
+
+# This list is intended to be used at global inventory level
+apt__pins_global: {}
+
+# This list is intended to be used at hostgroup inventory level
+apt__pins_group: {}
+
+# This list is intended to be used at host inventory level
+apt__pins_host: {}
+
+# Merged list of pinnings
+apt__pins: '{{
+    apt__pins_global
+    |combine(apt__pins_group)
+    |combine(apt__pins_host)
+  }}'
+
+
+### APT CONFIGURATION
+# ---------------------------------------
+## Base configuration
+# Declare a proxy for APT request
+# apt__proxy:
+#   host:
+#   port: 8080
+#   https: true
+
+# Limit APT bandwidth to this speed (in kBytes/sec)
+# apt__http_download_limit: 0
+
+
+## Periodic cron task
+# Enable the update/upgrade script (0=disable)
+apt__periodic_enabled: true
+
+# Do "apt-get update" automatically every n-days (0=disable)
+apt__periodic_update_package_lists: 0
+
+# Run the "unattended-upgrade" security upgrade script every n-days (0=disabled)
+apt__periodic_unattended_upgrade: 0
+
+# Do "apt-get upgrade --download-only" every n-days (0=disable)
+apt__periodic_download_upgradeable_packages: false
+
+# Send report mail to root
+#      0: no report             (or null string)
+#      1: progress report       (actually any string)
+#      2: + command outputs     (remove -qq, remove 2>/dev/null, add -d)
+#      3: + trace on
+apt__periodic_verbose: 0
+
+# The apt cron job will delay its execution by a random
+# time span between zero and 'APT::Periodic::RandomSleep' seconds.
+# Note that sleeping in the apt job will be delaying the
+# execution of all subsequent cron.daily jobs.
+# NOTE : not used on systemd because timer already include a random delay
+apt__periodic_random_sleep: 0
+
+
+## Cleaning
+# Set maximum allowed age of a cache package file. If a cache
+# package file is older it is deleted (0=disable)
+apt__periodic_max_age: 0
+
+# Set minimum age of a package file. If a file is younger it
+# will not be deleted (0=disable). Usefull to prevent races
+# and to keep backups of the packages for emergency.
+apt__periodic_min_age: 2
+
+# Set maximum size of the cache in MB (0=disable). If the cache
+# is bigger, cached package files are deleted until the size
+# requirement is met (the biggest packages will be deleted first)
+apt__periodic_max_size: 0
+
+# Do "apt-get autoclean" every n-days (0=disable)
+apt__periodic_autoclean_interval: 30
+
+# Do "apt-get clean" every n-days (0=disable)
+apt__periodic_clean_interval: 0
+
+
+## Backup
+# Backup after n-days if archive contents changed.(0=disable)
+apt__periodic_backup_interval: 0
+
+# Backup level.(0=disable), 1 is invalid.
+apt__periodic_backup_level: 3
+
+
+## Unattended Upgrades
+# Send email to this address for problems or packages upgrades
+# apt__unattended_upgrades_mail: ''
+
+# Use the specified value in the "From" field of outgoing mails.
+apt__unattended_upgrades_mail_sender: 'root@{{ ansible_fqdn }}'
+
+# Set this value to "true" to get emails only on errors.
+apt__unattended_upgrades_mail_only_on_error: false
+
+# This option allows you to control if on a unclean dpkg exit
+# unattended-upgrades will automatically run
+#   dpkg --force-confold --configure -a
+apt__unattended_upgrades_auto_fix_interrupted_dpkg: true
+
+# Split the upgrade into the smallest possible chunks so that
+# they can be interrupted with SIGUSR1. This makes the upgrade
+# a bit slower but it has the benefit that shutdown while a upgrade
+# is running is possible (with a small delay)
+apt__unattended_upgrades_minimal_steps: true
+
+# Do automatic removal of new unused dependencies after the upgrade
+# (equivalent to apt-get autoremove)
+apt__unattended_upgrades_remove_unused_dependencies: alse
+
+# Automatically reboot *WITHOUT CONFIRMATION*
+#  if the file /var/run/reboot-required is found after the upgrade
+apt__unattended_upgrades_automatic_reboot: false
+
+# Automatically reboot even if there are users currently logged in.
+apt__unattended_upgrades_automatic_reboot_withusers: false
+
+# If automatic reboot is enabled and needed,
+# reboot at the specific time instead of immediately
+apt__unattended_upgrades_automatic_reboot_time: now
+
+# Install all unattended-upgrades when the machine is shuting down
+# instead of doing it in the background while the machine is running
+# This will (obviously) make shutdown slower
+apt__unattended_upgrades_install_on_shutdown: false
+
+# List of packages "origin" and "archive" to update.
+# These are taken respectively from the Origin and Suite fields of the repository's Release file,
+#  or can be found in the output of: apt-cache policy
+#  to get the "o" and "a" fields for the given repository.
+apt__unattended_upgrades_origins_patterns:
+  - 'origin=Debian,codename=${distro_codename},label=Debian-Security'
+
+# No packages that match the regular expressions in this list will be marked for upgrade
+# If a package A has a blacklisted package B as a dependency then both packages A and B will not be upgraded
+# All regexp will be considered with a '^' at the beginning
+# Note you may need to escape special characters like "+" as "\+".
+apt__unattended_upgrades_package_blacklist: []
+
+# By default dependencies of whitelisted packages are allowed.
+# This can be changed to only ever allow whitelisted packages
+# This means that you also need to list all the dependencies of a whitelisted package.
+apt__unattended_upgrades_package_whitelist_strict: true
+
+# Only packages that match the regular expressions in this list will be marked for upgrade
+# All regexp will be considered with a '^' at the beginning
+# Note you may need to escape special characters like "+" as "\+".
+apt__unattended_upgrades_package_whitelist: []
+
+# Enable logs into syslog
+apt__unattended_upgrades_syslog_enabled: false
+
+# Syslog facility
+apt__unattended_upgrades_syslog_facility: daemon
+
+
+## List changes
+# Enable or not the apt listchange feature
+apt__listchanges_enabled: false
+
+# Main configuration file of apt listchanges
+apt__listchanges_configuration_file: '{{ apt__configuration_directory }}/listchanges.conf'
+
+# Apt list changes configurations
+apt__listchanges_configurations_default:
+  apt.frontend: pager
+  apt.email_address: root
+  apt.save_seen: '{{ apt__variable_directory }}/listchanges.db'
+  cmdline.frontend: pager
+
+# This dict is intended to be used at global inventory level
+apt__listchanges_configurations_global: {}
+
+# This dict is intended to be used at hostgroup inventory level
+apt__listchanges_configurations_group: {}
+
+# This dict is intended to be used at host inventory level
+apt__listchanges_configurations_host: {}
+
+# Merged dict of configurations
+apt__listchanges_configurations: '{{
+    apt__listchanges_configurations_default
+    |combine(apt__listchanges_configurations_global)
+    |combine(apt__listchanges_configurations_group)
+    |combine(apt__listchanges_configurations_host)
+  }}'
+
+
+## Misc
+# Path to the stamp file to update after each update
+apt__update_stamp_file: '{{ apt__variable_directory }}/periodic/update-success-stamp'
+
+# If true, each apt-get update will generated cached list of package in files
+# and each tols like facts,
+# monitoring items will fetch packages updates from theses files
+# instead of running apt-get directly. It is recommanded to let it to true
+apt__use_cached_updates_list: true
+
+# Path to the file which contains availables packages updates
+apt__cached_updates_file: /var/lib/apt/periodic/packages-updates
+# Path to the file which contains availabes packaes security updates
+apt__cached_security_updates_file:
+  '{{ apt__variable_directory }}/periodic/packages-security-updates'
+
+# Path to the file which contains availables packages updates
+apt__cached_dist_updates_file: '{{ apt__variable_directory }}/periodic/packages-dist-updates'
+# Path to the file which contains availabes packaes security updates
+apt__cached_security_dist_updates_file:
+  '{{ apt__variable_directory }}/periodic/packages-security-dist-updates'
+
+# Path to the file which can be autoremoved
+apt__cached_unneeded_packages_file: '{{ apt__variable_directory }}/periodic/packages-unneeded'
+
+# Default cache valid time for update operations
+apt__cache_valid_time: 3600

@@ -1,0 +1,39 @@
+---
+
+- name: List installed apt confs
+  find:
+    paths: '{{ apt__configuration_include_directory }}'
+    file_type: file
+  register: _apt__installed_conf_files
+
+## purge feature
+
+- name: List ansible managed apt confs
+  find:
+    paths: '{{ apt__configuration_include_directory }}'
+    file_type: file
+    contains: '//{{ apt__ansible_managed_key }}'
+  register: _apt__managed_conf_files
+
+- name: Remove unknown installed apt confs
+  file:
+    path: '{{ item }}'
+    state: absent
+  with_items: "{{
+    _apt__installed_conf_files.files
+    |map(attribute='path')
+    |difference(
+      _apt__managed_conf_files.files
+      |map(attribute='path')
+    )
+    |list }}"
+  when: apt__configurations_purge|bool
+    and item|basename not in apt__configurations_purge_whitelist
+
+- name: Create apt settings
+  include_tasks: types/setting.yml
+  vars:
+    apt__setting: "{{ outer_item.value|combine({'name': outer_item.key}) }}"
+  with_dict: '{{ apt__configurations }}'
+  loop_control:
+    loop_var: outer_item
