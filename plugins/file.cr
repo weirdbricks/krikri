@@ -393,19 +393,6 @@ module Krikri
       errno == Errno::ENOENT ? nil : errno
     end
 
-    # File.symlink? is NOT the lenient probe File.exists? is: it goes
-    # through File.info?, which RAISES File::AccessDeniedError on EACCES
-    # instead of returning false. Ansible's get_state reports such a
-    # path (one behind an unreadable ancestor) as absent, so callers
-    # that only need the lexists answer must get `false` here rather
-    # than the exception; every other File::Error keeps its previous
-    # failure outcome.
-    private def symlink_present?(path : String) : Bool
-      File.symlink?(path)
-    rescue File::AccessDeniedError
-      false
-    end
-
     private def dispatch_state(state : String, path : String) : PluginResult
       case state
       when "directory" then handle_directory(path)
@@ -1249,26 +1236,21 @@ module Krikri
 
     # Handle state=absent
     private def handle_absent(path : String) : PluginResult
-      # lexists semantics: a DANGLING symlink (target gone) reports
-      # File.exists? == false (it follows links) but still needs removing
-      # - Ansible's state=absent removes broken symlinks too. The link
-      # probe is the rescued one: Crystal's File.symlink? goes through
-      # File.info? and RAISES File::Error on EACCES rather than
-      # returning false, which turned Ansible's ok/absent for a path
-      # behind an unreadable ancestor into "Unable to get file info:
+      # ensure_absent branches on a single get_state() result, which supplies
+      # the changed verdict, initial_diff's prev_state and the
+      # rmtree-vs-unlink split. get_state's lstat semantics keep a DANGLING
+      # symlink (target gone) a "link" even though File.exists? follows the
+      # link and reports false; missing a broken symlink here used to leave
+      # it unremoved (Ansible removes those too). lstat is also the
+      # non-raising probe: Crystal's File.symlink? goes through
+      # File.info? and RAISES File::Error on EACCES rather than returning
+      # false, which turned Ansible's ok/absent for a path behind an
+      # unreadable ancestor into "Unable to get file info:
       # ...: Permission denied".
-      unless File.exists?(path) || symlink_present?(path)
-        # Path doesn't exist, nothing to do
-        if @check_mode
-          return PluginResult.new(
-            changed: false,
-            failed: false,
-            msg: "",
-            path: path,
-            key_order: ABSENT_KEY_ORDER
-          )
-        end
+      prev_state = path_state(path)
 
+      if prev_state == "absent"
+        # Path doesn't exist, nothing to do
         return PluginResult.new(
           changed: false,
           failed: false,
@@ -1278,12 +1260,18 @@ module Krikri
         )
       end
 
+      # ensure_absent builds initial_diff() from get_state() BEFORE it
+      # removes anything, and keeps it on the result in check mode too,
+      # so --diff prints the transition for a removal (issue #1749: this
+      # engine printed no diff block at all).
+      diff_data = absent_diff(path, prev_state)
+
       # Path exists, remove it
       if @check_mode
         result = PluginResult.new(
           changed: true,
           failed: false,
-
+          diff: diff_data,
           path: path,
           key_order: ABSENT_KEY_ORDER
         )
@@ -1303,7 +1291,7 @@ module Krikri
       # code reported changed while leaving the path untouched when the
       # connecting user cannot delete it (issue #1485) - a false success
       # that never converges.
-      if !File.symlink?(path) && Dir.exists?(path)
+      if prev_state == "directory"
         begin
           FileUtils.rm_r(path)
         rescue ex : File::Error
@@ -1342,9 +1330,82 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
+        diff: diff_data,
         path: path,
         key_order: ABSENT_KEY_ORDER
       )
+    end
+
+    # file.py's initial_diff(path, 'absent', prev_state): real seeds both
+    # sides with the path, records the state transition whenever the
+    # requested state differs from get_state(), and - only for a directory
+    # - appends the os.walk listing under "path_content". Built before the
+    # delete (issue #1749: --diff printed nothing for a removal).
+    private def absent_diff(path : String, prev_state : String) : JSON::Any?
+      return nil unless @diff_mode
+      return nil if prev_state == "absent"
+
+      before = {"path" => JSON::Any.new(path), "state" => JSON::Any.new(prev_state)} of String => JSON::Any
+      after = {"path" => JSON::Any.new(path), "state" => JSON::Any.new("absent")} of String => JSON::Any
+      before["path_content"] = directory_path_content(path) if prev_state == "directory"
+      generate_attribute_diff(before, after)
+    end
+
+    # initial_diff's path_content: every walked subdirectory path, then
+    # every walked file path, in os.walk's depth-first order. os.walk
+    # classifies an entry with entry.is_dir() (which follows symlinks, so
+    # a symlink to a directory lands in "directories") but with
+    # followlinks=False never recurses through that symlink.
+    private def directory_path_content(path : String) : JSON::Any
+      directories = [] of JSON::Any
+      files = [] of JSON::Any
+      walk_path_content(path, directories, files)
+      JSON.parse({
+        "directories" => directories,
+        "files"       => files,
+      }.to_json)
+    end
+
+    private def walk_path_content(path : String, directories : Array(JSON::Any), files : Array(JSON::Any)) : Nil
+      entries = begin
+        Dir.children(path)
+      rescue File::Error
+        # os.walk's default onerror=None drops a directory it cannot
+        # scandir at all (the directory itself was already listed by its
+        # parent).
+        return
+      end
+
+      subdirs = [] of String
+      entries.each do |entry|
+        full = File.join(path, entry)
+        # Distinct from the scandir policy above: os.walk wraps each
+        # entry's is_dir() probe in its own OSError rescue and classifies
+        # a failed probe as a non-directory, so the rest of the listing
+        # survives (a symlink whose target is stat-unreachable is the
+        # real-world trigger).
+        if directory_entry?(full)
+          directories << JSON::Any.new(full)
+          subdirs << full unless symlink_entry?(full)
+        else
+          files << JSON::Any.new(full)
+        end
+      end
+      subdirs.each { |subdir| walk_path_content(subdir, directories, files) }
+    end
+
+    private def directory_entry?(path : String) : Bool
+      Dir.exists?(path)
+    rescue File::Error
+      false
+    end
+
+    private def symlink_entry?(path : String) : Bool
+      File.symlink?(path)
+    rescue File::Error
+      # os.walk's followlinks=False guard never recurses; treating an
+      # unprobeable entry as a link keeps that guarantee.
+      true
     end
 
     # shutil.rmtree's OSError text carries a plain (non-bytes) path repr,
@@ -2256,11 +2317,12 @@ module Krikri
       System::Group.find_by?(id: gid.to_s).try(&.name) || gid.to_s
     end
 
-    # file.py's get_state(): the path's own lstat type. Both diff builders
-    # that record a state transition use it - execute_touch against the
-    # literal "touch" after.state (a touch on an existing file always diffs
-    # the transition, even when no attribute changes), and ensure_directory
-    # against "directory".
+    # file.py's get_state(): the path's own lstat type. Every state handler
+    # that records a transition or branches on the previous type uses it -
+    # execute_touch against the literal "touch" after.state (a touch on an
+    # existing file always diffs the transition, even when no attribute
+    # changes), ensure_directory against "directory", and ensure_absent for
+    # the diff, the changed verdict and the rmtree-vs-unlink split.
     private def path_state(path : String) : String
       info = lstat(path)
       return "absent" unless info

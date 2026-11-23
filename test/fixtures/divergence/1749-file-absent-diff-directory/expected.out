@@ -1,0 +1,27 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [ansible.builtin.file] ****************************************************
+--- before
++++ after
+@@ -1,13 +1,4 @@
+ {
+     "path": "<WORK>/targetdir",
+-    "path_content": {
+-        "directories": [
+-            "<WORK>/targetdir/sub"
+-        ],
+-        "files": [
+-            "<WORK>/targetdir/top.txt",
+-            "<WORK>/targetdir/sub/inner.txt"
+-        ]
+-    },
+-    "state": "directory"
++    "state": "absent"
+ }
+
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

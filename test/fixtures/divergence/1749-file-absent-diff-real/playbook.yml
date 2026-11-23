@@ -1,0 +1,8 @@
+# The issue's repro, with only the path adapted to the case's scratch tree.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - ansible.builtin.file:
+        path: "{{ playbook_dir }}/target.conf"
+        state: absent
