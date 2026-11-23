@@ -102,6 +102,20 @@ private DIVERGENCE_CASES = [
   {issue: 1667, slug: "postgres-exporter-selinux-package-fact-origin"},
   {issue: 1687, slug: "handler-remote-module-before-delegated-task"},
   {issue: 1704, slug: "force-handlers-skips-unreachable-host"},
+  {issue: 1703, slug: "pre-upload-unreachable-booked-at-block"},
+  {issue: 1703, slug: "block-delegated-children-dropped"},
+  {issue: 1703, slug: "unreachable-skips-block-rescue-and-always"},
+  {issue: 1703, slug: "block-rescue-runs-before-unreachable"},
+  {issue: 1703, slug: "include-tasks-descends-before-unreachable"},
+  {issue: 1703, slug: "include-role-descends-before-unreachable"},
+  {issue: 1703, slug: "ignore-errors-does-not-unhalt-unreachable"},
+  {issue: 1703, slug: "rescue-unreachable-skips-always"},
+  {issue: 1703, slug: "include-role-block-descends"},
+  {issue: 1703, slug: "include-tasks-nondelegated-child"},
+  {issue: 1703, slug: "multi-host-block-rescue"},
+  {issue: 1703, slug: "nested-block-inner-unreachable"},
+  {issue: 1703, slug: "rescue-unreachable-with-block-ignore-errors"},
+  {issue: 1703, slug: "multi-host-rescue-only-failed-host"},
 ]
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
@@ -529,6 +543,76 @@ describe "divergence corpus" do
 
   it "replays 1704-force-handlers-skips-unreachable-host" do
     expected, actual, report = divergence_transcripts(1704, "force-handlers-skips-unreachable-host")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-pre-upload-unreachable-booked-at-block" do
+    expected, actual, report = divergence_transcripts(1703, "pre-upload-unreachable-booked-at-block")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-block-delegated-children-dropped" do
+    expected, actual, report = divergence_transcripts(1703, "block-delegated-children-dropped")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-unreachable-skips-block-rescue-and-always" do
+    expected, actual, report = divergence_transcripts(1703, "unreachable-skips-block-rescue-and-always")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-block-rescue-runs-before-unreachable" do
+    expected, actual, report = divergence_transcripts(1703, "block-rescue-runs-before-unreachable")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-include-tasks-descends-before-unreachable" do
+    expected, actual, report = divergence_transcripts(1703, "include-tasks-descends-before-unreachable")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-include-role-descends-before-unreachable" do
+    expected, actual, report = divergence_transcripts(1703, "include-role-descends-before-unreachable")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-ignore-errors-does-not-unhalt-unreachable" do
+    expected, actual, report = divergence_transcripts(1703, "ignore-errors-does-not-unhalt-unreachable")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-rescue-unreachable-skips-always" do
+    expected, actual, report = divergence_transcripts(1703, "rescue-unreachable-skips-always")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-include-role-block-descends" do
+    expected, actual, report = divergence_transcripts(1703, "include-role-block-descends")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-include-tasks-nondelegated-child" do
+    expected, actual, report = divergence_transcripts(1703, "include-tasks-nondelegated-child")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-multi-host-block-rescue" do
+    expected, actual, report = divergence_transcripts(1703, "multi-host-block-rescue")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-nested-block-inner-unreachable" do
+    expected, actual, report = divergence_transcripts(1703, "nested-block-inner-unreachable")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-rescue-unreachable-with-block-ignore-errors" do
+    expected, actual, report = divergence_transcripts(1703, "rescue-unreachable-with-block-ignore-errors")
+    assert_equal(expected, actual, report)
+  end
+
+  it "replays 1703-multi-host-rescue-only-failed-host" do
+    expected, actual, report = divergence_transcripts(1703, "multi-host-rescue-only-failed-host")
     assert_equal(expected, actual, report)
   end
 end

@@ -1,0 +1,23 @@
+
+PLAY [target] ******************************************************************
+
+TASK [include_tasks] ***********************************************************
+included: <WORK>/tasks/inner.yml for target
+
+TASK [command] *****************************************************************
+changed: [target -> localhost]
+
+TASK [ping] ********************************************************************
+[ERROR]: Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.
+Origin: <WORK>/playbook.yml:9:7
+
+7   tasks:
+8     - include_tasks: tasks/inner.yml
+9     - ping:
+        ^ column 7
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+
+PLAY RECAP *********************************************************************
+target                     : ok=2    changed=1    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+

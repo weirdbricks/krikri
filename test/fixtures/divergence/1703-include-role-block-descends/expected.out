@@ -1,0 +1,19 @@
+
+PLAY [target] ******************************************************************
+
+TASK [include_role : rb] *******************************************************
+included: rb for target
+
+TASK [rb : command] ************************************************************
+[ERROR]: Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.
+Origin: <WORK>/roles/rb/tasks/main.yml:2:7
+
+1 - block:
+2     - command: "true"
+        ^ column 7
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+
+PLAY RECAP *********************************************************************
+target                     : ok=1    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+

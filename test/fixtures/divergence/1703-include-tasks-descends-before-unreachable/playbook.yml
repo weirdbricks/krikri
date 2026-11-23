@@ -1,0 +1,9 @@
+# Same pre-upload short circuit as the issue's block: form of the repro, on the
+# include_tasks: dispatch: the include never dials the host, its children
+# do. The trailing ping: is not invented - without a task that really
+# connects, the eager pass has nothing to upload and never dials either.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - include_tasks: tasks/inner.yml
+    - ping:

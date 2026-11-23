@@ -1,0 +1,17 @@
+
+PLAY [target] ******************************************************************
+
+TASK [command] *****************************************************************
+[ERROR]: Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.
+Origin: <WORK>/playbook.yml:8:11
+
+6   tasks:
+7     - block:
+8         - command: "true"
+            ^ column 11
+
+fatal: [target]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: Connection to 192.0.2.1 closed by remote host.", "unreachable": true}
+
+PLAY RECAP *********************************************************************
+target                     : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   
+

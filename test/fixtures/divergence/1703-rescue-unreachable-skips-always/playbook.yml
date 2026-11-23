@@ -1,0 +1,14 @@
+# A rescue: whose task dials and loses the host removes it from the play
+# too, so always: must not run for it.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+            msg: boom
+          delegate_to: localhost
+      rescue:
+        - ping:
+      always:
+        - debug:
+            msg: always

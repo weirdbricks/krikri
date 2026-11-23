@@ -1,0 +1,17 @@
+# The block's ignore_errors: true must not un-halt a host the rescue task
+# loses at the transport. The body task overrides it back to false, or the
+# inherited value would swallow the failure and rescue: would never run.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+            msg: boom
+          delegate_to: localhost
+          ignore_errors: false
+      ignore_errors: true
+      rescue:
+        - ping:
+      always:
+        - debug:
+            msg: always

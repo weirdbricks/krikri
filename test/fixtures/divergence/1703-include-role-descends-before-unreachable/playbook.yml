@@ -1,0 +1,9 @@
+# Same pre-upload short circuit as the issue's block: form of the repro, on the
+# include_role: dispatch: the include never dials the host, the role's own
+# tasks do. The trailing ping: is what makes the eager pass dial at all.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - include_role:
+        name: kpgrole
+    - ping:

@@ -1,0 +1,19 @@
+# The inner block loses the host; neither level's rescue:/always: runs.
+- hosts: target
+  gather_facts: false
+  tasks:
+    - block:
+        - block:
+            - command: "true"
+          rescue:
+            - debug:
+                msg: rescued inner
+          always:
+            - debug:
+                msg: always inner
+      rescue:
+        - debug:
+            msg: rescued outer
+      always:
+        - debug:
+            msg: always outer
