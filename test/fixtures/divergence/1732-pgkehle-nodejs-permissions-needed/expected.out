@@ -1,0 +1,42 @@
+
+PLAY [local] *******************************************************************
+
+TASK [Test User Permissions To Use Ports 80/443] *******************************
+skipping: [localhost]
+
+TASK [Determine if the permissions are needed] *********************************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'differs': object of type 'dict' has no attribute 'stdout'
+
+Task failed.
+Origin: <WORK>/playbook.yml:17:7
+
+15       changed_when: false
+16
+17     - name: Determine if the permissions are needed
+         ^ column 7
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.set_fact' failed.
+Origin: <WORK>/playbook.yml:18:7
+
+16
+17     - name: Determine if the permissions are needed
+18       set_fact:
+         ^ column 7
+
+<<< caused by >>>
+
+Error while resolving value for 'differs': object of type 'dict' has no attribute 'stdout'
+Origin: <WORK>/playbook.yml:19:18
+
+17     - name: Determine if the permissions are needed
+18       set_fact:
+19         differs: "{{ results_cap.stdout.find('differs') >= 1 }}"
+                    ^ column 18
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'differs': object of type 'dict' has no attribute 'stdout'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=1    rescued=0    ignored=0   
+

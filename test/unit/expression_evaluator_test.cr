@@ -84,6 +84,61 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("mylist | length > 0").must_equal("False")
   end
 
+  it "fails an ordering comparison on a missing attribute with ansible's read wording" do
+    # A task registered while SKIPPED carries no stdout, and real ansible
+    # (2.21.6, live-verified) fails `{{ results_cap.stdout.find('differs')
+    # >= 1 }}` at the attribute READ, not at the comparison: "object of
+    # type 'dict' has no attribute 'stdout'". The operand used to resolve
+    # to JSON null, so the task died with Python's NoneType ordering
+    # TypeError instead (issue #1732, pgkehle.nodejs).
+    v = Hash(String, JSON::Any).new
+    v["results_cap"] = JSON.parse(%({"skipped": true, "changed": false}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    assert_raises_message(Krikri::UndefinedVariableError,
+      "object of type 'dict' has no attribute 'stdout'") do
+      evaluator.evaluate("results_cap.stdout.find('differs') >= 1")
+    end
+  end
+
+  it "fails an ordering comparison on an undefined name with ansible's undefined wording" do
+    # Same read-time failure for a name nothing defines: real reports
+    # "'missing_var' is undefined", never the NoneType ordering TypeError
+    # the null-resolved operand produced (live-verified vs 2.21.6).
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    assert_raises_message(Krikri::UndefinedVariableError,
+      "'missing_var' is undefined") do
+      evaluator.evaluate("missing_var >= 1")
+    end
+  end
+
+  it "keeps the ordering TypeError for two genuinely incomparable operands" do
+    # The undefined-read probe declines here, so a real Python TypeError
+    # still surfaces as one (live-verified vs 2.21.6: "'>=' not supported
+    # between instances of 'str' and 'int'").
+    v = Hash(String, JSON::Any).new
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    assert_raises_message(Krikri::VariableSubstitutor::ComparisonTypeError,
+      /'>=' not supported between instances of 'str' and 'int'/) do
+      evaluator.evaluate("'x' >= 1")
+    end
+  end
+
+  it "keeps an empty first/last failure out of the undefined-read wording" do
+    # `first`/`last` on an empty sequence is Jinja's StopIteration, a FILTER
+    # runtime failure real words bare ("No first item, sequence was empty."),
+    # not the undefined READ the probe recovers. Escalating it as an undefined
+    # variable turned a `when:`'s expected conditional-evaluation failure into
+    # an uncaught error that killed the run (issue #548).
+    v = Hash(String, JSON::Any).new
+    v["empty"] = JSON::Any.new([] of JSON::Any)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError,
+      "No first item, sequence was empty.") do
+      evaluator.evaluate("empty | first == 'y'")
+    end
+  end
+
   it "evaluates range(stop) with the | list filter, matching Python's range()" do
     # Real bug found benchmarking a perf playbook: `loop: "{{ range(1, 11)
     # | list }}"` silently resolved to nil (fell through to plain variable
