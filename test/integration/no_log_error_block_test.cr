@@ -210,9 +210,10 @@ describe "failed no_log copy's [ERROR] block" do
   # from only the requested manager list - before the censored fatal
   # line. Like the rpm-less package_facts spec above, "rpm" is safe to
   # force here because this suite's hosts are dpkg-based; skip when the
-  # host's python can actually import rpm, since the gate then can't fire.
+  # host carries an `rpm` binary, since the manager is then usable
+  # (ansible-core 2.21.6's rpm manager is a CLIMgr, issue #1724).
   it "prints the block above the censored fatal for a no_log package_facts failure" do
-    skip "python on this host can import rpm" if Krikri.missing_python_library("rpm", "rpm").nil?
+    skip "rpm binary on this host's PATH" unless Process.find_executable("rpm").nil?
 
     output = run_playbook(<<-YAML)
           - package_facts:

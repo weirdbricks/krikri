@@ -1,0 +1,14 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gather the package facts] ************************************************
+ok: [localhost]
+
+TASK [Show a gathered package entry] *******************************************
+ok: [localhost] => {
+    "msg": "{\"name\": \"aide\", \"version\": \"0.16\", \"release\": \"1.el9\", \"epoch\": \"None\", \"arch\": \"x86_64\", \"source\": \"rpm\"}"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

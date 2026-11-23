@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Gather the package facts
+      ansible.builtin.package_facts:
+        manager: rpm
+
+    - name: Show a gathered package entry
+      ansible.builtin.debug:
+        msg: "{{ ansible_facts.packages['aide'][0] | to_json }}"

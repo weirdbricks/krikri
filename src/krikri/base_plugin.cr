@@ -400,11 +400,17 @@ module Krikri
     # process's PATH plus /sbin, /usr/sbin, /usr/local/sbin when missing from
     # it and present on disk, with the executable name double-quoted.
     protected def missing_executable_message(name : String) : String
+      %(Failed to find required executable "#{name}" in paths: #{missing_executable_search_paths.join(':')})
+    end
+
+    # The directory list get_bin_path searches, in order, and the list it
+    # quotes in the failure message (see missing_executable_message).
+    protected def missing_executable_search_paths : Array(String)
       paths = (ENV["PATH"]? || "").split(':')
       {"/sbin", "/usr/sbin", "/usr/local/sbin"}.each do |dir|
         paths << dir if !paths.includes?(dir) && Dir.exists?(dir)
       end
-      %(Failed to find required executable "#{name}" in paths: #{paths.join(':')})
+      paths
     end
 
     # Directories searched beyond $PATH by Ansible's get_bin_path
