@@ -1253,6 +1253,44 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "warns for a task vars: value whose only consumer lookup runs in the when:" do
+    # Issue #1731, lotusnoir.apps_snoopy's include_vars: `params` consumes
+    # `params_` through lookup('first_found') and the only render that
+    # reads `params` is the task's own `when:` - real templates both
+    # values in that one operation and prints params_'s block at its list
+    # entry (live-verified against 2.21.6: 11:15 below).
+    stdout, stderr, _dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: lookup through when
+            debug:
+              msg: hi
+            vars:
+              params_:
+                files:
+                  - "{{ ansible_os_family | lower }}.yml"
+                  - default.yml
+                paths:
+                  - vars
+              params: "{{ lookup('first_found', params_, errors='ignore') }}"
+            when:
+              - (params | length > 0)
+      PLAYBOOK
+      "vars/default.yml" => "marker: ok\n",
+    })
+
+    stdout.must_include("TASK [lookup through when]")
+    stdout.wont_include("skipping: [localhost]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include(":11:15\n")
+    stderr.must_include("11             - \"{{ ansible_os_family | lower }}.yml\"\n")
+    stderr.must_include("^ column 15")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "prints one block for the task name template and one for a same-named module param" do
     # Issue #1025, round 29903261's marauderxtreme.local_system: the user
     # task's own name: template and its name: param each read a top-level

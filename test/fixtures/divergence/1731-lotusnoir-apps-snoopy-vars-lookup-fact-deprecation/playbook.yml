@@ -1,0 +1,27 @@
+# lotusnoir.apps_snoopy's tasks/main.yml include_vars entry, verbatim: the
+# task-level `vars:` `params_` list holds the fact reads, `params` consumes it
+# through lookup('first_found'), and the task's own `when:` is the render that
+# consumes `params` - so real prints `params_`'s INJECT_FACTS_AS_VARS block at
+# the list entry even though the value is only ever reached through the when:.
+# The `default.yml` fallback is the only addition, so first_found matches on
+# any distribution and the task itself succeeds.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Gather OS specific variables
+      ansible.builtin.include_vars: "{{ params }}"
+      vars:
+        params_:
+          files:
+            - "{{ ansible_distribution | lower }}-{{ ansible_distribution_version | lower }}.yml"
+            - "{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+            - "{{ ansible_os_family | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+            - "{{ ansible_distribution | lower }}.yml"
+            - "{{ ansible_os_family | lower }}.yml"
+            - default.yml
+          paths:
+            - vars
+        params: "{{ lookup('first_found', params_, errors='ignore') }}"
+      when:
+        - (params | length > 0)

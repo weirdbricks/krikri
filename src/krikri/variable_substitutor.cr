@@ -3254,26 +3254,31 @@ module Krikri
       end
     end
 
-    # Whether this fiber is inside a capture (see #capture_var_deprecations):
-    # a nested lazy render (a task var reading another variable's value)
-    # contributes its readings to the open capture, and no pending list
-    # flushes mid-render.
-    def self.capturing_var_deprecations? : Bool
-      captures = @@var_deprecation_captures[Fiber.current]?
-      !(captures.nil? || captures.empty?)
-    end
-
     # Replays the readings captured while *name*'s value rendered eagerly
     # (see #capture_var_deprecations), now that a render is consuming the
     # value. The pending list is consumed with them: a second use of the
     # same value reads no facts again, and real templates the value once
     # per consuming operation with the deprecate tag keeping the first
     # access only.
+    #
+    # While another value's eager render is still open (a capture on this
+    # fiber), the readings belong to THAT value's eventual consumer rather
+    # than to this operation: real templates a value the rendering value
+    # consumes inside the same operation, so `params` =
+    # lookup('first_found', params_) read from a task's `when:` prints
+    # `params_`'s block when the when: consumes `params` - lotusnoir
+    # .apps_snoopy's include_vars showed none at all while `params_`'s
+    # readings stayed pending forever (issue #1731).
     def self.flush_pending_var_deprecations(name : String) : Nil
-      return if capturing_var_deprecations?
       base = name.strip.split(/[.\[]/, 2)[0]
       return if base.empty?
       readings = @@pending_var_deprecations.delete(base) || return
+      if captures = @@var_deprecation_captures[Fiber.current]?
+        unless captures.empty?
+          captures.last.concat(readings)
+          return
+        end
+      end
       readings.each(&.call)
     end
 
