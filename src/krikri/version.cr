@@ -112,10 +112,10 @@ module Krikri
   # libraries (identified by the weirdbricks GitHub owner in shard.yml,
   # which carries real behavioral changes, not just version pins); a
   # deployed binary should say which repo it was actually built from.
-  # krikri-jinja, krikri-xml and krikri-aws-signer are krikri's own
-  # libraries, not forks, so they are annotated with their repo and pin
-  # but not labeled "fork".
-  OWN_SHARDS = %w[krikri-jinja krikri-xml krikri-aws-signer]
+  # krikri-jinja, krikri-xml, krikri-aws-signer and krikri-aws-ssm are
+  # krikri's own libraries, not forks, so they are annotated with their
+  # repo and pin but not labeled "fork".
+  OWN_SHARDS = %w[krikri-jinja krikri-xml krikri-aws-signer krikri-aws-ssm]
 
   RUNTIME_DEPENDENCY_FORK_NOTES = begin
     notes = {} of String => String

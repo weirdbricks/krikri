@@ -37,7 +37,7 @@ dependencies:
     tag: v0.3.1
   krikri-aws-ssm:
     github: weirdbricks/krikri-aws-ssm
-    tag: v0.3.0
+    tag: v1.0.0
 
 development_dependencies:
   ameba:
