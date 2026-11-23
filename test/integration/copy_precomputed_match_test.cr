@@ -55,6 +55,37 @@ describe "copy plugin - __precomputed_match" do
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
+
+  # The precomputed match reaches the same equal-content branch as a local
+  # src:, so check mode still resolves group:/owner: and fails an unknown
+  # name (the checksum match sends real to the FILE module, whose
+  # set_group_if_different looks the name up even under --check) - issue
+  # #1678. Nothing may be written.
+  it "check mode fails an unknown group with the file-module shape" do
+    dest = File.tempname("copy-precomputed-match-check-group-spec")
+    File.write(dest, "original\n")
+    File.chmod(dest, 0o600)
+
+    result = PluginSpecHelper.run("copy", {
+      "dest"                => dest,
+      "src"                 => "/nonexistent/path/should-never-be-read",
+      "__precomputed_match" => "true",
+      "group"               => "no-such-group-krikri-spec",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("chgrp failed: failed to look up group no-such-group-krikri-spec")
+    result["path"].as_s.must_equal(dest)
+    result["warnings"].as_a.map(&.as_s).must_equal([
+      "failed to look up group no-such-group-krikri-spec. Create group up to this point in real play",
+    ])
+    File.info(dest).permissions.value.to_s(8).must_equal("600")
+    File.read(dest).must_equal("original\n")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
 end
 
 describe "copy plugin - content: converted from a small src: file, dest: is an existing directory" do

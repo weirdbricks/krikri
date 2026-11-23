@@ -1873,30 +1873,6 @@ module Krikri
       result.extra["warnings"] = JSON::Any.new(warnings) unless warnings.empty?
     end
 
-    private def unknown_owner_warning(owner : String) : String?
-      return nil if owner.empty?
-      if owner.matches?(/\A\d+\z/)
-        uid = owner.to_i
-        return nil unless System::User.find_by?(id: uid.to_s).nil?
-        "failed to look up user with uid #{uid}. Create user up to this point in real play"
-      else
-        return nil unless System::User.find_by?(name: owner).nil?
-        "failed to look up user #{owner}. Create user up to this point in real play"
-      end
-    end
-
-    private def unknown_group_warning(group : String) : String?
-      return nil if group.empty?
-      if group.matches?(/\A\d+\z/)
-        gid = group.to_i
-        return nil unless System::Group.find_by?(id: gid.to_s).nil?
-        "failed to look up group with gid #{gid}. Create group up to this point in real play"
-      else
-        return nil unless System::Group.find_by?(name: group).nil?
-        "failed to look up group #{group}. Create group up to this point in real play"
-      end
-    end
-
     # The lookup half of Ansible's basic.py set_owner_if_different/
     # set_group_if_different, which run even in check mode and FAIL the
     # task whenever the target path EXISTS - their

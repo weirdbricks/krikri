@@ -132,7 +132,12 @@ module Krikri
       # module_args where the content value is replaced by Ansible's
       # VALUE_SPECIFIED_IN_NO_LOG_PARAMETER sentinel. Deterministic - no
       # random staged path (the module never stages in check mode).
-      if @check_mode && !result.failed? && result.changed? && @params.has_key?("content")
+      # Only the would-WRITE branch runs the copy module at all: an
+      # equal-content dest takes the action plugin's checksum-match path
+      # to the FILE module, whose invocation is not the copy args (and
+      # whose registered result has no invocation, live-verified vs
+      # 2.21.6 - that result carries dest, so it is excluded here).
+      if @check_mode && !result.failed? && result.changed? && @params.has_key?("content") && !result.extra.has_key?("dest")
         dest = @params["dest"]?
         if dest
           result.extra["invocation"] = JSON::Any.new({
@@ -423,6 +428,16 @@ module Krikri
             # The attribute diff has to be READ before the pass applies
             # them: real's file-module call diff-records the file's
             # state at entry.
+            #
+            # Check mode never reaches the apply: real dispatches the FILE
+            # module there, which only COMPARES, so the file on disk stays
+            # untouched (krikri used to chmod/chown it here, mutating the
+            # target during a --check run). That module also resolves
+            # owner:/group: and reports stale attributes as changed, and
+            # warns about unknown names - see #check_mode_attrs_result.
+            if @check_mode
+              return check_mode_attrs_result(dest, content_sha1, UNCHANGED_KEY_ORDER)
+            end
             diff_data = file_attribute_diff(dest)
             attributes_fixed, failure = apply_extended_attributes(dest, content_sha1)
             return failure if failure
@@ -573,15 +588,11 @@ module Krikri
         basename = @params["__original_src_basename"]?.presence || File.basename(src)
         dest = File.join(dest, basename) if Dir.exists?(dest) || dest.ends_with?('/')
         if @check_mode
-          result = PluginResult.new(
-            changed: false,
-            failed: false,
-            dest: dest,
-            checksum: @params["__precomputed_checksum"]?.presence || "",
-            key_order: UNCHANGED_KEY_ORDER
-          )
-          add_path_info(result, dest)
-          return result
+          # The checksum match sends real down the copy ACTION plugin's
+          # "already correct hash" branch, which runs the FILE module -
+          # so check mode still resolves owner:/group: and reports stale
+          # attributes as changed (see #check_mode_attrs_result).
+          return check_mode_attrs_result(dest, @params["__precomputed_checksum"]?.presence || "", UNCHANGED_KEY_ORDER)
         end
 
         attributes_fixed, failure = apply_extended_attributes(dest, @params["__precomputed_checksum"]?.presence)
@@ -737,27 +748,36 @@ module Krikri
 
       # CHECK MODE: Report what would change
       if @check_mode
-        result = PluginResult.new(
-          changed: changed,
+        unless changed
+          # remote_src never takes the action plugin's checksum-match
+          # shortcut: the copy MODULE runs, and its own exit-time
+          # set_fs_attributes_if_different still resolves owner:/group: in
+          # check mode - without file.py's "Create group up to this point"
+          # warning, which only the file module emits (live-verified vs
+          # 2.21.6). Its result is the module's own dest/src/md5sum/
+          # checksum/changed shape.
+          if true?(@params["remote_src"]?)
+            return remote_src_check_mode_result(dest, src, src_md5, src_sha1)
+          end
+          # Otherwise the action's "already correct hash" branch runs the
+          # FILE module, whose result carries dest/path, the SHA1 checksum
+          # (added by the action's `if not module_return.get('checksum')`
+          # fill-in) and the add_path_info stat fields - and whose
+          # owner:/group: lookups and attribute comparison run too, so an
+          # unknown name fails the task and a stale attribute is
+          # `changed` (see #check_mode_attrs_result). Live-verified
+          # against ansible-core 2.19.4/2.21.6.
+          return check_mode_attrs_result(dest, src_sha1, UNCHANGED_KEY_ORDER)
+        end
+        # A would-CHANGE check result is Ansible's copy ACTION PLUGIN's own
+        # bare `changed: true` (no dest, no stat fields).
+        return PluginResult.new(
+          changed: true,
           failed: false,
           msg: "",
           diff: diff_data,
-          # A would-CHANGE check result is Ansible's copy ACTION
-          # PLUGIN's own bare `changed: true` (no dest, no stat fields).
-          # A would-NOT-change one falls through to the file module (the
-          # action's "already correct hash" branch), whose result carries
-          # dest/path, the SHA1 checksum (added by the action's
-          # `if not module_return.get('checksum')` fill-in), and the
-          # add_path_info stat fields - all live-verified against
-          # ansible-core 2.19.4.
-          key_order: changed ? CHECK_KEY_ORDER : UNCHANGED_KEY_ORDER
+          key_order: CHECK_KEY_ORDER
         )
-        unless changed
-          result.extra["dest"] = JSON::Any.new(dest)
-          result.extra["checksum"] = JSON::Any.new(src_sha1)
-          add_path_info(result, dest)
-        end
-        return result
       end
 
       # If file is identical, just update attributes if requested - and
@@ -1571,6 +1591,44 @@ module Krikri
       end
 
       {true, nil}
+    end
+
+    # remote_src's equal-content check-mode result. Unlike the local flows,
+    # real runs the copy MODULE here (no action-plugin checksum shortcut),
+    # and its exit-time set_fs_attributes_if_different compares owner:/
+    # group:/mode: even under --check - reporting `changed` when they
+    # differ and failing an unresolvable name with the module's own
+    # fail_json(path=..., msg=...) shape: no dest echo, no checksum, and
+    # none of file.py's "Create group up to this point" warning, which only
+    # the file module emits. Live-verified against ansible-core 2.21.6.
+    private def remote_src_check_mode_result(dest : String, src : String, src_md5 : String, src_sha1 : String) : PluginResult
+      changed = false
+      begin
+        if File.exists?(dest) && (info = File.info?(dest, follow_symlinks: false))
+          changed = check_mode_attrs_differ?(dest, info)
+        end
+      rescue ex : OwnerLookupFailure
+        failure = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: ex.message || "owner lookup failed",
+          path: dest
+        )
+        add_path_info(failure, dest)
+        return failure
+      end
+
+      result = PluginResult.new(
+        changed: changed,
+        failed: false,
+        dest: dest,
+        src: src,
+        md5sum: src_md5,
+        checksum: src_sha1,
+        key_order: CHANGED_KEY_ORDER
+      )
+      add_path_info(result, dest)
+      result
     end
 
     # Combined attribute reconciliation for every path copy touches, in

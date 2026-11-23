@@ -1,0 +1,21 @@
+---
+
+- name: gokev.motd-splash check mode
+  hosts: local
+  gather_facts: false
+  tasks:
+    - name: seed the destination a warm run leaves behind
+      ansible.builtin.copy:
+        src: '{{ playbook_dir }}/roles/gokev.motd-splash/templates/motd_gokev'
+        dest: '{{ playbook_dir }}/motd'
+      check_mode: false
+
+    - name: motd template
+      ansible.builtin.template:
+        src: '{{ playbook_dir }}/roles/gokev.motd-splash/templates/motd_gokev'
+        dest: '{{ playbook_dir }}/motd'
+        owner: root
+        group: wheel
+        mode: '0644'
+        backup: true
+      no_log: true
