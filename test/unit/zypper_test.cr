@@ -85,6 +85,29 @@ describe "zypper plugin argument validation" do
     str_starts_with?(result["msg"].as_s,
       "Failed to find required executable \"zypper\" in paths: ").must_equal(true)
   end
+
+  it "fails a wrong-typed bool before the probe under --check (issue #1721)" do
+    # The kpg chaos playbook hands the module a rendered list name plus
+    # skip_post_errors: pnphwi. AnsibleModule validates every option's type
+    # before main() runs, and --check does not change that, so real never
+    # reaches get_cmd()'s probe here: the convert_bool message is the whole
+    # failure both engines print for this task.
+    result = PluginSpecHelper.run("zypper", {
+      "name"                => "nwjbxv,iklusu",
+      "skip_post_errors"    => "pnphwi",
+      "auto_import_keys"    => "true",
+      "disable_gpg_check"   => "true",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    # The frozenset tail's order is per-process in real; the members and
+    # their quoting are not, so a change in either is a real divergence.
+    result["msg"].as_s.must_equal(
+      "argument 'skip_post_errors' is of type str and we were unable to convert to bool: " \
+      "The value 'pnphwi' is not a valid boolean. " \
+      "Valid booleans include: 'y', 'yes', 'on', '1', 'true', 't', 1, 'n', 'no', 'off', '0', 'false', 'f', 0")
+  end
 end
 
 describe "zypper_repository plugin check mode and validation" do
