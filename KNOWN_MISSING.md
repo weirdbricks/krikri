@@ -904,6 +904,21 @@ because anyone intends to fix them.
   container-id-shaped hostnamectl shim, so the mask's anchor stays stable even where the build
   host's own name has another shape.
 
+- **`yum_versionlock`'s locklist carries yum's own wall-clock comment (kpg yum_versionlock cases,
+  issues #1708/#1712/#1716).** `community.general.yum_versionlock` never writes
+  `/etc/dnf/plugins/versionlock.list` itself - it shells out to `yum -q versionlock add`, and on DNF
+  hosts that plugin prepends its own comment to the entry line: a blank line, then
+  `# Added lock on Mon Nov 23 09:58:36 2026`, then `sed-0:4.9-5.el10.*`. The stamp is the wall
+  clock at the moment yum ran, so the two engines' containers, started and run seconds apart, can
+  never produce the same file bytes - two runs of real Ansible disagree identically. Everything
+  else about that file (the blank line, the entry line, its mode and size) already matches, and
+  krikri runs the module's own command, so this is not a krikri gap: the generator's host-state
+  oracle, which sha256s file contents without applying `ByteDiff::MASKS`, needs to drop or
+  `<TIME>`-normalise the `# Added lock on ...` comment line before hashing that path.
+  `test/unit/yum_versionlock_test.cr` pins the delegation the mask anchors on (krikri lets yum
+  write the timestamped block, adds nothing itself, and skips the add for an already-locked
+  package).
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is

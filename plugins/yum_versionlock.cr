@@ -19,7 +19,12 @@ module Krikri
   end
 
   class YumVersionlockPlugin < BasePlugin
-    YUM_BIN = "/usr/bin/yum"
+    # Resolved by check_preconditions the way AnsibleModule's
+    # get_bin_path("yum", required=True) does - the module process's PATH
+    # first, then /sbin, /usr/sbin, /usr/local/sbin - and not pinned to
+    # /usr/bin/yum: a yum installed only in /usr/local/bin still runs the
+    # module on real ansible (live-verified against 2.21.6, issue #1712).
+    @yum_bin : String = ""
 
     # The Ansible module matches each locklist entry against two NEVRA
     # shapes - yum's epoch-prefixed "1:name-version-release.arch" first,
@@ -83,11 +88,12 @@ module Krikri
     end
 
     private def check_preconditions : PluginResult?
-      unless File.exists?(YUM_BIN)
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to find required executable \"yum\" in paths: #{ENV.fetch("PATH", "")}")
+      if resolved = find_required_binary("yum")
+        @yum_bin = resolved
+        return nil
       end
-      nil
+      PluginResult.new(changed: false, failed: true,
+        msg: PluginHelpers::GetBinPath.missing_executable_error("yum", @bin_searched_paths))
     end
 
     # Mirrors the Ansible module's C(get_versionlock_packages): rc 0 returns
@@ -131,7 +137,7 @@ module Krikri
     private def run_yum(args : Array(String)) : {output: String, errout: String, rc: Int32}
       output = IO::Memory.new
       errout = IO::Memory.new
-      rc = Process.run(YUM_BIN, args, output: output, error: errout).exit_code
+      rc = Process.run(@yum_bin, args, output: output, error: errout).exit_code
       {output: output.to_s, errout: errout.to_s, rc: rc}
     end
 
