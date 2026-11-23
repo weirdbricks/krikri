@@ -154,8 +154,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Broken for two releases in a row before this: the Homebrew bottle
+      # these runners are served is Crystal 1.21.0, which has no
+      # OpenSSL::Cipher#gcm_tag (crystal-lang/crystal added it in 1.22),
+      # so the macOS jobs died building krikri-aws-ssm's encryption.cr
+      # while the Linux job kept building against the 1.22.3 pinned in
+      # its own image. The brew install stays for the shared libraries;
+      # the pkg pins the compiler both macOS runners build with.
       - name: Install Crystal
-        run: brew install crystal
+        run: |
+          # `brew install crystal` first, for the shared libraries every
+          # Crystal build links on macOS (libevent, OpenSSL, ...); the pkg
+          # below then replaces the Homebrew bottle (1.21.0, too old for
+          # the aws-ssm shard) with the pinned compiler the Linux job's
+          # image carries.
+          brew install crystal
+          curl -fsSL -o crystal.pkg \
+            "https://github.com/crystal-lang/crystal/releases/download/1.22.3/crystal-1.22.3-1.universal.pkg"
+          sudo installer -pkg crystal.pkg -target /
+          # The pkg installs under /usr/local; put it ahead of a Homebrew
+          # bottle so the arm64 runner does not keep using the brew one.
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+          crystal --version
 
       # --without-development: ameba (a dev-only lint dependency, unused
       # by the release binaries themselves) has its own `shards build`
@@ -163,9 +183,9 @@ jobs:
       # yet support (confirmed live: v0.9.687's macOS x86_64 job pulled
       # Crystal 1.21.0 via Homebrew - a different bottle than arm64's
       # 1.20.2 - and ameba 1.6.4's postinstall failed with "undefined
-      # method 'next_string_array_token' for Crystal::Lexer"). Skipping
-      # it entirely for release builds sidesteps that fragility rather
-      # than pinning to a specific Crystal version.
+      # method 'next_string_array_token' for Crystal::Lexer"). Skipping it
+      # entirely for release builds keeps that fragility off the release
+      # jobs whatever compiler the pin above lands on.
       - name: Install deps
         run: shards install --without-development
 
