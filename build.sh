@@ -378,6 +378,30 @@ if [ "$STATIC" = false ] && [ "$IS_DARWIN" = false ] && [ -f "scripts/fmod_compa
     BUILD_FLAGS="$BUILD_FLAGS $LINK_SHIM_ARGS"
 fi
 
+# libxml2 (dynamic Linux builds only, the same partial-static trick as
+# libbz2 further down): krikri-aws-ssm's STS client reads AWS's
+# Query-protocol answers with Crystal's stdlib XML, which links
+# libxml2.so.2 dynamically - and base_plugin -> ssh_manager ->
+# ssm_transport -> krikri-aws-ssm carries it into EVERY plugin binary,
+# i.e. onto the hosts those plugins are uploaded to. A stock Ubuntu
+# image has no libxml2.so.2, and round 29923741's
+# alesauce.provision_new_stock_linux_server showed what that costs:
+# real ansible's Gathering Facts is pure Python and returned ok, while
+# each krikri plugin died at process start ("error while loading shared
+# libraries: libxml2.so.2") before main() ever ran, so the whole play
+# failed at facts. Statically link just libxml2, plus the zlib/liblzma/
+# libm archives it needs, so the binary still works where those .so
+# files are absent; every other dependency stays dynamic.
+#
+# Must stay one --link-flags entry per token: the build calls below
+# expand $BUILD_FLAGS unquoted, so a single `-Wl,-Bstatic -lxml2 ...`
+# value would split into separate argv entries and be rejected.
+LINK_XML_ARGS=""
+if [ "$STATIC" = false ] && [ "$IS_DARWIN" = false ]; then
+    LINK_XML_ARGS="--link-flags=-Wl,-Bstatic --link-flags=-lxml2 --link-flags=-Wl,-Bdynamic --link-flags=-lz --link-flags=-llzma --link-flags=-lm"
+    BUILD_FLAGS="$BUILD_FLAGS $LINK_XML_ARGS"
+fi
+
 # The flavor this run asks for, as recorded in the stamp file.
 STATIC_WORD="dynamic"
 WANT_STATIC_LINKAGE="no"

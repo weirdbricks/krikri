@@ -1,0 +1,9 @@
+---
+# alesauce.provision_new_stock_linux_server's site.yml, reduced to the
+# task that diverged (the implicit Gathering Facts, issue #1726): the
+# round's target image had no libxml2.so.2, so krikri's facts plugin
+# never started. The role's own tasks are left out - the play died
+# before reaching them, and creating the role's user would mutate the
+# host the suite runs on.
+- hosts: local
+  gather_facts: true
