@@ -155,6 +155,11 @@ module Krikri
         if text.includes?("hostvars")
           VarSubstitutor.emit_template_hostvars_fact_deprecations(template, @vars)
         end
+        # jinja2 resolves the template root frame's every loaded name as the
+        # frame opens, so a fact read inside a branch this render will not
+        # enter still trips its deprecation - see
+        # VarSubstitutor.emit_template_frame_open_reads.
+        VarSubstitutor.emit_template_frame_open_reads(template, @vars, jinja_resolver)
         engine = KrikriJinja.default_engine
         if chunks = @render_chunks
           # A render! retry (unknown filter/test registered, then re-rendered)
