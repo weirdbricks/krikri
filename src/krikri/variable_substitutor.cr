@@ -473,6 +473,16 @@ module Krikri
     return nil if UNDEFINED_TOLERANT_FILTERS.includes?(filter_name)
 
     return nil if VariableSubstitutor::VariableLookup.new(vars).resolve(source)
+    # Real Ansible imports every `filter_plugins/*.py` file when it COMPILES
+    # a filter-bearing template, which happens before evaluation reaches
+    # this undefined source - so a role plugin's import-time deprecations
+    # print even though the chain aborts before any filter runs. Every
+    # raise site below reports the chain's failure instead of rendering it,
+    # so none of them would otherwise reach a scan (znerol.wkd's
+    # wkd_hash/wkd_dir plugin, issue #1772).
+    Krikri::PythonFilterRunner.scan_for_filter_expression(
+      expr, vars["playbook_dir"]?.try(&.as_s?)
+    )
     source
   end
 

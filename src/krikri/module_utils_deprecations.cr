@@ -312,8 +312,10 @@ module Krikri
       }.to_json)
     end
 
-    # The console line for one imported `_text` symbol.
-    private def self.text_import_deprecation_text(symbol : String) : String
+    # The console line for one imported `_text` symbol - also the wording
+    # PythonFilterRunner applies to a controller-side plugin import that ran
+    # under an ansible-core older than 2.21's deprecating shim.
+    def self.text_import_deprecation_text(symbol : String) : String
       "Importing '#{symbol}' from 'ansible.module_utils._text' is deprecated. " \
       "This feature will be removed from ansible-core version 2.24. " \
       "Use ansible.module_utils.common.text.converters instead."

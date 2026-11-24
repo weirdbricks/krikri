@@ -1,0 +1,7 @@
+# The round's play: znerol.wkd_gpg as the only role, so its (and its meta
+# dependency's) filter_plugins are the only plugin source in the run.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - wkd_gpg
