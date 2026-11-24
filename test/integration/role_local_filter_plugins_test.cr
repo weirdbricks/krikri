@@ -36,10 +36,12 @@ private def write_role_with_filter(root : String) : Nil
     J2
 end
 
-private def run_playbook(root : String, playbook_body : String) : {Process::Status, String}
+private def run_playbook(root : String, playbook_body : String,
+                         extra_args : Array(String) = [] of String) : {Process::Status, String}
   File.write(File.join(root, "pb.yml"), playbook_body)
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+  argv = ["-i", INVENTORY] + extra_args + ["pb.yml"]
+  status = Process.run(BINARY, argv, output: output, error: output, chdir: root)
   {status, output.to_s}
 end
 
@@ -826,6 +828,52 @@ describe "role-local filter_plugins import-time deprecations" do
         YAML
 
       status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+
+      status.success?.must_equal(false, output)
+      output.must_include("'nosuch_source' is undefined", output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.").size.must_equal(1, output)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
+
+  # The check-phase twin of #1772 (issue #1782): --check does not change how the
+  # failing loop source is evaluated, and real still compiles the filter-bearing
+  # template and imports the role's filter_plugins files, so a check-mode run
+  # must carry the same import-time deprecation block as a real one.
+  it "shows a role plugin's import-time deprecations in --check when the chain's undefined source fails first (issue #1782)" do
+    root = File.tempname("filter-import-deprecations-undefined-source-check")
+    begin
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "filter_plugins", "text_helpers.py"), <<-PYTHON)
+        from ansible.module_utils._text import to_bytes
+        from ansible.module_utils._text import to_text
+
+
+        class FilterModule(object):
+            def filters(self):
+                return {"shout": self.shout}
+
+            def shout(self, value):
+                return to_text(value).upper()
+        PYTHON
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: loop source whose filter chain starts at an undefined name
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          loop: "{{ nosuch_source | shout }}"
+        YAML
+
+      status, output = run_playbook(root, <<-YAML, ["--check"])
         - hosts: localhost
           connection: local
           gather_facts: false
