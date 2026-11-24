@@ -1,0 +1,14 @@
+---
+# defaults file for backups3
+local_backup_dir: /backups3
+env: test
+bucket_name: mybucket
+paths_to_backup:
+  path1:
+    path: /var/www
+    tag: www
+  path2:
+    path: /var/test_backup
+    tag: test
+aws_access_key: aws_access_key
+aws_secret_key: aws_secret_key

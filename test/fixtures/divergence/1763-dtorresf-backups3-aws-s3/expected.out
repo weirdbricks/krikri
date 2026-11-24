@@ -1,0 +1,8 @@
+[ERROR]: couldn't resolve module/action 'aws_s3'. This often indicates a misspelling, missing collection, or incorrect module path.
+Origin: <WORK>/roles/dtorresf.backups3/tasks/main.yml:19:3
+
+17   with_dict: "{{ paths_to_backup }}"
+18
+19 - name: Copy tar file to s3 bucket
+     ^ column 3
+

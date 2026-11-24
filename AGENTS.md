@@ -45,7 +45,10 @@ by the two `scripts/gen_*_runtime_data.py` scripts). Nothing in `src/` may
 scan an installed ansible-core or `ansible_collections` tree to make a
 parity decision - the moving parts live in the generators, which are
 dev-time tooling only (see KNOWN_MISSING.md's "krikri never consults an
-installed ansible-core or collections tree"). Executing python plugins is
+installed ansible-core or collections tree"). A playbook-adjacent
+`<playbook_dir>/collections/ansible_collections` tree is play INPUT, not
+an install (a round hard-links a role's declared collections beside
+`site.yml`), so name resolution may read it. Executing python plugins is
 different and still allowed: a role's/playbook's `library/*.py` module, a
 collection's python plugin and the `ansible.module_utils` imports those
 executed modules resolve come from the environment.

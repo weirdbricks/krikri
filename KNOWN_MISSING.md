@@ -586,7 +586,12 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 - Consequences, all accepted:
   - **Refusal parity is gone where real's own installed set decides.** Real refuses a whole
     playbook at load (rc=4, zero tasks) for a module name it cannot resolve on the controller it
-    runs on; krikri no longer does that. An unresolvable name takes the executor's
+    runs on; krikri no longer does that. The one carve-out is a BARE spelling ansible-core's own
+    runtime data redirects into a collection whose captured release ships no such module, when
+    neither the playbook-adjacent `collections/` tree nor the task's `collections:` names that
+    collection: real's loader cannot resolve it anywhere and krikri refuses the playbook at load
+    with real's own `[ERROR]` line and Origin block (issue #1763). An unresolvable name takes the
+    executor's
     unavailable-module flow instead: a `when:`-gated task skips cleanly and a genuinely reached one
     is reported with a `uses unimplemented plugin` line and the run exits 4 at the end (except under
     `--check` for the unported modules real itself skips there - the ones whose Ansible module
@@ -595,7 +600,8 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
     module, whose generator never opts in, while the collection's `_info` readers do and keep the
     report). So a playbook using a collection nobody has installed, or a
     name real cannot resolve either, runs
-    (and usually skips) under krikri where real refuses it at load. This also means the
+    (and usually skips) under krikri where real refuses it at load - unless it is one of those
+    bare redirect spellings. This also means the
     `ansible.mariadb.mariadb_db`-style aliases are unconditional (real resolves those only where
     the collection is installed, issue #499).
   - **Version-gated behavior uses the pinned snapshot, not the controller's collections.** The

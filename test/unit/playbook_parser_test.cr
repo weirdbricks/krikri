@@ -998,6 +998,75 @@ describe Krikri::PlaybookParser do
       task.unavailable_module.must_equal("amazon.aws.autoscaling_group_info")
     end
 
+    # Issue #1763: a BARE spelling ansible-core's own runtime data
+    # redirects into a collection whose captured release ships no such
+    # module is a definitive miss - real's loader follows the redirect,
+    # finds nothing and refuses the whole playbook at load (live-verified
+    # vs 2.19.11 on dtorresf.backups3's `aws_s3:` task). The graceful
+    # unavailable-module flow above deliberately does not cover it.
+    it "refuses a bare spelling whose builtin redirect chain is a captured miss (issue #1763)" do
+      error = assert_raises(Krikri::UnresolvedModuleError) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: Copy tar file to s3 bucket
+                aws_s3:
+                  bucket: mybucket
+          YAML
+        )
+      end
+      message = error.message || ""
+      message.must_include("couldn't resolve module/action 'aws_s3'")
+      message.must_include("misspelling, missing collection, or incorrect module path")
+    end
+
+    it "does not refuse when the playbook-adjacent collections tree provides the redirect target" do
+      # The layout a round's installed role dependencies land in: the
+      # adjacent tree is play input, so real resolves the bare spelling
+      # there and krikri leaves the task on the graceful skip path.
+      dir = PluginSpecHelper.tmp_path("parser-adjacent-collections")
+      FileUtils.mkdir_p(File.join(dir, "collections", "ansible_collections", "amazon", "aws"))
+      playbook = File.join(dir, "playbook.yml")
+      File.write(playbook, <<-YAML)
+        - hosts: all
+          tasks:
+            - name: Copy tar file to s3 bucket
+              aws_s3:
+                bucket: mybucket
+        YAML
+      task = Krikri::PlaybookParser.parse(playbook).plays[0].tasks[0]
+      task.unavailable_module.must_equal("aws_s3")
+    ensure
+      FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+    end
+
+    it "keeps an FQCN and an uncaptured redirect target on the lazy unavailable path" do
+      # An FQCN names a collection release krikri cannot pin, so it stays
+      # graceful even when the capture kept no tree for that collection.
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: unimplemented module in an implemented collection
+                amazon.aws.autoscaling_group_info:
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("amazon.aws.autoscaling_group_info")
+
+      # google.cloud's capture kept routing data only: the builtin
+      # redirect into it is undecidable, not a miss a controller with that
+      # collection installed would refuse (issue #1744's mutating gcp_*
+      # modules).
+      task = Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: create boot-disk
+                gcp_compute_disk:
+                  name: boot-disk-01
+        YAML
+      ).plays[0].tasks[0]
+      task.unavailable_module.must_equal("gcp_compute_disk")
+    end
+
     it "raises when no plays parse successfully" do
       assert_raises_message(Exception, /No valid plays found/) do
         Krikri::PlaybookParser.parse_string(<<-YAML

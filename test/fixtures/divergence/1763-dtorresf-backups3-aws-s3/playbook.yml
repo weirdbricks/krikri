@@ -1,0 +1,8 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  # Real refuses the playbook at LOAD time (the role's aws_s3 task), before
+  # any variable is templated; the role's own defaults supply the rest.
+  roles:
+    - dtorresf.backups3
