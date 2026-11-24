@@ -2752,6 +2752,11 @@ module Krikri
             # the import line itself is Ansible's own load refusal (rc=4,
             # issue #815).
             raise ex
+          rescue ex : LoopControlError
+            # Same bypass - an invalid `loop_control:` on any task of the
+            # imported play (or on the import line itself) is
+            # ansible-core's load refusal (rc=4, issue #1768).
+            raise ex
           rescue ex : RoleVarsNotDictError
             # Same bypass - a statically imported role whose vars/ or
             # defaults/ entry point is not a mapping is ansible-core's
@@ -2884,6 +2889,11 @@ module Krikri
           # block, a handler or a roles: entry is Ansible's own
           # playbook-load refusal (rc=4, issue #815), not a per-play
           # soft-skip.
+          raise ex
+        rescue ex : LoopControlError
+          # Same bypass - an invalid `loop_control:` on any of the play's
+          # tasks is ansible-core's load refusal (rc=4, issue #1768), not
+          # a per-play soft-skip.
           raise ex
         rescue ex : RoleVarsNotDictError
           # Same bypass - a role (play-level, a meta dependency, or a
@@ -3580,6 +3590,11 @@ module Krikri
           # Same bypass - a non-mapping `vars:` is ansible-core's
           # Base._load_vars playbook-load refusal (rc=4, issue #815),
           # not a per-task graceful skip.
+          raise ex
+        rescue ex : LoopControlError
+          # Same bypass - an invalid `loop_control:` is ansible-core's
+          # LoopControl load/validate refusal (rc=4, issue #1768), not a
+          # per-task graceful skip.
           raise ex
         rescue ex
           puts "Warning: Skipping #{context} #{index + 1}: #{ex.message}".colorize(:yellow)
@@ -5530,13 +5545,9 @@ module Krikri
       # loop_control.loop_var - exposes the loop item under a custom name
       # (Ansible default "item"). dev-sec os_hardening uses
       # `loop_control: { loop_var: mount }` so an include_tasks/loop drives
-      # tasks that read `mount.path`, `mount.owner`, etc.
-      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
-        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
-        task.index_var = loop_control["index_var"]?.try(&.as_s?)
-        task.loop_label = loop_control["label"]?.try(&.as_s?)
-        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
-      end
+      # tasks that read `mount.path`, `mount.owner`, etc. The same helper
+      # validates the mapping the way real ansible does at load time.
+      parse_loop_control(task, task_hash, source_file, source_map, source_prefix, index)
 
       # Parse until / retries / delay
       # until: goes through condition_to_string, not safe_yaml_to_string:
@@ -6832,12 +6843,7 @@ module Krikri
       # using `loop_control: { loop_var: _loop_var }` on an
       # include_vars: task had `_loop_var` stay unbound regardless of
       # what the loop actually resolved to (round165).
-      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
-        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
-        task.index_var = loop_control["index_var"]?.try(&.as_s?)
-        task.loop_label = loop_control["label"]?.try(&.as_s?)
-        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
-      end
+      parse_loop_control(task, task_hash, source_file, source_map, source_prefix, source_index)
 
       task
     end
@@ -7445,6 +7451,91 @@ module Krikri
       raise NonDictVarsError.new(render)
     end
 
+    # LoopControl's own attribute names. `extended_allitems` and
+    # `break_when` are accepted but not acted on (krikri implements
+    # neither keyword yet) - real ansible accepts them, so refusing them
+    # here would be a divergence of its own.
+    LOOP_CONTROL_KEYWORDS = {
+      "loop_var", "index_var", "label", "pause", "extended",
+      "extended_allitems", "break_when",
+    }
+
+    # Validates a task's `loop_control:` mapping the way ansible-core does
+    # at task-LOAD time, then assigns the attributes krikri honours. Every
+    # refusal here aborts the WHOLE run before the first play banner
+    # (rc=4): real refused runs krikri used to execute, because the
+    # mapping was read with as_h?/as_s? and whatever could not be typed
+    # was silently dropped (issue #1768 - pabluskinc.dell_powerconnect_
+    # switch's `loop_control: label: {interface: ...}` refused the run in
+    # real ansible while krikri ran on and failed later for an unrelated
+    # reason). See LoopControlError for the three messages.
+    private def self.parse_loop_control(task : Task, task_hash : Hash(YAML::Any, YAML::Any), source_file : String?, source_map : YamlSourceMap?, source_prefix : String, source_index : Int32) : Nil
+      return unless task_hash.has_key?("loop_control")
+
+      yaml = task_hash["loop_control"]
+      prefix = "#{task_source_prefix(source_prefix, source_index)}/loop_control"
+      loop_control = yaml.as_h?
+      unless loop_control
+        message = "the `loop_control` value must be specified as a dictionary and cannot be a variable itself (though it can contain variables)"
+        # A null value carries no tag in real ansible, so its refusal has
+        # no Origin even though the source map records a position for the
+        # empty node (live-verified vs 2.21.6).
+        raise LoopControlError.new(yaml.raw.nil? ? "[ERROR]: #{message}\n\n" : loop_control_error_render(message, source_file, source_map, prefix))
+      end
+
+      # Base._validate_attributes runs before any attribute is loaded, so
+      # an unknown key wins over a bad value on a known one. The Origin
+      # points at the offending KEY, while the source map records the
+      # value's start, hence the walk-back on the same line.
+      loop_control.each_key do |key|
+        key_str = key.to_s
+        next if LOOP_CONTROL_KEYWORDS.includes?(key_str)
+        pos = source_map.try(&.at?("#{prefix}/#{key_str}"))
+        if pos && (line = pos[0]) > 0 && source_file && File.file?(source_file)
+          if src_line = File.read_lines(source_file)[line - 1]?
+            key_idx = src_line.index("#{key_str}:")
+            pos = {line, key_idx + 1} if key_idx
+          end
+        end
+        raise LoopControlError.new(origin_error_render_at(
+          "'#{key_str}' is not a valid attribute for a LoopControl",
+          source_file, source_map, pos))
+      end
+
+      # Base.validate's only parse-time type check: an isa='string'
+      # attribute holding a list or a dict. LoopControl declares loop_var,
+      # index_var and label that way, in this order, so several bad ones
+      # report the first declared. The Python class name is part of
+      # ansible's message, hence the two fixed spellings.
+      {"loop_var", "index_var", "label"}.each do |attr|
+        value = loop_control[attr]?
+        next unless value
+        python_class = if value.as_a?
+                         "_AnsibleTaggedList"
+                       elsif value.as_h?
+                         "_AnsibleTaggedDict"
+                       else
+                         next
+                       end
+        raise LoopControlError.new(origin_error_render_at(
+          "The field '#{attr}' is supposed to be a string type, however the incoming data structure is a <class 'ansible.module_utils._internal._datatag.#{python_class}'>",
+          source_file, source_map, source_map.try(&.at?("#{prefix}/#{attr}"))))
+      end
+
+      task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
+      task.index_var = loop_control["index_var"]?.try(&.as_s?)
+      task.loop_label = loop_control["label"]?.try(&.as_s?)
+      task.loop_extended = parse_become_value(loop_control["extended"]?) || false
+    end
+
+    # LoopControlError's stderr block: the [ERROR] line plus an Origin at
+    # `prefix` when the source map has one. Only non-null values reach
+    # here - a null `loop_control:` prints the bare line (see
+    # parse_loop_control).
+    private def self.loop_control_error_render(message : String, source_file : String?, source_map : YamlSourceMap?, prefix : String) : String
+      origin_error_render_at(message, source_file, source_map, source_map.try(&.at?(prefix)))
+    end
+
     # The [ERROR] block for a key not on the include-family attribute
     # allowlist (TaskInclude/IncludeRole validation): the message, the
     # invalid_task_attribute_failed suppression line, and an Origin at
@@ -7977,6 +8068,27 @@ module Krikri
       end
     end
 
+    # A `loop_control:` ansible-core refuses at task-load time, in its own
+    # order: a value that is not a mapping (Task._load_loop_control - even
+    # a bare `{{ var }}` template, "the `loop_control` value must be
+    # specified as a dictionary and cannot be a variable itself (though it
+    # can contain variables)"), an unknown key (Base._validate_attributes,
+    # "'<key>' is not a valid attribute for a LoopControl") and a list or
+    # dict given to one of LoopControl's isa='string' attributes (loop_var,
+    # index_var, label - Base.validate, "The field '<name>' is supposed to
+    # be a string type, however the incoming data structure is a <class
+    # 'ansible.module_utils._internal._datatag._AnsibleTaggedDict'>"). Every
+    # one aborts the whole run with rc=4 before any play banner (live-
+    # verified vs 2.21.6, issue #1768). Carries the rendered stderr block
+    # for krikri-playbook.cr to print verbatim.
+    class LoopControlError < Exception
+      getter render : String
+
+      def initialize(@render : String)
+        super(render.lines.first?.try(&.lchop("[ERROR]: ")) || "invalid loop_control")
+      end
+    end
+
     # Validates that every key in a task_hash for an include_tasks:/
     # include_role: directive is on the allowlist above (or is the
     # include directive key itself - the task's "action", not a
@@ -8215,12 +8327,7 @@ module Krikri
       # loop_control.loop_var - expose each item under the custom name
       # (e.g. `mount` instead of `item`), as dev-sec os_hardening does for
       # its per-mountpoint include_tasks loop.
-      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
-        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
-        task.index_var = loop_control["index_var"]?.try(&.as_s?)
-        task.loop_label = loop_control["label"]?.try(&.as_s?)
-        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
-      end
+      parse_loop_control(task, task_hash, source_file, source_map, source_prefix, source_index)
 
       task
     end
@@ -8588,12 +8695,9 @@ module Krikri
         task.loop_lookup_terms = generic_lookup[1]
       end
 
-      if loop_control = task_hash["loop_control"]?.try(&.as_h?)
-        task.loop_var = loop_control["loop_var"]?.try(&.as_s?)
-        task.index_var = loop_control["index_var"]?.try(&.as_s?)
-        task.loop_label = loop_control["label"]?.try(&.as_s?)
-        task.loop_extended = parse_become_value(loop_control["extended"]?) || false
-      end
+      # loop_control on the include/role statement itself: the same
+      # load-time validation and attribute assignment as any other task.
+      parse_loop_control(task, task_hash, source_file, source_map, source_prefix, source_index)
 
       task
     end

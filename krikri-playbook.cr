@@ -1051,6 +1051,14 @@ rescue ex : Krikri::PlaybookParser::NonDictVarsError
   # (issue #815, lullis.certbot_nginx).
   STDERR.print ex.render
   exit 4
+rescue ex : Krikri::PlaybookParser::LoopControlError
+  # A `loop_control:` real ansible refuses at task load - a non-mapping
+  # value, an unknown key, or a list/dict where LoopControl expects a
+  # string (loop_var/index_var/label) - is its whole-run load refusal
+  # (rc=4, no play banner, live-verified vs 2.21.6, issue #1768). The
+  # [ERROR] + Origin block was rendered at the raise site.
+  STDERR.print ex.render
+  exit 4
 rescue ex : Krikri::RoleVarsNotDictError
   # A role's vars/main.yml or defaults/main.yml whose parsed top level
   # is not a mapping is ansible-core's own role-load AnsibleParserError:
@@ -1843,6 +1851,13 @@ playbook.plays.each_with_index do |play, _play_index|
       # (rc=4, no recap, live-verified vs 2.19.11 for an
       # include_tasks:-loaded file's bad vars). The render was built at
       # the raise site (issue #815).
+      STDERR.print ex.render
+      exit 4
+    rescue ex : Krikri::PlaybookParser::LoopControlError
+      # Same whole-run abort discovered by a runtime-loaded file's own
+      # invalid `loop_control:` - ansible-core's LoopControl load/validate
+      # refusal (rc=4, no recap). The render was built at the raise site
+      # (issue #1768).
       STDERR.print ex.render
       exit 4
     rescue ex : Krikri::RoleVarsNotDictError

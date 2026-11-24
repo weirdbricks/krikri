@@ -469,6 +469,13 @@ module Krikri
           # exception carries the [ERROR] render; the play-loop rescue
           # in krikri-playbook.cr prints it (issue #815).
           raise ex
+        rescue ex : PlaybookParser::LoopControlError
+          # Same bypass - a runtime-loaded file's own invalid
+          # `loop_control:` is ansible-core's LoopControl load/validate
+          # refusal (rc=4, no recap), not a per-task failure. The
+          # exception carries the [ERROR] render; the play-loop rescue
+          # in krikri-playbook.cr prints it (issue #1768).
+          raise ex
         rescue ex : RoleVarsNotDictError
           # Same bypass - a runtime-loaded role's own non-mapping
           # vars//defaults/ entry point is ansible-core's role-load
@@ -3396,6 +3403,11 @@ module Krikri
       # file's own non-mapping `vars:` is the whole-run rc=4 refusal
       # (issue #815), not a per-task failure.
       raise ex
+    rescue ex : PlaybookParser::LoopControlError
+      # Same bypass as the batched include path above - a runtime-loaded
+      # file's own invalid `loop_control:` is the whole-run rc=4 refusal
+      # (issue #1768), not a per-task failure.
+      raise ex
     rescue ex : RoleVarsNotDictError
       # Same bypass as the batched include path above - a runtime-loaded
       # role's own non-mapping vars//defaults/ entry point is the
@@ -4172,6 +4184,14 @@ module Krikri
         # load role" failure. The exception carries the [ERROR] render;
         # the play-loop rescue in krikri-playbook.cr prints it (issue
         # #815).
+        raise ex
+      rescue ex : PlaybookParser::LoopControlError
+        # Same bypass as NonDictVarsError's above: an include_role:'d
+        # role whose own tasks carry an invalid `loop_control:` aborts
+        # the whole run in Ansible (LoopControl load/validate refusal,
+        # rc=4, no recap), not a per-task "Failed to load role" failure.
+        # The exception carries the [ERROR] render; the play-loop rescue
+        # in krikri-playbook.cr prints it (issue #1768).
         raise ex
       rescue ex : RoleVarsNotDictError
         # Same bypass as NonDictVarsError's above: an include_role:'d

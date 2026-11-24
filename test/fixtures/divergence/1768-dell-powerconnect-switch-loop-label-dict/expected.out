@@ -1,0 +1,39 @@
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.
+Origin: <WORK>/roles/pabluskinc.dell_powerconnect_switch/tasks/main.yml:5:5
+
+3 - name: Ensure the pexpect Python package is installed
+4   local_action:
+5     module: pip
+      ^ column 5
+
+Use a string value for `action`.
+
+[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.
+Origin: <WORK>/roles/pabluskinc.dell_powerconnect_switch/tasks/main.yml:12:5
+
+10 - name: Ensure global switch configuration is applied
+11   local_action:
+12     module: expect
+       ^ column 5
+
+Use a string value for `action`.
+
+[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.
+Origin: <WORK>/roles/pabluskinc.dell_powerconnect_switch/tasks/main.yml:31:5
+
+29 - name: Ensure switch interface configuration is applied
+30   local_action:
+31     module: expect
+       ^ column 5
+
+Use a string value for `action`.
+
+[ERROR]: The field 'label' is supposed to be a string type, however the incoming data structure is a <class 'ansible.module_utils._internal._datatag._AnsibleTaggedDict'>
+Origin: <WORK>/roles/pabluskinc.dell_powerconnect_switch/tasks/main.yml:57:7
+
+55   loop_control:
+56     label:
+57       interface: "{{ item.key }}"
+         ^ column 7
+

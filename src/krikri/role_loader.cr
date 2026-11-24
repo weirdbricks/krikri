@@ -192,6 +192,10 @@ module Krikri
         # issue #815) - the preload must not swallow it into silence; the
         # real role load below re-raises the same error to the play loop.
         raise e
+      rescue e : PlaybookParser::LoopControlError
+        # Same for an invalid `loop_control:` on one of the role's tasks
+        # (LoopControl load/validate refusal, rc=4, issue #1768).
+        raise e
       rescue
       ensure
         chain.delete(role_dir)
