@@ -227,6 +227,39 @@ describe "file state=touch diff payload (issue #1441, live-verified vs 2.21.6)" 
     File.delete(path) if path && File.exists?(path)
   end
 
+  # The kpg chaos shape (playbook 000005-multi-expect-chaos, issues
+  # #1503/#1759): a "path" the playbook wrote as the integer 5 (ansible's
+  # arg-spec `path` type coerces it to "5" before the module runs, so the
+  # plugin receives the same string either way), alongside `follow` and a
+  # custom `modification_time_format`. Real ansible 2.21.6 prints the same
+  # four-key absent -> touch hunk for it; the only lines the generator's
+  # comparison cannot match are the wall-clock atime/mtime floats (see
+  # KNOWN_MISSING.md), never the cwd-relative path or the hunk's shape.
+  it "keeps the four-key touch hunk for a cwd-relative path under follow + a time format" do
+    workdir = tmp_path("touch-chaos-int-path")
+    Dir.mkdir_p(workdir)
+    created = File.join(workdir, "5")
+
+    result = PluginSpecHelper.run("file", {
+      "path"                     => "5",
+      "state"                    => "touch",
+      "follow"                   => "true",
+      "modification_time_format" => "%Y%m%d%H%M.%S",
+      "_ansible_diff"            => "true",
+    }, chdir: workdir)
+
+    diff = result["diff"]
+    diff["before"].as_h.keys.sort!.must_equal(["atime", "mtime", "path", "state"])
+    diff["after"].as_h.keys.sort!.must_equal(["atime", "mtime", "path", "state"])
+    diff["before"]["path"].as_s.must_equal("5")
+    diff["after"]["path"].as_s.must_equal("5")
+    diff["before"]["state"].as_s.must_equal("absent")
+    diff["after"]["state"].as_s.must_equal("touch")
+    result["changed"].as_bool.must_equal(true)
+  ensure
+    File.delete(created) if created && File.exists?(created)
+  end
+
   it "carries no diff container unless diff mode is on" do
     path = tmp_path("touch-diff-off.txt")
     File.write(path, "hi\n")

@@ -922,8 +922,8 @@ because anyone intends to fix them.
   unsanitized `msg` and a bare `install` as `cmd`) was a real engine gap, fixed with the sanitiser in
   issue #1372.
 
-- **`file:` with `state: touch` diffs wall-clock timestamps (kpg file cases, issue #1503).** Under
-  `--diff` the module prints `initial_diff()`'s payload, and its `atime`/`mtime` entries are the
+- **`file:` with `state: touch` diffs wall-clock timestamps (kpg file cases, issues #1503/#1759).**
+  Under `--diff` the module prints `initial_diff()`'s payload, and its `atime`/`mtime` entries are the
   file's own stat times plus the "now" Ansible reads immediately before applying `utime`
   (`update_timestamp_for_file`). For a NEW path the hunk carries a pair on both sides (the
   just-created file's times as the before side, next to the `absent -> touch` transition). Those
@@ -932,7 +932,9 @@ because anyone intends to fix them.
   already matches (the key order, the state transition, the hunk's line counts), so this is not a
   krikri gap: the generator needs an epoch-seconds mask (`\d{10}\.\d+`) like the ones it has for its
   other per-run values. `test/integration/touch_result_shape_test.cr` pins the shape such a mask
-  anchors on.
+  anchors on. The chaos re-file (#1759, playbook `000005-multi-expect-chaos`) is the same hunk under
+  a wrong-typed integer `path` plus `follow`/`modification_time_format`: both engines coerce the int
+  to `"5"` and print identical hunk lines apart from those floats.
 
 - **`assemble:`'s controller-side diff names a per-run staging file (kpg assemble cases, issue
   #1539).** With `remote_src` falsy under `--diff`, Ansible's assemble action assembles the fragments
