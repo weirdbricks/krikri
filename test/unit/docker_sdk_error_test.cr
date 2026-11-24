@@ -88,6 +88,20 @@ module Krikri
             .must_equal("Code: 500 Message: boom")
         end
       end
+      describe ".pull_stream_error_text" do
+        it "uses real's code/message wording when the stream carried errorDetail" do
+          detail = JSON.parse(%({"code": 1, "message": "denied"}))
+          ex = KrikriDocker::Errors::ImagePullError.new("denied", detail)
+          DockerSdkError.pull_stream_error_text("docker.io/library/x", ex)
+            .must_equal("Error pulling docker.io/library/x - code: 1 message: denied")
+        end
+
+        it "uses the bare error text when there is no errorDetail" do
+          ex = KrikriDocker::Errors::ImagePullError.new("denied")
+          DockerSdkError.pull_stream_error_text("docker.io/library/x", ex)
+            .must_equal("Error pulling docker.io/library/x - denied")
+        end
+      end
     end
   end
 end

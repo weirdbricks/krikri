@@ -38,7 +38,11 @@ module Krikri
         version = api_version || client.api_version
         base = "#{sdk_base_url(params, client)}/v#{version}"
         kind = 400 <= ex.status_code < 500 ? "Client" : "Server"
-        "#{ex.status_code} #{kind} Error for #{base}#{ex.url}: #{ex.reason} (\"#{ex.daemon_message}\")"
+        text = "#{ex.status_code} #{kind} Error for #{base}#{ex.url}: #{ex.reason}"
+        # The SDK omits the quoted explanation entirely when the body
+        # carries no message.
+        message = ex.daemon_message
+        message ? "#{text} (\"#{message}\")" : text
       end
 
       # The pure renderer, for a status/URL/body triple that did not come
@@ -113,6 +117,19 @@ module Krikri
         KrikriDocker::API.new(client).images.pull(repository, tag)
       rescue ex : KrikriDocker::Errors::DockerAPIError
         raise ImagePullError.new("Error pulling image #{display_ref} - #{api_error_text(client, params, ex)}")
+      rescue ex : KrikriDocker::Errors::ImagePullError
+        # The daemon streamed the failure inside an HTTP 200; real fails with
+        # its own wording ("Error pulling <name> - code: ... message: ...",
+        # or just the error text), not the APIError rendering.
+        raise ImagePullError.new(pull_stream_error_text(repository, ex))
+      end
+
+      def self.pull_stream_error_text(name : String, ex : KrikriDocker::Errors::ImagePullError) : String
+        if ex.error_detail
+          "Error pulling #{name} - code: #{ex.code} message: #{ex.message}"
+        else
+          "Error pulling #{name} - #{ex.error}"
+        end
       end
 
       # Real docker_login validates registry credentials with the daemon's

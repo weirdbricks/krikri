@@ -26,7 +26,7 @@ shards:
 
   krikri-docker:
     git: https://github.com/weirdbricks/krikri-docker.git
-    version: 0.1.0+git.commit.455d40bda0a1fb62b83ea2b91c866c02ad28384b
+    version: 0.1.1+git.commit.cbadbdb484af96ae7be9be2adcbcd4f6d6ccb21c
 
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git

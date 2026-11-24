@@ -1125,7 +1125,8 @@ module Krikri
 
       expected_exposed = exposed_ports.keys.to_set
       if image_ref
-        expected_exposed += (api.images.inspect(image_ref).config.exposed_ports || Hash(String, Hash(String, String)).new).keys.to_set
+        image_config = api.images.inspect(image_ref).config
+        expected_exposed += (image_config.try(&.exposed_ports) || Hash(String, Hash(String, String)).new).keys.to_set
       end
       actual_exposed = (config.exposed_ports || Hash(String, Hash(String, String)).new).keys.to_set
 
@@ -1146,7 +1147,7 @@ module Krikri
     private def expected_env(api : KrikriDocker::API, image_ref : String?, requested : Hash(String, String)) : Set(String)
       expected = Hash(String, String).new
       if image_ref
-        image_env = api.images.inspect(image_ref).config.env || [] of String
+        image_env = api.images.inspect(image_ref).config.try(&.env) || [] of String
         image_env.each do |entry|
           key, _, value = entry.partition('=')
           expected[key] = value
