@@ -111,6 +111,7 @@ module Krikri
       action_name : String? = nil,
       task_source_file : String? = nil,
       task_source_line : Int32 = 0,
+      task_raw_params : Hash(String, String)? = nil,
     ) : ActionResult
       # Get action plugin class
       plugin_class = ACTION_PLUGINS[module_name]?
@@ -182,9 +183,16 @@ module Krikri
       # Templar), so the param's own source position has to be registered
       # here for a deprecation that read trips to carry the Origin real
       # prints - the task-param substitution sites that normally provide
-      # it have already been popped by this point.
+      # it have already been popped by this point. A literal `var:` value
+      # rides along as the site's TEXT because a read's Origin is only
+      # claimed for a site whose template NAMES the read variable
+      # (VarSubstitutor#deprecation_site_names?): without it a `var:`
+      # naming a top-level fact printed no INJECT_FACTS_AS_VARS block at
+      # all, while real warns at the `var:` value token (publicarray
+      # .unbound, issue #1770, live-verified against 2.21.6).
+      var_site_text = debug_var_site_text(task_raw_params)
       result = if debug_var_param?(module_name, params) && task_source_file
-                 VarSubstitutor.set_current_task_param(task_source_file, task_source_line, "var")
+                 VarSubstitutor.set_current_task_param(task_source_file, task_source_line, "var", var_site_text)
                  begin
                    action_plugin.execute
                  ensure
@@ -201,6 +209,20 @@ module Krikri
       return false unless module_name == "ansible.builtin.debug" || module_name == "debug"
       var = params["var"]?
       !var.nil? && !var.empty?
+    end
+
+    # The `var:` argument AS WRITTEN, for the source position a fact read
+    # inside it is blamed on - nil when it is itself a template
+    # (`var: "{{ item }}"`). Real reads such an argument's fact at whatever
+    # named the template (a loop item read pins the block at the item's own
+    # scalar, live-verified against 2.21.6), so claiming this param's token
+    # for it would mislabel the Origin; those reads keep their existing
+    # (silent) attribution instead.
+    private def self.debug_var_site_text(raw_params : Hash(String, String)?) : String?
+      raw = raw_params.try(&.["var"]?)
+      return nil unless raw
+      return nil if raw.includes?("{{") || raw.includes?("{%")
+      raw
     end
 
     # A controller-side action plugin standing in for a module real ansible

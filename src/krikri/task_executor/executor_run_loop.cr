@@ -3116,7 +3116,7 @@ module Krikri
         # directory"). Batchable tasks never carry delegate_to:, so this is
         # nil in practice here.
         action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, task.delegate_to ? host : nil, resolve_task_check_mode(task, vars_context), nil, task.action_name,
-          task_source_file: task.source_file, task_source_line: task.source_line)
+          task_source_file: task.source_file, task_source_line: task.source_line, task_raw_params: task.params)
         emit_assert_that_deprecations(task, substituted_params, action_result, vars_context)
 
         unless action_result.success?
@@ -3927,7 +3927,8 @@ module Krikri
             task_deadline,
             task.action_name,
             task_source_file: task.source_file,
-            task_source_line: task.source_line
+            task_source_line: task.source_line,
+            task_raw_params: task.params
           )
         end
         # The deadline expired during the action stage itself (real's
