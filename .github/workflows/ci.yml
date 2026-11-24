@@ -142,6 +142,43 @@ jobs:
       - name: Build main executable and plugins
         run: ./build.sh
 
+      - name: Plugins load on the declared target baseline
+        # The plugins are uploaded to the target and must start there. A
+        # stock Ubuntu 24.04 image has no libxml2 (issues #1726/#1736) and
+        # no libyaml, and a build that grows such a dependency dies in the
+        # dynamic loader before main() - which real ansible's Python facts
+        # never do. Run every distinct plugin binary in a minimal baseline
+        # container (the same library set krikri-role-tester's GuestBaseline
+        # installs) so a new shared-library dependency fails here instead of
+        # on a customer's host. Any exit status is fine; only the loader's
+        # own error fails the step.
+        run: |
+          # A tar stream, not a bind mount: the job itself runs in a
+          # container, so $PWD is not a host path the Docker daemon can mount.
+          tar -C bin -cf - plugins | docker run --rm -i docker.io/library/ubuntu:24.04 sh -c '
+            set -e
+            mkdir -p /plugins
+            tar -C /plugins -xf -
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends \
+              libyaml-0-2 libssl3t64 libgmp10 liblzma5 zlib1g libpcre2-8-0 >/dev/null
+            log=/tmp/load.log
+            : > "$log"
+            seen=""
+            for f in /plugins/* /plugins/.fat-plugin; do
+              [ -f "$f" ] || continue
+              ino=$(stat -c %i "$f")
+              case "$seen" in *" $ino "*) continue ;; esac
+              seen="$seen $ino "
+              timeout 10 "$f" </dev/null >/dev/null 2>>"$log" || true
+            done
+            if grep -q "error while loading shared libraries" "$log"; then
+              echo "a plugin cannot load on the baseline target:"
+              grep "error while loading shared libraries" "$log" | head -5
+              exit 1
+            fi
+          '
+
       - name: Provide the docker smoke-test image
         # cli_test.cr's end-to-end docker smoke test runs
         # testing/test-docker-quick.yml, which treats

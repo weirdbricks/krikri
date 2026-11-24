@@ -9,9 +9,21 @@ require "../minitest_helper"
 # builds, or a test checkout that never ran build.sh).
 describe "glibc symbol versions" do
   it "has no GLIBC_2.38+ version requirements in built binaries" do
-    skip "objdump not available" if `command -v objdump 2>/dev/null`.empty?
+    if `command -v objdump 2>/dev/null`.empty?
+      if ENV["CI"]?
+        flunk "objdump is required: the glibc symbol contract cannot be checked without it"
+      else
+        skip "objdump not available"
+      end
+    end
     binaries = ["bin/krikri-playbook", "bin/plugins/facts"].select { |path| File.file?(path) }
-    skip "binaries not built" if binaries.empty?
+    if binaries.empty?
+      if ENV["CI"]?
+        flunk "no binaries built: run ./build.sh before the test suite"
+      else
+        skip "binaries not built"
+      end
+    end
 
     binaries.each do |binary|
       output = `objdump -T #{binary} 2>/dev/null`

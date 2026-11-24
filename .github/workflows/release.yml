@@ -129,6 +129,39 @@ jobs:
             ls -lh 'dist/${PKG}.tar.gz'
           "
 
+      - name: Smoke-test plugin load on a bare target
+        # The release build is fully static, so a bare Ubuntu 24.04 image -
+        # no packages at all - is the strictest target a shipped plugin can
+        # meet. Running each distinct binary proves it loads there and would
+        # catch a shared-library dependency that slipped past the static
+        # assertion above (the class that broke dynamic builds in #1726 and
+        # GLIBC_2.38 in #164). Plugin protocol errors are expected and
+        # ignored; only the loader's own error fails the step.
+        run: |
+          PKG="krikri-${GITHUB_REF_NAME}-linux-${{ matrix.arch }}"
+          # A tar stream, not a bind mount, for the same reason as CI: the
+          # workspace path is not guaranteed to be a host path Docker can mount.
+          tar -C "dist/$PKG" -cf - plugins | docker run --rm -i docker.io/library/ubuntu:24.04 sh -c '
+            set -e
+            mkdir -p /plugins
+            tar -C /plugins -xf -
+            log=/tmp/load.log
+            : > "$log"
+            seen=""
+            for f in /plugins/* /plugins/.fat-plugin; do
+              [ -f "$f" ] || continue
+              ino=$(stat -c %i "$f")
+              case "$seen" in *" $ino "*) continue ;; esac
+              seen="$seen $ino "
+              timeout 10 "$f" </dev/null >/dev/null 2>>"$log" || true
+            done
+            if grep -q "error while loading shared libraries" "$log"; then
+              echo "a shipped plugin cannot load on a bare target:"
+              grep "error while loading shared libraries" "$log" | head -5
+              exit 1
+            fi
+          '
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
