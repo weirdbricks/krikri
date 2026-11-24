@@ -1,0 +1,29 @@
+---
+# The task krikri-role-tester extracted from alvistack.firefox; only the play
+# is adapted to run it against localhost (the round ran it against its
+# testhost inventory). The loop var is the role's own vars/main.yml
+# _flatpak_remote, and the task body is verbatim.
+#
+# PATH hides flatpak: the round's host had no flatpak installed, and this case
+# has to reproduce that on machines where /usr/bin/flatpak exists. The module's
+# missing-binary failure names no searched directories, so the exact list never
+# reaches the transcript.
+#
+# gather_facts is off because the divergent task needs no facts, and
+# ansible-core 2.21.6 gathers them without printing a task (krikri still
+# prints its Gathering Facts block, a separate divergence).
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  environment:
+    PATH: /usr/local/sbin:/usr/local/bin
+  tasks:
+    - name: flatpak remote-add
+      community.general.flatpak_remote:
+        name: "{{ item.name }}"
+        flatpakrepo_url: "{{ item.flatpakrepo_url }}"
+        state: "{{ item.state }}"
+      loop: "{{ _flatpak_remote }}"
+      vars:
+        _flatpak_remote:
+          - { state: present, name: flathub, flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo }

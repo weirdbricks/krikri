@@ -298,6 +298,15 @@ module Krikri
       # (Oefenweb.locales round 210720 hard-stopped on it). Drives
       # /etc/locale.gen + locale-gen on the target.
       "community.general.locale_gen",
+      # flatpak / flatpak_remote (issue #1774, alvistack.firefox): both
+      # tasks were unavailable-module skips where real ran the module and
+      # failed it with "Executable 'flatpak' was not found on the system."
+      # (failed=1, rc=2 vs krikri's skipped=2, rc=4). flatpak_remote
+      # drives the remote-add/remote-list/remote-modify/remote-delete
+      # commands, flatpak the list/install/update/uninstall family - see
+      # plugins/flatpak_remote.cr and plugins/flatpak.cr.
+      "community.general.flatpak",
+      "community.general.flatpak_remote",
       # mail (0.9.1627): SMTP mail sending (deekayen.log_mailer round
       # 5460362 - the role's "Send e-mail, attaching files." task was an
       # unavailable-module skip where real ran the module and failed on
