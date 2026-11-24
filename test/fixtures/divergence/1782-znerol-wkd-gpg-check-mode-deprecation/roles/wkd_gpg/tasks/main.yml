@@ -1,0 +1,13 @@
+# znerol.wkd_gpg's first task, verbatim (roles/main.yml:8): the loop source
+# filters through the dependency role's `wkd_hash`/`wkd_dir` plugin, whose
+# module-level `ansible.module_utils._text` imports are what real reports when
+# it compiles this template. `wkd_gpg_uids` is the round's own undefined
+# source, so the task fails before any filter runs.
+- name: WKD directory present
+  loop: "{{ wkd_gpg_uids | list }}"
+  loop_control:
+    loop_var: wkd_gpg_uid
+  file:
+    state: directory
+    path: "{{ wkd_gpg_export_dest | dirname }}"
+    recurse: true

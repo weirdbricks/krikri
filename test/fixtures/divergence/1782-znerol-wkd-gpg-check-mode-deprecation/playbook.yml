@@ -1,0 +1,11 @@
+# The round's check-phase play: znerol.wkd_gpg as the only role, its first
+# task failing on the round's own undefined `wkd_gpg_uids` source. Real still
+# compiles the filter-bearing loop template, so its dependency role's
+# filter_plugins import deprecations print in --check too. Facts gathering is
+# kept (the round ran it) and become dropped so the case runs as a plain local
+# user: neither affects the deprecation block.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - wkd_gpg
