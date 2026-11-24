@@ -1253,6 +1253,82 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "stays silent for a task var that merely holds a fact's own text" do
+    # Issue #1766's shape, minimal: real injects a fact under its fact-cache
+    # key, so setup's `ansible_*` facts are not readable as their bare
+    # `ansible_facts` name - `{{ distribution }}` with no author var is
+    # undefined. A task var holding the fact's own text through the UNTAGGED
+    # `ansible_facts[...]` spelling is an ordinary author value, so reading
+    # it warns NOTHING (live-verified vs 2.21.6); the value-equality test
+    # alone read it as the deprecated fact and printed a block at the
+    # consuming param.
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: task var equal to the fact text
+            debug:
+              msg: "{{ distribution }}"
+            vars:
+              distribution: "{{ ansible_facts['distribution'] }}"
+      PLAYBOOK
+
+    stdout.must_include("TASK [task var equal to the fact text]")
+    stderr.wont_include("INJECT_FACTS_AS_VARS")
+  end
+
+  it "origins a with_first_found candidate's read at the task var's declaration" do
+    # Issue #1766, lerwys.logrotate's own task verbatim: the candidate list
+    # consumes the task-level `vars:` values, whose templates read the
+    # distribution facts. Real templates each value lazily at that render
+    # and tags the VALUE, so the one block names the `distribution:` line
+    # (live-verified vs 2.21.6: 17:19 below), never the candidate element
+    # that merely read the variable.
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - logrotate
+      PLAYBOOK
+      "roles/logrotate/tasks/main.yml" => <<-TASKS,
+      ---
+      - name: add OS specific variables
+        include_vars: '{{ loop_vars }}'
+        with_first_found:
+          - files:
+              - '{{ distribution }}-{{ distribution_version }}.yml'
+              - '{{ distribution }}-{{ distribution_major_version }}.yml'
+              - '{{ distribution }}.yml'
+              - '{{ ansible_os_family }}.yml'
+              - '{{ ansible_system }}.yml'
+              - 'defaults.yml'
+            paths:
+              - 'vars'
+        loop_control:
+          loop_var: loop_vars
+        vars:
+          distribution: '{{ ansible_distribution }}'
+          distribution_version: '{{ ansible_distribution_version }}'
+          distribution_major_version: '{{ ansible_distribution_major_version }}'
+      TASKS
+      "roles/logrotate/vars/defaults.yml" => <<-VARS,
+      ---
+      logrotate_package: logrotate
+      VARS
+    })
+
+    stdout.must_include("TASK [logrotate : add OS specific variables]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.must_include("Origin: #{dir}/roles/logrotate/tasks/main.yml:17:19\n")
+    stderr.must_include("17     distribution: '{{ ansible_distribution }}'\n")
+    stderr.must_include("^ column 19")
+    stderr.wont_include(":6:15")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "warns for a task vars: value whose only consumer lookup runs in the when:" do
     # Issue #1731, lotusnoir.apps_snoopy's include_vars: `params` consumes
     # `params_` through lookup('first_found') and the only render that

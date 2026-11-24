@@ -2645,6 +2645,24 @@ module Krikri
       @@var_origin_lookups[host_name]?.try(&.call(name, leaf))
     end
 
+    # Per-host resolver answering whether *name* is a spelling real
+    # actually injects at the top level for that host, published by
+    # TaskExecutor#build_vars_context from the fact store's own keys (see
+    # #register_injected_fact_spelling_lookup). nil when no probe is
+    # registered for the host, so the caller keeps its scope-shape guess
+    # instead of going silent.
+    @@injected_fact_spelling_lookups = {} of String => (String -> Bool)
+
+    def self.register_injected_fact_spelling_lookup(host_name : String, &block : String -> Bool) : Nil
+      @@injected_fact_spelling_lookups[host_name] = block
+    end
+
+    def self.injected_fact_spelling?(host_name : String?, name : String) : Bool?
+      return nil unless host_name
+      block = @@injected_fact_spelling_lookups[host_name]?
+      block.try(&.call(name))
+    end
+
     # Whether the template being rendered by the CURRENT fiber site names
     # *name* - the guard that ties a fact read to the template text that
     # named it, for the reads no variable value accounts for (a `when:`
@@ -2695,14 +2713,32 @@ module Krikri
     # takes the name-level answer. A set_fact: write is the same shape of
     # answer - real's own SET_FACT layer is untagged and wins over the
     # injected copy whatever the name looks like (see #set_fact_var_name?).
+    #
+    # Because the injected name IS the fact store's own key spelling, a
+    # fact whose cache key carries the `ansible_` prefix is never readable
+    # as its bare `ansible_facts` spelling (live-verified vs 2.21.6: with
+    # no author var, `{{ distribution }}` is undefined while
+    # `{{ ansible_distribution }}` warns). The `ansible_facts` dict names
+    # cannot answer that - namespace_facts strips the prefix for every
+    # key - so the executor publishes the store's own spellings for the
+    # host (see #register_injected_fact_spelling_lookup). Without them an
+    # author var holding the fact's own text under the stripped name was
+    # misread as the tagged fact: lerwys.logrotate's
+    # `distribution: '{{ ansible_distribution }}'` read from its
+    # with_first_found candidates printed the deprecation at the candidate
+    # line instead of the task var's declaration (issue #1766).
     def self.top_level_fact_name?(name : String, vars : Hash(String, JSON::Any)) : Bool
       return false if name == "ansible_local"
       return false if name.ends_with?("_interpreter")
-      return false if set_fact_var_name?(host_from_vars(vars), name)
+      host_name = host_from_vars(vars)
+      return false if set_fact_var_name?(host_name, name)
       facts = vars["ansible_facts"]?.try(&.as_h?)
       return false unless facts
       injected = facts[name]? || (name.starts_with?("ansible_") ? facts[name["ansible_".size..]]? : nil)
       return false unless injected
+      if injected_fact_spelling?(host_name, name) == false
+        return false
+      end
       if (ctx = vars[name]?) && ctx != injected
         return false
       end
