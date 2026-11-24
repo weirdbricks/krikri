@@ -106,6 +106,24 @@ describe "mount plugin" do
     result["msg"].as_s.must_include("path")
   end
 
+  # The executor marks EVERY remote dispatch with __krikri_remote_tty so the
+  # spawn plugins can manufacture the ssh transport's controlling terminal
+  # (issue #1728). It is engine bookkeeping, not a module argument: real
+  # ansible.posix.mount never sees it, so a remote `state: absent` task must
+  # run instead of failing "Unsupported parameters ... __krikri_remote_tty"
+  # (issue #1771, thechip911.hardening's "Remove /tmp from fstab").
+  it "does not reject the executor's __krikri_remote_tty remote-dispatch marker" do
+    fstab = fresh_fstab("remote-tty.fstab", "tmpfs /mnt/x tmpfs rw 0 0\n")
+
+    result = PluginSpecHelper.run("mount", {
+      "path" => "/mnt/x", "state" => "absent", "fstab" => fstab, "__krikri_remote_tty" => "1",
+    })
+
+    result["failed"]?.try(&.as_bool?).must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    File.read(fstab).must_equal("")
+  end
+
   # ansible.posix 2.1.x's mount.py passes its `warnings` list to mount.py's
   # single exit_json success exit (args always carries warnings=[]), so
   # ansible-core's _return_formatted has a `warnings` kwarg to deprecate on

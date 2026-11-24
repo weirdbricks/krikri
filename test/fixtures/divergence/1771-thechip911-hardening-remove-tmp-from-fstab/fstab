@@ -1,0 +1,2 @@
+tmpfs /mnt/krikri1771 tmpfs rw,nosuid,nodev 0 0
+UUID=abcd-1234 / ext4 defaults 0 1

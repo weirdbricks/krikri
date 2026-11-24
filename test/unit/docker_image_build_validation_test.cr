@@ -208,6 +208,23 @@ describe "docker_image_build plugin argument validation" do
                                   "tls_client_key, tls_verify).")
   end
 
+  # __krikri_remote_tty rides with every remote dispatch as engine
+  # bookkeeping (issue #1728/#1771); real docker_image_build never sees it,
+  # so validation must not fail the task over it.
+  it "does not reject the executor's __krikri_remote_tty remote-dispatch marker" do
+    result = PluginSpecHelper.run("docker_image_build", {
+      "name"                => "krikri/test",
+      "path"                => "/tmp/krikri-no-such-dir",
+      "__krikri_remote_tty" => "1",
+    })
+
+    # Past argument validation the plugin fails on this box's docker CLI /
+    # missing path, so only the validation message matters here.
+    msg = result["msg"]?.try(&.as_s) || ""
+    msg.includes?("Unsupported parameters").must_equal(false)
+    msg.includes?("__krikri_remote_tty").must_equal(false)
+  end
+
   it "fails a nonexistent path directory only after validation passed" do
     # With `docker` being podman's shim the CLI probe (community.docker's
     # "Cannot determine Docker client information. Are you maybe using

@@ -777,7 +777,8 @@ module Krikri
     private def validate_unsupported : PluginResult?
       unsupported = @params.keys.reject do |k|
         SPEC_PARAMS.includes?(k) || COMMON_CLI_SPEC.has_key?(k) ||
-          COMMON_CLI_SPEC.values.any?(&.includes?(k)) || INTERNAL_PARAMS.includes?(k)
+          COMMON_CLI_SPEC.values.any?(&.includes?(k)) || INTERNAL_PARAMS.includes?(k) ||
+          k.starts_with?("_")
       end
       [{"secrets", SECRETS_SUBOPTIONS}, {"outputs", OUTPUTS_SUBOPTIONS}].each do |pair|
         param, suboptions = pair

@@ -107,9 +107,15 @@ module Krikri
       # are engine-internal keys injected by the executor (see
       # build_plugin_config), not part of Ansible's argument_spec, so none
       # are rejected. The parenthesized alias list mirrors Ansible's msg (name).
+      # Every engine-internal key carries a leading underscore - including
+      # __krikri_remote_tty, which rides with EVERY remote dispatch (see
+      # executor_run_loop.cr) - so the whole prefix is exempt here, the way
+      # dnf/yum/systemd already do it; without that a remote mount task
+      # failed with "Unsupported parameters ... __krikri_remote_tty" where
+      # real ansible ran it (issue #1771).
       mount_supported = {"backup", "boot", "dump", "fstab", "fstype", "opts", "opts_no_log", "passno", "path", "src", "state", "name"}
       mount_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
-      unsupported = @params.keys.reject { |k| mount_supported.includes?(k) || mount_internal.includes?(k) }
+      unsupported = @params.keys.reject { |k| mount_supported.includes?(k) || mount_internal.includes?(k) || k.starts_with?("_") }
       unless unsupported.empty?
         return PluginResult.new(
           changed: false,
