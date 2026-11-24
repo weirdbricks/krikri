@@ -548,17 +548,15 @@ module Krikri
       forks : Int32 = 5,
       limit : String? = nil,
     ) : Hash(String, String)
-      # Collect all unique module names used in the playbook
-      required_plugins = Set(String).new
-
-      # Track if any play needs facts gathering
-      needs_facts = false
-
-      playbook.plays.each do |play|
-        # Check if this play gathers facts
-        needs_facts = true if play.gather_facts?
-
-        collect_required_plugins(play.tasks, required_plugins)
+      # One module-name set PER PLAY, not one for the whole playbook: a
+      # host only ever runs the tasks of the plays that include it, so
+      # staging another play's modules on it was wasted work at best. At
+      # worst - an external plugin with no binary for that host's platform
+      # - it reported a `fatal:` FAILED for a host that never ran the
+      # plugin at all (issue #1756).
+      play_plugins = playbook.plays.map do |play|
+        plugins = Set(String).new
+        collect_required_plugins(play.tasks, plugins)
 
         # Handlers are deliberately NOT collected here, unlike tasks:.
         # They run at the end of the play (or at a `meta: flush_handlers`),
@@ -576,12 +574,14 @@ module Krikri
         # pseudo-modules (`include_tasks:`, `block:`, ...) out of
         # get_local_plugin_path entirely - walking them is what crashed
         # outright for geerlingguy.jenkins's own include_tasks: handler.
+
+        # Facts are gathered at the start of THIS play, so only its hosts
+        # need the facts plugin.
+        plugins.add("facts") if play.gather_facts?
+        plugins
       end
 
-      # Add facts plugin if any play needs it
-      required_plugins.add("facts") if needs_facts
-
-      return {} of String => String if required_plugins.empty?
+      return {} of String => String if play_plugins.all?(&.empty?)
 
       # Collect one upload target per EFFECTIVE CONNECTION SPEC, not per
       # host: a play's own vars: can move the connection away from the
@@ -599,6 +599,9 @@ module Krikri
       # then reports the real failure shape itself.
       spec_conns = Hash(String, ConnectionSettings).new
       spec_contributions = Hash(String, Array({String, Bool})).new
+      # The module names each spec will actually be asked to run: the union
+      # of the plugin sets of the plays that contributed it.
+      spec_plugins = Hash(String, Set(String)).new
 
       # --limit restricts every play's hosts to the intersection with the
       # subset (ansible-playbook only ever connects to the limited hosts),
@@ -613,7 +616,7 @@ module Krikri
       # per-task connection decisions carry.
       playbook_dir = File.dirname(File.expand_path(playbook.path))
 
-      playbook.plays.each do |play|
+      playbook.plays.each_with_index do |play, play_index|
         hosts = inventory.get_hosts(play.hosts.to_s)
         if names = limit_names
           hosts = hosts.select { |host| names.includes?(host.name) }
@@ -721,6 +724,7 @@ module Krikri
           end
           spec_contributions[host_key] << {host.name,
                                            play_tasks_have_connection_override?(play.tasks) || play_tasks_have_connection_override?(play.handlers)}
+          (spec_plugins[host_key] ||= Set(String).new).concat(play_plugins[play_index])
         end
       end
 
@@ -728,7 +732,10 @@ module Krikri
 
       puts "Preparing plugins for remote execution...".colorize(:cyan) if @@verbose
 
-      plugin_list = required_plugins.to_a
+      # Every spec's own set, unioned: used only to pre-warm the local
+      # digest cache below.
+      all_plugins = Set(String).new
+      spec_plugins.each_value { |plugins| all_plugins.concat(plugins) }
 
       # Pre-seed every host's uploaded-plugin set and the local digest
       # cache *before* spawning anything, so each fiber below only reads
@@ -747,7 +754,7 @@ module Krikri
           SSHManager.register_connection_password(conn.conn_host, conn.user, conn.port, conn_password)
         end
       end
-      plugin_list.each do |plugin_name|
+      all_plugins.each do |plugin_name|
         # An external plugin (issue #1755) may exist ONLY as a per-platform
         # build (plugins-<key>/), and which binary this is cannot be known
         # until each host's own upload probes its platform. Resolving one
@@ -777,7 +784,7 @@ module Krikri
           buffer = IO::Memory.new
           OutputRouting.redirect_current_fiber_to(buffer)
           begin
-            upload_plugins_to_host(entry[:host], plugin_list, entry[:conn])
+            upload_plugins_to_host(entry[:host], spec_plugins[entry[:conn].spec_key].to_a, entry[:conn])
           rescue ex
             # Captured rather than left to propagate: an exception
             # escaping a spawned fiber takes the whole process down with
@@ -844,13 +851,16 @@ module Krikri
             # just has no binaries it can run on it. Booking it as
             # UNREACHABLE would send someone debugging ssh AND mask the real
             # reason on every later task (the facts pass reports excluded
-            # hosts with a generic "Failed to connect" line). So: report the
-            # actionable message here, leave the host IN the play, and let
-            # its first task fail with the same message via the typed
-            # rescues on the dispatch paths - one failed task halts the
-            # host from there on, exactly like any other module failure.
-            msg = {"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json
-            puts %(fatal: [#{host_name}]: FAILED! => #{msg}).colorize(:red)
+            # hosts with a generic "Failed to connect" line). It is not
+            # printed either: ansible has no eager pass, so a host that
+            # never runs the plugin (a different play, a skipped task, a
+            # deferred when:) printed nothing - this pass used to emit a
+            # task-style `fatal:` line before the first PLAY banner for
+            # that host while the recap still said failed=0 (issue #1756).
+            # The host stays IN the play, and the dispatch that really needs
+            # the binary fails its own task with the same message via the
+            # typed rescues on every dispatch path - the only case ansible
+            # itself reports.
             next
           end
           if ex.is_a?(SshCommandNotExecutableError)

@@ -1,0 +1,12 @@
+# Issue #1756's repro-skipped.yml: a task that targets `linuxhost` but is
+# skipped. The external `hello:` task is spelled as a built-in module here -
+# a checked-in --plugin-path root cannot be made mode 0755 by the corpus
+# copy (cp_r creates it with the invoking umask, and the registry refuses a
+# group-writable root), while the eager pre-upload pass fails identically
+# through krikri's own plugins-<arch>/ lookup. The external-plugin form of
+# both shapes is replayed by test/integration/runtime_plugin_test.cr.
+- hosts: linuxhost
+  gather_facts: false
+  tasks:
+    - ansible.builtin.ping:
+      when: false
