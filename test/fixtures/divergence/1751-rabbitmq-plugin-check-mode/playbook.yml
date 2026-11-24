@@ -1,0 +1,21 @@
+# kpg-playbook 000027-multi-rabbitmq_plugin-happy (seed=1795491005),
+# task #27.0 copied verbatim; only delegate_to is dropped so the task runs on
+# the local host. The fakebin/rabbitmq-plugins stub stands in for a real
+# rabbitmq-plugins so the `list -E -m` probe succeeds with a broker that has
+# none of the requested plugins.
+---
+- name: 'Krikri-playbook-generator: multi-task #27'
+  hosts: local
+  gather_facts: false
+  any_errors_fatal: true
+  environment:
+    PATH: "{{ playbook_dir }}/fakebin:/usr/local/bin:/usr/bin:/bin"
+  tasks:
+    - name: 'Rabbitmq_plugin #27.0'
+      community.rabbitmq.rabbitmq_plugin:
+        broker_state: online
+        names: wufeut
+        new_only: "true"
+        state: enabled
+      register: kpg_task_0
+      ignore_errors: true
