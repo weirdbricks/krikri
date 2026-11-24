@@ -2,6 +2,7 @@ require "json"
 require "./bigint_json"
 require "./spawn_error"
 require "./controller_python"
+require "./module_utils_deprecations"
 # emit_display_deprecations funnels the wrapper's replayed import-time
 # deprecations through ResultDisplay.emit_core_deprecation (run-wide dedup
 # plus the one-time "deprecation_warnings=False" hint) - a leaf-file require,
@@ -803,6 +804,7 @@ module Krikri
           # (live-verified vs 2.21.6 with two unloadable files beside one
           # good file - issue #1180).
           deprecations.concat(display_deprecation_lines(result))
+          deprecations.concat(text_import_deprecation_lines(result))
           @@names_cache[path] = {mtime, set}
         end
         set.each { |set_name| names << set_name }
@@ -877,6 +879,9 @@ module Krikri
       display_deprecation_lines(result).each do |line|
         ResultDisplay.emit_core_deprecation(line)
       end
+      text_import_deprecation_lines(result).each do |line|
+        ResultDisplay.emit_core_deprecation(line)
+      end
     end
 
     # The [DEPRECATION WARNING] texts in the wrapper's replayed display
@@ -890,6 +895,19 @@ module Krikri
         lines << line.lchop("[DEPRECATION WARNING]: ")
       end
       lines
+    end
+
+    # The deprecated `ansible.module_utils._text` names the wrapper saw a
+    # plugin import under an ansible-core that predates 2.21's deprecating
+    # shim (see the wrapper's _record_text_imports), formatted with the
+    # 2.21.6 wording real prints - the parity target's own text, which the
+    # installed interpreter's Display would otherwise word differently.
+    private def text_import_deprecation_lines(result : JSON::Any) : Array(String)
+      symbols = result["text_imports"]?.try(&.as_a?) || return [] of String
+      symbols.compact_map do |symbol|
+        name = symbol.as_s?
+        ModuleUtilsDeprecations.text_import_deprecation_text(name) if name
+      end
     end
 
     # Runs the wrapper script below against one request. Returns the
@@ -951,6 +969,40 @@ module Krikri
           _ansible_warnings = None
 
 
+      _TEXT_IMPORT_NAMES = ("to_bytes", "to_native", "to_text")
+      _text_imports = []
+
+
+      def _record_text_imports():
+          # ansible-core 2.21 serves ansible.module_utils._text as a shim whose
+          # module-level __getattr__ deprecates each name imported from it, and
+          # _display_deprecations replays those entries through Display. An
+          # OLDER ansible-core carries the same names as plain attributes, so
+          # such an import records nothing and the 2.21 lines real prints would
+          # be missing. krikri's parity target is 2.21.6, so intercept the three
+          # deprecated names and report the ones a plugin really imports; the
+          # Crystal side formats the 2.21.6 text.
+          try:
+              import ansible.module_utils._text as _text_module
+          except Exception:
+              return
+          if getattr(_text_module, "__getattr__", None) is not None:
+              return
+          stashed = {}
+          for name in _TEXT_IMPORT_NAMES:
+              if name in _text_module.__dict__:
+                  stashed[name] = _text_module.__dict__.pop(name)
+
+          def __getattr__(name):
+              if name in stashed:
+                  _text_imports.append(name)
+                  return stashed[name]
+              raise AttributeError(
+                  "module %r has no attribute %r" % (_text_module.__name__, name))
+
+          _text_module.__getattr__ = __getattr__
+
+
       def _display_deprecations():
           # Ansible shows a plugin import's module-level deprecations
           # (`from ansible.module_utils._text import to_bytes`) through its
@@ -988,11 +1040,17 @@ module Krikri
           return buffer.getvalue()
 
 
-      def _respond(body, dumps_kwargs):
+      def _with_deprecations(body):
           display = _display_deprecations()
           if display:
               body["display"] = display
-          sys.stdout.write(json.dumps(body, **dumps_kwargs))
+          if _text_imports:
+              body["text_imports"] = _text_imports
+          return body
+
+
+      def _respond(body, dumps_kwargs):
+          sys.stdout.write(json.dumps(_with_deprecations(body), **dumps_kwargs))
 
 
       def _load_plugin(path):
@@ -1140,6 +1198,7 @@ module Krikri
 
       def main():
           payload = json.loads(sys.stdin.read())
+          _record_text_imports()
           names, skipped = _load_all(payload.get("paths", []))
           if payload.get("action") == "list":
               _respond({"ok": True, "names": sorted(names), "skipped": skipped}, {})
@@ -1169,10 +1228,7 @@ module Krikri
           # python type name prefixed.
           body = {"ok": False, "kind": "error",
                   "error": str(exc)}
-          display = _display_deprecations()
-          if display:
-              body["display"] = display
-          sys.stdout.write(json.dumps(body))
+          sys.stdout.write(json.dumps(_with_deprecations(body)))
       PYTHON
   end
 end

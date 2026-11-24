@@ -1,0 +1,32 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [wkd_gpg : WKD directory present] *****************************************
+[ERROR]: Task failed: 'wkd_gpg_uids' is undefined
+
+Task failed.
+Origin: <WORK>/roles/wkd_gpg/tasks/main.yml:6:3
+
+4 # it compiles this template. `wkd_gpg_uids` is the round's own undefined
+5 # source, so the task fails before any filter runs.
+6 - name: WKD directory present
+    ^ column 3
+
+<<< caused by >>>
+
+'wkd_gpg_uids' is undefined
+Origin: <WORK>/roles/wkd_gpg/tasks/main.yml:7:9
+
+5 # source, so the task fails before any filter runs.
+6 - name: WKD directory present
+7   loop: "{{ wkd_gpg_uids | list }}"
+          ^ column 9
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: 'wkd_gpg_uids' is undefined"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.
+[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.

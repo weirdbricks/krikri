@@ -796,6 +796,52 @@ describe "role-local filter_plugins import-time deprecations" do
       FileUtils.rm_rf(root) if root
     end
   end
+
+  it "shows a role plugin's import-time deprecations when the chain's undefined source fails first (issue #1772)" do
+    root = File.tempname("filter-import-deprecations-undefined-source")
+    begin
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      File.write(File.join(root, "roles", "myrole", "filter_plugins", "text_helpers.py"), <<-PYTHON)
+        from ansible.module_utils._text import to_bytes
+        from ansible.module_utils._text import to_text
+
+
+        class FilterModule(object):
+            def filters(self):
+                return {"shout": self.shout}
+
+            def shout(self, value):
+                return to_text(value).upper()
+        PYTHON
+      # znerol.wkd_gpg's own loop source (issue #1772): real imports the
+      # role's filter_plugins files when it compiles this template, so the
+      # plugin's deprecations print even though the undefined source fails
+      # the task before any filter runs.
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - name: loop source whose filter chain starts at an undefined name
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          loop: "{{ nosuch_source | shout }}"
+        YAML
+
+      status, output = run_playbook(root, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          roles:
+            - myrole
+        YAML
+
+      status.success?.must_equal(false, output)
+      output.must_include("'nosuch_source' is undefined", output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_bytes' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[DEPRECATION WARNING]: Importing 'to_text' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.").size.must_equal(1, output)
+      output.scan("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.").size.must_equal(1, output)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
 end
 
 describe "a wrapper-level introspection failure is not cached as an empty name set" do
