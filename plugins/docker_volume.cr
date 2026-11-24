@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "docr"
+require "krikri-docker"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_client"
@@ -13,7 +13,7 @@ module Krikri
   # See plugins/docker_network.cr's module comment for the shared
   # architecture note (talks to the Docker Engine API directly, local
   # UNIX socket by default or a remote daemon over TCP(+TLS) via
-  # docker_host:/TLS params, via the weirdbricks/docr fork - connection
+  # docker_host:/TLS params, via the krikri-docker shard - connection
   # param parsing shared through PluginHelpers::DockerClient).
   #
   # Supported parameters (real's own argument_spec):
@@ -109,7 +109,7 @@ module Krikri
       end
     rescue ex : VolumeApiFailure
       PluginResult.new(changed: false, failed: true, msg: ex.message || "")
-    rescue ex : Docr::Errors::DockerAPIError
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError | Socket::Addrinfo::Error
       PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
@@ -133,9 +133,9 @@ module Krikri
     # version before DockerVolumeManager (and its get_existing_volume /
     # sanitize_labels calls) run, so an unreachable daemon fails here with
     # the connect wording, not with a label error.
-    private def connect_volume_client : Docr::Client
+    private def connect_volume_client : KrikriDocker::Client
       client, _ = PluginHelpers::DockerClient.build(@params)
-      client.call("GET", "/version") { |response| response.consume_body_io }
+      client.api_version
       client
     end
 
@@ -149,7 +149,7 @@ module Krikri
     end
 
     private def ensure_present(
-      client : Docr::Client,
+      client : KrikriDocker::Client,
       settings : VolumeSettings,
       labels : Hash(String, JSON::Any),
       existing : JSON::Any?,
@@ -175,7 +175,7 @@ module Krikri
       result
     end
 
-    private def ensure_absent(client : Docr::Client, settings : VolumeSettings, existing : JSON::Any?) : PluginResult
+    private def ensure_absent(client : KrikriDocker::Client, settings : VolumeSettings, existing : JSON::Any?) : PluginResult
       actions = [] of String
       existed_before = !existing.nil?
 
@@ -295,36 +295,33 @@ module Krikri
     # Driver and DriverOpts, and `Labels` only when the task gave the
     # option at all (an explicit null is real's None, not `{}`).
     private def create_volume!(
-      client : Docr::Client,
+      client : KrikriDocker::Client,
       settings : VolumeSettings,
       labels : Hash(String, JSON::Any),
       actions : Array(String),
     ) : Nil
       unless settings.check_mode
-        payload = {
-          "Name"       => JSON::Any.new(settings.name),
-          "Driver"     => JSON::Any.new(settings.driver),
-          "DriverOpts" => JSON::Any.new(settings.driver_options),
-        } of String => JSON::Any
-        payload["Labels"] = JSON::Any.new(labels) if settings.labels_given
-        created = call_json(client, "POST", "/volumes/create", JSON::Any.new(payload))
-        created_name = created.try { |response| response["Name"]?.try(&.as_s?) } || settings.name
-        call_json(client, "GET", "/volumes/#{created_name}")
+        api = KrikriDocker::API.new(client)
+        created = with_volume_api_failure(client) do
+          api.volumes.create(settings.name, settings.driver, settings.driver_options, settings.labels_given ? labels : nil)
+        end
+        created_name = created["Name"]?.try(&.as_s?) || settings.name
+        with_volume_api_failure(client) { api.volumes.get_json(created_name) }
       end
       actions << "Created volume #{settings.name} with driver #{settings.driver}"
     end
 
-    private def remove_volume!(client : Docr::Client, name : String, check_mode : Bool, actions : Array(String)) : Nil
-      call_json(client, "DELETE", "/volumes/#{name}") unless check_mode
+    private def remove_volume!(client : KrikriDocker::Client, name : String, check_mode : Bool, actions : Array(String)) : Nil
+      with_volume_api_failure(client) { KrikriDocker::API.new(client).volumes.remove(name) } unless check_mode
       actions << "Removed volume #{name}"
     end
 
     # The volume entry from the daemon's own `GET /volumes` listing, the
     # same payload real registers as `volume` (an exact Name match; a
     # null/absent Volumes list means no volume exists).
-    private def find_volume(client : Docr::Client, name : String) : JSON::Any?
-      response = call_json(client, "GET", "/volumes")
-      volumes = response.try(&.["Volumes"]?)
+    private def find_volume(client : KrikriDocker::Client, name : String) : JSON::Any?
+      response = with_volume_api_failure(client) { KrikriDocker::API.new(client).volumes.list_json }
+      volumes = response["Volumes"]?
       return nil if volumes.nil? || volumes.raw.nil?
       volumes.as_a.find { |volume| volume["Name"]?.try(&.as_s?) == name }
     end
@@ -336,13 +333,9 @@ module Krikri
     class VolumeApiFailure < Exception
     end
 
-    private def call_json(client : Docr::Client, method : String, path : String, body : JSON::Any? = nil) : JSON::Any?
-      headers = HTTP::Headers{"Content-Type" => "application/json", "Accept" => "application/json"}
-      client.call(method, path, headers, body.try(&.to_json)) do |response|
-        text = response.body_io?.try(&.gets_to_end)
-        text.nil? || text.empty? ? nil : (JSON.parse(text) rescue nil)
-      end
-    rescue ex : Docr::Errors::DockerAPIError
+    private def with_volume_api_failure(client : KrikriDocker::Client, &)
+      yield
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       raise VolumeApiFailure.new(PluginHelpers::DockerSdkError.api_error_text(client, @params, ex))
     end
 

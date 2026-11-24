@@ -16,10 +16,6 @@ shards:
     git: https://github.com/crystal-lang/crystal-db.git
     version: 0.15.0
 
-  docr:
-    git: https://github.com/weirdbricks/docr.git
-    version: 0.1.4+git.commit.c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
-
   krikri-aws-signer:
     git: https://github.com/weirdbricks/krikri-aws-signer.git
     version: 1.0.0+git.commit.82fd59dc9d1a4fb168f95b2996ac036e663e7e21
@@ -27,6 +23,10 @@ shards:
   krikri-aws-ssm:
     git: https://github.com/weirdbricks/krikri-aws-ssm.git
     version: 1.0.2+git.commit.093da4f2d696a6afe87b56578c273e102e15b4ae
+
+  krikri-docker:
+    git: https://github.com/weirdbricks/krikri-docker.git
+    version: 0.1.0+git.commit.455d40bda0a1fb62b83ea2b91c866c02ad28384b
 
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git

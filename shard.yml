@@ -1,5 +1,5 @@
 name: krikri
-version: 0.9.3070
+version: 0.9.3071
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
@@ -11,9 +11,9 @@ dependencies:
   krikri-jinja:
     github: weirdbricks/krikri-jinja
     tag: v1.0.0
-  docr:
-    github: weirdbricks/docr
-    commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
+  krikri-docker:
+    github: weirdbricks/krikri-docker
+    tag: v0.1.0
   mysql:
     github: weirdbricks/crystal-mysql
     tag: crystal-ansible-0.9.342

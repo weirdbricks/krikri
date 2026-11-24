@@ -36,3 +36,9 @@ Third-party libraries
 ---------------------
 Crystal shard dependencies keep their own licenses (MIT or BSD-3-Clause at the
 time of writing); see shard.yml and lib/.
+
+krikri-docker (github.com/weirdbricks/krikri-docker) is a fork of
+marghidanu/docr (github.com/marghidanu/docr), MIT licensed, Copyright (c) 2021
+Tudor Marghidanu. The fork keeps the API surface krikri's docker_* modules use,
+carries the Docker/Podman compatibility fixes they need, and retains the
+upstream copyright notice in its own LICENSE.

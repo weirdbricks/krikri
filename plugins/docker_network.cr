@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "docr"
+require "krikri-docker"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_client"
@@ -13,7 +13,7 @@ module Krikri
   # See plugins/docker_image.cr's module comment for the shared
   # architecture note (talks to the Docker Engine API directly, local
   # UNIX socket by default or a remote daemon over TCP(+TLS) via
-  # docker_host:/TLS params below, via the weirdbricks/docr fork).
+  # docker_host:/TLS params below, via the krikri-docker shard).
   #
   # Supported parameters:
   # - name: network name (required)
@@ -26,10 +26,9 @@ module Krikri
   #   containers currently connected but not listed get disconnected too
   #   (matches Ansible's own default). Pass appends: true to only add
   #   missing connections and never disconnect anything (Ansible's
-  #   own appends:/incremental alias). Uses the same raw
-  #   `Docr::Client#call` escape hatch as docker_container.cr's networks:
-  #   for `POST /networks/{id}/connect`/`disconnect` - docr's own
-  #   Networks#connect/#disconnect are unimplemented stubs.
+  #   own appends:/incremental alias). Sent through the client's
+  #   Networks#connect/#disconnect wrappers, like docker_container.cr's
+  #   networks:.
   # - appends: bool, default false - see connected: above.
   # - docker_host: / tls: / validate_certs: (alias tls_verify:) / cacert_path: /
   #   cert_path: / key_path: - connect to a remote Docker daemon over
@@ -169,7 +168,7 @@ module Krikri
       ipam_driver_options = @params["ipam_driver_options"]?.try { |json| Hash(String, String).from_json(json) }
 
       client, _ = PluginHelpers::DockerClient.build(@params)
-      api = Docr::API.new(client)
+      api = KrikriDocker::API.new(client)
 
       # Real validates the ipam_config subnets AFTER the daemon connection
       # (TaskParameters.__init__ runs once the client already exists), so
@@ -188,14 +187,14 @@ module Krikri
       else
         ensure_absent(api, name, existing, check_mode)
       end
-    rescue ex : Docr::Errors::DockerAPIError
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError | Socket::Addrinfo::Error
       PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
     end
 
     private def ensure_present(
-      api : Docr::API,
+      api : KrikriDocker::API,
       name : String,
       driver : String,
       internal : Bool,
@@ -205,7 +204,7 @@ module Krikri
       appends : Bool,
       ipam_driver : String?,
       ipam_driver_options : Hash(String, String)?,
-      existing : Docr::Types::Network?,
+      existing : KrikriDocker::Types::Network?,
       check_mode : Bool,
       debug_mode : Bool,
       diff_mode : Bool,
@@ -256,10 +255,10 @@ module Krikri
     end
 
     # The create half of present(): the raw IPAM-bearing payload when any
-    # IPAM param was given, the docr-typed create otherwise (both skipped
+    # IPAM param was given, the typed create otherwise (both skipped
     # in check mode, where only the action gets recorded).
     private def create_network!(
-      api : Docr::API, name : String, driver : String, internal : Bool,
+      api : KrikriDocker::API, name : String, driver : String, internal : Bool,
       attachable : Bool, labels : Hash(String, String)?,
       ipam_driver : String?, ipam_driver_options : Hash(String, String)?,
       check_mode : Bool,
@@ -272,7 +271,7 @@ module Krikri
         return
       end
 
-      config = Docr::Types::NetworkConfig.new(
+      config = KrikriDocker::Types::NetworkConfig.new(
         name: name,
         driver: driver,
         internal: internal,
@@ -290,13 +289,13 @@ module Krikri
     # maps the `diff` result carries (each keyed "ipam_config[<idx>.]<key>"
     # etc., `exists` added by the caller).
     private def ipam_drift(
-      api : Docr::API, name : String, existing : Docr::Types::Network?,
+      api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::Network?,
       ipam_driver : String?, ipam_driver_options : Hash(String, String)?,
     ) : Drift?
       return nil if existing.nil?
       return nil if ipam_driver.nil? && ipam_driver_options.nil? && ipam_pools.empty?
 
-      net = docker_raw_get(api.client, "/networks/#{name}")
+      net = network_json(api, name)
       return nil unless net
 
       drift = Drift.new
@@ -518,9 +517,9 @@ module Krikri
     # daemon's POST /networks/create body exactly as real builds it
     # (Name/Driver/Options/IPAM/CheckDuplicate, then the conditional
     # fields, then the IPAM dict when any IPAM param was given). The
-    # non-IPAM path keeps the docr-typed create above.
+    # non-IPAM path keeps the typed create above.
     private def create_network_with_ipam!(
-      api : Docr::API, name : String, driver : String, internal : Bool,
+      api : KrikriDocker::API, name : String, driver : String, internal : Bool,
       attachable : Bool, labels : Hash(String, String)?,
       ipam_driver : String?, ipam_driver_options : Hash(String, String)?,
     ) : Nil
@@ -544,7 +543,7 @@ module Krikri
         } of String => JSON::Any)
       end
 
-      docker_raw_call(api.client, "POST", "/networks/create", JSON::Any.new(data))
+      api.networks.create(JSON::Any.new(data))
     end
 
     private def driver_options_json : JSON::Any
@@ -567,8 +566,8 @@ module Krikri
 
     # Ansible's container_names_in_network, for the connected: defaulting
     # above.
-    private def container_names_in_network(api : Docr::API, name : String) : Array(String)
-      net = docker_raw_get(api.client, "/networks/#{name}")
+    private def container_names_in_network(api : KrikriDocker::API, name : String) : Array(String)
+      net = network_json(api, name)
       containers = net.try(&.["Containers"]?.try(&.as_h?)) || {} of String => JSON::Any
       containers.values.compact_map do |container|
         container.as_h?.try(&.["Name"]?.try(&.as_s?))
@@ -579,7 +578,7 @@ module Krikri
     # refuses to remove an in-use network), then delete, then record the
     # action. Real addresses the network by NAME here, not by id.
     private def remove_network!(
-      api : Docr::API, name : String, existing : Docr::Types::Network,
+      api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::Network,
       check_mode : Bool, actions : Array(String),
     ) : Nil
       disconnect_all!(api, existing.id) unless check_mode
@@ -596,7 +595,7 @@ module Krikri
     # `exists` leads the before/after maps (present() adds it first),
     # then the IPAM comparison entries.
     private def present_result(
-      api : Docr::API, name : String, actions : Array(String),
+      api : KrikriDocker::API, name : String, actions : Array(String),
       changed : Bool, keep_actions : Bool, with_diff : Bool,
       diff_mode : Bool, existed_before : Bool, drift : Drift?,
     ) : PluginResult
@@ -627,10 +626,10 @@ module Krikri
     # FIRST (`disconnect_all_containers()`, verified against its actual
     # source), since Docker's own network-remove API itself refuses to
     # delete a network with any container still attached.
-    private def disconnect_all!(api : Docr::API, network_id : String) : Nil
-      current = api.networks.inspect(network_id).containers || Hash(String, Docr::Types::NetworkContainer).new
+    private def disconnect_all!(api : KrikriDocker::API, network_id : String) : Nil
+      current = api.networks.inspect(network_id).containers || Hash(String, KrikriDocker::Types::NetworkContainer).new
       current.values.each do |container|
-        docker_raw_call(api.client, "POST", "/networks/#{network_id}/disconnect", {"Container" => container.name})
+        api.networks.disconnect(network_id, container.name)
       end
     end
 
@@ -638,9 +637,8 @@ module Krikri
     # daemon's `/networks/<name>` GET (null when it does not exist) - not
     # a re-serialization of a typed struct, so every daemon-returned key
     # and its daemon-returned order survive verbatim.
-    private def inspect_network_json(api : Docr::API, name : String) : JSON::Any
-      raw = docker_raw_get(api.client, "/networks/#{name}")
-      raw || JSON::Any.new(nil)
+    private def inspect_network_json(api : KrikriDocker::API, name : String) : JSON::Any
+      network_json(api, name) || JSON::Any.new(nil)
     end
 
     # A 404 (no such network) is Ansible's `None`, not a failure - get_network
@@ -649,12 +647,11 @@ module Krikri
       JSON::Any.new(values.map { |value| JSON::Any.new(value) })
     end
 
-    private def docker_raw_get(client : Docr::Client, path : String) : JSON::Any?
-      client.call("GET", path, HTTP::Headers{"Accept" => "application/json"}) do |response|
-        body = response.body_io?.try(&.gets_to_end)
-        body.nil? || body.empty? ? nil : JSON.parse(body)
-      end
-    rescue Docr::Errors::DockerAPIError
+    # A 404 (no such network) is Ansible's `None`, not a failure -
+    # get_network swallows it into a null `network`.
+    private def network_json(api : KrikriDocker::API, name : String) : JSON::Any?
+      api.networks.get_json(name)
+    rescue KrikriDocker::Errors::DockerAPIError
       nil
     end
 
@@ -665,18 +662,18 @@ module Krikri
     # anything changed (real records connect/disconnect there too, and
     # folds each into `changed`).
     private def sync_connected!(
-      api : Docr::API, name : String, connected : Array(String),
+      api : KrikriDocker::API, name : String, connected : Array(String),
       appends : Bool, check_mode : Bool, actions : Array(String),
     ) : Bool
       return false if connected.empty? && appends
 
-      current = api.networks.inspect(name).containers || Hash(String, Docr::Types::NetworkContainer).new
+      current = api.networks.inspect(name).containers || Hash(String, KrikriDocker::Types::NetworkContainer).new
       current_names = current.values.map(&.name)
       changed = false
 
       connected.each do |container|
         next if current_names.includes?(container)
-        docker_raw_call(api.client, "POST", "/networks/#{name}/connect", {"Container" => container}) unless check_mode
+        api.networks.connect(name, container) unless check_mode
         actions << "Connected container #{container}"
         changed = true
       end
@@ -684,7 +681,7 @@ module Krikri
       unless appends
         current_names.each do |container|
           next if connected.includes?(container)
-          docker_raw_call(api.client, "POST", "/networks/#{name}/disconnect", {"Container" => container}) unless check_mode
+          api.networks.disconnect(name, container) unless check_mode
           actions << "Disconnected container #{container}"
           changed = true
         end
@@ -838,12 +835,7 @@ module Krikri
       unsupported_params_error("community.docker.docker_network", unsupported, SPEC)
     end
 
-    private def docker_raw_call(client : Docr::Client, method : String, path : String, body)
-      headers = HTTP::Headers{"Content-Type" => "application/json"}
-      client.call(method, path, headers, body.to_json) { |response| response.consume_body_io }
-    end
-
-    private def ensure_absent(api : Docr::API, name : String, existing : Docr::Types::Network?, check_mode : Bool) : PluginResult
+    private def ensure_absent(api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::Network?, check_mode : Bool) : PluginResult
       actions = [] of String
       remove_network!(api, name, existing, check_mode, actions) if existing
 
@@ -857,7 +849,7 @@ module Krikri
       result
     end
 
-    private def find_network(api : Docr::API, name : String) : Docr::Types::Network?
+    private def find_network(api : KrikriDocker::API, name : String) : KrikriDocker::Types::Network?
       api.networks.list.find { |net| net.name == name }
     end
   end

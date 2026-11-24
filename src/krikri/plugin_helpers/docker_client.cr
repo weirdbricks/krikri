@@ -1,11 +1,11 @@
-require "docr"
+require "krikri-docker"
 require "openssl"
 require "./docker_sdk_error"
 require "./python_lib_gate"
 
 module Krikri
   module PluginHelpers
-    # DockerClient - builds a Docr::Client from a docker_*.cr plugin's
+    # DockerClient - builds a KrikriDocker::Client from a docker_*.cr plugin's
     # own params, supporting both the common case (a local/rootless
     # UNIX socket) and a remote TCP(+TLS) daemon. Shared by
     # docker_container.cr/docker_image.cr/docker_network.cr instead of
@@ -14,7 +14,7 @@ module Krikri
     # - docker_host: "unix:///path/to.sock" / "tcp://host:port" /
     #   "https://host:port" - defaults to the DOCKER_HOST environment
     #   variable (the same convention the Docker CLI and every other
-    #   Docker SDK honor), falling back further to Docr::Client's own
+    #   Docker SDK honor), falling back further to KrikriDocker::Client's own
     #   UNIX-socket default when neither is set. Parsed the way the SDK's
     #   parse_host() reads it (see #parse_host), so a value real rejects
     #   fails here too instead of being read as a socket path.
@@ -50,26 +50,24 @@ module Krikri
     #   docker_host:'s own host (which is still what's actually
     #   connected to) - the common docker-machine-style setup of
     #   reaching a daemon via a raw IP while its certificate is issued
-    #   for a fixed name like "localhost". Implemented in `docr` itself
-    #   (a real shard change, not a local patch - see its own commit
-    #   history): `Docr::Client`'s TCP(+TLS) constructor gained an
-    #   optional `tls_hostname` param, and `#io` reimplements
-    #   `HTTP::Client`'s own TCP+TLS connection logic (rather than
-    #   deferring to it via `super`, which it still does for the
+    #   for a fixed name like "localhost". Implemented in the
+    #   krikri-docker shard itself: `KrikriDocker::Client`'s TCP(+TLS)
+    #   constructor takes an optional `tls_hostname` param, and `#io`
+    #   reimplements `HTTP::Client`'s own TCP+TLS connection logic (rather
+    #   than deferring to it via `super`, which it still does for the
     #   ordinary same-hostname case) only when this is set - plain
     #   `HTTP::Client` has no hook to override just the verification
     #   hostname while still connecting to a different one.
     #
-    # Not implemented: pinning the requests to an `api_version:` (this
-    # codebase's `docr`-based API calls have no version prefix on any
-    # endpoint URL at all, on a local socket either - adding version
-    # negotiation would mean touching every endpoint across `docr`, not
-    # just connection setup here, a meaningfully bigger change than
-    # anything else in this file). The VALUE is still validated, though:
-    # real's SDK Client.__init__ parses an explicitly pinned version and
-    # fails client construction on a bad one (see #validate_api_version!),
-    # and skipping that made every chaos playbook carrying a bogus
-    # `api_version:` diverge - krikri ran the task where real failed it.
+    # Not implemented: pinning the requests to an `api_version:` (the
+    # krikri-docker client sends no version prefix on any endpoint URL, on
+    # a local socket either - it caches the daemon's negotiated version
+    # only for rendering SDK-style failure text). The VALUE is still
+    # validated, though: real's SDK Client.__init__ parses an explicitly
+    # pinned version and fails client construction on a bad one (see
+    # #validate_api_version!), and skipping that made every chaos playbook
+    # carrying a bogus `api_version:` diverge - krikri ran the task where
+    # real failed it.
     module DockerClient
       # Real community.docker's DOCKER_COMMON_ARGS:
       # the connection parameters every API module's argument_spec merges
@@ -142,8 +140,8 @@ module Krikri
       # consumers, the docker_swarm*/docker_node*/docker_config/
       # docker_secret family this engine does not implement; there is no
       # version branch on the vendored path.) krikri talks to the Docker
-      # Engine API directly (docr) and needs no `requests` either, so
-      # without this gate it carried on where real stops.
+      # Engine API directly (krikri-docker) and needs no `requests` either,
+      # so without this gate it carried on where real stops.
       #
       # Runs at the same point real's does: after TLS parameter validation,
       # before the client is constructed, so before any network I/O.
@@ -231,7 +229,7 @@ module Krikri
       # Client.__init__ runs version_lt(version, MINIMUM_DOCKER_API_VERSION)
       # through StrictVersion, so an unparseable value raises
       # "invalid version number '<value>'", which AnsibleDockerClientBase
-      # wraps in "Error connecting: ". krikri's docr client never prefixes
+      # wraps in "Error connecting: ". krikri's client never prefixes
       # its URLs with a version (see the class comment), but the parse
       # MUST still fail like real's or a bogus api_version silently
       # succeeds here where real fails the task.
@@ -286,7 +284,7 @@ module Krikri
         end
       end
 
-      def self.build(params : Hash(String, String)) : {Docr::Client, String}
+      def self.build(params : Hash(String, String)) : {KrikriDocker::Client, String}
         docker_host = resolved_docker_host(params)
         # Real's TLS parameter validation happens before the client is
         # constructed, so it also comes before the SDK import gate and the
@@ -307,8 +305,8 @@ module Krikri
           # after constructing the client (so after parse_host), and
           # before any request goes out.
           validate_api_version!(params)
-          client = Docr::Client.new(socket_path)
-          {client, socket_path || "default socket #{Docr::Client::DEFAULT_SOCKET_PATH}"}
+          client = KrikriDocker::Client.new(socket_path)
+          {client, socket_path || "default socket #{KrikriDocker::Client::DEFAULT_SOCKET_PATH}"}
         end
       end
 
@@ -362,7 +360,7 @@ module Krikri
         when "tcp", "ssh"
           tcp_endpoint(proto, authority, tls)
         else
-          # unix, plus npipe - docr has no Windows transport, so that one
+          # unix, plus npipe - this client has no Windows transport, so that one
           # keeps the raw value as a socket path rather than inventing a
           # connection.
           ParsedHost.new(socket_path_for(authority, path), nil, nil)
@@ -511,12 +509,12 @@ module Krikri
         {} of String => String
       end
 
-      private def self.build_tcp(params : Hash(String, String), docker_host : String?, host : String, port : Int32) : {Docr::Client, String}
+      private def self.build_tcp(params : Hash(String, String), docker_host : String?, host : String, port : Int32) : {KrikriDocker::Client, String}
         tls_hostname = params["tls_hostname"]? || env_overlay(params)["DOCKER_TLS_HOSTNAME"]? || ENV["DOCKER_TLS_HOSTNAME"]?
 
         tls = build_tls_context(params, docker_host)
         validate_api_version!(params)
-        client = Docr::Client.new(host, port, tls, tls_hostname)
+        client = KrikriDocker::Client.new(host, port, tls, tls_hostname)
         {client, "#{docker_host}#{tls ? " (TLS)" : ""}"}
       end
 

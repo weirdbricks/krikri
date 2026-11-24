@@ -96,7 +96,7 @@ module Krikri
       # __init__ and its first round trip is GET /version.
       client, _ = PluginHelpers::DockerClient.build(@params)
       if state == "absent"
-        PluginHelpers::DockerSdkError.negotiated_api_version(client)
+        client.api_version
         return censor(logout(registry_url, config_path), password)
       end
 

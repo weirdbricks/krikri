@@ -111,9 +111,9 @@ describe "Krikri.parse_shard_yml_dependency_pins" do
         crinja:
           github: weirdbricks/crinja
           tag: crystal-play-0.9.32
-        docr:
-          github: weirdbricks/docr
-          commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
+        krikri-docker:
+          github: weirdbricks/krikri-docker
+          tag: v0.1.0
         legacy:
           github: weirdbricks/legacy
           branch: master
@@ -131,11 +131,11 @@ describe "Krikri.parse_shard_yml_dependency_pins" do
 
     pins = Krikri.parse_shard_yml_dependency_pins(yml, "dependencies")
     pins.must_equal({
-      "crinja" => {github: "weirdbricks/crinja", tag: "crystal-play-0.9.32", branch: nil, commit: nil},
-      "docr"   => {github: "weirdbricks/docr", tag: nil, branch: nil, commit: "c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca"},
-      "legacy" => {github: "weirdbricks/legacy", tag: nil, branch: "master", commit: nil},
-      "bz2"    => {github: "weirdbricks/bz2.cr", tag: nil, branch: nil, commit: nil},
-      "pg"     => {github: "will/crystal-pg", tag: nil, branch: nil, commit: nil},
+      "crinja"        => {github: "weirdbricks/crinja", tag: "crystal-play-0.9.32", branch: nil, commit: nil},
+      "krikri-docker" => {github: "weirdbricks/krikri-docker", tag: "v0.1.0", branch: nil, commit: nil},
+      "legacy"        => {github: "weirdbricks/legacy", tag: nil, branch: "master", commit: nil},
+      "bz2"           => {github: "weirdbricks/bz2.cr", tag: nil, branch: nil, commit: nil},
+      "pg"            => {github: "will/crystal-pg", tag: nil, branch: nil, commit: nil},
     })
   end
 
@@ -155,7 +155,7 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
     expect(str_starts_with?(notes["krikri-xml"], " (weirdbricks/krikri-xml, tag v")).must_equal(true).must_equal(true)
     notes["krikri-aws-signer"].must_equal(" (weirdbricks/krikri-aws-signer, tag v1.0.0)")
     notes["mysql"].must_equal(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.342)")
-    notes["docr"].must_equal(" (weirdbricks/docr fork, commit c90ea8d)")
+    notes["krikri-docker"].must_equal(" (weirdbricks/krikri-docker fork, tag v0.1.0)")
     notes["bz2"].must_equal(" (weirdbricks/bz2.cr fork)")
 
     notes.has_key?("awscr-signer").must_equal(false)

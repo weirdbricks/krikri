@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "docr"
+require "krikri-docker"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_client"
@@ -14,7 +14,7 @@ module Krikri
   # See plugins/docker_network.cr's module comment for the shared
   # architecture note (talks to the Docker Engine API directly, local
   # UNIX socket by default or a remote daemon over TCP(+TLS) via
-  # docker_host:/TLS params, via the weirdbricks/docr fork - connection
+  # docker_host:/TLS params, via the krikri-docker shard - connection
   # param parsing shared through PluginHelpers::DockerClient).
   #
   # Supported parameters:
@@ -37,10 +37,10 @@ module Krikri
   # - exists: bool - whether a network with that name/ID was found.
   # - network: the raw `GET /networks/{id}` inspection output (a dict), or
   #   null when not found. Returned as the daemon's own JSON verbatim (via
-  #   the same raw `Docr::Client#call` escape hatch docker_network.cr uses
-  #   for its non-typed endpoints), not through docr's typed
-  #   Docr::Types::Network - the type drops fields it has no mapping for,
-  #   and roles legitimately read arbitrary inspection keys off this dict.
+  #   Networks#get_json, like docker_network.cr), not through the typed
+  #   KrikriDocker::Types::Network - the type drops fields it has no mapping
+  #   for, and roles legitimately read arbitrary inspection keys off this
+  #   dict.
   #
   # An unreachable Docker daemon FAILS the task with a real connection
   # error (message shape "Error connecting: ..."), matching Ansible's
@@ -72,7 +72,7 @@ module Krikri
       name = @params["name"]?.to_s
 
       client, _ = PluginHelpers::DockerClient.build(@params)
-      api = Docr::API.new(client)
+      api = KrikriDocker::API.new(client)
 
       matched = api.networks.list.find { |net| net.name == name || net.id.starts_with?(name) }
 
@@ -83,18 +83,13 @@ module Krikri
           key_order: KEY_ORDER, exists: false, network: nil)
       end
 
-      raw = raw_get(api.client, "/networks/#{matched.id}")
+      raw = api.networks.get_json(matched.id)
       PluginResult.new(changed: false, failed: false, failed_flag: false,
-        key_order: KEY_ORDER, exists: true, network: JSON.parse(raw))
-    rescue ex : Docr::Errors::DockerAPIError
+        key_order: KEY_ORDER, exists: true, network: raw)
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError | Socket::Addrinfo::Error
       PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
-    end
-
-    private def raw_get(client : Docr::Client, path : String) : String
-      headers = HTTP::Headers{"Content-Type" => "application/json"}
-      client.call("GET", path, headers, &.body_io.gets_to_end)
     end
 
     # AnsibleModule validation over the merged spec, in

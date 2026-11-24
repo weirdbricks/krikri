@@ -60,13 +60,11 @@ module Krikri
         end
       end
 
-      describe ".api_error_text from a docr exception" do
-        it "re-renders docr's Code/Message exception as the SDK's wording" do
-          client = Docr::Client.new("/krikri-test-nonexistent.sock")
-          client.last_request_url = "/networks/create"
-          # docr's constructor itself prepends the "Code: NNN Message: "
-          # prefix, so the daemon's own message goes in bare here.
-          ex = Docr::Errors::DockerAPIError.new("failed to find driver or plugin \"nosuchdriver\"", 500)
+      describe ".api_error_text from a client exception" do
+        it "re-renders the request URL and daemon message as the SDK's wording" do
+          client = KrikriDocker::Client.new("/krikri-test-nonexistent.sock")
+          ex = KrikriDocker::Errors::DockerAPIError.new(500, "Internal Server Error",
+            "{\"message\": \"failed to find driver or plugin \\\"nosuchdriver\\\"\"}", "/networks/create")
           DockerSdkError.api_error_text(client,
             {"docker_host" => "unix:///run/user/1000/podman/podman.sock"} of String => String,
             ex, api_version: "1.41")
@@ -74,30 +72,20 @@ module Krikri
         end
 
         it "quotes a TCP daemon's base_url, not the http+docker placeholder" do
-          client = Docr::Client.new("127.0.0.1", 2375)
-          client.last_request_url = "/auth"
-          ex = Docr::Errors::DockerAPIError.new("login failed", 500)
+          client = KrikriDocker::Client.new("127.0.0.1", 2375)
+          ex = KrikriDocker::Errors::DockerAPIError.new(500, "Internal Server Error",
+            %({"message": "login failed"}), "/auth")
           DockerSdkError.api_error_text(client, {"docker_host" => "tcp://127.0.0.1:2375"} of String => String,
             ex, api_version: "1.41")
             .must_equal(%(500 Server Error for http://127.0.0.1:2375/v1.41/auth: Internal Server Error ("login failed")))
         end
 
-        it "falls back to docr's own text when no request URL was recorded" do
-          client = Docr::Client.new("/krikri-test-nonexistent.sock")
-          ex = Docr::Errors::DockerAPIError.new("boom", 500)
+        it "falls back to the exception's own text when no request URL was recorded" do
+          client = KrikriDocker::Client.new("/krikri-test-nonexistent.sock")
+          ex = KrikriDocker::Errors::DockerAPIError.new(500, "Internal Server Error",
+            %({"message": "boom"}), "")
           DockerSdkError.api_error_text(client, Hash(String, String).new, ex)
             .must_equal("Code: 500 Message: boom")
-        end
-      end
-
-      describe ".form_url_encode" do
-        it "percent-encodes a slash in a repository name like requests' urlencode" do
-          DockerSdkError.form_url_encode("docker.io/library/busybox")
-            .must_equal("docker.io%2Flibrary%2Fbusybox")
-        end
-
-        it "encodes a space the form way and leaves unreserved characters alone" do
-          DockerSdkError.form_url_encode("a b-c.d_e~f").must_equal("a+b-c.d_e~f")
         end
       end
     end

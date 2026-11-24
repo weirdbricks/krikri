@@ -462,8 +462,8 @@ describe "docker result shape: docker_container" do
 
   # Ansible's create payload never carries StopSignal/StopTimeout unless
   # the task set stop_signal:/stop_timeout:, so the container it
-  # registers has neither - `docr`'s own config defaults would show up
-  # here as SIGTERM/10.
+  # registers has neither - the client's own config defaults would show
+  # up here as SIGTERM/10.
   it "creates a container whose Config sets neither StopSignal nor StopTimeout" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     name = "krikri-spec___dk-shape-stopcfg"
@@ -477,8 +477,8 @@ describe "docker result shape: docker_container" do
     # A Docker Engine daemon registers an empty StopSignal (and a null
     # StopTimeout) for a container real created; Podman's compat API
     # reports its own "15"/10 defaults either way, so the SIGTERM
-    # spelling docr would have sent is what a regression guard can key
-    # on here.
+    # spelling the client would have sent is what a regression guard can
+    # key on here.
     config["StopSignal"].as_s.wont_include("SIGTERM")
     remove_krikri_kp_dk_container(name)
   end

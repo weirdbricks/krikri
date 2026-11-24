@@ -7,7 +7,7 @@ require "../../src/krikri/plugin_helpers/docker_client"
 # unparseable value raises StrictVersion's "invalid version number",
 # which AnsibleDockerClientBase wraps in "Error connecting: ", and a
 # parseable one below the SDK's own minimum (or the module's 1.25
-# default) fails too. krikri's docr client calls every endpoint
+# default) fails too. the krikri-docker client calls every endpoint
 # unversioned (see docker_client.cr's class comment), so without
 # mirroring the parse a playbook carrying a bogus api_version succeeded
 # here where real fails the task (kpg round 000027, issue #1340).

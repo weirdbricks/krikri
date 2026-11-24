@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "docr"
+require "krikri-docker"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_ref"
@@ -18,7 +18,7 @@ module Krikri
   # See plugins/docker_image.cr's module comment for the shared
   # architecture note (talks to the Docker Engine API directly, local
   # UNIX socket by default or a remote daemon over TCP(+TLS) via
-  # docker_host:/TLS params below, via the weirdbricks/docr fork).
+  # docker_host:/TLS params below, via the krikri-docker shard).
   #
   # Supported parameters:
   # - name: container name (required)
@@ -113,12 +113,10 @@ module Krikri
   #   [...], "ipv4_address": ..., "ipv6_address": ...}` - additional
   #   networks to connect the container to, beyond whatever
   #   network_mode:/the default bridge network already attaches it to.
-  #   docr itself only stubs NetworkConnect/NetworkDisconnect (TODO, no
-  #   body), so this talks to `POST /networks/{id}/connect` directly via
-  #   `Docr::Client#call`, the same raw-HTTP-escape-hatch pattern already
-  #   used by image_exists? below - not a docr modification. Checked (and
-  #   connected to, if missing) on every run, including when the container
-  #   already matches on image/command and nothing else would change.
+  #   Sent through the krikri-docker client's Networks#connect/#disconnect
+  #   wrappers. Checked (and connected to, if missing) on every run,
+  #   including when the container already matches on image/command and
+  #   nothing else would change.
   # - docker_host: / tls: / validate_certs: (alias tls_verify:) / cacert_path: /
   #   cert_path: / key_path: - connect to a remote Docker daemon over
   #   TCP(+TLS) instead of the local UNIX socket - see
@@ -131,8 +129,8 @@ module Krikri
   #   `normalize_healthcheck`. `test: ["NONE"]` is the real, documented
   #   way to explicitly disable an inherited healthcheck. `start_interval:`
   #   (Ansible's own newer addition) is NOT implemented - the
-  #   underlying `docr` library's own `HealthConfig` type has no field
-  #   for it, a real scope cut one layer below this plugin.
+  #   underlying `krikri-docker` library's own `HealthConfig` type has no
+  #   field for it, a real scope cut one layer below this plugin.
   # - check_mode
   #
   # Idempotency compares image (leniently, see DockerRef.same?), command,
@@ -256,7 +254,7 @@ module Krikri
       healthy_max_wait = healthy_timeout.as(Float64?)
 
       client, _ = PluginHelpers::DockerClient.build(@params)
-      api = Docr::API.new(client)
+      api = KrikriDocker::API.new(client)
       existing = find_container(api, name)
 
       return absent_shape(api, name, existing, check_mode) if state == "absent"
@@ -279,7 +277,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: ex.message || "")
     rescue ex : StartFailure
       PluginResult.new(changed: false, failed: true, msg: ex.message || "")
-    rescue ex : Docr::Errors::DockerAPIError
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError | Socket::Addrinfo::Error
       PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
@@ -287,8 +285,8 @@ module Krikri
 
     # The per-state dispatch, kept out of #execute so both stay readable.
     private def dispatch_state(
-      state : String, api : Docr::API, name : String,
-      existing : Docr::Types::ContainerSummary?, image_ref : String?, pull : Bool,
+      state : String, api : KrikriDocker::API, name : String,
+      existing : KrikriDocker::Types::ContainerSummary?, image_ref : String?, pull : Bool,
       needs_create : Bool, needs_recreate : Bool, requested_networks : Array(RequestedNetwork),
       healthy_max_wait : Float64?, check_mode : Bool,
     ) : PluginResult
@@ -324,7 +322,7 @@ module Krikri
     # state=absent: real records no container facts here at all, even in
     # check_mode where the container is still there afterwards.
     private def absent_shape(
-      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary?, check_mode : Bool,
+      api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::ContainerSummary?, check_mode : Bool,
     ) : PluginResult
       real_shape(ensure_absent(api, existing, check_mode), api, name, check_mode, existing, removed: true)
     end
@@ -336,8 +334,8 @@ module Krikri
     # afterwards. A failed result is passed through untouched - Ansible's
     # fail_json shape is already PluginResult's default.
     private def real_shape(
-      result : PluginResult, api : Docr::API, name : String, check_mode : Bool,
-      existing : Docr::Types::ContainerSummary?, removed : Bool = false,
+      result : PluginResult, api : KrikriDocker::API, name : String, check_mode : Bool,
+      existing : KrikriDocker::Types::ContainerSummary?, removed : Bool = false,
     ) : PluginResult
       return result if result.failed?
 
@@ -545,14 +543,9 @@ module Krikri
       end
     end
 
-    private def container_inspect_json(api : Docr::API, name : String) : JSON::Any?
-      raw = nil
-      api.client.call("GET", "/containers/#{name}/json", HTTP::Headers{"Accept" => "application/json"}) do |response|
-        raw = response.body_io?.try(&.gets_to_end)
-      end
-      return nil if raw.nil? || raw.empty?
-      JSON.parse(raw)
-    rescue Docr::Errors::DockerAPIError
+    private def container_inspect_json(api : KrikriDocker::API, name : String) : JSON::Any?
+      api.containers.inspect_json(name)
+    rescue KrikriDocker::Errors::DockerAPIError
       nil
     end
 
@@ -568,7 +561,7 @@ module Krikri
     end
 
     private def recreate_needed?(
-      api : Docr::API, existing : Docr::Types::ContainerSummary?,
+      api : KrikriDocker::API, existing : KrikriDocker::Types::ContainerSummary?,
       recreate_requested : Bool, image_ref : String?, command : Array(String)?,
     ) : Bool
       existing ? recreate_requested || !matches?(api, existing, image_ref, command) : false
@@ -586,7 +579,7 @@ module Krikri
     end
 
     private def ensure_present(
-      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary?,
+      api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::ContainerSummary?,
       image_ref : String?, pull : Bool, needs_create : Bool, needs_recreate : Bool,
       requested_networks : Array(RequestedNetwork), start : Bool, check_mode : Bool,
     ) : PluginResult
@@ -614,7 +607,7 @@ module Krikri
     end
 
     private def ensure_stopped(
-      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary?,
+      api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::ContainerSummary?,
       image_ref : String?, pull : Bool, needs_create : Bool, needs_recreate : Bool,
       requested_networks : Array(RequestedNetwork), check_mode : Bool,
     ) : PluginResult
@@ -659,7 +652,7 @@ module Krikri
     # used. Skipped in check mode and when the started flow already
     # failed, matching real (`state == 'healthy' and not check_mode`).
     private def wait_for_healthy_result(
-      api : Docr::API, name : String, base : PluginResult,
+      api : KrikriDocker::API, name : String, base : PluginResult,
       max_wait : Float64?, check_mode : Bool,
     ) : PluginResult
       return base if check_mode || base.failed?
@@ -671,16 +664,13 @@ module Krikri
       end
       container_id = container.id
 
-      client = api.client
       inspect_fn = PluginHelpers::DockerHealthWait::InspectFn.new do
-        # Raw GET rather than api.containers.inspect: Ansible's wait loop
+        # Raw JSON rather than api.containers.inspect: Ansible's wait loop
         # carries the FULL raw inspect dict into the result's
-        # `container:` key, and docr's typed ContainerInspectResponse
-        # drops fields Ansible keeps (same reason as the
-        # network-connect/image-exists raw-HTTP escape hatches above).
-        body = client.call("GET", "/containers/#{container_id}/json") { |response| response.body_io.gets_to_end }
-        JSON.parse(body)
-      rescue ex : Docr::Errors::DockerAPIError
+        # `container:` key, and the typed ContainerInspectResponse
+        # drops fields Ansible keeps.
+        api.containers.inspect_json(container_id)
+      rescue ex : KrikriDocker::Errors::DockerAPIError
         # Ansible's get_container_by_id: NotFound => None (the vanished
         # container failure), any other inspect error =>
         # "Error inspecting container: <error>".
@@ -711,7 +701,7 @@ module Krikri
     # container (pulling the image first when pull: is set), optionally
     # start it, and connect any requested networks.
     private def create_new_container(
-      api : Docr::API, name : String, image_ref : String?, pull : Bool,
+      api : KrikriDocker::API, name : String, image_ref : String?, pull : Bool,
       requested_networks : Array(RequestedNetwork), start : Bool,
     )
       config = build_container_config(image_ref || raise "image is required to create a new container")
@@ -727,7 +717,7 @@ module Krikri
     # first when running, delete, re-pull when pull: is set, create,
     # optionally start, connect requested networks).
     private def recreate_container(
-      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary,
+      api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::ContainerSummary,
       image_ref : String?, pull : Bool, requested_networks : Array(RequestedNetwork), start : Bool,
     )
       config = build_container_config(image_ref || raise "image is required to create a new container")
@@ -743,21 +733,21 @@ module Krikri
     # The one start call every state=started flow funnels through, so the
     # failure wording matches real's container_start exactly (see
     # StartFailure above).
-    private def start_container!(api : Docr::API, container_id : String) : Nil
+    private def start_container!(api : KrikriDocker::API, container_id : String) : Nil
       api.containers.start(container_id)
-    rescue ex : Docr::Errors::DockerAPIError
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       raise StartFailure.new("Error starting container #{container_id}: #{PluginHelpers::DockerSdkError.api_error_text(api.client, @params, ex)}")
     end
 
     private def start_existing(
-      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary,
+      api : KrikriDocker::API, name : String, existing : KrikriDocker::Types::ContainerSummary,
       requested_networks : Array(RequestedNetwork), check_mode : Bool,
     ) : PluginResult
       return PluginResult.new(changed: true, failed: false, msg: "Container #{name} would be started") if check_mode
 
       begin
         api.containers.start(existing.id)
-      rescue ex : Docr::Errors::DockerAPIError
+      rescue ex : KrikriDocker::Errors::DockerAPIError
         # HTTP 304 Not Modified - the container was started between the
         # state read above and the start call (or is already running
         # under a different state spelling like "restarting").
@@ -780,7 +770,7 @@ module Krikri
     # connects any missing requested networks (see the class doc comment)
     # and folds that into changed:/msg: if it did anything.
     private def no_op_networks_result(
-      api : Docr::API, container_id : String,
+      api : KrikriDocker::API, container_id : String,
       requested_networks : Array(RequestedNetwork), check_mode : Bool, base_msg : String,
     ) : PluginResult
       unless check_mode
@@ -791,7 +781,7 @@ module Krikri
       PluginResult.new(changed: false, failed: false, msg: base_msg)
     end
 
-    private def ensure_absent(api : Docr::API, existing : Docr::Types::ContainerSummary?, check_mode : Bool) : PluginResult
+    private def ensure_absent(api : KrikriDocker::API, existing : KrikriDocker::Types::ContainerSummary?, check_mode : Bool) : PluginResult
       unless existing
         return PluginResult.new(changed: false, failed: false, msg: "Container already absent")
       end
@@ -814,7 +804,7 @@ module Krikri
     # particular is genuinely gnarly to compare (Docker's own inspect
     # output fills in HostIp defaults like "0.0.0.0" the request may
     # have left nil), not folded into this pass.
-    private def matches?(api : Docr::API, existing : Docr::Types::ContainerSummary, image_ref : String?, command : Array(String)?) : Bool
+    private def matches?(api : KrikriDocker::API, existing : KrikriDocker::Types::ContainerSummary, image_ref : String?, command : Array(String)?) : Bool
       if image_ref && !PluginHelpers::DockerRef.same?(existing.image, image_ref)
         return false
       end
@@ -880,7 +870,7 @@ module Krikri
 
     COMPARISON_KEY_ALIASES = {"ports" => ["ports", "published_ports"]}
 
-    private def extra_fields_match?(api : Docr::API, inspected : Docr::Types::ContainerInspectResponse, image_ref : String?) : Bool
+    private def extra_fields_match?(api : KrikriDocker::API, inspected : KrikriDocker::Types::ContainerInspectResponse, image_ref : String?) : Bool
       config = inspected.config
       host_config = inspected.host_config
 
@@ -892,14 +882,14 @@ module Krikri
       true
     end
 
-    private def config_fields_match?(api : Docr::API, config : Docr::Types::ContainerConfig, image_ref : String?) : Bool
+    private def config_fields_match?(api : KrikriDocker::API, config : KrikriDocker::Types::ContainerConfig, image_ref : String?) : Bool
       return false unless entrypoint_matches?(config)
       return false unless env_matches?(api, config, image_ref)
       return false unless labels_matches?(config)
       true
     end
 
-    private def entrypoint_matches?(config : Docr::Types::ContainerConfig) : Bool
+    private def entrypoint_matches?(config : KrikriDocker::Types::ContainerConfig) : Bool
       entrypoint = @params["entrypoint"]?
       return true unless entrypoint
       mode = comparison_mode("entrypoint", "strict")
@@ -910,7 +900,7 @@ module Krikri
       mode == "strict" ? actual == requested : requested.all? { |e| actual.includes?(e) }
     end
 
-    private def env_matches?(api : Docr::API, config : Docr::Types::ContainerConfig, image_ref : String?) : Bool
+    private def env_matches?(api : KrikriDocker::API, config : KrikriDocker::Types::ContainerConfig, image_ref : String?) : Bool
       env_json = @params["env"]?
       return true unless env_json
       mode = comparison_mode("env", "allow_more_present")
@@ -921,7 +911,7 @@ module Krikri
       mode == "strict" ? actual == expected : expected.subset_of?(actual)
     end
 
-    private def labels_matches?(config : Docr::Types::ContainerConfig) : Bool
+    private def labels_matches?(config : KrikriDocker::Types::ContainerConfig) : Bool
       labels_json = @params["labels"]?
       return true unless labels_json
       mode = comparison_mode("labels", "allow_more_present")
@@ -932,7 +922,7 @@ module Krikri
       mode == "strict" ? actual == requested : dict_subset?(requested, actual)
     end
 
-    private def volumes_match?(host_config : Docr::Types::HostConfig) : Bool
+    private def volumes_match?(host_config : KrikriDocker::Types::HostConfig) : Bool
       requested = parse_volumes(@params["volumes"]?)
       return true unless requested
       mode = comparison_mode("volumes", "allow_more_present")
@@ -943,7 +933,7 @@ module Krikri
       mode == "strict" ? actual == requested : requested.subset_of?(actual)
     end
 
-    private def simple_host_fields_match?(host_config : Docr::Types::HostConfig) : Bool
+    private def simple_host_fields_match?(host_config : KrikriDocker::Types::HostConfig) : Bool
       return false unless restart_policy_matches?(host_config)
       return false unless network_mode_matches?(host_config)
       return false unless bool_field_matches?("privileged", host_config.privileged)
@@ -951,13 +941,13 @@ module Krikri
       true
     end
 
-    private def restart_policy_matches?(host_config : Docr::Types::HostConfig) : Bool
+    private def restart_policy_matches?(host_config : KrikriDocker::Types::HostConfig) : Bool
       policy_name = @params["restart_policy"]?
       return true unless policy_name && comparison_mode("restart_policy", "strict") != "ignore"
       host_config.restart_policy.try(&.name) == policy_name
     end
 
-    private def network_mode_matches?(host_config : Docr::Types::HostConfig) : Bool
+    private def network_mode_matches?(host_config : KrikriDocker::Types::HostConfig) : Bool
       network_mode = @params["network_mode"]?
       return true unless network_mode && comparison_mode("network_mode", "strict") != "ignore"
       host_config.network_mode == network_mode
@@ -968,26 +958,26 @@ module Krikri
       !!actual == true?(@params[field]?)
     end
 
-    private def comparison_fields_match?(api : Docr::API, config : Docr::Types::ContainerConfig, host_config : Docr::Types::HostConfig, image_ref : String?) : Bool
+    private def comparison_fields_match?(api : KrikriDocker::API, config : KrikriDocker::Types::ContainerConfig, host_config : KrikriDocker::Types::HostConfig, image_ref : String?) : Bool
       return false unless ports_field_matches?(api, config, host_config, image_ref)
       return false unless healthcheck_field_matches?(config)
       true
     end
 
-    private def ports_field_matches?(api : Docr::API, config : Docr::Types::ContainerConfig, host_config : Docr::Types::HostConfig, image_ref : String?) : Bool
+    private def ports_field_matches?(api : KrikriDocker::API, config : KrikriDocker::Types::ContainerConfig, host_config : KrikriDocker::Types::HostConfig, image_ref : String?) : Bool
       return true unless ports_param_raw
       mode = comparison_mode("ports", "allow_more_present")
       mode == "ignore" || ports_match?(api, config, host_config, image_ref, strict: mode == "strict")
     end
 
-    private def healthcheck_field_matches?(config : Docr::Types::ContainerConfig) : Bool
+    private def healthcheck_field_matches?(config : KrikriDocker::Types::ContainerConfig) : Bool
       healthcheck_json = @params["healthcheck"]?
       return true unless healthcheck_json
       mode = comparison_mode("healthcheck", "allow_more_present")
       mode == "ignore" || healthcheck_matches?(config.healthcheck, healthcheck_json, strict: mode == "strict")
     end
 
-    private def resource_fields_match?(host_config : Docr::Types::HostConfig) : Bool
+    private def resource_fields_match?(host_config : KrikriDocker::Types::HostConfig) : Bool
       return false unless resource_memory_match?(host_config)
       return false unless resource_cpu_match?(host_config)
       return false unless resource_cpuset_match?(host_config)
@@ -995,7 +985,7 @@ module Krikri
       true
     end
 
-    private def resource_memory_match?(host_config : Docr::Types::HostConfig) : Bool
+    private def resource_memory_match?(host_config : KrikriDocker::Types::HostConfig) : Bool
       if (memory = @params["memory"]?) && comparison_mode("memory", "strict") != "ignore"
         return false unless host_config.memory == PluginHelpers::DockerResources.human_to_bytes(memory)
       end
@@ -1011,7 +1001,7 @@ module Krikri
       true
     end
 
-    private def resource_cpu_match?(host_config : Docr::Types::HostConfig) : Bool
+    private def resource_cpu_match?(host_config : KrikriDocker::Types::HostConfig) : Bool
       if (memory_swappiness = @params["memory_swappiness"]?) && comparison_mode("memory_swappiness", "strict") != "ignore"
         return false unless host_config.memory_swappiness == memory_swappiness.to_i64
       end
@@ -1027,7 +1017,7 @@ module Krikri
       true
     end
 
-    private def resource_cpuset_match?(host_config : Docr::Types::HostConfig) : Bool
+    private def resource_cpuset_match?(host_config : KrikriDocker::Types::HostConfig) : Bool
       if (cpuset_cpus = @params["cpuset_cpus"]?) && comparison_mode("cpuset_cpus", "strict") != "ignore"
         return false unless host_config.cpuset_cpus == cpuset_cpus
       end
@@ -1043,7 +1033,7 @@ module Krikri
       true
     end
 
-    private def resource_pids_match?(host_config : Docr::Types::HostConfig) : Bool
+    private def resource_pids_match?(host_config : KrikriDocker::Types::HostConfig) : Bool
       if (oom_score_adj = @params["oom_score_adj"]?) && comparison_mode("oom_score_adj", "strict") != "ignore"
         return false unless host_config.oom_score_adj == oom_score_adj.to_i64
       end
@@ -1070,14 +1060,14 @@ module Krikri
     # every sub-field including ones the task left unset (matching
     # Ansible's own literal dict-equality behavior under an explicit
     # `strict` override).
-    private def healthcheck_matches?(actual : Docr::Types::HealthConfig?, healthcheck_json : String, strict : Bool) : Bool
+    private def healthcheck_matches?(actual : KrikriDocker::Types::HealthConfig?, healthcheck_json : String, strict : Bool) : Bool
       expected = PluginHelpers::DockerHealthcheck.parse(healthcheck_json)
       return true unless expected
 
       strict ? strict_healthcheck_match?(actual, expected) : lenient_healthcheck_match?(actual, expected)
     end
 
-    private def strict_healthcheck_match?(actual : Docr::Types::HealthConfig?, expected : PluginHelpers::DockerHealthcheck::Parsed) : Bool
+    private def strict_healthcheck_match?(actual : KrikriDocker::Types::HealthConfig?, expected : PluginHelpers::DockerHealthcheck::Parsed) : Bool
       return false unless actual
 
       actual.test == expected.test &&
@@ -1087,7 +1077,7 @@ module Krikri
         actual.start_period == expected.start_period
     end
 
-    private def lenient_healthcheck_match?(actual : Docr::Types::HealthConfig?, expected : PluginHelpers::DockerHealthcheck::Parsed) : Bool
+    private def lenient_healthcheck_match?(actual : KrikriDocker::Types::HealthConfig?, expected : PluginHelpers::DockerHealthcheck::Parsed) : Bool
       return false unless actual
 
       (expected.test.nil? || actual.test == expected.test) &&
@@ -1105,8 +1095,8 @@ module Krikri
     # client (Ansible's own `community.docker`, capped well below
     # the daemon's latest) both report back the literal string
     # `HostIp: "0.0.0.0"`, but a real Docker Engine 29.1.3 queried via
-    # the *unversioned/latest* API (what this plugin's own `docr` client
-    # uses, same as the `docker` CLI's own default) reports back
+    # the *unversioned/latest* API (what this plugin's own client uses,
+    # same as the `docker` CLI's own default) reports back
     # `HostIp: ""` instead - an empty string, not nil/missing either.
     # Both nil and "" normalize to "0.0.0.0" here so the comparison
     # matches Ansible's own idempotent behavior regardless of which
@@ -1121,13 +1111,13 @@ module Krikri
     # published_ports dict with an identical binding list, but the
     # container may have EXTRA published/exposed ports the task never
     # mentioned - `strict` requires the whole dict/set to match exactly.
-    private def ports_match?(api : Docr::API, config : Docr::Types::ContainerConfig, host_config : Docr::Types::HostConfig, image_ref : String?, strict : Bool) : Bool
+    private def ports_match?(api : KrikriDocker::API, config : KrikriDocker::Types::ContainerConfig, host_config : KrikriDocker::Types::HostConfig, image_ref : String?, strict : Bool) : Bool
       exposed_ports, port_bindings = build_ports
 
       expected_published = port_bindings.transform_values do |bindings|
         bindings.map { |bnd| "#{bnd.host_ip.presence || "0.0.0.0"}:#{bnd.host_port}" }.to_set
       end
-      actual_published = (host_config.port_bindings || Hash(String, Array(Docr::Types::PortBinding)).new).transform_values do |bindings|
+      actual_published = (host_config.port_bindings || Hash(String, Array(KrikriDocker::Types::PortBinding)).new).transform_values do |bindings|
         bindings.map { |bnd| "#{bnd.host_ip.presence || "0.0.0.0"}:#{bnd.host_port}" }.to_set
       end
       published_ok = strict ? actual_published == expected_published : dict_set_subset?(expected_published, actual_published)
@@ -1153,7 +1143,7 @@ module Krikri
     # whatever `env:` the task itself lists doesn't cause a false
     # mismatch on every single run - `env:`-given keys win over the
     # image's own value for the same key.
-    private def expected_env(api : Docr::API, image_ref : String?, requested : Hash(String, String)) : Set(String)
+    private def expected_env(api : KrikriDocker::API, image_ref : String?, requested : Hash(String, String)) : Set(String)
       expected = Hash(String, String).new
       if image_ref
         image_env = api.images.inspect(image_ref).config.env || [] of String
@@ -1166,7 +1156,7 @@ module Krikri
       expected.map { |k, v| "#{k}=#{v}" }.to_set
     end
 
-    private def find_container(api : Docr::API, name : String) : Docr::Types::ContainerSummary?
+    private def find_container(api : KrikriDocker::API, name : String) : KrikriDocker::Types::ContainerSummary?
       api.containers.list(all: true).find(&.names.map(&.lchop('/')).includes?(name))
     end
 
@@ -1186,7 +1176,7 @@ module Krikri
     # networks alone entirely, matching this plugin's own prior
     # behavior before `strict:` support existed). Returns
     # {connected, disconnected} names, for the result message.
-    private def sync_networks!(api : Docr::API, container_id : String, requested : Array(RequestedNetwork)) : {Array(String), Array(String)}
+    private def sync_networks!(api : KrikriDocker::API, container_id : String, requested : Array(RequestedNetwork)) : {Array(String), Array(String)}
       strict = networks_strict?
       return {[] of String, [] of String} if requested.empty? && !strict
 
@@ -1196,7 +1186,7 @@ module Krikri
 
       requested.each do |net|
         next if already_connected.includes?(net.name)
-        connect_network(api.client, net, container_id)
+        connect_network(api, net, container_id)
         connected << net.name
       end
 
@@ -1204,7 +1194,7 @@ module Krikri
         requested_names = requested.map(&.name)
         already_connected.each do |name|
           next if requested_names.includes?(name)
-          disconnect_network(api.client, name, container_id)
+          disconnect_network(api, name, container_id)
           disconnected << name
         end
       end
@@ -1225,30 +1215,28 @@ module Krikri
       parsed.try(&.["networks"]?).try(&.as_s?) == "strict"
     end
 
-    # docr's own Networks#connect/#disconnect are unimplemented stubs
-    # (TODO, empty body) - calls the Docker Engine API endpoint directly
-    # instead, the same raw-HTTP-escape-hatch pattern image_exists? below
-    # already uses for an endpoint docr's typed wrapper doesn't cover.
-    private def connect_network(client : Docr::Client, net : RequestedNetwork, container_id : String) : Nil
+    # The endpoint config carries the per-attachment settings the Docker
+    # Engine API accepts; the client's Networks#connect builds the request
+    # body.
+    private def connect_network(api : KrikriDocker::API, net : RequestedNetwork, container_id : String) : Nil
       endpoint_config = {
-        "Aliases"    => net.aliases,
-        "Links"      => net.links,
-        "IPAMConfig" => {
-          "IPv4Address" => net.ipv4_address,
-          "IPv6Address" => net.ipv6_address,
-        },
-      }
-      body = {"Container" => container_id, "EndpointConfig" => endpoint_config}.to_json
-      headers = HTTP::Headers{"Content-Type" => "application/json"}
+        "Aliases"    => json_string_array_or_null(net.aliases),
+        "Links"      => json_string_array_or_null(net.links),
+        "IPAMConfig" => JSON::Any.new({
+          "IPv4Address" => JSON::Any.new(net.ipv4_address),
+          "IPv6Address" => JSON::Any.new(net.ipv6_address),
+        } of String => JSON::Any),
+      } of String => JSON::Any
 
-      client.call("POST", "/networks/#{net.name}/connect", headers, body) { |response| response.consume_body_io }
+      api.networks.connect(net.name, container_id, endpoint_config)
     end
 
-    private def disconnect_network(client : Docr::Client, network_name : String, container_id : String) : Nil
-      body = {"Container" => container_id}.to_json
-      headers = HTTP::Headers{"Content-Type" => "application/json"}
+    private def json_string_array_or_null(values : Array(String)?) : JSON::Any
+      values ? JSON::Any.new(values.map { |value| JSON::Any.new(value) }) : JSON::Any.new(nil)
+    end
 
-      client.call("POST", "/networks/#{network_name}/disconnect", headers, body) { |response| response.consume_body_io }
+    private def disconnect_network(api : KrikriDocker::API, network_name : String, container_id : String) : Nil
+      api.networks.disconnect(network_name, container_id)
     end
 
     private def network_suffix(connected : Array(String), disconnected : Array(String) = [] of String) : String
@@ -1262,10 +1250,10 @@ module Krikri
     # <ref> - ...") around the Docker Python SDK's APIError text; both
     # halves are reproduced here by #pull_image! below. Everything else
     # escaping the module body gets the generic DockerException wrapper.
-    private def ensure_image_pulled(api : Docr::API, image_ref : String) : Nil
+    private def ensure_image_pulled(api : KrikriDocker::API, image_ref : String) : Nil
       ref_name, ref_tag = PluginHelpers::DockerRef.split(image_ref)
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
-      return if image_exists?(api.client, full_ref)
+      return if image_exists?(api, full_ref)
 
       # Real's pull_image failure message quotes "name:tag" (its
       # f"Error pulling image {name}:{tag}"), with the tag defaulted -
@@ -1277,27 +1265,24 @@ module Krikri
     # own prefix, so the wrapped text is the SDK's APIError rendering -
     # "<code> {Client|Server} Error for <url>: <reason>" plus the
     # daemon's own message in quotes (its errors.py). That URL is the
-    # versioned pull URL the SDK builds, while `docr` calls every
-    # endpoint unversioned and its own DockerAPIError keeps neither the
-    # status reason phrase nor the URL - so the pull goes out here
-    # directly, to keep the exact text Ansible reports.
-    private def pull_image!(client : Docr::Client, image_ref : String, repository : String, tag : String) : Nil
+    # versioned pull URL the SDK builds, while the client sends the pull
+    # unversioned; the shared helper re-renders it with the negotiated
+    # version, so the failure keeps the exact text Ansible reports.
+    private def pull_image!(client : KrikriDocker::Client, image_ref : String, repository : String, tag : String) : Nil
       PluginHelpers::DockerSdkError.pull_image!(client, @params, repository, tag, image_ref)
     end
 
-    # Same reasoning as docker_image.cr's own image_exists? - a raw GET,
-    # not Images#inspect, and the body must be drained even though its
-    # content is unused (left undrained, it desyncs the shared keep-alive
-    # connection's HTTP/1.1 framing for whatever call comes next).
-    private def image_exists?(client : Docr::Client, ref : String) : Bool
-      client.call("GET", "/images/#{ref}/json") { |response| response.consume_body_io }
+    # Same reasoning as docker_image.cr's own image_exists? - the raw JSON
+    # inspect, not the typed Image model, since only the status matters.
+    private def image_exists?(api : KrikriDocker::API, ref : String) : Bool
+      api.images.inspect_json(ref)
       true
-    rescue ex : Docr::Errors::DockerAPIError
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       return false if ex.status_code == 404
       raise ex
     end
 
-    private def build_container_config(image_ref : String) : Docr::Types::CreateContainerConfig
+    private def build_container_config(image_ref : String) : KrikriDocker::Types::CreateContainerConfig
       command = parse_command
       entrypoint = parse_entrypoint
       env = container_env
@@ -1306,13 +1291,13 @@ module Krikri
       exposed_ports, port_bindings = build_ports
 
       restart_policy_name = @params["restart_policy"]?
-      restart_policy = restart_policy_name ? Docr::Types::RestartPolicy.new(name: restart_policy_name) : nil
+      restart_policy = restart_policy_name ? KrikriDocker::Types::RestartPolicy.new(name: restart_policy_name) : nil
 
       volumes = parse_volumes(@params["volumes"]?)
 
       healthcheck = @params["healthcheck"]?.try { |json| built_healthcheck(json) }
 
-      host_config = Docr::Types::HostConfig.new(
+      host_config = KrikriDocker::Types::HostConfig.new(
         binds: volumes,
         port_bindings: port_bindings.empty? ? nil : port_bindings,
         restart_policy: restart_policy,
@@ -1332,7 +1317,7 @@ module Krikri
         pids_limit: @params["pids_limit"]?.try(&.to_i64),
       )
 
-      Docr::Types::CreateContainerConfig.new(
+      KrikriDocker::Types::CreateContainerConfig.new(
         image: image_ref,
         cmd: command,
         entrypoint: entrypoint,
@@ -1343,7 +1328,7 @@ module Krikri
         healthcheck: healthcheck,
         # Ansible only sets StopSignal/StopTimeout when the task gave the
         # stop_signal:/stop_timeout: options, so a container it created
-        # has neither. `docr`'s own config type defaults them to
+        # has neither. `krikri-docker`'s own config type defaults them to
         # SIGTERM/10, which would show up in the created container's
         # registered Config and make it differ from Ansible's - sent as
         # nulls (which the daemon reads as "unset", same as the absent
@@ -1357,13 +1342,13 @@ module Krikri
     # duration-parsing/test-normalization rules this mirrors from
     # Ansible's own `parse_healthcheck`/`normalize_healthcheck`.
     # `start_interval:` (Ansible's own newer addition) is NOT
-    # implemented - the underlying `docr` library's `HealthConfig` type
+    # implemented - the underlying `krikri-docker` library's `HealthConfig` type
     # has no field for it, a real scope cut one layer below this plugin.
-    private def built_healthcheck(json : String) : Docr::Types::HealthConfig?
+    private def built_healthcheck(json : String) : KrikriDocker::Types::HealthConfig?
       parsed = PluginHelpers::DockerHealthcheck.parse(json)
       return nil unless parsed
 
-      Docr::Types::HealthConfig.new(
+      KrikriDocker::Types::HealthConfig.new(
         test: parsed.test,
         interval: parsed.interval,
         timeout: parsed.timeout,
@@ -1372,9 +1357,9 @@ module Krikri
       )
     end
 
-    private def build_ports : {Hash(String, Hash(String, String)), Hash(String, Array(Docr::Types::PortBinding))}
+    private def build_ports : {Hash(String, Hash(String, String)), Hash(String, Array(KrikriDocker::Types::PortBinding))}
       exposed_ports = Hash(String, Hash(String, String)).new
-      port_bindings = Hash(String, Array(Docr::Types::PortBinding)).new
+      port_bindings = Hash(String, Array(KrikriDocker::Types::PortBinding)).new
 
       entries = parse_port_entries
       entries.each do |entry|
@@ -1382,8 +1367,8 @@ module Krikri
         key = "#{mapping.container_port}/#{mapping.proto}"
 
         exposed_ports[key] = Hash(String, String).new
-        port_bindings[key] ||= [] of Docr::Types::PortBinding
-        port_bindings[key] << Docr::Types::PortBinding.new(host_ip: mapping.host_ip, host_port: mapping.host_port)
+        port_bindings[key] ||= [] of KrikriDocker::Types::PortBinding
+        port_bindings[key] << KrikriDocker::Types::PortBinding.new(host_ip: mapping.host_ip, host_port: mapping.host_port)
       end
 
       {exposed_ports, port_bindings}

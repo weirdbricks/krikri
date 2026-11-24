@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "docr"
+require "krikri-docker"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/docker_ref"
 require "../src/krikri/plugin_helpers/docker_client"
@@ -14,12 +14,9 @@ module Krikri
   # default, or a remote daemon over TCP(+TLS) via docker_host:/TLS
   # params below (see PluginHelpers::DockerClient) - the same thing
   # Ansible's own community.docker collection does, via the Docker SDK
-  # for Python, using the docr shard. See the weirdbricks/docr fork's
-  # commit history for the reconnect/DOCKER_HOST/nullable-field/TCP+TLS
-  # fixes this plugin depends on; upstream marghidanu/docr as of 0.1.4
-  # has a "This HTTP::Client cannot be reconnected" bug that surfaces on
-  # anything past a single call, and no way to reach a remote daemon at
-  # all.
+  # for Python, using the krikri-docker shard (a fork of docr whose commit
+  # history carries the reconnect/DOCKER_HOST/nullable-field/TCP+TLS fixes
+  # this plugin depends on).
   #
   # Supported parameters:
   # - name: image reference, with or without a tag (required)
@@ -92,7 +89,7 @@ module Krikri
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
 
       client, _ = PluginHelpers::DockerClient.build(@params)
-      api = Docr::API.new(client)
+      api = KrikriDocker::API.new(client)
 
       pre_pull_id = image_id(client, full_ref)
       exists = !pre_pull_id.nil?
@@ -105,7 +102,7 @@ module Krikri
       end
     rescue ex : PluginHelpers::DockerSdkError::ImagePullError
       PluginResult.new(changed: false, failed: true, msg: ex.message || "")
-    rescue ex : Docr::Errors::DockerAPIError
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : PluginHelpers::DockerClient::InvalidDockerHostError | Socket::ConnectError | Socket::Addrinfo::Error
       PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerClient.connect_failure_text(ex, @params))
@@ -139,7 +136,7 @@ module Krikri
     end
 
     private def present_result(
-      client : Docr::Client, api : Docr::API, ref_name : String, ref_tag : String,
+      client : KrikriDocker::Client, api : KrikriDocker::API, ref_name : String, ref_tag : String,
       full_ref : String, pre_pull_id : String?, exists : Bool,
       force_source : Bool, check_mode : Bool, source : String?,
     ) : PluginResult
@@ -182,7 +179,7 @@ module Krikri
 
     # `image` is the daemon's own inspect payload for the reference,
     # verbatim - real registers the full dict, not a subset.
-    private def image_result(client : Docr::Client, ref : String, changed : Bool, actions : Array(String)) : PluginResult
+    private def image_result(client : KrikriDocker::Client, ref : String, changed : Bool, actions : Array(String)) : PluginResult
       result = PluginResult.new(changed: changed, failed: false, failed_flag: false,
         actions: json_string_array(actions),
         image: image_inspect_json(client, ref))
@@ -190,7 +187,7 @@ module Krikri
       result
     end
 
-    private def absent_result(client : Docr::Client, api : Docr::API, full_ref : String, exists : Bool, check_mode : Bool) : PluginResult
+    private def absent_result(client : KrikriDocker::Client, api : KrikriDocker::API, full_ref : String, exists : Bool, check_mode : Bool) : PluginResult
       if !exists
         # Real seeds `image` to {} and only ever fills it in on a removal.
         result = PluginResult.new(changed: false, failed: false, failed_flag: false,
@@ -210,31 +207,23 @@ module Krikri
       result
     end
 
-    private def image_inspect_json(client : Docr::Client, ref : String) : JSON::Any
-      raw = nil
-      client.call("GET", "/images/#{ref}/json") do |response|
-        raw = response.body_io?.try(&.gets_to_end)
-      end
-      return JSON.parse("{}") if raw.nil? || raw.empty?
-      JSON.parse(raw)
+    private def image_inspect_json(client : KrikriDocker::Client, ref : String) : JSON::Any
+      KrikriDocker::API.new(client).images.inspect_json(ref)
     end
 
     private def json_string_array(values : Array(String)) : JSON::Any
       JSON::Any.new(values.map { |value| JSON::Any.new(value) })
     end
 
-    # Existence check via a raw GET rather than Images#inspect: we only
-    # need a yes/no answer, so there's no reason to pull in (and trust)
-    # docr's much larger, less-exercised Docr::Types::Image parse just to
-    # throw the result away.
-    private def image_exists?(client : Docr::Client, ref : String) : Bool
+    # Existence check via the raw JSON inspect rather than the typed
+    # Image model: we only need a yes/no answer.
+    private def image_exists?(client : KrikriDocker::Client, ref : String) : Bool
       !image_id(client, ref).nil?
     end
 
-    # The image's own "Id" field (a "sha256:..." digest) via a raw GET -
-    # same minimal-trust approach as the old image_exists? (no reason to
-    # pull in docr's much larger Docr::Types::Image parse just for one
-    # field). nil if the image doesn't exist.
+    # The image's own "Id" field (a "sha256:..." digest) from the raw JSON
+    # inspect - same minimal-trust approach as image_exists?. nil if the
+    # image doesn't exist.
     #
     # Used for force_source:'s own idempotency re-check - verified
     # against Ansible's own `present()` source: after a forced
@@ -243,13 +232,9 @@ module Krikri
     # == self.results["image"]["Id"]: self.results["changed"] = False`)
     # - a force_source-triggered pull that resolves to the identical,
     # already-current image is a real no-op, not a "changed" pull.
-    private def image_id(client : Docr::Client, ref : String) : String?
-      id = nil
-      client.call("GET", "/images/#{ref}/json") do |response|
-        id = JSON.parse(response.body_io).dig?("Id").try(&.as_s?)
-      end
-      id
-    rescue ex : Docr::Errors::DockerAPIError
+    private def image_id(client : KrikriDocker::Client, ref : String) : String?
+      KrikriDocker::API.new(client).images.inspect_json(ref)["Id"].as_s?
+    rescue ex : KrikriDocker::Errors::DockerAPIError
       return nil if ex.status_code == 404
       raise ex
     end
