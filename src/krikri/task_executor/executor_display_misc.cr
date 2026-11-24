@@ -1145,10 +1145,10 @@ module Krikri
       # an UNREACHABLE result, not a process-killing upload exception.
       begin
         PluginManager.ensure_uploaded(exec_host, task.module_name, vars)
-      rescue ex : PluginArchUnsupportedError
+      rescue ex : PluginUnavailableError
         # Same failed-task shape execute_remote_plugin returns for this
         # (see its typed rescue) - one clean failed task with the
-        # actionable arch message, never a crash or a bogus UNREACHABLE.
+        # actionable message, never a crash or a bogus UNREACHABLE.
         return JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
       rescue ex : SshCommandNotExecutableError
         # Same controller-error shape execute_remote_plugin returns: an

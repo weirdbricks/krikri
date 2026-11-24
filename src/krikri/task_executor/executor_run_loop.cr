@@ -2680,6 +2680,13 @@ module Krikri
         failed = JSON.parse({"changed" => false, "failed" => true, "msg" => ex.task_failure_msg}.to_json)
         resend.each { |idx| interpreted[idx] = failed }
         return interpreted
+      rescue ex : PluginUnavailableError
+        # The re-upload found no usable local binary (an external plugin
+        # whose file is gone - issue #1755): the re-sent steps fail with
+        # the same actionable message a first dispatch would have carried.
+        failed = JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
+        resend.each { |idx| interpreted[idx] = failed }
+        return interpreted
       rescue ex
         raise ex unless SSHManager.connection_level_exception?(ex)
         detail = ex.message.to_s.strip
@@ -2774,6 +2781,14 @@ module Krikri
       # issue #716's `--login` loses the become user's login profile.
       return nil if steps.any? { |step| PluginManager.become_flags_set?(step.become_flags) }
       return nil if steps.any?(&.module_name.empty?)
+      # Every other daemon-eligibility reason has to gate a BATCH too, not
+      # just the solo path: an external module plugin (issue #1755) is never
+      # daemon-eligible (its dispatch table is compiled into the fat binary),
+      # and the same holds for anything else that ends up in
+      # DAEMON_INELIGIBLE_PLUGINS. Skipping the whole group (rather than
+      # splitting out just the ineligible step) keeps the group's results in
+      # one call and costs only the daemon's speedup for that group.
+      return nil if steps.any? { |step| !PluginManager.daemon_eligible?(step.module_name, false, step.become_flags) }
 
       ssh_user = conn.user
       return nil if SSHManager.daemon_unavailable?(conn.conn_host, ssh_user, conn.port, become_user,
@@ -3201,11 +3216,11 @@ module Krikri
       # like the pre-run unreachable pass does.
       begin
         PluginManager.ensure_uploaded(host, task.module_name, vars_context)
-      rescue ex : PluginArchUnsupportedError
+      rescue ex : PluginUnavailableError
         # Same failed-task shape the plugin dispatch itself returns for
         # this (see execute_remote_plugin's typed rescue): one clean
-        # failed task with the actionable arch message, never an
-        # unhandled crash and never a bogus UNREACHABLE.
+        # failed task with the actionable message, never an unhandled
+        # crash and never a bogus UNREACHABLE.
         return JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
       rescue ex : SshCommandNotExecutableError
         # Same controller-error shape execute_remote_plugin returns: an

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.3073-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.3074-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.21.6-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -51,9 +51,10 @@ What changes when you swap `ansible-playbook` for `krikri-playbook`:
 | Area | Difference |
 |---|---|
 | Module execution | Each module is a small native binary, uploaded once and cached - no per-task Python interpreter startup or module templating. The biggest source of the speedup (see **Performance**). |
-| Target architecture | Module binaries are compiled for the controller's CPU architecture (real Ansible ships Python modules, so it has no such constraint). A different-arch target (an x86_64 controller managing a Raspberry Pi, say) gets binaries from a `plugins-<arch>/` directory next to the `krikri-playbook` executable when one was built there - run `./build.sh` on a machine of that architecture and copy the resulting `bin/plugins/` directory across as `plugins-<arch>/`. Without one, the run fails immediately with those instructions, before uploading anything the target could not execute. |
+| Target architecture | Module binaries are compiled for the controller's CPU architecture (real Ansible ships Python modules, so it has no such constraint). A different-arch target (an x86_64 controller managing a Raspberry Pi, say) gets binaries from a `plugins-<arch>/` directory next to the `krikri-playbook` executable when one was built there - run `./build.sh` on a machine of that architecture and copy the resulting `bin/plugins/` directory across as `plugins-<arch>/`. Without one, the run fails immediately with those instructions, before uploading anything the target could not execute. External plugins (below) use the same key in their own `plugins-<key>/` subdirectories. |
 | SSH round trips | Consecutive tasks for the same host are batched into one round trip (`--no-batching` to disable). |
-| Third-party collection modules | Not vendored wholesale: a `community.*` module runs only once ported to a native plugin (list: `AVAILABLE_PLUGINS` in `src/krikri/module_registry.cr`); anything else fails with `krikri does not yet have module 'x.y.z' implemented`. A role's own `library/*.py` modules work as usual. |
+| Third-party collection modules | Not vendored wholesale: a `community.*` module runs only once ported to a native plugin (list: `AVAILABLE_PLUGINS` in `src/krikri/module_registry.cr`); anything else fails with a load-time `couldn't resolve module/action` refusal. A role's own `library/*.py` modules work as usual. |
+| Modules outside the krikri tree | Any module can be supplied as an external executable in any language through `--plugin-path DIR` (repeatable) or `KRIKRI_PLUGIN_PATH` - no fork and no krikri rebuild per plugin or per release. The executable speaks the same stdin-JSON/stdout-JSON protocol as a built-in module (`protocol: 1`); per-platform builds live in `plugins-<key>/` directories inside the plugin root. See [docs/external-plugins.md](docs/external-plugins.md). |
 | Cloud provider modules | Out of scope, except AWS/EC2 (`ec2_instance` and its supporting modules, `aws_ec2` inventory). |
 
 ---
@@ -213,6 +214,7 @@ krikri-playbook --ask-vault-pass playbook.yml         # vault-encrypted playbook
 krikri-playbook --no-batching playbook.yml            # one SSH round trip per task
 krikri-playbook --forks 10 playbook.yml               # host concurrency (default: 5)
 krikri-playbook --gathering smart playbook.yml        # fact gathering policy
+krikri-playbook --plugin-path ./my-plugins playbook.yml  # external module plugins
 ```
 
 `--forks` defaults to 5, like ansible-playbook. A fork here is a cheap

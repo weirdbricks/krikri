@@ -454,6 +454,7 @@ connection_password_file = nil.as(String?)
 become_password_file = nil.as(String?)
 flush_cache = false
 module_path_args = [] of String
+plugin_path_args = [] of String
 vault_id_args = [] of String
 vault_password_file = nil
 ask_vault_pass = false
@@ -600,6 +601,13 @@ begin
     parser.on("-M PATH", "--module-path=PATH", "Accepted for compatibility; modules here are compiled binaries, not a search path") do |mat|
       module_path_args << mat
     end
+    # Issue #1755 - external module plugins. Deliberately NOT --module-path: that
+    # is Ansible's PYTHON module path and stays accepted-and-inert here, while
+    # these directories hold compiled binaries/scripts in krikri's own
+    # stdin-JSON protocol.
+    parser.on("--plugin-path=DIR", "Directory of externally built module plugins (repeatable; also KRIKRI_PLUGIN_PATH)") do |dir|
+      plugin_path_args << dir
+    end
     parser.on("--vault-id=ID", "Vault identity as label@source (a password file, or @prompt); repeatable") do |v|
       vault_id_args << v
     end
@@ -702,6 +710,25 @@ rescue ex : OptionParser::InvalidOption
   exit 1
 rescue ex : Exception
   puts "Error: #{ex.message}".colorize(:red)
+  exit 1
+end
+
+# Issue #1755 - external module plugins. Resolve the roots ONCE here, before
+# the playbook is parsed (registration is how a task's module name resolves at
+# all) and before the chdir into the playbook's directory (a relative
+# --plugin-path is relative to the invocation directory, like every other
+# command-line path). Writing the resolved list back into KRIKRI_PLUGIN_PATH is
+# also what forwards it to the local `__async_run` re-invocation, which
+# re-enters this program before CLI parsing and so never sees the flag.
+Krikri::CliOptions.plugin_paths = plugin_path_args
+begin
+  plugin_roots = Krikri::RuntimePluginRegistry.discovery_paths
+  unless plugin_roots.empty?
+    ENV["KRIKRI_PLUGIN_PATH"] = plugin_roots.join(':')
+    Krikri::RuntimePluginRegistry.configure(plugin_roots)
+  end
+rescue ex : Krikri::RuntimePluginRegistry::ConfigError
+  STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
 end
 

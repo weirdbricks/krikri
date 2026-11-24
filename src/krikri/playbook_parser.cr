@@ -19,6 +19,7 @@ require "./variable_substitutor"
 
 require "./action_groups"
 require "./collection_index"
+require "./runtime_plugin_registry"
 
 module Krikri
   # A `block:`'s own `when:` clauses as the tasks nested inside it - and the
@@ -2338,6 +2339,14 @@ module Krikri
       # A templated module name resolves (or fails) at run time, never
       # here - the raw `{{ }}` text is not an unresolvable name.
       return if as_written.includes?("{{")
+      # An external module plugin (issue #1755) shadows a BARE tombstoned
+      # name exactly like a role's own `library/<name>` source does:
+      # supplying your own implementation of a module Ansible removed is a
+      # normal reason to build one. Deliberately bare names only - the same
+      # narrowing the library/ escape above documents, since real refuses an
+      # FQCN tombstone (`community.vmware.vcenter_folder`, ...) at load no
+      # matter what the controller has locally.
+      return if !as_written.includes?('.') && RuntimePluginRegistry.registered?(as_written)
 
       name = as_written
       tombstoned = REMOVED_MODULE_TOMBSTONES.has_key?(as_written)
@@ -2462,6 +2471,11 @@ module Krikri
     def self.resolve_module_name(raw : String) : String?
       return MODULE_ALIASES[raw] if MODULE_ALIASES.has_key?(raw)
       return raw if AVAILABLE_PLUGINS.includes?(raw)
+      # An external module plugin (issue #1755) is registered, not compiled
+      # in: resolving it here is the whole of "registration" - the task is
+      # left with a real module name, so `Task#unavailable_module` is never
+      # set and the task is dispatched rather than skipped.
+      return raw if RuntimePluginRegistry.registered?(raw)
 
       MODULE_SEARCH_COLLECTIONS.each do |collection|
         qualified = "#{collection}.#{raw}"
@@ -10278,6 +10292,9 @@ module Krikri
           # hard-stop), so "unimplemented" would be wrong for it -
           # every unresolvable name lands in this branch now.
           next if task.unavailable_module
+          # An external module plugin (issue #1755) is a supported module
+          # too; the registry is consulted exactly like AVAILABLE_PLUGINS.
+          next if RuntimePluginRegistry.registered?(task.module_name)
           unless AVAILABLE_PLUGINS.includes?(task.module_name)
             warnings << "Task '#{task.name}' uses unimplemented plugin: #{task.module_name}"
           end

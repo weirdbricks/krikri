@@ -12,6 +12,7 @@ require "./local_executor"
 require "./passwords"
 require "./connection_settings"
 require "./playbook_parser"
+require "./runtime_plugin_registry"
 require "./shell"
 require "./inventory_parser"
 require "./task_executor/output_routing"
@@ -24,6 +25,17 @@ require "./become_messages"
 require "./ssh_unreachable_msg"
 
 module Krikri
+  # A registered plugin has no binary this run can use - the common
+  # ancestor of the two reasons why: the target's platform has no
+  # per-platform build (PluginArchUnsupportedError), or the plugin's own
+  # file is not there at all (PluginBinaryNotFoundError). Both mean "the
+  # controller has nothing it can run here", never a reachability problem,
+  # and both take the same clean failed-task path with a message naming
+  # what is missing - so the rescue sites ask for this, not for either
+  # subclass.
+  class PluginUnavailableError < Exception
+  end
+
   # Issue #1 (arch awareness) - raised when a remote target reports a
   # CPU architecture this controller's plugin binaries were not built for
   # and no binaries for that architecture exist next to the running
@@ -34,7 +46,15 @@ module Krikri
   # failure the uploaded binary would otherwise produce on the target,
   # and instead of being misbooked as UNREACHABLE (the host is reachable
   # - the controller just has nothing it can run on it).
-  class PluginArchUnsupportedError < Exception
+  class PluginArchUnsupportedError < PluginUnavailableError
+  end
+
+  # An external plugin (issue #1755) is registered but the file the current
+  # resolution needs (the flat controller-platform binary, or the target's
+  # plugins-<key>/ one) does not exist. Unlike a built-in plugin, whose
+  # binaries ./build.sh always produced, this can legitimately happen at run
+  # time - a root may carry only some of a plugin's platform builds.
+  class PluginBinaryNotFoundError < PluginUnavailableError
   end
 
   # Plugin Manager - Handles plugin execution locally or remotely
@@ -297,7 +317,7 @@ module Krikri
         next false unless recorded
         begin
           recorded == cached_md5(get_local_plugin_path(name, arch))
-        rescue PluginArchUnsupportedError
+        rescue PluginUnavailableError
           false
         end
       end
@@ -425,7 +445,21 @@ module Krikri
       # sudo was told to preserve the environment), or whatever else the
       # task tuned.
       return false if become_flags_set?(become_flags)
-      !DAEMON_INELIGIBLE_PLUGINS.includes?(simple_plugin_name(plugin_name))
+      simplified = simple_plugin_name(plugin_name)
+      # An external plugin (issue #1755) is a normal executable whose only
+      # transport is the one-shot path: the daemon's dispatch table is
+      # compiled into the fat binary, so a daemon request for an external
+      # name could only ever hit its "unknown plugin" fallback. Provenance
+      # is checked here rather than through DAEMON_INELIGIBLE_PLUGINS
+      # because the registry is run-scoped, not a compile-time list.
+      return false if RuntimePluginRegistry.registered?(simplified)
+      !DAEMON_INELIGIBLE_PLUGINS.includes?(simplified)
+    end
+
+    # Whether *plugin_name* is an externally supplied module plugin (issue
+    # #1755) rather than one of krikri's own compiled binaries.
+    def self.runtime_plugin?(plugin_name : String) : Bool
+      RuntimePluginRegistry.registered?(simple_plugin_name(plugin_name))
     end
 
     # Whether the task actually configured become_flags; nil and a blank
@@ -714,6 +748,13 @@ module Krikri
         end
       end
       plugin_list.each do |plugin_name|
+        # An external plugin (issue #1755) may exist ONLY as a per-platform
+        # build (plugins-<key>/), and which binary this is cannot be known
+        # until each host's own upload probes its platform. Resolving one
+        # here without that platform would raise a false not-found for a
+        # perfectly good arch-specific plugin; upload_plugins_to_host
+        # resolves and digests it per host instead.
+        next if runtime_plugin?(plugin_name)
         cached_md5(get_local_plugin_path(plugin_name))
       end
       # Each host's uploads are entirely disjoint and order-independent,
@@ -798,7 +839,7 @@ module Krikri
         next unless ex = failures[entry[:conn].spec_key]?
         spec_contributions[entry[:conn].spec_key].each do |(host_name, has_override)|
           next if has_override
-          if ex.is_a?(PluginArchUnsupportedError)
+          if ex.is_a?(PluginUnavailableError)
             # NOT a reachability problem - the host answered, the controller
             # just has no binaries it can run on it. Booking it as
             # UNREACHABLE would send someone debugging ssh AND mask the real
@@ -984,7 +1025,11 @@ module Krikri
     # below. Shared rather than inlined per call site (was duplicated
     # once already, in collect_required_plugins, before this extraction).
     def self.simple_plugin_name(module_name : String) : String
-      module_name.sub(/^(ansible\.(builtin|legacy|posix|mysql)|community.(general|docker|mysql|postgresql|crypto|rabbitmq)|ovirt\.ovirt|amazon\.aws|containers\.podman)\./, "")
+      # The pattern lives in RuntimePluginRegistry so the external-plugin
+      # namespace ban (issue #1755) cannot drift from what is stripped
+      # here. Its dots are escaped now: the unescaped `community.` used to
+      # also match `communityXgeneral.`.
+      module_name.sub(RuntimePluginRegistry::STRIPPED_NAMESPACE, "")
     end
 
     # Plugins that actually read the "vars" field of their config JSON -
@@ -1549,6 +1594,13 @@ module Krikri
       TimingProfile.measure("transport.local_exec", "transport") do
         execute_local_plugin_impl(plugin_name, config, become, become_user, become_password, task_timeout, become_flags)
       end
+    rescue ex : PluginUnavailableError
+      # Same clean failed task the remote dispatch paths produce (see
+      # PluginUnavailableError's own comment). The local path had no such
+      # rescue because a built-in plugin's binary is always there while an
+      # external one (issue #1755) may be a per-platform build only, and
+      # then a local run has nothing to exec.
+      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
     end
 
     # Returns nil when the local daemon must not be used for this task, so
@@ -2068,9 +2120,9 @@ module Krikri
       daemon_scope : String? = nil,
     ) : JSON::Any
       normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags, daemon_scope))
-    rescue ex : PluginArchUnsupportedError
-      # One clean failed task carrying the actionable arch message (see
-      # PluginArchUnsupportedError's own comment) - not an unreachable,
+    rescue ex : PluginUnavailableError
+      # One clean failed task carrying the actionable message (see
+      # PluginUnavailableError's own comment) - not an unreachable,
       # not an unhandled crash. Reached when a module only discovered at
       # runtime (include_tasks:/include_role:) needs an upload the
       # pre-run pass never made.
@@ -3121,6 +3173,14 @@ module Krikri
       # Strip FQCN to get simple plugin filename
       simple_name = simple_plugin_name(plugin_name)
 
+      # An externally supplied plugin (issue #1755) resolves through the
+      # operator's --plugin-path/KRIKRI_PLUGIN_PATH roots, never through
+      # krikri's own plugins/ dirs - and its name is already a flat, safe
+      # path component (the registry rejects anything else).
+      if RuntimePluginRegistry.registered?(simple_name)
+        return runtime_plugin_path(simple_name, target_arch)
+      end
+
       if arch = arch_override_for(target_arch)
         # Resolved next to the running binary first (an installed
         # krikri-playbook keeps its per-arch builds beside plugins/),
@@ -3168,6 +3228,40 @@ module Krikri
       return compiled if File.exists?(compiled)
 
       raise "Plugin binary not found: #{plugin_name} (looked for #{compiled})"
+    end
+
+    # Resolve an external plugin's own binary (issue #1755).
+    #
+    # *target_arch* is the target's platform key, exactly as the per-arch
+    # krikri builds read it: nil for a local connection (which must never
+    # probe an arch, matching where a local dispatch actually runs), the
+    # bare arch for a same-OS target, `<os>-<arch>` otherwise. A key that
+    # differs from this build's platform takes `plugins-<key>/<name>` ONLY:
+    # the controller-platform binary would just die with an exec-format
+    # error on that target, so a miss raises PluginArchUnsupportedError
+    # naming the directories actually searched instead of uploading it.
+    private def self.runtime_plugin_path(name : String, target_arch : String?) : String
+      if arch = arch_override_for(target_arch)
+        if path = RuntimePluginRegistry.arch_path(name, arch)
+          return path
+        end
+
+        raise PluginArchUnsupportedError.new(
+          "no #{arch} binary for external plugin #{name}: the target host reports a different " \
+          "platform than this krikri-playbook build " \
+          "(#{controller_os}-#{build_arch.empty? ? "unknown" : build_arch}), and an external plugin " \
+          "is an ordinary executable with no per-arch fallback. Build or obtain a #{arch} binary " \
+          "and place it in plugins-#{arch}/ under one of the plugin directories " \
+          "(--plugin-path/KRIKRI_PLUGIN_PATH); the directories searched were " \
+          "#{RuntimePluginRegistry.arch_search_dirs(arch).join(", ")}"
+        )
+      end
+
+      RuntimePluginRegistry.flat_path(name) || raise PluginBinaryNotFoundError.new(
+        "Plugin binary not found: #{name} (external plugin: looked for " \
+        "#{RuntimePluginRegistry.flat_search_dirs.join(", ")}; set --plugin-path or " \
+        "KRIKRI_PLUGIN_PATH to the directory that contains it)"
+      )
     end
 
     # The arch directory to override the default plugin lookup with, when

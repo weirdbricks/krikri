@@ -214,6 +214,50 @@ and the no-build case failed with the actionable message. A genuine foreign-CPU 
 exercised - nothing on this machine can execute aarch64 code - but the exec surface itself is
 the same code path the same-arch run has always used. Decided 2026-10-11.
 
+### External module plugins (issue #1755): v1 limits
+
+`--plugin-path DIR` (repeatable) and `KRIKRI_PLUGIN_PATH` load `module` (target-side) plugins
+built outside this tree, in any language that produces an executable. The module boundary was
+already a process boundary (JSON config on stdin, JSON result on stdout) and upload, md5
+de-duplication, batching and remote staging are name-keyed, so an external plugin behaves like
+a built-in one. The layout, resolution rules and the frozen `protocol: 1` config/result shape
+live in `docs/external-plugins.md`. The deliberate v1 limits:
+
+- **`module` plugins only.** Action, filter, test and lookup plugins, callbacks, Python plugins
+  and installed collections, custom inventory/connection/strategy/vars/become plugins, plugin
+  manifests/aliases and in-process shared-library loading are all out of scope.
+- **Per-platform binaries are required, with no cross-build and no flat fallback.** A remote
+  target whose platform key differs from the controller's resolves `plugins-<key>/<name>` ONLY;
+  a miss fails early with `PluginArchUnsupportedError` naming the directories searched. The
+  controller's own build, or a flat file in the same root, is deliberately never used for such
+  a target - it could only die there with an exec-format error. Local connections (including
+  `delegate_to: localhost`) and same-platform or not-yet-probed targets use the flat `<name>`
+  only. Static linking is strongly recommended (musl/static for Linux, static Go/Crystal/Rust
+  builds): the same executable is uploaded to every managed host, so a dynamically linked
+  binary needs a matching libc/runtime there, and a shebang script needs its interpreter.
+- **External plugins are daemon-ineligible.** The persistent ssh daemon and the local daemon
+  both run a resident copy of the fat plugin binary whose dispatch table is compiled in, so an
+  external name can never be served from one. Such a task takes the one-shot transport, and a
+  batch group containing one is sent over the script transport instead of the daemon. Results
+  are identical; only that group's daemon speedup is forfeited.
+- **Names are flat path components.** `[A-Za-z0-9][A-Za-z0-9_.-]*`, no namespace
+  `simple_plugin_name` strips (`ansible.*`, `community.general.*` and friends), no shadowing of
+  a built-in module or of a name krikri only knows as an alias (`raw`, `systemd_service`, ...),
+  no `plugins-` prefix, and one name provided by two roots is an error - the name is a path
+  component locally, in the remote staging directory and in the shell/batch target string. A
+  registered name does shadow a removed-module tombstone, the same way a role's own
+  `library/<name>` source does, so an external plugin can replace a module ansible-core removed.
+- **Plugin roots are a trust boundary.** A root must exist, be listable, not be a symlink, not
+  be group- or world-writable, and be owned by the invoking user or root; plugin files must be
+  regular (non-symlink) executables matched by exact filename, and `plugins-<key>/` directories
+  must be real directories (the fat-plugin "any executable in the directory" fallback
+  deliberately does not apply). `KRIKRI_PLUGIN_PATH` is the only injection
+  route - a task's `environment:` never influences resolution - and it is inherited by krikri's
+  own child processes, which is how the local `__async_run` re-invocation finds the same roots.
+- **`--plugin-path` is krikri-only.** `library/`, `ANSIBLE_LIBRARY`/`[defaults] library` and
+  `ANSIBLE_*_PLUGINS` keep meaning exactly what they mean to Ansible, and `krikri-lint` has no
+  `--plugin-path` in v1 (it stays permissive for collections it has no captured tree for).
+
 ### Docker TCP-unreachable wording embeds a Python heap pointer
 
 - A docker module run with `DOCKER_HOST` pointing at a closed TCP port fails with
@@ -960,7 +1004,10 @@ because anyone intends to fix them.
   * `-M`/`--module-path` is accepted and ignored, a scope cut rather than an oversight: real searches
     those directories for PYTHON modules while every module here is a compiled binary, and faking it
     would silently look for a same-named compiled binary in a directory of `.py` files this can never
-    execute.
+    execute. It stays inert even now that `--plugin-path`/`KRIKRI_PLUGIN_PATH` exist (issue #1755):
+    those load external compiled/scripted plugins in krikri's own protocol, which is a deliberately
+    different mechanism from a Python module search path, and reusing the flag would give one spelling
+    two incompatible meanings.
   * `--scp-extra-args` extends the scp command lines in `SSHManager#upload_file`/`#download_file`,
     alongside `--ssh-common-args` (which real applies to scp as well - only `--ssh-extra-args` is
     ssh-only). `PluginManager` also falls back to scp for the plugin-binary push when rsync is missing.

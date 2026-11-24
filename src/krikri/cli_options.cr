@@ -38,6 +38,14 @@ module Krikri
     # --step: prompt before each task.
     class_property? step : Bool = false
 
+    # --plugin-path DIR (repeatable, issue #1755): directories searched for
+    # externally built module plugins, alongside the KRIKRI_PLUGIN_PATH
+    # environment variable. Read by RuntimePluginRegistry, which also
+    # writes the combined list back into KRIKRI_PLUGIN_PATH so the local
+    # `__async_run` re-invocation inherits it (it re-enters krikri-playbook
+    # before CLI parsing, so an argument flag could never reach it).
+    class_property plugin_paths = [] of String
+
     # Extra ssh arguments contributed by --ssh-common-args and
     # --ssh-extra-args, split the way a shell would (Ansible passes
     # these through to ssh as a raw argument string).

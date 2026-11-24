@@ -35,3 +35,33 @@ describe "plugin registry consistency" do
     stale.must_equal([] of String, "AVAILABLE_PLUGINS entries with no plugins/*.cr binary and not controller-side")
   end
 end
+
+# The counterpart invariant for the EXTERNAL plugin registry (issue #1755):
+# fixtures proving an out-of-tree plugin works must obey the same rules
+# RuntimePluginRegistry enforces at load, and must not shadow a built-in
+# module - a shadowed name would either be rejected at run time or (worse)
+# silently run something other than what the task named.
+EXTERNAL_FIXTURES_DIR = File.expand_path("../fixtures/external_plugins", __DIR__)
+
+describe "external plugin fixture registry (issue #1755)" do
+  it "names every executable fixture with the plugin name charset" do
+    bad = [] of String
+    Dir.glob(File.join(EXTERNAL_FIXTURES_DIR, "**", "*")).each do |path|
+      next unless File.file?(path) && File::Info.executable?(path)
+      name = File.basename(path)
+      bad << name unless name.matches?(Krikri::RuntimePluginRegistry::NAME_PATTERN)
+    end
+    bad.must_equal([] of String, "external plugin fixtures whose name is not a valid plugin name")
+  end
+
+  it "never shadows a built-in module name" do
+    native = Krikri::PlaybookParser::AVAILABLE_PLUGINS.map { |entry| Krikri::PluginManager.simple_plugin_name(entry) }.to_set
+    shadowing = [] of String
+    Dir.glob(File.join(EXTERNAL_FIXTURES_DIR, "**", "*")).each do |path|
+      next unless File.file?(path) && File::Info.executable?(path)
+      name = File.basename(path)
+      shadowing << name if native.includes?(name)
+    end
+    shadowing.must_equal([] of String, "external plugin fixtures shadowing a native module")
+  end
+end

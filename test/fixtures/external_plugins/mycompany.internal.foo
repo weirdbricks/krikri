@@ -1,0 +1,20 @@
+#!/bin/sh
+# External module plugin fixture for issue #1755 - a module built OUTSIDE the
+# krikri tree, in a language that is not Crystal, loaded from a plugin
+# directory. Deliberately POSIX sh: the whole point is that krikri's module
+# boundary is a process boundary (JSON config on stdin, JSON result on
+# stdout), so any language that produces an executable works.
+#
+# protocol: 1 (see docs/external-plugins.md)
+#   stdin:  {"host":{"name":...,"user":...,"port":...},
+#            "params":{"name":"world", "_ansible_check_mode":"false", ...},
+#            "vars":{...connection keys...},
+#            "become":"false", "become_user":null, "become_flags":null,
+#            "collection_version":null}
+#   stdout: {"changed":true,"msg":"...","invoked_name":"..."}
+#
+# The last "name" in the document is the task's own params.name (host.name
+# comes first, and no other key is spelled "name").
+config=$(cat)
+name=$(printf '%s' "$config" | grep -o '"name":"[^"]*"' | tail -1 | cut -d'"' -f4)
+printf '{"changed":true,"msg":"hello from %s","invoked_name":"%s"}\n' "$name" "$name"
