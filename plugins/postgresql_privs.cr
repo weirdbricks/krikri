@@ -103,7 +103,9 @@ module Krikri
   #   (default `"public"`, matching Ansible's own default) -
   #   `language:`/`tablespace:` aren't schema-qualified at all in real
   #   PostgreSQL (cluster-wide objects), matching Ansible's own
-  #   `obj_ids` construction.
+  #   `obj_ids` construction. Supplying it for any object type that does
+  #   not live in a schema is an error, matching Ansible's own
+  #   `Argument "schema" is not allowed for type "X".`.
   # - session_role: `SET ROLE "role"` immediately after connecting,
   #   before anything else - the specified role must already be one
   #   `login_user:` is a member of (a plain PostgreSQL server-side error
@@ -441,13 +443,13 @@ module Krikri
     # Expansion to letters happens per object class at apply time, since
     # ALL means different privileges for TABLES than for SEQUENCES.
     private def default_privs_list(privs_param : String?) : Array(String)
-      raise "privs is required for type 'default_privs'" unless privs_param
+      raise %(Argument "privs" is required for type "default_privs".) unless privs_param
       privs_param.split(',').map(&.strip.upcase).reject(&.empty?)
     end
 
     # objs: for default_privs are object *classes*, not object names.
     private def default_privs_classes(objs_param : String?) : Array(String)
-      raise "objs is required for type 'default_privs'" unless objs_param
+      raise %(Argument "objs" is required for type "default_privs".) unless objs_param
 
       classes = if objs_param.strip.upcase == "ALL_DEFAULT"
                   ALL_DEFAULT_CLASSES.dup
@@ -460,7 +462,7 @@ module Krikri
           raise "objs for type 'default_privs' must be one of #{DEFAULT_OBJ_CLASSES.keys.join(", ")} or ALL_DEFAULT, got '#{cls}'"
         end
       end
-      raise "objs is required for type 'default_privs'" if classes.empty?
+      raise %(Argument "objs" is required for type "default_privs".) if classes.empty?
 
       classes
     end
@@ -471,12 +473,12 @@ module Krikri
     private def resolve_privs_for(type : String, privs_param : String?) : Array(String)
       case type
       when "group"
-        raise "privs is not allowed for type 'group'" if privs_param
+        raise %(Argument "privs" is not allowed for type "group".) if privs_param
         [] of String
       when "default_privs"
         default_privs_list(privs_param)
       else
-        raise "privs is required for type '#{type}'" unless privs_param
+        raise %(Argument "privs" is required for type "#{type}".) unless privs_param
         PluginHelpers::PostgresqlAcl.resolve_privs(type, privs_param)
       end
     end
@@ -499,9 +501,19 @@ module Krikri
       # mysql_user in round 43 (robertdebock.postgres) - a real
       # playbook using any of these aliases got treated as if the
       # param was never set at all.
-      privs_param = @params["privs"]? || @params["priv"]?
+      privs_param = unset_if_empty(@params["privs"]? || @params["priv"]?)
       roles_param = @params["roles"]? || @params["role"]?
       raise "roles is required" unless roles_param
+
+      login_db = @params["login_db"]? || @params["db"]? || @params["database"]? || "postgres"
+
+      schema_param = unset_if_empty(@params["schema"]?)
+
+      # Ansible's own pre-connection validation order is schema, then objs,
+      # then privs, and the first problem found is the one it reports - a
+      # schema/type mismatch therefore wins over a missing privs.
+      validate_schema!(type, schema_param)
+      objs, all_in_schema = resolve_objs!(type, login_db)
 
       privs = resolve_privs_for(type, privs_param)
       privs_raw = if privs_param
@@ -510,12 +522,9 @@ module Krikri
                     [] of String
                   end
 
-      login_db = @params["login_db"]? || @params["db"]? || @params["database"]? || "postgres"
-      schema = @params["schema"]? || "public"
+      schema = schema_param || "public"
       roles_raw = roles_param.split(',').map(&.strip).reject(&.empty?)
       target_roles = resolve_target_roles!(type)
-
-      objs, all_in_schema = resolve_objs!(type, login_db)
 
       build_resolved_params(type, state, privs, privs_raw, roles_raw, objs, all_in_schema,
         target_roles, schema, login_db)
@@ -534,6 +543,23 @@ module Krikri
     private def validate_type_and_state!(type : String, state : String) : Nil
       raise "value of type must be one of: #{VALID_TYPES.join(", ")}, got: #{type}" unless VALID_TYPES.includes?(type)
       raise "value of state must be one of: present, absent, got: #{state}" unless state == "present" || state == "absent"
+    end
+
+    # The object types schema: applies to; Ansible rejects schema: outright
+    # for every other type (database, schema, language, tablespace, group,
+    # foreign_*, parameter) instead of ignoring it.
+    SCHEMA_TYPES = {"table", "sequence", "function", "procedure", "type", "default_privs"}
+
+    private def validate_schema!(type : String, schema : String?) : Nil
+      return if schema.nil? || SCHEMA_TYPES.includes?(type)
+
+      raise %(Argument "schema" is not allowed for type "#{type}".)
+    end
+
+    # Ansible's argument checks are Python truthiness tests, so an empty
+    # string counts as "not provided" (Crystal's "" is truthy).
+    private def unset_if_empty(value : String?) : String?
+      value.try(&.empty?) ? nil : value
     end
 
     private def build_resolved_params(
@@ -562,43 +588,56 @@ module Krikri
     # doesn't need an extra nil-check branch just to get Array(String)
     # instead of Array(String)?.
     private def resolve_objs!(type : String, login_db : String) : {Array(String), Bool}
-      objs_param = @params["objs"]? || @params["obj"]?
+      objs_param = unset_if_empty(@params["objs"]? || @params["obj"]?)
 
       return {default_privs_classes(objs_param), false} if type == "default_privs"
+      return {[] of String, true} if all_in_schema!(type, objs_param)
 
-      if objs_param == "ALL_IN_SCHEMA"
-        raise "objs: ALL_IN_SCHEMA can only be used for type: table, sequence, function or procedure, got '#{type}'" unless ALL_IN_SCHEMA_TYPES.includes?(type)
-        return {[] of String, true}
-      end
+      objs = parse_objs(type, login_db, objs_param)
+      raise %(Argument "objs" is required for type "#{type}".) if objs.nil? || objs.empty?
 
-      objs = if objs_param
-               parsed = objs_param.split(',').map(&.strip).reject(&.empty?)
-               # Routine signatures are encoded with ':' between argument
-               # types, because objs: itself is comma-separated - without
-               # this convention `f(int, text)` would split into the two
-               # nonsense objects `f(int` and `text)`. Ansible uses
-               # exactly the same encoding, and applies it after the
-               # comma split, not before: `obj.replace(':', ',')`.
-               parsed = parsed.map(&.gsub(':', ',')) if ROUTINE_TYPES.includes?(type)
-               parsed
-             elsif type == "database"
-               [login_db]
-             end
-
-      raise "objs is required for type '#{type}'" if objs.nil? || objs.empty?
-
-      # Ansible requires the `name(args)` form for routines and
-      # raises on anything else, rather than trying to resolve a bare
-      # name - PostgreSQL's own regprocedure input requires the argument
-      # list too ("expected a left parenthesis"), so a bare name could
-      # only ever work by guessing at overloads. Same message it uses.
-      if ROUTINE_TYPES.includes?(type)
-        objs.each do |obj|
-          raise "Illegal function / procedure signature: \"#{obj}\"." unless obj.includes?('(')
-        end
-      end
-
+      validate_routine_signatures!(type, objs)
       {objs, false}
+    end
+
+    # `objs: ALL_IN_SCHEMA` is a sentinel (table/sequence/function/
+    # procedure only), not an object name: #execute resolves it live
+    # against the schema. Ansible's own spelling of the rejection is
+    # reproduced for every other type.
+    private def all_in_schema!(type : String, objs_param : String?) : Bool
+      return false unless objs_param == "ALL_IN_SCHEMA"
+      unless ALL_IN_SCHEMA_TYPES.includes?(type)
+        raise %(Argument "objs": ALL_IN_SCHEMA can be used only for type: table, sequence, function or procedure, #{type} was passed.)
+      end
+
+      true
+    end
+
+    # Routine signatures are encoded with ':' between argument types,
+    # because objs: itself is comma-separated - without this convention
+    # `f(int, text)` would split into the two nonsense objects `f(int`
+    # and `text)`. Ansible uses exactly the same encoding, and applies it
+    # after the comma split, not before: `obj.replace(':', ',')`.
+    private def parse_objs(type : String, login_db : String, objs_param : String?) : Array(String)?
+      if objs_param
+        parsed = objs_param.split(',').map(&.strip).reject(&.empty?)
+        return ROUTINE_TYPES.includes?(type) ? parsed.map(&.gsub(':', ',')) : parsed
+      end
+
+      type == "database" ? [login_db] : nil
+    end
+
+    # Ansible requires the `name(args)` form for routines and raises on
+    # anything else, rather than trying to resolve a bare name -
+    # PostgreSQL's own regprocedure input requires the argument list too
+    # ("expected a left parenthesis"), so a bare name could only ever
+    # work by guessing at overloads. Same message it uses.
+    private def validate_routine_signatures!(type : String, objs : Array(String)) : Nil
+      return unless ROUTINE_TYPES.includes?(type)
+
+      objs.each do |obj|
+        raise "Illegal function / procedure signature: \"#{obj}\"." unless obj.includes?('(')
+      end
     end
 
     # (No identifier allow-list: every identifier reaches SQL only through

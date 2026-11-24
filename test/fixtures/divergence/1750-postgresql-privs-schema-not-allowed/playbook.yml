@@ -1,0 +1,22 @@
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  # The kpg generator's play #0.0, reduced to the single task that
+  # diverged: its module arguments are copied verbatim from the round
+  # (only delegate_to was dropped, since this case runs on localhost).
+  tasks:
+    - name: 'Postgresql_privs #0.0'
+      community.postgresql.postgresql_privs:
+        ca_cert: ghirvj
+        connect_params: {}
+        login_db: butfki
+        login_unix_socket: /var/run/postgresql
+        objs: kpgdb
+        roles: kpguser
+        schema: zlolmi
+        ssl_key: /tmp/kpg-work/sub
+        ssl_mode: prefer
+        target_roles: kpdihz
+        type: database
+      register: kpg_task_0
+      ignore_errors: true
