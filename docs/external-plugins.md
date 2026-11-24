@@ -144,6 +144,13 @@ they may be added in later protocol versions.
     "_module_name": "mycompany.internal.foo",
     "_verbosity": "0"
   },
+  "args": {
+    "name": "world",
+    "_ansible_check_mode": "false",
+    "_ansible_diff": "false",
+    "_module_name": "mycompany.internal.foo",
+    "_verbosity": "0"
+  },
   "vars": {
     "ansible_connection": "local",
     "ansible_host": "web1",
@@ -161,14 +168,48 @@ they may be added in later protocol versions.
 - `host` - the task's effective connection target. Under a local connection
   (`ansible_connection=local`) the module's own filesystem operations are the
   target's, exactly as for a krikri-built module.
-- `params` - the task's own arguments, plus krikri-injected keys (all strings,
-  `"true"`/`"false"`):
+- `args` - **read this for anything that is not text.** The task's own
+  arguments in their original JSON types: bool, number, string, `null`,
+  and nested objects/arrays, exactly as the playbook wrote them (a
+  `true` is `true`, `[1, 2]` is an array of numbers, `{k: v}` is an object,
+  and a string that merely holds `{"k":"v"}` stays a string). Plus the same
+  krikri-injected keys `params` carries, which are strings:
   - `_ansible_check_mode`, `_ansible_diff` - effective modes for this task.
   - `_module_name` - the name exactly as the playbook invoked it.
   - `_verbosity` - the run's `-v` level.
   - `_environment` - JSON-encoded `environment:` for this task, when set.
   - Keys starting with `_ansible_` / `_first_gather` are krikri/Ansible
     internal; ignore whatever you do not understand.
+
+  The executor recovers a value's type from the playbook's own literal
+  (dicts, lists - including a list member containing a comma - numbers,
+  bools, `null`), from a plain whole-value `{{ variable }}` reference (the
+  referenced value's type, in list members too), or from a whole-value
+  template that rendered to a container. A value whose type only exists
+  after a more complex template (a filter, an operator, a string built from
+  mixed text) arrives as its rendered text - a string, the same text
+  `params` carries - because re-evaluating it to recover the type could run
+  a lookup twice. `args` never carries an unrendered `{{ }}` value, and it
+  re-types rendered text only when the whole value was one template.
+- `params` - the same task arguments on krikri's **strings-only** wire,
+  flattened. It is kept for protocol-1 plugins that already read it; prefer
+  `args`. Every value is a string, and the flattening is lossy, so the
+  encodings below cannot always be reversed:
+  - a string argument is its own text, unchanged.
+  - a YAML bool/int/float literal is written as the private-use character
+    U+E000 followed by `nonstring:` and the value's JSON text -
+    `"\u{E000}nonstring:true"`, `"\u{E000}nonstring:5"`,
+    `"\u{E000}nonstring:1.5"`.
+  - a YAML `null` is `__crystal_ansible_none__`.
+  - a dict (or a list carrying dict or nested-list members) is its compact
+    JSON text: `{"k":"v","n":1}`.
+  - a list of scalars is its members joined with `,` - `x,y`. A non-string
+    member carries the U+E000 `nonmember:` marker instead of `nonstring:`.
+
+  Consequences: a dict and a string argument holding the same JSON arrive as
+  the same bytes, `[x, y]` and `["x,y"]` both arrive as `x,y`, and a string
+  argument that begins with one of those markers would read as an encoded
+  value. That is exactly what `args` exists to avoid.
 - `vars` - a fixed, pruned set of connection/lookup keys: `ansible_connection`,
   `ansible_host`, `ansible_ssh_private_key_file`, `ansible_private_key_file`,
   `ansible_ssh_common_args`, `ansible_ssh_extra_args`,

@@ -1,0 +1,36 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [echoargs] ****************************************************************
+ok: [localhost]
+
+TASK [ansible.builtin.debug] ***************************************************
+ok: [localhost] => {
+    "r.got.params": {
+        "a_bool": true,
+        "a_dict": {
+            "k": "v",
+            "n": 1
+        },
+        "a_dict_text": "{\"k\":\"v\",\"n\":1}",
+        "a_float": 1.5,
+        "a_int": 5,
+        "a_list_of_int": [
+            1,
+            2
+        ],
+        "a_list_of_str": [
+            "x",
+            "y"
+        ],
+        "a_list_with_comma": [
+            "x,y"
+        ],
+        "a_none": null,
+        "a_str": "hello"
+    }
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

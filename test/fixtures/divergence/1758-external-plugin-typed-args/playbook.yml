@@ -1,0 +1,24 @@
+# Issue #1758's repro, verbatim: every argument shape whose type the
+# strings-only `params` wire loses. ansible-playbook runs library/echoargs.py
+# and krikri runs the external plugins/echoargs (KRIKRI_PLUGIN_PATH in
+# env.txt), so the two transcripts expose exactly the difference the issue
+# reports: real ansible passes the written types, krikri's protocol only
+# does through `args`.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - echoargs:
+        a_bool: true
+        a_int: 5
+        a_float: 1.5
+        a_str: hello
+        a_none: null
+        a_dict: {k: v, n: 1}
+        a_list_of_str: [x, y]
+        a_list_of_int: [1, 2]
+        a_list_with_comma: ["x,y"]
+        a_dict_text: '{"k":"v","n":1}'
+      register: r
+    - ansible.builtin.debug:
+        var: r.got.params

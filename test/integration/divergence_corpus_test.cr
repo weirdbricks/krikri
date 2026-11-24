@@ -59,6 +59,8 @@ private def replay_divergence_case(issue : Int32, slug : String) : String
   dir = PluginSpecHelper.tmp_path("divergence-#{name}-#{Random::Secure.hex(4)}")
   FileUtils.mkdir_p(File.join(dir, "home"))
   # expected.out/NOTES.md are the case's recorded result, not its input.
+  # copy_inputs also normalizes the copied tree's directory modes, which is
+  # what keeps an external plugin root (issues #1757, #1758) non-writable.
   Krikri::DivergenceCase.copy_inputs(source, dir)
 
   stdout = IO::Memory.new

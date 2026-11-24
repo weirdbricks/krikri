@@ -15,6 +15,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 private FIXTURE      = File.join(PROJECT_ROOT, "test", "fixtures", "external_plugins", "mycompany.internal.foo")
+private ECHO_FIXTURE = File.join(PROJECT_ROOT, "test", "fixtures", "external_plugins", "mycompany.internal.echo")
 
 private PLAYBOOK = <<-YAML
   - hosts: localhost
@@ -48,6 +49,18 @@ private def make_plugin_dir(name : String, empty : Bool = false, arch_key : Stri
     FileUtils.cp(FIXTURE, File.join(target, "mycompany.internal.foo"))
     File.chmod(File.join(target, "mycompany.internal.foo"), 0o755)
   end
+  dir
+end
+
+# The same trust-boundary setup, holding the config-echoing fixture: it
+# returns its whole stdin config inside the result, so a spec can inspect
+# exactly what the plugin received (issue #1758's typed `args`).
+private def make_echo_plugin_dir(name : String) : String
+  dir = PluginSpecHelper.tmp_path("#{name}-#{Random::Secure.hex(4)}")
+  Dir.mkdir_p(dir)
+  File.chmod(dir, 0o755)
+  FileUtils.cp(ECHO_FIXTURE, File.join(dir, "mycompany.internal.echo"))
+  File.chmod(File.join(dir, "mycompany.internal.echo"), 0o755)
   dir
 end
 
@@ -209,6 +222,76 @@ describe "external module plugins (issue #1755)" do
     status, output = run_external(["--plugin-path", dir])
     status.success?.must_equal(false, output)
     output.includes?("group- or world-writable").must_equal(true, output)
+  end
+
+  # Issue #1758: `params` is a strings-only wire, so every non-string
+  # argument arrives flattened ("\u{E000}nonstring:true", a comma-joined
+  # list, a dict's JSON text) and a dict cannot be told from a string
+  # holding the same JSON. The additive `args` copy carries the JSON types
+  # the playbook wrote, which is what a plugin taking bools/lists/dicts
+  # needs. The echo fixture returns its whole config, so the assertions
+  # below run against exactly what the plugin received.
+  it "adds the task's arguments again as typed args (issue #1758)" do
+    dir = make_echo_plugin_dir("ext-echo")
+    playbook = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          typed_list: [x, y]
+          typed_bool: true
+          typed_text: "true"
+          typed_int: 7
+        tasks:
+          - name: typed args
+            mycompany.internal.echo:
+              a_bool: true
+              a_int: 5
+              a_float: 1.5
+              a_str: hello
+              a_none: null
+              a_dict: {k: v, n: 1}
+              a_list_of_str: [x, y]
+              a_list_of_int: [1, 2]
+              a_list_with_comma: ["x,y"]
+              a_dict_text: '{"k":"v","n":1}'
+              a_dict_tmpl: {k: "{{ typed_text }}", n: 1}
+              a_marker_text: "\\uE000nonstring:true"
+              a_span_list: "{{ typed_list }}"
+              a_span_bool: "{{ typed_bool }}"
+              a_span_text: "{{ typed_text }}"
+              a_span_int: "{{ typed_int }}"
+              a_tmpl_list: ["{{ typed_text }}", "{{ typed_int }}"]
+            register: r
+          - ansible.builtin.assert:
+              that:
+                - r.got.args.a_bool == true
+                - r.got.args.a_int == 5
+                - r.got.args.a_float == 1.5
+                - r.got.args.a_str == "hello"
+                - r.got.args.a_none is none
+                - r.got.args.a_dict.k == "v"
+                - r.got.args.a_dict.n == 1
+                - r.got.args.a_list_of_str == ["x", "y"]
+                - r.got.args.a_list_of_int == [1, 2]
+                - r.got.args.a_list_with_comma[0] == "x,y"
+                - r.got.args.a_list_with_comma | length == 1
+                - r.got.args.a_dict_text == '{"k":"v","n":1}'
+                - r.got.args.a_dict_tmpl.k == "true"
+                - r.got.args.a_dict_tmpl.n == 1
+                - r.got.args.a_marker_text == "\\uE000nonstring:true"
+                - r.got.args.a_span_list == ["x", "y"]
+                - r.got.args.a_span_bool == true
+                - r.got.args.a_span_text == "true"
+                - r.got.args.a_span_int == 7
+                - r.got.args.a_tmpl_list == ["true", 7]
+          - ansible.builtin.debug:
+              msg: "TYPED ARGS OK"
+      YAML
+    status, output = run_playbook(playbook, ["--plugin-path", dir])
+    status.success?.must_equal(true, output)
+    output.includes?("All assertions passed").must_equal(true, output)
+    output.includes?("TYPED ARGS OK").must_equal(true, output)
   end
 end
 
