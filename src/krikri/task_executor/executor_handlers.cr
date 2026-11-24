@@ -1340,7 +1340,8 @@ module Krikri
             handler_deadline,
             handler.action_name,
             task_source_file: handler.source_file,
-            task_source_line: handler.source_line
+            task_source_line: handler.source_line,
+            task_raw_params: handler.params
           )
         end
         # The deadline expired during the action stage itself - same

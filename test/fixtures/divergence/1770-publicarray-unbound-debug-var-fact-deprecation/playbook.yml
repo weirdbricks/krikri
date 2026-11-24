@@ -1,0 +1,18 @@
+# publicarray.unbound's tasks/main.yml:14-16 and 45-47, verbatim: two
+# `debug: var:` reads of gathered facts. `no_log: true` is the only
+# addition - the tasks print the fact VALUES (`systemd`, this box's PATH),
+# which differ between hosts, while the INJECT_FACTS_AS_VARS block this case
+# pins is printed either way (real keeps it above the censored result).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Display init system
+      debug:
+        var: ansible_service_mgr
+      no_log: true
+
+    - name: Get $PATH
+      debug:
+        var: ansible_env.PATH
+      no_log: true

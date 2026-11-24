@@ -777,6 +777,37 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
   end
 
+  it "attributes a debug var: read to the argument's own value token" do
+    # Issue #1770, publicarray.unbound: `debug: var: ansible_service_mgr`
+    # resolves the fact inside the action plugin, after the param site that
+    # normal task templating would blame has been popped. Real 2.21.6 warns
+    # for it - once per distinct `var:` value, Origin'd at that value token -
+    # so the site has to carry the argument text the read's Origin is
+    # claimed from.
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: Display init system
+            debug:
+              var: ansible_service_mgr
+          - name: Get $PATH
+            debug:
+              var: ansible_env.PATH
+      PLAYBOOK
+
+    stdout.must_include("TASK [Display init system]")
+    stdout.must_include("TASK [Get $PATH]")
+    stderr.must_include("[DEPRECATION WARNING]: #{FACT_DEPRECATION_TEXT}\n")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include(":7:14\n")
+    stderr.must_include("7         var: ansible_service_mgr\n")
+    stderr.must_include(":10:14\n")
+    stderr.must_include("10         var: ansible_env.PATH\n")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
   it "attributes an unnamed role task's dash-line include_vars read to the role's own file" do
     # Issue #1194, capitanh.rapiddeploy_ansible_role: its roles/.../
     # tasks/main.yml line 3 is `- include_vars: "{{ansible_os_family}}-vars.yml"`,
