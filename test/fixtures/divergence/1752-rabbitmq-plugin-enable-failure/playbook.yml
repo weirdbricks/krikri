@@ -1,0 +1,17 @@
+# The issue's failing task on the local connection. The round's host had a
+# broker reachable through /usr/sbin/rabbitmq-plugins; the fixture ships the
+# same `rabbitmq-plugins` (same stdout/stderr/rc for the unknown plugin) under
+# `rabbitmq/bin`, selected with `prefix:` so the pin does not depend on the
+# case's PATH.
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: 'Rabbitmq_plugin #27.0'
+      community.rabbitmq.rabbitmq_plugin:
+        broker_state: online
+        names: wufeut
+        new_only: "true"
+        state: enabled
+        prefix: "{{ playbook_dir }}/rabbitmq"
+      register: kpg_task_0
+      ignore_errors: true
