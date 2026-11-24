@@ -1824,13 +1824,20 @@ module Krikri
         # A looped meta: is the exception - real ignores its loop on the
         # skip path entirely and prints the single meta skip line (or
         # nothing at all for the actions that reject a when: outright).
+        aggregate_registered = false
         if task_has_loop?(nested_task) && nested_task.module_name != "_meta"
           # A label that fails to template under the False block when:
           # converts this skip into a task FAILURE (see
           # print_skipped_looped_task) - the task is then fully booked
           # there (failed stat, no skip, no register skip result), so
           # this method's skipped bookkeeping below must not run for it.
-          next if print_skipped_looped_task(nested_task, host, inherited_when)
+          outcome = print_skipped_looped_task(nested_task, host, inherited_when)
+          next if outcome.failed?
+          # A loop source that RESOLVED to a list (even an empty one)
+          # registers real's loop aggregate there; only an undefined or
+          # unrenderable source keeps the flat conditional-skip register
+          # below (live-verified vs 2.21.6, issue #1733).
+          aggregate_registered = outcome.registered?
         elsif nested_task.module_name == "_meta"
           # Real aborts on an unrecognized meta action before its own
           # conditional handling, so the block's false condition never
@@ -1867,9 +1874,22 @@ module Krikri
         # ansible skipped=8, the extra one being exactly this shape).
         unless nested_task.module_name == "_meta"
           @results[host.name]["skipped"] += 1
-          register_skip_result(nested_task, host)
+          register_skip_result(nested_task, host) unless aggregate_registered
         end
       end
+    end
+
+    # What a skipped looped task inside a when:-false block still owes:
+    # real resolves the loop source and registers a per-item loop
+    # aggregate whenever it resolves to a list (an EMPTY list gets the
+    # "No items in the list" aggregate), but collapses an UNDEFINED or
+    # unrenderable source to the flat conditional-skip register, and a
+    # loop_control.label that fails to render to a task FAILURE
+    # (live-verified vs 2.21.6).
+    private enum SkippedLoopedOutcome
+      FlatSkip
+      Registered
+      Failed
     end
 
     # The skipped display for a looped task inside a when:-false block:
@@ -1888,10 +1908,12 @@ module Krikri
     #     line - real never fails a task on its loop source once the
     #     inherited when: is already False (live-verified: undefined
     #     `loop:` under a False block when prints `skipping:`, rc=0).
-    # Returns true when the task was converted into a FAILURE by a
+    # Returns :failed when the task was converted into a FAILURE by a
     # loop_control.label that could not template (already fully booked
-    # here), false when it stayed a plain skip.
-    private def print_skipped_looped_task(task : Task, host : Host, inherited_when : String?) : Bool
+    # here), :registered when the loop source resolved to a list and the
+    # aggregate was written here, :flat_skip when it stayed the plain
+    # conditional skip the caller registers.
+    private def print_skipped_looped_task(task : Task, host : Host, inherited_when : String?) : SkippedLoopedOutcome
       connection_host = host.name
       begin
         vars_context = build_vars_context(task, host, loop_lenient_vars: true)
@@ -1901,7 +1923,7 @@ module Krikri
         # failed, but the inherited when: is False anyway, so the task is
         # skipped - one line, like a non-looped child.
         puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(task, host, inherited_when)).colorize(:cyan)
-        return false
+        return SkippedLoopedOutcome::FlatSkip
       end
       loop_vars_context = loop_source_vars_context(task, host, vars_context)
       loop_shared_sub = task.loop_fileglob || task.loop_file ? VarSubstitutor.new(vars: loop_vars_context, host_name: host.name) : nil
@@ -1928,19 +1950,20 @@ module Krikri
         # One clean failed task, banner already printed by the caller.
         emit_loop_source_error_block(task, ex)
         finish_single_task(task, host, loop_source_error_result(ex, task), vars_context: vars_context)
-        return true
+        return SkippedLoopedOutcome::Failed
       rescue
         nil
       end
 
       if loop_items.nil?
         puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(task, host, inherited_when)).colorize(:cyan)
-        return false
+        return SkippedLoopedOutcome::FlatSkip
       end
 
       if loop_items.empty?
         puts Krikri::Oneline.skip_line(connection_host, Krikri::ResultDisplay.skip_line_suffix_empty_loop).colorize(:cyan)
-        return false
+        register_skipped_loop_aggregate(task, host, [] of JSON::Any, inherited_when)
+        return SkippedLoopedOutcome::Registered
       end
 
       rendered_items = begin
@@ -1950,7 +1973,7 @@ module Krikri
       end
       if rendered_items.nil?
         puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(task, host, inherited_when)).colorize(:cyan)
-        return false
+        return SkippedLoopedOutcome::FlatSkip
       end
       # Same one-level flatten the executed loop applies (executor_loops).
       # Real never shows an unflattened element as an (item=...) label on
@@ -1962,7 +1985,8 @@ module Krikri
         rendered_items = flatten_with_items_one_level(rendered_items)
         if rendered_items.empty?
           puts Krikri::Oneline.skip_line(connection_host, Krikri::ResultDisplay.skip_line_suffix_empty_loop).colorize(:cyan)
-          return false
+          register_skipped_loop_aggregate(task, host, [] of JSON::Any, inherited_when)
+          return SkippedLoopedOutcome::Registered
         end
       end
 
@@ -2054,14 +2078,47 @@ module Krikri
           debug_fatal_host = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
           puts "fatal: [#{debug_fatal_host}]: FAILED! => #{Krikri::ResultDisplay.dump_suffix(dump)}".colorize(:red)
         end
-        return true
+        return SkippedLoopedOutcome::Failed
       end
       # Every item is condition-skipped here, so the trailing line is the
       # all-items-skipped aggregate, same as the executed loop path's
       # executed_count == 0 branch. Real's dump only carries "changed":
       # false for non-debug modules (see skip_line_suffix_all_skipped).
       puts Krikri::Oneline.skip_line(connection_host, Krikri::ResultDisplay.skip_line_suffix_all_skipped(changed: !is_debug)).colorize(:cyan)
-      false
+      register_skipped_loop_aggregate(task, host, rendered_items, inherited_when)
+      SkippedLoopedOutcome::Registered
+    end
+
+    # The registered result of a looped task a when:-false BLOCK skipped
+    # once its loop source resolved: real records EVERY item in the loop
+    # aggregate's `results` (each the ordinary per-item conditional skip
+    # dict, carrying the block's clause as false_condition), so a later
+    # `loop: "{{ registered.results }}"` iterates them and prints one
+    # skipping line per item - registering the flat conditional skip
+    # here left that downstream loop with zero items and a single bare
+    # skipping line where real prints one per item (issue #1733). An
+    # empty (or flattening-to-empty) source registers the distinct
+    # "No items in the list" aggregate instead.
+    private def register_skipped_loop_aggregate(task : Task, host : Host, items : Array(JSON::Any), inherited_when : String?) : Nil
+      register_name = task.register
+      return if register_name.nil? || register_name.empty?
+
+      aggregate = {} of String => JSON::Any
+      if items.empty?
+        aggregate["skipped"] = JSON::Any.new(true)
+        aggregate["skip_reason"] = JSON::Any.new("No items in the list")
+        aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
+        aggregate["results"] = JSON::Any.new([] of JSON::Any)
+        Krikri::ResultDisplay.mark_deprecated_skipped_reason("No items in the list")
+      else
+        entries = items.map_with_index { |item, idx| JSON::Any.new(loop_item_skip_result(task, item, idx, inherited_when)) }
+        aggregate["skipped"] = JSON::Any.new(true)
+        aggregate["msg"] = JSON::Any.new("All items skipped")
+        aggregate["results"] = JSON::Any.new(entries)
+      end
+      ResultShape.normalize_registered!(aggregate)
+      @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
+      @hv_generation += 1
     end
 
     # The -v dump appended to a when:-false skipped line. Real keys the

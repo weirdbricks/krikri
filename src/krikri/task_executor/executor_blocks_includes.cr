@@ -74,15 +74,20 @@ module Krikri
       propagate_role_context(task, task.block_tasks || [] of Task)
       propagate_role_context(task, task.always_tasks || [] of Task)
 
-      run_hosts, skip_hosts = partition_by_when(task, hosts, inherit_on_error: true)
+      skip_conditions = Hash(String, String).new
+      run_hosts, skip_hosts = partition_by_when(task, hosts, inherit_on_error: true, skip_conditions: skip_conditions)
 
       skip_hosts.each do |host|
         # A block's when: is inherited by every task inside block: and
         # always: (verified against ansible-playbook) - rescue: is
         # left alone since it only ever runs if the block itself
         # actually failed, which can't happen when it never ran at all.
-        print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition, task)
-        print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition, task)
+        # Per-host failing clause, not the block's merged chain: real
+        # reports only the clause of the inherited list that evaluated
+        # False (see execute_block's own note, issue #1733).
+        failed_clause = skip_conditions[host.name]? || task.when_condition
+        print_skipped_tasks(task.block_tasks || [] of Task, host, failed_clause, task)
+        print_skipped_tasks(task.always_tasks || [] of Task, host, failed_clause, task)
       end
       return if run_hosts.empty?
 
@@ -2359,8 +2364,17 @@ module Krikri
           # aggregate line for the block) - rescue: is left alone since
           # it only ever runs if the block itself actually failed, which
           # can't happen when it never ran at all.
-          print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition, task)
-          print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition, task)
+          #
+          # Only the CLAUSE that evaluated False is handed down: a block
+          # nested inside a passing block carries its parent's clause
+          # prepended to its when: list, and real evaluates that list
+          # clause by clause, reporting the first False one as the skip's
+          # false_condition - handing down the merged chain named a
+          # condition the playbook never wrote (t2d.ansible_role_libvirt_vm's
+          # nested autodetect blocks, issue #1733).
+          failed_clause = @last_false_condition || task.when_condition
+          print_skipped_tasks(task.block_tasks || [] of Task, host, failed_clause, task)
+          print_skipped_tasks(task.always_tasks || [] of Task, host, failed_clause, task)
           return
         end
       end
