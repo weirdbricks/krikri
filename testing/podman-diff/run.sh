@@ -56,7 +56,7 @@ podman exec "$NAME_A" bash -c "ansible-galaxy collection install ansible.posix:=
   || { log "FATAL: collection install failed"; exit 1; }
 
 log "staging krikri-playbook in $NAME_B"
-podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libxml2 libssl3 libyaml-0-2 libpcre2-8-0 python3 procps cron gnupg git >/dev/null" \
+podman exec "$NAME_B" bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends libssl3 libyaml-0-2 libpcre2-8-0 python3 procps cron gnupg git >/dev/null" \
   || { log "FATAL: runtime lib install failed"; exit 1; }
 podman exec "$NAME_B" bash -c "mkdir -p /opt/krikri/bin"
 podman cp "$REPO_DIR/bin/krikri-playbook" "$NAME_B:/opt/krikri/bin/krikri-playbook"
@@ -328,12 +328,11 @@ fi
 # xml cases: the real community.general.xml imports lxml in the REAL
 # container - without python3-lxml every case fails on the import
 # instead of exercising the xpath/mutation logic. krikri's xml plugin
-# uses native libxml2 (already installed in the krikri container) but
-# its kpg32 gate probes the target's python for lxml to mirror exactly
-# that import failure - with the package only in the real container the
-# gate fires on the krikri side and every case diverges on provisioning
-# instead of behavior. Gated on the requested case list like the
-# htpasswd cases.
+# parses with krikri-xml (pure Crystal, no libxml2) but its kpg32 gate
+# probes the target's python for lxml to mirror exactly that import
+# failure - with the package only in the real container the gate fires
+# on the krikri side and every case diverges on provisioning instead of
+# behavior. Gated on the requested case list like the htpasswd cases.
 if printf '%s\n' "${cases[@]}" | grep -q '^xml'; then
   log "installing python3-lxml for xml cases"
   for c in "$NAME_A" "$NAME_B"; do

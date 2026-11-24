@@ -8,12 +8,13 @@ FROM docker.io/library/rockylinux:9
 # update_cache: true) needs a real, non-empty cache to find anything at
 # all, and an empty one fails identically on both engines regardless of
 # which is actually being tested.
-# Same libxml2 reasoning as Containerfile (Debian): the fat plugin binary
-# links libxml2.so.2, and a guest without it fails every plugin at load
-# time with exit 127.
+# Same shared-library reasoning as Containerfile (Debian): a library a
+# plugin binary links must be present or every plugin dies at load time
+# with exit 127. libxml2 is no longer one of them (krikri-xml is pure
+# Crystal), so it is not installed here.
 RUN dnf makecache -y && dnf install -y --allowerasing \
         systemd \
-        openssh-server python3 python3-libselinux libxml2 \
+        openssh-server python3 python3-libselinux \
         iproute kmod procps-ng \
         curl gnupg2 unzip ca-certificates sudo \
     && mkdir -p /root/.ssh && chmod 700 /root/.ssh \

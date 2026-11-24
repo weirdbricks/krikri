@@ -198,19 +198,19 @@ is the record of *why*, so nobody re-derives it.
    now refuses to start a VM without the key present.
 
 10. **A base-image refresh can silently drop libraries krikri's plugin
-    binary links - libxml2 most recently.** Re-running `build.sh`
-    re-pulls `debian:trixie`/`rockylinux:9`, and the fresh base is a
-    moving target. When trixie's dependency closure for the
-    Containerfile's package list stopped carrying `libxml2.so.2`, every
-    krikri plugin died at load time on the rebuilt guests (exit 127,
-    `error while loading shared libraries`) - surfacing as
-    `Plugin execution failed on remote` on the first Gathering Facts
-    task of all 36 kata roles in the 2026-09-10 round, while
-    ansible-playbook (python-only) ran fine on the same hosts. The
-    Containerfiles now install `libxml2` explicitly; if a future base
-    refresh moves another library, the same signature (every plugin,
-    exit 127, first plugin call) means check `ldd bin/plugins/facts`
-    against what the guest actually ships.
+    binary links.** Re-running `build.sh` re-pulls
+    `debian:trixie`/`rockylinux:9`, and the fresh base is a moving
+    target. When trixie's dependency closure for the Containerfile's
+    package list stopped carrying `libxml2.so.2`, every krikri plugin
+    died at load time on the rebuilt guests (exit 127, `error while
+    loading shared libraries`) - surfacing as `Plugin execution failed
+    on remote` on the first Gathering Facts task of all 36 kata roles in
+    the 2026-09-10 round, while ansible-playbook (python-only) ran fine
+    on the same hosts. krikri's plugins no longer link libxml2 (the XML
+    and STS consumers use `krikri-xml`, pure Crystal), so that specific
+    library is gone rather than pinned; the general rule stays - the
+    same signature (every plugin, exit 127, first plugin call) means
+    check `ldd bin/plugins/facts` against what the guest actually ships.
 
 ## Verified
 
