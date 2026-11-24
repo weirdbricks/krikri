@@ -102,9 +102,9 @@ describe "become password command construction (become_password_test.cr)" do
   describe "SSHManager daemon sudo command" do
     it "keeps sudo -n (clean framed stdin) when no password is needed" do
       Krikri::SSHManager.daemon_remote_command("/p/command", "deploy")
-        .must_equal("sudo -H -n -u 'deploy' -- '/p/command' --daemon")
+        .must_equal("unset PS1; sudo -H -n -u 'deploy' -- '/p/command' --daemon")
       Krikri::SSHManager.daemon_remote_command("/p/command", nil)
-        .must_equal("'/p/command' --daemon")
+        .must_equal("unset PS1; '/p/command' --daemon")
     end
 
     it "switches to sudo -S -p '' for the probed password case" do
@@ -113,7 +113,7 @@ describe "become password command construction (become_password_test.cr)" do
       # the remote shell's `bash -c`. #spawn_daemon writes the password
       # line into the daemon's stdin pipe ahead of the frames instead.
       cmd = Krikri::SSHManager.daemon_remote_command("/p/command", "deploy", true)
-      cmd.must_equal("sudo -H -S -p '' -u 'deploy' -- '/p/command' --daemon")
+      cmd.must_equal("unset PS1; sudo -H -S -p '' -u 'deploy' -- '/p/command' --daemon")
       cmd.includes?("deploy'").must_equal(true)
     end
 
@@ -124,11 +124,23 @@ describe "become password command construction (become_password_test.cr)" do
       # (live-verified against ansible-core 2.21.6, issue #1564), so the
       # non-become daemon carries it as well (issue #606).
       Krikri::SSHManager.daemon_remote_command("/p/command", "deploy", false, "xterm-ghostty")
-        .must_equal("TERM='xterm-ghostty' sudo -H -n -u 'deploy' -- '/p/command' --daemon")
+        .must_equal("unset PS1; TERM='xterm-ghostty' sudo -H -n -u 'deploy' -- '/p/command' --daemon")
       Krikri::SSHManager.daemon_remote_command("/p/command", nil, false, "xterm-ghostty")
-        .must_equal("TERM='xterm-ghostty' '/p/command' --daemon")
+        .must_equal("unset PS1; TERM='xterm-ghostty' '/p/command' --daemon")
       Krikri::SSHManager.daemon_remote_command("/p/command", "deploy", false, "")
-        .must_equal("sudo -H -n -u 'deploy' -- '/p/command' --daemon")
+        .must_equal("unset PS1; sudo -H -n -u 'deploy' -- '/p/command' --daemon")
+    end
+
+    it "drops PS1 leaked by an sshd-invoked login profile (issue #1747)" do
+      # Amazon Linux 2023's bash (RHEL's SSH_SOURCE_BASHRC patch) sources
+      # ~/.bashrc for the sshd `bash -c` that launches the daemon,
+      # exporting PS1 from /etc/profile.d. Ansible's module, run through
+      # /bin/sh -c, never sees it; the daemon must drop it so every
+      # command: task it serves matches ansible-core's environment.
+      Krikri::SSHManager.daemon_remote_command("/p/command", nil)
+        .starts_with?("unset PS1; ").must_equal(true)
+      Krikri::SSHManager.daemon_remote_command("/p/command", "deploy", true, "xterm-ghostty")
+        .starts_with?("unset PS1; TERM='xterm-ghostty'").must_equal(true)
     end
   end
 

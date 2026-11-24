@@ -1164,12 +1164,22 @@ module Krikri
     # keeps the target's own TERM.
     def self.daemon_remote_command(remote_binary_path : String, become_user : String?, sudo_needs_password : Bool = false, term : String? = nil) : String
       term_prefix = term && !term.empty? ? "TERM=#{shell_quote(term)} " : ""
-      return "#{term_prefix}#{shell_quote(remote_binary_path)} --daemon" unless become_user
+      # Issue #1747: RHEL-family bash builds (SSH_SOURCE_BASHRC) source
+      # ~/.bashrc - and through /etc/bashrc every /etc/profile.d script -
+      # for an sshd-invoked `bash -c`, so that shell already exports PS1
+      # by the time it launches us. Ansible's module process never sees
+      # PS1 (its command runs through `/bin/sh -c`, and bash-as-sh drops
+      # PS1 for non-interactive children), and neither does krikri's
+      # one-shot path (`bash -s` drops it). A resident daemon exec'd
+      # straight from this shell would hand PS1 to every task it serves,
+      # so drop it here, before the plugin starts.
+      ps1_prefix = "unset PS1; "
+      return "#{ps1_prefix}#{term_prefix}#{shell_quote(remote_binary_path)} --daemon" unless become_user
       # -H (set HOME to the become user's) is part of ansible's sudo
       # become plugin's own defaults - without it the daemon keeps
       # HOME=/root and ~/.ansible/tmp resolves wrong (issue #629).
       flags = sudo_needs_password ? "-H -S -p ''" : "-H -n"
-      "#{term_prefix}sudo #{flags} -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
+      "#{ps1_prefix}#{term_prefix}sudo #{flags} -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
     end
 
     private def self.write_daemon_frame(io : IO, payload : String) : Nil
