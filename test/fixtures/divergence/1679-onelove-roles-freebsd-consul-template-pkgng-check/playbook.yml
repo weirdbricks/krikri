@@ -1,8 +1,0 @@
----
-# The play krikri-role-tester runs for the role; only the inventory and the
-# local connection differ (the round's testhost was reached over ssh).
-- hosts: localhost
-  connection: local
-  gather_facts: true
-  roles:
-    - onelove-roles.freebsd-consul-template

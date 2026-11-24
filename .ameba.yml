@@ -11,19 +11,16 @@
 Lint/Formatting:
   Excluded:
   - plugins/lvol.cr
-  - plugins/maven_artifact.cr
   - plugins/nsupdate.cr
   - plugins/package.cr
   - plugins/postgresql_query.cr
   - plugins/shell.cr
   - plugins/template.cr
   - test/integration/apt_param_coverage_test.cr
-  - test/integration/maven_artifact_test.cr
   - test/unit/add_host_action_plugin_test.cr
   - test/unit/ansible_mounts_numeric_stats_test.cr
   - test/unit/ec2_instance_test.cr
   - test/unit/nsupdate_message_test.cr
-  - test/unit/zfs_commands_test.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/playbook_parser.cr
   - src/krikri/plugin_helpers/dpkg_divert_command.cr
@@ -31,7 +28,6 @@ Lint/Formatting:
   - src/krikri/plugin_helpers/nsupdate_message.cr
   - src/krikri/plugin_helpers/rpm_package.cr
   - src/krikri/plugin_helpers/virsh_net.cr
-  - src/krikri/plugin_helpers/zfs_commands.cr
   - src/krikri/task_executor/executor_blocks_includes.cr
   - src/krikri/task_executor/executor_task_exec.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
@@ -58,9 +54,7 @@ Lint/NotNil:
   - plugins/assemble.cr
   - plugins/docker_login.cr
   - plugins/dpkg_divert.cr
-  - plugins/java_cert.cr
   - plugins/lvol.cr
-  - plugins/maven_artifact.cr
   - plugins/nsupdate.cr
   - plugins/postgresql_query.cr
   - plugins/replace.cr
@@ -118,12 +112,10 @@ Metrics/CyclomaticComplexity:
   - plugins/get_url.cr
   - plugins/getent.cr
   - plugins/git.cr
-  - plugins/java_cert.cr
   - plugins/lineinfile.cr
   - plugins/locale_gen.cr
   - plugins/lvol.cr
   - plugins/make.cr
-  - plugins/maven_artifact.cr
   - plugins/mysql_variables.cr
   - plugins/nsupdate.cr
   - plugins/openssl_csr.cr
@@ -150,7 +142,6 @@ Metrics/CyclomaticComplexity:
   - plugins/virt_net.cr
   - plugins/x509_certificate.cr
   - plugins/xml.cr
-  - plugins/zfs.cr
   - src/krikri/conditional_evaluator.cr
   - src/krikri/inventory_parser.cr
   - src/krikri/ipaddr_core.cr
@@ -212,7 +203,6 @@ Lint/NotNilAfterNoBang:
 Lint/WhitespaceAroundMacroExpression:
   Excluded:
   - test/unit/dnf_yum_arg_spec_validation_test.cr
-  - test/unit/rabbitmq_plugin_resolution_test.cr
   - test/unit/bool_param_validation_test.cr
   - test/unit/playbook_parser_test.cr
   - test/unit/openssl_certificate_info_alias_test.cr
@@ -221,7 +211,6 @@ Lint/WhitespaceAroundMacroExpression:
 Lint/UselessAssign:
   Excluded:
   - test/unit/expression_evaluator_test.cr
-  - test/unit/maven_artifact_command_test.cr
 
 Naming/BlockParameterName:
   Excluded:
@@ -305,7 +294,6 @@ Style/HeredocIndent:
   - test/unit/ec2_vpc_subnet_info_test.cr
   - test/unit/iam_user_test.cr
   - test/unit/inventory_plugins_test.cr
-  - test/unit/maven_artifact_command_test.cr
   - test/unit/modprobe_command_test.cr
   - test/unit/proc_net_tcp_test.cr
   - test/unit/systemd_restart_failure_wording_test.cr

@@ -9,7 +9,7 @@
 #   openssl_csr, openssl_csr_info, openssl_dhparam, openssl_pkcs12,
 #   openssl_privatekey, openssl_privatekey_info, openssl_publickey,
 #   openssl_publickey_info, x509_certificate, x509_certificate_info,
-#   openssh_keypair, get_certificate, java_cert
+#   openssh_keypair, get_certificate
 # (the crypto family lives in tasks_security_certs.yml, pulled in via
 # include_tasks so this playbook also exercises the include machinery).
 #
@@ -29,8 +29,7 @@
 # - Modules with no reachable backend on the target are gated with
 #   capability probes so they SKIP the way Ansible does
 #   (skipped: in the recap), never faked: the SELinux family (no
-#   SELinux on Debian-family hosts), firewalld (RHEL-family), and
-#   java_cert unless a JDK (keytool) happens to be installed.
+#   SELinux on Debian-family hosts) and firewalld (RHEL-family).
 # - Package installs are a deliberate exception (like zfsutils-linux
 #   in synthetic_batch_bench.yml): libcap2-bin/iptables/ufw are the
 #   minimum tooling for this theme and every rule they enable is
@@ -185,12 +184,6 @@
       failed_when: false
       changed_when: false
 
-    - name: Probe java keytool
-      ansible.builtin.command: which keytool
-      register: sec_keytool_probe
-      failed_when: false
-      changed_when: false
-
     # DELIBERATE EXCEPTION to this playbook's "no packages" rule:
     # libcap2-bin (setcap/getcap), iptables and ufw are the minimum
     # tooling this theme needs and are absent from stripped-down
@@ -241,11 +234,6 @@
       ansible.builtin.debug:
         msg: "skipping capabilities section: setcap absent (no libcap2-bin)"
       when: sec_setcap_probe.rc != 0
-
-    - name: Report java keytool unavailable
-      ansible.builtin.debug:
-        msg: "skipping java_cert section: keytool absent (no JDK installed)"
-      when: sec_keytool_probe.rc != 0
 
     # ---------------------------------------------------------------
     # user: create throwaway accounts with real homes under the bench
@@ -1116,8 +1104,8 @@
       when: sec_setcap_probe.rc == 0
 
     # ---------------------------------------------------------------
-    # Crypto family (openssl_*/x509_*/openssh_keypair/get_certificate/
-    # java_cert): lives in the included file so this playbook also
+    # Crypto family (openssl_*/x509_*/openssh_keypair/get_certificate):
+    # lives in the included file so this playbook also
     # exercises include_tasks with a real, fact-dependent section.
     # ---------------------------------------------------------------
     - name: Include crypto module coverage tasks

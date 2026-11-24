@@ -3293,6 +3293,70 @@
    "parents"
   ]
  },
+ "ansible.builtin.homebrew": {
+  "mutually_exclusive": [],
+  "options": {
+   "name": {
+    "aliases": [
+     "formula",
+     "package",
+     "pkg"
+    ],
+    "type": "list",
+    "elements": "str"
+   },
+   "path": {
+    "type": "path",
+    "default": "/usr/local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin"
+   },
+   "state": {
+    "type": "str",
+    "choices": [
+     "present",
+     "installed",
+     "latest",
+     "upgraded",
+     "head",
+     "linked",
+     "unlinked",
+     "absent",
+     "removed",
+     "uninstalled"
+    ],
+    "default": "present"
+   },
+   "update_homebrew": {
+    "type": "bool",
+    "default": false
+   },
+   "upgrade_all": {
+    "aliases": [
+     "upgrade"
+    ],
+    "type": "bool",
+    "default": false
+   },
+   "install_options": {
+    "aliases": [
+     "options"
+    ],
+    "type": "list",
+    "elements": "str"
+   },
+   "upgrade_options": {
+    "type": "list",
+    "elements": "str"
+   },
+   "force_formula": {
+    "type": "bool",
+    "default": false
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [],
+  "required_together": []
+ },
  "ansible.builtin.hostname": {
   "mutually_exclusive": [],
   "options": {
@@ -10087,6 +10151,70 @@
   "required_one_of": [],
   "required_together": []
  },
+ "community.general.cpanm": {
+  "mutually_exclusive": [],
+  "options": {
+   "name": {
+    "aliases": [
+     "pkg"
+    ],
+    "type": "str"
+   },
+   "version": {
+    "type": "str"
+   },
+   "from_path": {
+    "type": "path"
+   },
+   "notest": {
+    "type": "bool",
+    "default": false
+   },
+   "locallib": {
+    "type": "path"
+   },
+   "mirror": {
+    "type": "str"
+   },
+   "mirror_only": {
+    "type": "bool",
+    "default": false
+   },
+   "installdeps": {
+    "type": "bool",
+    "default": false
+   },
+   "install_recommendations": {
+    "type": "bool"
+   },
+   "install_suggestions": {
+    "type": "bool"
+   },
+   "executable": {
+    "type": "path"
+   },
+   "mode": {
+    "type": "str",
+    "choices": [
+     "compatibility",
+     "new"
+    ],
+    "default": "new"
+   },
+   "name_check": {
+    "type": "str"
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [
+   [
+    "name",
+    "from_path"
+   ]
+  ],
+  "required_together": []
+ },
  "community.general.cronvar": {
   "mutually_exclusive": [
    [
@@ -10129,99 +10257,6 @@
   },
   "required_by": {},
   "required_if": [],
-  "required_one_of": [],
-  "required_together": []
- },
- "community.general.deploy_helper": {
-  "mutually_exclusive": [],
-  "options": {
-   "path": {
-    "aliases": [
-     "dest"
-    ],
-    "type": "path",
-    "required": true
-   },
-   "release": {
-    "type": "str"
-   },
-   "releases_path": {
-    "type": "str",
-    "default": "releases"
-   },
-   "shared_path": {
-    "type": "path",
-    "default": "shared"
-   },
-   "current_path": {
-    "type": "path",
-    "default": "current"
-   },
-   "keep_releases": {
-    "type": "int",
-    "default": 5
-   },
-   "clean": {
-    "type": "bool",
-    "default": true
-   },
-   "unfinished_filename": {
-    "type": "str",
-    "default": "DEPLOY_UNFINISHED"
-   },
-   "state": {
-    "type": "str",
-    "choices": [
-     "present",
-     "absent",
-     "clean",
-     "finalize",
-     "query"
-    ],
-    "default": "present"
-   },
-   "mode": {
-    "type": "raw"
-   },
-   "owner": {
-    "type": "str"
-   },
-   "group": {
-    "type": "str"
-   },
-   "seuser": {
-    "type": "str"
-   },
-   "serole": {
-    "type": "str"
-   },
-   "selevel": {
-    "type": "str"
-   },
-   "setype": {
-    "type": "str"
-   },
-   "attributes": {
-    "aliases": [
-     "attr"
-    ],
-    "type": "str"
-   },
-   "unsafe_writes": {
-    "type": "bool",
-    "default": false
-   }
-  },
-  "required_by": {},
-  "required_if": [
-   [
-    "state",
-    "finalize",
-    [
-     "release"
-    ]
-   ]
-  ],
   "required_one_of": [],
   "required_together": []
  },
@@ -10286,70 +10321,6 @@
   "required_by": {},
   "required_if": [],
   "required_one_of": [],
-  "required_together": []
- },
- "community.general.cpanm": {
-  "mutually_exclusive": [],
-  "options": {
-   "name": {
-    "aliases": [
-     "pkg"
-    ],
-    "type": "str"
-   },
-   "version": {
-    "type": "str"
-   },
-   "from_path": {
-    "type": "path"
-   },
-   "notest": {
-    "type": "bool",
-    "default": false
-   },
-   "locallib": {
-    "type": "path"
-   },
-   "mirror": {
-    "type": "str"
-   },
-   "mirror_only": {
-    "type": "bool",
-    "default": false
-   },
-   "installdeps": {
-    "type": "bool",
-    "default": false
-   },
-   "install_recommendations": {
-    "type": "bool"
-   },
-   "install_suggestions": {
-    "type": "bool"
-   },
-   "executable": {
-    "type": "path"
-   },
-   "mode": {
-    "type": "str",
-    "choices": [
-     "compatibility",
-     "new"
-    ],
-    "default": "new"
-   },
-   "name_check": {
-    "type": "str"
-   }
-  },
-  "required_by": {},
-  "required_if": [],
-  "required_one_of": [
-   [
-    "name",
-    "from_path"
-   ]
-  ],
   "required_together": []
  },
  "community.general.easy_install": {
@@ -10813,136 +10784,6 @@
   "required_one_of": [],
   "required_together": []
  },
- "community.general.java_cert": {
-  "mutually_exclusive": [
-   [
-    "cert_url",
-    "cert_path",
-    "cert_content",
-    "pkcs12_path"
-   ]
-  ],
-  "options": {
-   "cert_url": {
-    "type": "str"
-   },
-   "cert_path": {
-    "type": "path"
-   },
-   "cert_content": {
-    "type": "str"
-   },
-   "pkcs12_path": {
-    "type": "path"
-   },
-   "pkcs12_password": {
-    "type": "str",
-    "no_log": true
-   },
-   "pkcs12_alias": {
-    "type": "str"
-   },
-   "cert_alias": {
-    "type": "str"
-   },
-   "cert_port": {
-    "type": "int",
-    "default": 443
-   },
-   "keystore_path": {
-    "type": "path"
-   },
-   "keystore_pass": {
-    "type": "str",
-    "required": true,
-    "no_log": true
-   },
-   "trust_cacert": {
-    "type": "bool",
-    "default": false
-   },
-   "keystore_create": {
-    "type": "bool",
-    "default": false
-   },
-   "keystore_type": {
-    "type": "str"
-   },
-   "executable": {
-    "type": "str",
-    "default": "keytool"
-   },
-   "state": {
-    "type": "str",
-    "choices": [
-     "absent",
-     "present"
-    ],
-    "default": "present"
-   },
-   "mode": {
-    "type": "raw"
-   },
-   "owner": {
-    "type": "str"
-   },
-   "group": {
-    "type": "str"
-   },
-   "seuser": {
-    "type": "str"
-   },
-   "serole": {
-    "type": "str"
-   },
-   "selevel": {
-    "type": "str"
-   },
-   "setype": {
-    "type": "str"
-   },
-   "attributes": {
-    "aliases": [
-     "attr"
-    ],
-    "type": "str"
-   },
-   "unsafe_writes": {
-    "type": "bool",
-    "default": false
-   }
-  },
-  "required_by": {},
-  "required_if": [
-   [
-    "state",
-    "present",
-    [
-     "cert_path",
-     "cert_url",
-     "cert_content",
-     "pkcs12_path"
-    ],
-    true
-   ],
-   [
-    "state",
-    "absent",
-    [
-     "cert_url",
-     "cert_alias"
-    ],
-    true
-   ]
-  ],
-  "required_one_of": [],
-  "required_together": [
-   [
-    "keystore_path",
-    "keystore_pass"
-   ]
-  ]
- },
  "community.general.kernel_blacklist": {
   "mutually_exclusive": [],
   "options": {
@@ -11257,152 +11098,6 @@
    },
    "jobs": {
     "type": "int"
-   }
-  },
-  "required_by": {},
-  "required_if": [],
-  "required_one_of": [],
-  "required_together": []
- },
- "community.general.maven_artifact": {
-  "mutually_exclusive": [
-   [
-    "version",
-    "version_by_spec"
-   ]
-  ],
-  "options": {
-   "group_id": {
-    "type": "str",
-    "required": true
-   },
-   "artifact_id": {
-    "type": "str",
-    "required": true
-   },
-   "version": {
-    "type": "str"
-   },
-   "version_by_spec": {
-    "type": "str"
-   },
-   "classifier": {
-    "type": "str",
-    "default": ""
-   },
-   "extension": {
-    "type": "str",
-    "default": "jar"
-   },
-   "repository_url": {
-    "type": "str",
-    "default": "https://repo1.maven.org/maven2"
-   },
-   "username": {
-    "aliases": [
-     "aws_secret_key"
-    ],
-    "type": "str"
-   },
-   "password": {
-    "aliases": [
-     "aws_secret_access_key"
-    ],
-    "type": "str",
-    "no_log": true
-   },
-   "headers": {
-    "type": "dict"
-   },
-   "force_basic_auth": {
-    "type": "bool",
-    "default": false
-   },
-   "state": {
-    "type": "str",
-    "choices": [
-     "present",
-     "absent"
-    ],
-    "default": "present"
-   },
-   "timeout": {
-    "type": "int",
-    "default": 10
-   },
-   "dest": {
-    "type": "path",
-    "required": true
-   },
-   "validate_certs": {
-    "type": "bool",
-    "default": true
-   },
-   "client_cert": {
-    "type": "path"
-   },
-   "client_key": {
-    "type": "path"
-   },
-   "keep_name": {
-    "type": "bool",
-    "default": false
-   },
-   "verify_checksum": {
-    "type": "str",
-    "choices": [
-     "never",
-     "download",
-     "change",
-     "always"
-    ],
-    "default": "download"
-   },
-   "checksum_alg": {
-    "type": "str",
-    "choices": [
-     "md5",
-     "sha1"
-    ],
-    "default": "md5"
-   },
-   "unredirected_headers": {
-    "type": "list",
-    "elements": "str"
-   },
-   "directory_mode": {
-    "type": "str"
-   },
-   "mode": {
-    "type": "raw"
-   },
-   "owner": {
-    "type": "str"
-   },
-   "group": {
-    "type": "str"
-   },
-   "seuser": {
-    "type": "str"
-   },
-   "serole": {
-    "type": "str"
-   },
-   "selevel": {
-    "type": "str"
-   },
-   "setype": {
-    "type": "str"
-   },
-   "attributes": {
-    "aliases": [
-     "attr"
-    ],
-    "type": "str"
-   },
-   "unsafe_writes": {
-    "type": "bool",
-    "default": false
    }
   },
   "required_by": {},
@@ -12036,45 +11731,6 @@
   "required_one_of": [],
   "required_together": []
  },
- "community.general.snap": {
-  "mutually_exclusive": [],
-  "options": {
-   "name": {
-    "type": "list",
-    "required": true,
-    "elements": "str"
-   },
-   "state": {
-    "type": "str",
-    "choices": [
-     "absent",
-     "present",
-     "enabled",
-     "disabled"
-    ],
-    "default": "present"
-   },
-   "classic": {
-    "type": "bool",
-    "default": false
-   },
-   "channel": {
-    "type": "str"
-   },
-   "options": {
-    "type": "list",
-    "elements": "str"
-   },
-   "dangerous": {
-    "type": "bool",
-    "default": false
-   }
-  },
-  "required_by": {},
-  "required_if": [],
-  "required_one_of": [],
-  "required_together": []
- },
  "community.general.sudoers": {
   "mutually_exclusive": [
    [
@@ -12543,34 +12199,6 @@
     "type": "list",
     "required": true,
     "elements": "str"
-   }
-  },
-  "required_by": {},
-  "required_if": [],
-  "required_one_of": [],
-  "required_together": []
- },
- "community.general.zfs": {
-  "mutually_exclusive": [],
-  "options": {
-   "name": {
-    "type": "str",
-    "required": true
-   },
-   "state": {
-    "type": "str",
-    "required": true,
-    "choices": [
-     "absent",
-     "present"
-    ]
-   },
-   "origin": {
-    "type": "str"
-   },
-   "extra_zfs_properties": {
-    "type": "dict",
-    "default": {}
    }
   },
   "required_by": {},
@@ -13697,145 +13325,6 @@
   "required_one_of": [],
   "required_together": []
  },
- "community.rabbitmq.rabbitmq_plugin": {
-  "mutually_exclusive": [],
-  "options": {
-   "names": {
-    "aliases": [
-     "name"
-    ],
-    "type": "str",
-    "required": true
-   },
-   "new_only": {
-    "type": "bool",
-    "default": "no"
-   },
-   "state": {
-    "type": "str",
-    "choices": [
-     "enabled",
-     "disabled"
-    ],
-    "default": "enabled"
-   },
-   "broker_state": {
-    "type": "str",
-    "choices": [
-     "online",
-     "offline"
-    ],
-    "default": "online"
-   },
-   "prefix": {
-    "type": "str",
-    "default": null
-   }
-  },
-  "required_by": {},
-  "required_if": [],
-  "required_one_of": [],
-  "required_together": []
- },
- "community.rabbitmq.rabbitmq_user": {
-  "mutually_exclusive": [],
-  "options": {
-   "user": {
-    "aliases": [
-     "name",
-     "username"
-    ],
-    "type": "str",
-    "required": true
-   },
-   "password": {
-    "type": "str",
-    "default": null,
-    "no_log": true
-   },
-   "tags": {
-    "type": "str",
-    "default": null
-   },
-   "permissions": {
-    "type": "list",
-    "default": [],
-    "elements": "dict"
-   },
-   "vhost": {
-    "type": "str",
-    "default": "/"
-   },
-   "configure_priv": {
-    "type": "str",
-    "default": "^$"
-   },
-   "write_priv": {
-    "type": "str",
-    "default": "^$"
-   },
-   "read_priv": {
-    "type": "str",
-    "default": "^$"
-   },
-   "topic_permissions": {
-    "type": "list",
-    "default": [],
-    "elements": "dict"
-   },
-   "force": {
-    "type": "bool",
-    "default": "no"
-   },
-   "state": {
-    "type": "str",
-    "choices": [
-     "present",
-     "absent"
-    ],
-    "default": "present"
-   },
-   "node": {
-    "type": "str",
-    "default": "rabbit"
-   },
-   "update_password": {
-    "type": "str",
-    "choices": [
-     "on_create",
-     "always"
-    ],
-    "default": "on_create"
-   },
-   "login_protocol": {
-    "type": "str",
-    "choices": [
-     "http",
-     "https"
-    ],
-    "default": "http"
-   },
-   "login_host": {
-    "type": "str"
-   },
-   "login_port": {
-    "type": "str",
-    "default": "15672"
-   },
-   "login_user": {
-    "type": "str",
-    "no_log": true
-   },
-   "login_password": {
-    "type": "str",
-    "no_log": true
-   }
-  },
-  "required_by": {},
-  "required_if": [],
-  "required_one_of": [],
-  "required_together": []
- },
  "containers.podman.podman_image": {
   "mutually_exclusive": [
    [
@@ -14029,69 +13518,5 @@
     "password"
    ]
   ]
- },
- "ansible.builtin.homebrew": {
-  "mutually_exclusive": [],
-  "options": {
-   "name": {
-    "aliases": [
-     "formula",
-     "package",
-     "pkg"
-    ],
-    "type": "list",
-    "elements": "str"
-   },
-   "path": {
-    "type": "path",
-    "default": "/usr/local/bin:/opt/homebrew/bin:/home/linuxbrew/.linuxbrew/bin"
-   },
-   "state": {
-    "type": "str",
-    "choices": [
-     "present",
-     "installed",
-     "latest",
-     "upgraded",
-     "head",
-     "linked",
-     "unlinked",
-     "absent",
-     "removed",
-     "uninstalled"
-    ],
-    "default": "present"
-   },
-   "update_homebrew": {
-    "type": "bool",
-    "default": false
-   },
-   "upgrade_all": {
-    "aliases": [
-     "upgrade"
-    ],
-    "type": "bool",
-    "default": false
-   },
-   "install_options": {
-    "aliases": [
-     "options"
-    ],
-    "type": "list",
-    "elements": "str"
-   },
-   "upgrade_options": {
-    "type": "list",
-    "elements": "str"
-   },
-   "force_formula": {
-    "type": "bool",
-    "default": false
-   }
-  },
-  "required_by": {},
-  "required_if": [],
-  "required_one_of": [],
-  "required_together": []
  }
 }

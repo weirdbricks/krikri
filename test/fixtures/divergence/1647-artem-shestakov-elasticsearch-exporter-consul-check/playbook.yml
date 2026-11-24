@@ -1,9 +1,0 @@
----
-# The play krikri-role-tester runs for the role; only the inventory and the
-# role's become: differ. The round's testhost ran the role as root, while a
-# localhost capture cannot sudo (the consul task itself needs no root).
-- hosts: localhost
-  connection: local
-  gather_facts: true
-  roles:
-    - artem_shestakov.elasticsearch_exporter

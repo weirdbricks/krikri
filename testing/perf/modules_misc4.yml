@@ -3,11 +3,11 @@
 # playbooks (modules_files.yml, modules_packages.yml, modules_security.yml,
 # modules_systems.yml, modules_data.yml, modules_xml.yml,
 # modules_files_storage.yml, modules_misc2.yml, modules_misc3.yml).
-# Theme: the Docker-family, dynamic-DNS and ZFS
+# Theme: the Docker-family and dynamic-DNS
 # modules that had no synthetic coverage yet:
 #   docker_container, docker_image, docker_image_build, docker_login,
 #   docker_network, docker_network_info, docker_compose_v2,
-#   nsupdate, zfs
+#   nsupdate
 #
 # SAFETY CONTRACT FOR THIS BATCH - STRONGER THAN THE SIBLINGS':
 # EVERYTHING here is LOCAL-ONLY. No AWS,
@@ -15,7 +15,7 @@
 # localhost/loopback is ever contacted for mutation. Every section
 # gates on local capability probes and is EXPECTED to skip cleanly on
 # most stock containers (a clean all-skip run on a plain Ubuntu or
-# Rocky container with none of docker/zfs/bind
+# Rocky container with none of docker/bind
 # installed is the correct outcome, not a shortcoming - this playbook
 # must produce ZERO failed tasks there).
 #
@@ -50,15 +50,6 @@
 #   updates for it. Stock containers have no such server, so this
 #   always skips cleanly here by design; bind9/named is deliberately
 #   NOT installed or started as a side effect.
-# - zfs gates on `which zpool` AND `which zfs` AND real kernel ZFS
-#   support (/dev/zfs, the same probe synthetic_batch_bench.yml uses)
-#   AND loop-device availability (losetup -f, the same probe
-#   modules_files.yml uses for the filesystem/lvg/lvol/parted family).
-#   When an existing run-scoped pool is not found, a throwaway pool is
-#   created on a sparse loopback file under the run-scoped /tmp root
-#   (same pattern as the block-device family), and everything -
-#   dataset, snapshot, pool, loop attachment, image file - is torn
-#   down again at the end.
 #
 # Same conventions as the sibling playbooks: run-scoped vars derived
 # from the epoch run id, all mutations confined to
@@ -92,10 +83,6 @@
     mm4_compose_project: "krikri_mm4_{{ mm4_run_id }}"
     # ZFS: throwaway pool + dataset + snapshot on a sparse loopback
     # file under the run-scoped root.
-    mm4_pool: "krikri_mm4_{{ mm4_run_id }}"
-    mm4_zfs_dataset: "krikri_mm4_{{ mm4_run_id }}/data"
-    mm4_zfs_snapshot: "krikri_mm4_{{ mm4_run_id }}/data@mm4{{ mm4_run_id }}"
-    mm4_zfs_img: "{{ mm4_dir }}/zpool.img"
     # nsupdate: the run-scoped zone is a .invalid name that no real DNS
     # hierarchy serves - only a deliberately-configured local dynamic
     # server (virtually never present) could possibly accept it.
@@ -232,31 +219,6 @@
       changed_when: false
       when: mm4_nsupdate_probe.rc == 0 and mm4_dns_listener_probe.rc | default(1) == 0
 
-    # zfs gates: tooling, real kernel ZFS support, loop devices.
-    - name: Probe zpool binary
-      ansible.builtin.command: which zpool
-      register: mm4_zpool_probe
-      failed_when: false
-      changed_when: false
-
-    - name: Probe zfs binary
-      ansible.builtin.command: which zfs
-      register: mm4_zfs_probe
-      failed_when: false
-      changed_when: false
-
-    - name: Probe ZFS kernel support
-      ansible.builtin.command: test -c /dev/zfs
-      register: mm4_devzfs_probe
-      failed_when: false
-      changed_when: false
-
-    - name: Probe loop device support
-      ansible.builtin.command: losetup -f
-      register: mm4_loop_probe
-      failed_when: false
-      changed_when: false
-
     # ---------------------------------------------------------------
     # Skip notices - one clean debug per skipped section, never a
     # failure. This is what a plain Ubuntu/Rocky container run should
@@ -287,10 +249,6 @@
         msg: "skipping nsupdate section: nsupdate absent, no local nameserver on 127.0.0.1:53, or no dynamic-update-capable zone (the expected case on every stock container)"
       when: mm4_nsupdate_probe.rc != 0 or mm4_dns_listener_probe.rc | default(1) != 0 or mm4_nsupdate_capable_probe.rc | default(1) != 0
 
-    - name: Notice zfs section skipped
-      ansible.builtin.debug:
-        msg: "skipping zfs section: zpool/zfs absent, /dev/zfs absent (host kernel has no zfs module) or loop devices unavailable"
-      when: mm4_zpool_probe.rc != 0 or mm4_zfs_probe.rc != 0 or mm4_devzfs_probe.rc != 0 or mm4_loop_probe.rc != 0
 
     # ---------------------------------------------------------------
     # docker_container: one throwaway run_id-scoped container from the
@@ -653,130 +611,9 @@
       when: mm4_nsupdate_probe.rc == 0 and mm4_dns_listener_probe.rc | default(1) == 0 and mm4_nsupdate_capable_probe.rc | default(1) == 0
 
     # ---------------------------------------------------------------
-    # zfs: gated on zpool+zfs binaries, real kernel ZFS support
-    # (/dev/zfs) and loop devices. Reuses a leftover run-scoped pool if
-    # one exists, otherwise creates one on a sparse loopback file under
-    # the run-scoped root (modules_files.yml's block-device pattern).
-    # Exercises dataset create with a property, idempotency re-assert,
-    # a property CHANGE (zfs set path) + read-back, and a snapshot -
-    # everything destroyed again in cleanup.
-    # ---------------------------------------------------------------
-    - name: Check whether the run-scoped zfs pool already exists
-      ansible.builtin.command: zpool list "{{ mm4_pool }}"
-      register: mm4_pool_check
-      failed_when: false
-      changed_when: false
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0
-
-    - name: Create the sparse loopback image for the pool
-      ansible.builtin.command: truncate -s 128M "{{ mm4_zfs_img }}"
-      args:
-        creates: "{{ mm4_zfs_img }}"
-      register: mm4_zfs_img_create
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0
-
-    - name: Attach the loopback image to a loop device
-      ansible.builtin.command: losetup --find --show "{{ mm4_zfs_img }}"
-      register: mm4_loop_attach
-      changed_when: true
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0
-
-    - name: Create the run-scoped zfs pool on the loop device
-      ansible.builtin.command: zpool create -f "{{ mm4_pool }}" "{{ mm4_loop_attach.stdout | default('') }}"
-      register: mm4_pool_create
-      changed_when: true
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0 and (mm4_loop_attach.stdout | default('')) | trim | length > 0
-
-    # Everything below only runs when the pool actually exists (either
-    # freshly created or a leftover from an interrupted earlier run).
-    - name: Notice zfs exercise skipped (no usable pool)
-      ansible.builtin.debug:
-        msg: "skipping zfs exercise: zfs tooling present but no run-scoped pool and loop-device attach failed"
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and mm4_pool_check.rc | default(1) != 0 and mm4_pool_create.rc | default(1) != 0
-
-    - name: Create throwaway zfs dataset with a property
-      community.general.zfs:
-        name: "{{ mm4_zfs_dataset }}"
-        state: present
-        extra_zfs_properties:
-          compression: "on"
-      register: mm4_zfs_dataset_create
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Re-assert throwaway zfs dataset (idempotency check)
-      community.general.zfs:
-        name: "{{ mm4_zfs_dataset }}"
-        state: present
-        extra_zfs_properties:
-          compression: "on"
-      register: mm4_zfs_dataset_create_again
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Change the dataset compression property
-      community.general.zfs:
-        name: "{{ mm4_zfs_dataset }}"
-        state: present
-        extra_zfs_properties:
-          compression: "lz4"
-      register: mm4_zfs_dataset_change
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Re-assert the changed property (idempotency check)
-      community.general.zfs:
-        name: "{{ mm4_zfs_dataset }}"
-        state: present
-        extra_zfs_properties:
-          compression: "lz4"
-      register: mm4_zfs_dataset_change_again
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Read back the dataset compression property
-      ansible.builtin.command: zfs get -H -o value compression "{{ mm4_zfs_dataset }}"
-      register: mm4_zfs_compression_readback
-      changed_when: false
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Debug zfs dataset result
-      ansible.builtin.debug:
-        msg: "zfs {{ mm4_zfs_dataset }}: create={{ mm4_zfs_dataset_create.changed }} re-assert={{ mm4_zfs_dataset_create_again.changed }} change={{ mm4_zfs_dataset_change.changed }} re-change={{ mm4_zfs_dataset_change_again.changed }} compression={{ mm4_zfs_compression_readback.stdout | default('?') }}"
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Check zfs dataset lifecycle and idempotency
-      ansible.builtin.assert:
-        that:
-          - mm4_zfs_dataset_create.changed
-          - mm4_zfs_dataset_create_again.changed == false
-          - mm4_zfs_dataset_change.changed
-          - mm4_zfs_dataset_change_again.changed == false
-          - mm4_zfs_compression_readback.stdout is search('lz4')
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Create throwaway zfs snapshot
-      community.general.zfs:
-        name: "{{ mm4_zfs_snapshot }}"
-        state: present
-      register: mm4_zfs_snapshot_create
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Re-assert throwaway zfs snapshot (idempotency check)
-      community.general.zfs:
-        name: "{{ mm4_zfs_snapshot }}"
-        state: present
-      register: mm4_zfs_snapshot_create_again
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Check zfs snapshot create and idempotency
-      ansible.builtin.assert:
-        that:
-          - mm4_zfs_snapshot_create.changed
-          - mm4_zfs_snapshot_create_again.changed == false
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    # ---------------------------------------------------------------
     # Cleanup: every throwaway object removed again, most-specific
     # first. Order matters: compose down + container removal before the
-    # network goes away; snapshot -> dataset -> pool -> loop detach ->
-    # image file for zfs. Cleanup tasks are failed_when: false where a
+    # network goes away. Cleanup tasks are failed_when: false where a
     # partially-skipped section could leave nothing to clean.
     # ---------------------------------------------------------------
     - name: Take the throwaway compose project down
@@ -818,38 +655,6 @@
         that:
           - mm4_network_remove.changed
       when: mm4_docker_probe.rc == 0 and mm4_docker_daemon.rc | default(1) == 0
-
-    - name: Remove throwaway zfs snapshot
-      community.general.zfs:
-        name: "{{ mm4_zfs_snapshot }}"
-        state: absent
-      register: mm4_zfs_snapshot_destroy
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Remove throwaway zfs dataset
-      community.general.zfs:
-        name: "{{ mm4_zfs_dataset }}"
-        state: absent
-      register: mm4_zfs_dataset_destroy
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Check zfs dataset removal happened
-      ansible.builtin.assert:
-        that:
-          - mm4_zfs_dataset_destroy.changed
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Destroy the throwaway zfs pool
-      ansible.builtin.command: zpool destroy "{{ mm4_pool }}"
-      failed_when: false
-      changed_when: false
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    - name: Detach the loopback image
-      ansible.builtin.command: losetup -d "{{ mm4_loop_attach.stdout | default('') }}"
-      failed_when: false
-      changed_when: false
-      when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_loop_attach.stdout | default('')) | trim | length > 0
 
     - name: Remove benchmark root directory
       ansible.builtin.file:

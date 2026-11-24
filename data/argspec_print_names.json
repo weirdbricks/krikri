@@ -2379,19 +2379,6 @@
   "supported": null,
   "unsupported": null
  },
- "community.general.deploy_helper|community.general.deploy_helper": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "missing required arguments: path"
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: path",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
  "community.general.dnf_versionlock|community.general.dnf_versionlock": {
   "dump": {
    "ansible_facts": {
@@ -2496,19 +2483,6 @@
   "supported": null,
   "unsupported": null
  },
- "community.general.java_cert|community.general.java_cert": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "missing required arguments: keystore_pass"
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: keystore_pass",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
  "community.general.kernel_blacklist|community.general.kernel_blacklist": {
   "dump": {
    "ansible_facts": {
@@ -2583,19 +2557,6 @@
    "msg": "missing required arguments: chdir"
   },
   "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: chdir",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
- "community.general.maven_artifact|community.general.maven_artifact": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "Unsupported parameters for (community.general.maven_artifact) module: zznope. Supported parameters include: artifact_id, attributes, checksum_alg, classifier, client_cert, client_key, dest, directory_mode, extension, force_basic_auth, group, group_id, headers, keep_name, mode, owner, password, repository_url, selevel, serole, setype, seuser, state, timeout, unredirected_headers, unsafe_writes, username, validate_certs, verify_checksum, version, version_by_spec (attr, aws_secret_access_key, aws_secret_key)."
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (community.general.maven_artifact) module: zznope. Supported parameters include: artifact_id, attributes, checksum_alg, classifier, client_cert, client_key, dest, directory_mode, extension, force_basic_auth, group, group_id, headers, keep_name, mode, owner, password, repository_url, selevel, serole, setype, seuser, state, timeout, unredirected_headers, unsafe_writes, username, validate_certs, verify_checksum, version, version_by_spec (attr, aws_secret_access_key, aws_secret_key).",
   "printed_name": null,
   "supported": null,
   "unsupported": null
@@ -2704,19 +2665,6 @@
   "supported": null,
   "unsupported": null
  },
- "community.general.snap|community.general.snap": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "missing required arguments: name"
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: name",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
  "community.general.sudoers|community.general.sudoers": {
   "dump": {
    "ansible_facts": {
@@ -2778,19 +2726,6 @@
    "msg": "missing required arguments: name"
   },
   "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: name",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
- "community.general.zfs|community.general.zfs": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "missing required arguments: name, state"
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: name, state",
   "printed_name": null,
   "supported": null,
   "unsupported": null
@@ -2900,32 +2835,6 @@
   "unsupported": null
  },
  "community.postgresql.postgresql_user|community.postgresql.postgresql_user": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "missing required arguments: user"
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: user",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
- "community.rabbitmq.rabbitmq_plugin|community.rabbitmq.rabbitmq_plugin": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "missing required arguments: names"
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: names",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
- "community.rabbitmq.rabbitmq_user|community.rabbitmq.rabbitmq_user": {
   "dump": {
    "ansible_facts": {
     "discovered_interpreter_python": "/usr/bin/python3.13"

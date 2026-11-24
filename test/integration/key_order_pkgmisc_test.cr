@@ -7,7 +7,7 @@ require "../../src/krikri/ssh_manager"
 
 # Registered-result key orders (and spot values) for the round-993004
 # kop_pkg_misc probe family - synchronize, subversion, apache2_module,
-# java_cert, openssl_csr/openssl_csr_info - pinned to what REAL
+# openssl_csr/openssl_csr_info - pinned to what REAL
 # ansible-core 2.19.11 registered on the real host, captured per probe by
 # the probe role's `KEYORDER|<probe>|{{ r | to_json }}` debug lines in
 # ~/scratch/krt-results/993004_atlantic_local_kop_pkg_misc/cold_py.out
@@ -16,15 +16,12 @@ require "../../src/krikri/ssh_manager"
 # Root-free exercisability on this dev box:
 # - openssl and rsync are installed: the openssl_csr/openssl_csr_info and
 #   synchronize probes run end-to-end against real tmp files/dirs.
-# - svn, keytool and a2enmod/apache2ctl are NOT installed: those probes
-#   run against fake-binaries-on-PATH shims (the same hermetic shim
-#   approach test/integration/apache2_module_test.cr and the lvg/pv
-#   tests use), scripted to emit the captured real tool output bytes.
-#   The shim PATH reaches the plugin through the task's `environment:`
-#   keyword (per-command exports), except java_cert, whose Ansible module
-#   probes keytool with a bare execvpe-style lookup INSIDE the plugin
-#   process before any command runs - there the whole engine child gets
-#   the shim PATH (per-child Process.run env, parallel-safe).
+# - svn and a2enmod/apache2ctl are NOT installed: those probes run
+#   against fake-binaries-on-PATH shims (the same hermetic shim approach
+#   test/integration/apache2_module_test.cr and the lvg/pv tests use),
+#   scripted to emit the captured real tool output bytes. The shim PATH
+#   reaches the plugin through the task's `environment:` keyword
+#   (per-command exports).
 #
 # The synchronize action plugin's controller-side final results register
 # Ansible's module shapes: success [changed, msg, rc, cmd, stdout_lines,
@@ -350,245 +347,6 @@ describe "kop_pkg_misc round 993004 keyorder: subversion failure" do
     svn = File.join(PluginSpecHelper.tmp_path("svn-fail/shim"), "svn")
     File.write(svn, "#!/bin/sh\necho \"svn: E170013: Unable to connect to a repository at URL 'file:///var/tmp/kop_nosuchrepo'\" >&2\necho \"svn: E180001: Unable to open repository 'file:///var/tmp/kop_nosuchrepo'\" >&2\nexit 1\n")
     File.chmod(svn, 0o755)
-  end
-end
-
-describe "kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)" do
-  @java_cert_keystore : String? = nil
-  @java_cert_cert : String? = nil
-  @java_cert_missing : String? = nil
-
-  it "registers the fresh import as [changed, failed, msg, rc, diff, cmd, stdout, error, stdout_lines]" do
-    # Real probe java_cert_import: exit_json(changed=True, msg=, rc=,
-    # cmd=, stdout=, error=, diff=) - msg is the empty stdout (kept),
-    # keytool's prompts/receipt ride on stderr as `error`. 2.21's
-    # registered export leads with its declared fields (changed, failed,
-    # msg, rc, diff) and then the module's own keys.
-    dump = run_java_cert_probe("import")
-
-    dump.as_h.keys.must_equal(["changed", "failed", "msg", "rc", "diff", "cmd", "stdout", "error", "stdout_lines"])
-    dump["changed"].as_bool.must_equal(true)
-    dump["msg"].as_s.must_equal("")
-    dump["rc"].as_i.must_equal(0)
-    dump["cmd"].as_a.map(&.as_s).must_equal([
-      "keytool", "-importcert", "-noprompt",
-      "-keystore", @java_cert_keystore.not_nil!,
-      "-file", @java_cert_cert.not_nil!,
-      "-alias", "kopcert",
-    ])
-    dump["stdout"].as_s.must_equal("")
-    dump["error"].as_s.must_equal("Enter keystore password:  Re-enter new password: Certificate was added to keystore\n")
-    dump["diff"]["before"].as_s.must_equal("\n")
-    dump["diff"]["after"].as_s.must_equal("kopcert\n")
-    dump["stdout_lines"].as_a.must_be_empty
-    dump["failed"].as_bool.must_equal(false)
-  end
-
-  it "registers the same-cert rerun as just [changed, failed]" do
-    # Real probe java_cert_exists (import the same cert again): the
-    # digest matches, result stays the empty dict - registered shape is
-    # only changed: false + failed: false.
-    dump = run_java_cert_probe("exists")
-
-    dump.as_h.keys.must_equal(["changed", "failed"])
-    dump["changed"].as_bool.must_equal(false)
-    dump["failed"].as_bool.must_equal(false)
-  end
-
-  it "registers the check-mode second-alias import as just [changed, failed] with changed: true" do
-    # Real probe java_cert_check (import a second alias in check mode):
-    # check mode exits changed=true without running the mutation - the
-    # registered shape is only [changed, failed].
-    dump = run_java_cert_probe("check")
-
-    dump.as_h.keys.must_equal(["changed", "failed"])
-    dump["changed"].as_bool.must_equal(true)
-    dump["failed"].as_bool.must_equal(false)
-  end
-
-  it "registers the alias removal as [changed, failed, msg, rc, diff, cmd, stdout, error, stdout_lines]" do
-    # Real probe java_cert_remove (state: absent on the imported alias):
-    # same import-family shape, diff before "kopcert\n" / after null,
-    # keytool's bare password prompt rides on stderr as `error`.
-    dump = run_java_cert_probe("remove")
-
-    dump.as_h.keys.must_equal([
-      "changed", "failed", "msg", "rc", "diff", "cmd", "stdout", "error", "stdout_lines",
-    ])
-    dump["changed"].as_bool.must_equal(true)
-    dump["msg"].as_s.must_equal("")
-    dump["rc"].as_i.must_equal(0)
-    dump["cmd"].as_a.map(&.as_s).must_equal([
-      "keytool", "-delete", "-noprompt",
-      "-keystore", @java_cert_keystore.not_nil!,
-      "-alias", "kopcert",
-    ])
-    dump["error"].as_s.must_equal("Enter keystore password:  ")
-    dump["diff"]["before"].as_s.must_equal("kopcert\n")
-    dump["diff"]["after"].raw.must_be_nil
-    dump["failed"].as_bool.must_equal(false)
-  end
-
-  it "registers the unreadable-cert failure as [rc, cmd, failed, msg, changed, exception]" do
-    # Real probe java_cert_fail (import a nonexistent cert): the
-    # openssl x509 extraction fails (PEM attempt, then the captured DER
-    # fallback), fail_json(msg=..., rc=, cmd=) with kwargs lead - cmd is
-    # the DER-fallback ARGV - and the controller backfills changed then
-    # exception.
-    dump = run_java_cert_probe("fail")
-
-    dump.as_h.keys.must_equal(["changed", "failed", "exception", "msg", "rc", "cmd"])
-    dump["rc"].as_i.must_equal(1)
-    cmd = dump["cmd"].as_a.map(&.as_s)
-    cmd.first.must_equal("/usr/bin/openssl")
-    cmd[-2..].must_equal(["-inform", "der"])
-    cmd.must_include(@java_cert_missing.not_nil!)
-    dump["msg"].as_s.starts_with?("Internal module failure, cannot extract certificate, error: ").must_equal(true)
-    dump["changed"].as_bool.must_equal(false)
-    dump["exception"].as_s.must_equal("(traceback unavailable)")
-  end
-
-  # Replays the probe role's java_cert sequence (import -> exists ->
-  # check -> remove, plus the missing-cert failure) in ONE engine run so
-  # the shim keystore state evolves exactly like the capture's. The
-  # engine child gets the shim PATH: Ansible's test_keytool probes keytool
-  # with a bare execvpe-style lookup inside the plugin process before any
-  # shell command runs, so the task `environment:` exports never reach
-  # it. The shim is a text-file "keystore" whose -list output is a real
-  # PEM certificate (the plugin sha256-digests it through real openssl
-  # to decide idempotency).
-  private def run_java_cert_probe(probe : String) : JSON::Any
-    tmp = PluginSpecHelper.tmp_path("java-cert")
-    FileUtils.mkdir_p(File.join(tmp, "shim"))
-    keystore = File.join(tmp, "kop_ks.jks")
-    cert = File.join(tmp, "shim", "kop_cert.pem")
-    missing = File.join(tmp, "kop_nosuch.pem")
-    @java_cert_keystore = keystore
-    @java_cert_cert = cert
-    @java_cert_missing = missing
-
-    File.delete(keystore) if File.exists?(keystore)
-    unless File.exists?(cert)
-      Process.run("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                              "-keyout", File.join(tmp, "kop_cert.key"), "-out", cert,
-                              "-days", "2", "-subj", "/CN=kop-probe"],
-        output: Process::Redirect::Close, error: Process::Redirect::Close)
-    end
-    File.exists?(cert).must_equal(true)
-
-    env = {
-      "PATH"              => "#{File.join(tmp, "shim")}:#{ENV["PATH"]}",
-      "KOP_KEYSTORE_FILE" => keystore,
-      "KOP_CERT_FILE"     => cert,
-    }
-
-    yaml = <<-YAML
-      - hosts: localhost
-        connection: local
-        gather_facts: false
-        tasks:
-          - community.general.java_cert:
-              cert_path: #{cert}
-              keystore_path: #{keystore}
-              keystore_pass: kopKeystorePass1
-              keystore_create: true
-              cert_alias: kopcert
-              state: present
-            register: r
-          - copy:
-              content: "{{ r | to_json }}"
-              dest: KRIKRI_DUMP_DIR/import.json
-            changed_when: false
-          - community.general.java_cert:
-              cert_path: #{cert}
-              keystore_path: #{keystore}
-              keystore_pass: kopKeystorePass1
-              keystore_create: true
-              cert_alias: kopcert
-              state: present
-            register: r
-          - copy:
-              content: "{{ r | to_json }}"
-              dest: KRIKRI_DUMP_DIR/exists.json
-            changed_when: false
-          - community.general.java_cert:
-              cert_path: #{cert}
-              keystore_path: #{keystore}
-              keystore_pass: kopKeystorePass1
-              keystore_create: true
-              cert_alias: kopcert2
-              state: present
-            check_mode: true
-            register: r
-          - copy:
-              content: "{{ r | to_json }}"
-              dest: KRIKRI_DUMP_DIR/check.json
-            changed_when: false
-          - community.general.java_cert:
-              cert_path: #{cert}
-              keystore_path: #{keystore}
-              keystore_pass: kopKeystorePass1
-              cert_alias: kopcert
-              state: absent
-            register: r
-          - copy:
-              content: "{{ r | to_json }}"
-              dest: KRIKRI_DUMP_DIR/remove.json
-            changed_when: false
-          - community.general.java_cert:
-              cert_path: #{missing}
-              keystore_path: #{keystore}
-              keystore_pass: kopKeystorePass1
-              keystore_create: true
-              cert_alias: kopfail
-              state: present
-            register: r
-            ignore_errors: true
-          - copy:
-              content: "{{ r | to_json }}"
-              dest: KRIKRI_DUMP_DIR/fail.json
-            changed_when: false
-      YAML
-    dumps = run_probe_dumps(yaml, ["import", "exists", "check", "remove", "fail"], env)
-    dumps[probe]
-  end
-
-  before_each do
-    FileUtils.mkdir_p(PluginSpecHelper.tmp_path("java-cert/shim"))
-    keytool = File.join(PluginSpecHelper.tmp_path("java-cert/shim"), "keytool")
-    File.write(keytool, <<-SCRIPT)
-      #!/bin/sh
-      STORE="$KOP_KEYSTORE_FILE"
-      CERT="$KOP_CERT_FILE"
-      [ -n "$STORE" ] || exit 1
-      prev=""
-      for a in "$@"; do
-        case "$prev" in
-          -keystore) KS="$a" ;;
-          -alias) ALIAS="$a" ;;
-        esac
-        prev="$a"
-      done
-      case "$1" in
-        "") exit 0 ;;
-        -list)
-          if [ -f "$KS" ] && grep -qxF "$ALIAS" "$KS"; then
-            cat "$CERT"
-            exit 0
-          fi
-          exit 1 ;;
-        -importcert)
-          echo "$ALIAS" >> "$KS"
-          echo "Enter keystore password:  Re-enter new password: Certificate was added to keystore" >&2
-          exit 0 ;;
-        -delete)
-          grep -vxF "$ALIAS" "$KS" > "$KS.tmp"; mv "$KS.tmp" "$KS"
-          printf 'Enter keystore password:  ' >&2
-          exit 0 ;;
-      esac
-      exit 1
-    SCRIPT
-    File.chmod(keytool, 0o755)
   end
 end
 

@@ -2,18 +2,18 @@ require "../minitest_helper"
 require "file_utils"
 
 # Registered-result key orders for the storage plugins (lvg, lvol,
-# parted, zfs, mount), pinned to the orders live-captured against
+# parted, mount), pinned to the orders live-captured against
 # ansible-core on a real Ubuntu 22.04 host in round 992003
 # (kop_storage): every probed task registered r and a following debug
 # emitted `{{ r | to_json }}`, and krikri-role-tester's keyorder report
 # compared the two engines' registered top-level key orders.
 #
 # Root-free verification boundary on this dev box (no passwordless
-# sudo; no loop devices, no zfs): only the shapes below are pinned
+# sudo; no loop devices): only the shapes below are pinned
 # end-to-end here. The remaining probe shapes - lvg_create/lvg_exists
 # (vgcreate needs root), lvol_create/lvol_exists/lvol_check/lvol_fail
-# (a real VG), zfs_create/zfs_exists/zfs_check/zfs_fail (a real pool),
-# and mount's mounted-state shapes - are verified against the captured
+# (a real VG), and mount's mounted-state shapes - are verified against
+# the captured
 # real outputs only; they need privileges this suite must not assume.
 # Their wire shapes are built from the same code paths these pins
 # exercise (the same PluginResult constructions with the same
@@ -291,32 +291,5 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
     # only in the changed value.
     keys["changed"].as_bool.must_equal(false)
     keys["backup_file"].as_s.must_equal("")
-  end
-
-  it "zfs on a non-ZFS host registers the missing-binary failure [failed, msg, changed, exception]" do
-    # zfs_create/zfs_exists/zfs_check/zfs_fail shapes need a real pool
-    # (capture-verified only - see the file comment); the only shape
-    # this environment can produce is the binary lookup failure, whose
-    # registered order follows the plain fail_json default.
-    skip("zfs binaries present - nothing to pin rootless") if lvm_tool_available?("zfs") && lvm_tool_available?("zpool")
-
-    keys = run_registered_dump12(<<-YAML)
-      - hosts: localhost
-        connection: local
-        gather_facts: false
-        tasks:
-          - community.general.zfs:
-              name: koppool/kopfs
-              state: present
-            register: r
-            ignore_errors: true
-          - copy:
-              content: |-
-                {{ r | to_json }}
-              dest: KRIKRI_DUMP_PATH
-      YAML
-
-    keys.as_h.keys.must_equal(["changed", "failed", "exception", "msg"])
-    keys["msg"].as_s.starts_with?("Failed to find required executable").must_equal(true)
   end
 end

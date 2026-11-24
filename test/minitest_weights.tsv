@@ -4,7 +4,6 @@
 4.61	hostile containers in task-level vars are never re-rendered (full matrix vs real-Ansible-verified output)#test_list_of_dict_var_via_f_list_no_canary_file_is_created_and_the_output_matches_Ansible
 3.32	storage plugin registered key order (round 992003 kop_storage)#test_parted_create_registers_changed_disk_partitions_script_failed_on_an_unlabeled_device
 3.18	role-private python module dispatch runs on the REMOTE target, not the controller#test_attempts_a_remote_SSH_connection_for_a_non_local_host_instead_of_running_locally
-3.13	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_clean_removes_unfinished_builds_and_old_releases_past_keep_releases_in_Ansible_s_ctime_order
 3.11	templated async:/poll: resolved at execution time#test_resolves_a_templated_poll_when_async_is_a_literal
 3.11	templated async:/poll: resolved at execution time#test_runs_a_templated_async_in_the_background_and_prints_ASYNC_POLL_OK
 3.07	storage plugin registered key order (round 992003 kop_storage)#test_parted_idempotent_rerun_registers_the_same_key_order_with_an_empty_script
@@ -93,7 +92,6 @@
 1.16	strategy:#test_treats_host_pinned_as_free
 1.16	wait_for timeout registered key order#test_registers_a_port_timeout_as_elapsed_failed_msg_changed_exception
 1.15	hostile containers in include_role vars are never re-rendered (full matrix vs real-Ansible-verified output)#test_dict_var_via_loop_no_canary_file_is_created_and_the_output_matches_Ansible
-1.14	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_clean_does_NOT_protect_the_release_current_points_at_real_deletes_it_symlink_dangles_
 1.14	hostile containers in include_role vars are never re-rendered (full matrix vs real-Ansible-verified output)#test_list_var_via_f_first_no_canary_file_is_created_and_the_output_matches_Ansible
 1.13	hostile containers in include_role vars are never re-rendered (full matrix vs real-Ansible-verified output)#test_list_var_via_var_no_canary_file_is_created_and_the_output_matches_Ansible
 1.13	strategy:#test_keeps_a_barrier_between_tasks_by_default
@@ -237,7 +235,6 @@
 0.64	docker_login plugin argument validation#test_state_absent_needs_no_credentials_no_required_if_
 0.64	environment: key validation (command injection regression)#test_rejects_an_apostrophe_escape_payload_key_without_executing_it
 0.64	krikri-playbook CLI (--check mode)#test__forks_1_one_host_at_a_time_produces_the_same_content_as_the_forks_5_default_s_parallel_fan_out
-0.64	maven_artifact plugin#test_downloads_from_a_file_repository_and_verifies_the_checksum
 0.64	openssl_certificate alias resolution#test_issues_a_self_signed_certificate_via_openssl_certificate_end_to_end
 0.63	Krikri::PythonActionRunner#test_passes_typed_task_args_and_task_vars_through_to_the_plugin
 0.63	docker_container state=healthy#test_skips_the_health_wait_in_check_mode
@@ -346,7 +343,6 @@
 0.45	role-local lookup_plugins/*.py custom lookups#test_resolves_query_with_kwargs_in_the_hand_rolled_evaluator
 0.45	x509_certificate_info plugin#test_carries_an_empty_valid_at_dict_when_the_option_is_absent
 0.44	docker sdk import gate#test_passes_when_requests_imports_under_the_host_s_own_interpreter_skipped_without_requests_
-0.44	kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)#test_registers_the_check_mode_second_alias_import_as_just_changed_failed_with_changed_true
 0.44	openssh_keypair plugin result key order#test_keeps_the_same_order_on_an_idempotent_unchanged_rerun
 0.44	x509_certificate plugin#test_rejects_providers_it_does_not_implement_instead_of_pretending
 0.43	Krikri::PythonLookupRunner#test_reports_a_plugin_file_with_a_syntax_error_as_a_plugin_error_not_an_unknown_lookup
@@ -380,7 +376,6 @@
 0.4	htpasswd plugin#test_creates_nested_missing_directories_like_os_makedirs
 0.4	htpasswd plugin#test_reports_Ansible_s_IsADirectoryError_when_path_is_a_directory
 0.4	htpasswd plugin#test_says_Remove_user_on_an_absent_removal_like_Ansible_s_absent_
-0.4	kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)#test_registers_the_same_cert_rerun_as_just_changed_failed_
 0.4	krikri-playbook CLI (--check mode)::--gathering#test_smart_and_implicit_produce_the_same_task_results_differing_only_in_gathering
 0.4	openssl_csr plugin#test_accepts_a_key_value_subject_string_like_Ansible_s_check_type_dict
 0.4	openssl_publickey_info plugin result key order#test_serializes_a_PEM_public_key_read_with_the_info_keys_in_Ansible_s_order
@@ -404,14 +399,10 @@
 0.38	environment: key validation (command injection regression)#test_rejects_a_key_with_shell_metacharacters_without_executing_it
 0.38	htpasswd plugin#test_fails_a_bare_relative_destination_like_os_makedirs_does
 0.38	htpasswd plugin#test_words_the_create_false_failure_like_Ansible_s_present_ValueError
-0.38	kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)#test_registers_the_unreadable_cert_failure_as_rc_cmd_failed_msg_changed_exception_
 0.38	openssl_privatekey plugin#test_encrypts_with_AES_256_CBC_when_a_passphrase_is_given_and_stays_idempotent
 0.38	package_facts plugin#test_fails_with_the_post_expansion_manager_list_when_auto_detection_finds_nothing
-0.38	round 994002 kop_misc2 registered key order::community.general.maven_artifact#test_registers_the_no_op_as_state_dest_changed_plus_the_stat_block_and_state_absent_does_NOT_delete_the_file
 0.38	storage plugin registered key order (round 992003 kop_storage)#test_lvol_failure_on_a_missing_VG_registers_rc_err_failed_msg_changed_exception_fail_json_rc_err_kwargs_lead_
 0.37	apt plugin - parameter coverage::cleanup flags (apt.py cleanup() command construction)#test_never_runs_standalone_autoclean_autoremove_when_the_update_cache_pass_exits_first_apt_py_cache_exit_precedes_the_cleanup_tail_
-0.37	kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)#test_registers_the_alias_removal_as_changed_msg_rc_cmd_stdout_error_diff_stdout_lines_failed_
-0.37	kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)#test_registers_the_fresh_import_as_changed_msg_rc_cmd_stdout_error_diff_stdout_lines_failed_
 0.37	mount_facts: ansible_facts shape#test_returns_mount_points_and_aggregate_mounts_unfiltered_on_a_real_host
 0.37	openssl_certificate alias resolution#test_issues_a_self_signed_certificate_via_ansible_legacy_openssl_certificate_end_to_end
 0.37	openssl_csr plugin#test_escapes_a_slash_in_a_subject_value_instead_of_splitting_the_field
@@ -455,7 +446,6 @@
 0.34	openssl_privatekey plugin#test_honours_mode_force_and_backup
 0.34	role-local filters carrying integers wider than Int64#test_carries_a_filter_s_wide_int_out_renders_it_unquoted_and_round_trips_it_back_into_Python
 0.34	role-local test plugins receiving integers wider than Int64#test_hands_a_wide_int_operand_to_the_test_as_a_real_Python_int_round_trip_
-0.34	round 994002 kop_misc2 registered key order::community.general.maven_artifact#test_registers_a_download_with_the_artifact_echo_changed_and_add_path_info_s_stat_block
 0.34	rpm_key URL fetch failure message (issue #339)#test_reports_an_unresolvable_key_hostname_in_fetch_url_s_gaierror_wording
 0.34	template: output_encoding is encoded by the action plugin#test_names_the_Python_type_Ansible_reports_for_each_non_string_value
 0.34	with_first_found: a custom paths: entry containing {{ role_path }}#test_resolves_a_RELATIVE_custom_paths_entry_against_the_including_file_s_own_directory_not_the_role_root
@@ -499,9 +489,7 @@
 0.31	openssl_privatekey plugin result key order#test_keeps_the_same_order_on_an_idempotent_unchanged_rerun
 0.31	openssl_privatekey plugin#test_generates_an_ECC_key_on_the_requested_curve_mapping_IANA_curve_names_to_OpenSSL_s
 0.31	package_facts plugin#test_attaches_real_s_unusable_rpm_warning_to_the_failed_result_issue_597_
-0.31	round 994002 kop_misc2 registered key order::community.general.deploy_helper#test_registers_the_idempotent_second_present_the_same_way_changed_false_no_msg_release_echo
 0.31	service plugin - use: service on a systemd host#test_fails_a_missing_unit_with_the_generic_module_s_not_found_wording_1159_
-0.31	snap plugin registered-result shapes (round-1100100 oracle)#test_disables_and_re_enables_with_the_generic_action_shape
 0.3	ANSIBLE_CACHE_PLUGIN=jsonfile fact caching#test_skips_re_gathering_on_a_warm_rerun_under_gathering_smart
 0.3	INJECT_FACTS_AS_VARS deprecation from a when: clause#test_prints_one_deprecation_for_an_import_clause_inherited_by_plain_imported_tasks
 0.3	INJECT_FACTS_AS_VARS deprecation#test_attributes_a_namespace_spelled_include_vars_path_read_to_that_argument_s_own_value
@@ -690,7 +678,6 @@
 0.24	krikri-playbook CLI (--check mode)::--gathering#test_explicit_gathers_only_for_plays_that_actually_wrote_gather_facts_true
 0.24	krikri-playbook CLI (--check mode)::magic variables#test_prefers_the_gathered_ansible_hostname_fact_over_the_inventory_name
 0.24	lookup plugin failure and kwarg shapes#test_wraps_file_failures_names_missing_vars_honors_errors_ignore_and_lookup_kwargs
-0.24	maven_artifact plugin#test_re_downloads_when_verify_checksum_always_finds_a_corrupt_destination
 0.24	openssl_csr plugin result key order#test_serializes_a_generated_CSR_with_extension_keys_in_Ansible_s_order
 0.24	openssl_privatekey plugin#test_fails_rather_than_regenerating_with_regenerate_fail_using_the_Ansible_module_s_wording
 0.24	package plugin name:* state: latest#test_reports_changed_true_when_the_upgrade_output_shows_upgraded_packages
@@ -702,7 +689,6 @@
 0.24	raw result shape#test_reports_a_missing_executable_as_the_login_shell_s_127_with_the_controller_exception_placeholder
 0.24	rc-257 missing-file failure key order#test_registers_a_lineinfile_failure_on_a_missing_path_as_rc_failed_msg_changed_exception
 0.24	role-local filter_plugins/*.py custom filters#test_surfaces_the_filter_s_own_failure_instead_of_a_misleading_No_filter_named_error_round_83177_
-0.24	round 994002 kop_misc2 registered key order::community.general.maven_artifact#test_fails_a_404_with_Ansible_s_downloader_message_including_the_missing_space_before_for_URL_
 0.24	script non-zero-exit Action failed header#test_still_retries_a_failing_script_under_until_retries
 0.24	service registered shapes (round994002/994003 systemd dispatch)#test_registers_name_changed_status_enabled_state_with_the_full_status_dict_no_msg_
 0.24	stat plugin#test_accepts_path_s_documented_dest_name_aliases_Ansible_s_argument_spec_
@@ -879,7 +865,6 @@
 0.21	krikri-playbook CLI (--check mode)::magic variables#test_does_not_overwrite_an_inventory_ansible_host_with_the_inventory_name
 0.21	loop items from author template sources over set_fact/register data always render#test_renders_with_items_elements_that_are_direct_references_to_set_fact_register_data_geerlingguy_php_shape_
 0.21	looped unarchive with per-item creates: skip (executor_loops#finish_looped_task)#test_shows_skipping_for_the_creates_satisfied_item_and_changed_for_the_rest_with_the_registered_aggregate_still_holding_all_items
-0.21	maven_artifact import-time library checks#test_the_library_failure_beats_the_spec_version_parser_failure
 0.21	mount plugin#test_removes_only_the_matching_entry_with_state_absent_from_fstab
 0.21	mysql_user plugin parameter validation#test_wraps_a_connection_refusal_in_community_mysql_s_own_message_shape
 0.21	openssh_keypair: cross-device temp-to-dest move#test_generates_the_keypair_at_the_destination_without_an_EXDEV_failure
@@ -890,9 +875,6 @@
 0.21	pause registered result shape#test_registers_Ansible_s_key_order_with_no_stdout_lines_stderr_lines
 0.21	plain fail_json registered key order (default failed emission)#test_registers_a_slurp_failure_as_failed_msg_changed_exception
 0.21	role-private module importing the role's own module_utils package#test_resolves_the_import_end_to_end_when_the_role_ships_module_utils_
-0.21	round 994002 kop_misc2 registered key order::community.general.deploy_helper#test_registers_state_absent_as_state_ansible_facts_changed_failed_with_the_empty_list_facts_sentinel
-0.21	round 994002 kop_misc2 registered key order::community.general.deploy_helper#test_registers_state_clean_as_state_changed_failed
-0.21	round 994002 kop_misc2 registered key order::community.general.deploy_helper#test_registers_state_finalize_as_state_changed_failed
 0.21	round 994002 kop_misc2 registered key order::community.libvirt.virt_net command: undefine#test_registers_undefine_failed_changed_with_no_changed_on_the_wire
 0.21	round 994002 kop_misc2 registered key order::community.libvirt.virt_net failure msgs match real (round 995005)#test_maps_a_missing_network_on_start_to_Ansible_s_network_NAME_not_found_
 0.21	round 994002 kop_misc2 registered key order::community.libvirt.virt_net state: msg carries Ansible's libvirt rc (round 996005)#test_keeps_the_check_mode_state_change_msg_less_Ansible_exits_from_inside_the_method_
@@ -1014,7 +996,6 @@
 0.19	deb822_repository plugin#test_accepts_a_real_YAML_list_of_valid_types_choices_check_mode_
 0.19	debconf plugin - vtype password read-back (get_password_value)#test_treats_a_dump_line_with_no_value_field_as_an_empty_stored_password
 0.19	debugger:#test_continues_on_c_leaving_the_task_s_own_exit_code
-0.19	deploy_helper plugin::ansible_facts publishing#test_state_finalize_and_state_clean_publish_no_ansible_facts
 0.19	dpkg_divert plugin result key order#test_serializes_an_unmodified_absence_as_changed_diversion_commands_messages_real_changed_diversion_commands_messages_diff_
 0.19	environment: keyword strict-undefined#test_renders_nested_templates_inside_a_string_form_environment_s_values
 0.19	facts set by a handler#test_are_visible_to_a_LATER_handler_in_the_same_flush
@@ -1059,7 +1040,6 @@
 0.19	raw result shape#test_skips_under_check_mode_with_the_bare_skipped_failed_changed_shape
 0.19	register: on a task skipped via its enclosing block's when:#test_still_sets_the_variable_to_a_skipped_changed_false_result_overwriting_an_earlier_register_under_the_same_name
 0.19	reserved variable name warning#test_warns_for_a_reserved_register_name_with_the_value_token_s_Origin
-0.19	round 994002 kop_misc2 registered key order::community.general.deploy_helper#test_registers_state_present_as_state_ansible_facts_changed_failed
 0.19	rpm_key plugin result key order (sweep8)#test_registers_a_fresh_import_as_changed_failed_no_msg_
 0.19	script non-zero-exit Action failed header#test_does_not_retry_a_relative_chdir_failure_under_until_retries_issue_1160_
 0.19	script: src: with the files/ prefix baked in resolves against the role#test_runs_script_files_x_sh_args_from_role_files_x_sh_issue_10_repro_
@@ -1161,7 +1141,6 @@
 0.18	rpm_key plugin result key order (sweep8)#test_registers_a_key_removal_as_changed_in_the_same_bare_shape
 0.18	rpm_key plugin result key order (sweep8)#test_registers_an_absent_no_op_as_the_same_bare_shape
 0.18	set_fact keeps a Jinja string expression a string (2.19 native typing)#test_matches_Ansible_s_type_debug_for_the_full_string_vs_native_matrix
-0.18	snap plugin registered-result shapes (round-1100100 oracle)#test_sets_options_in_one_snap_set_call_and_reports_options_changed
 0.18	subversion plugin - parameter coverage#test_export_yes_runs_svn_export_instead_of_checkout
 0.18	sudoers plugin result key order#test_registers_changed_first_Ansible_2_19_11_changed_failed_the_module_s_wire_is_just_changed_
 0.18	synchronize plugin#test_fails_when_rsync_fails_nonexistent_src_and_carries_rc_cmd
@@ -1418,7 +1397,6 @@
 0.16	seport argument validation order#test_still_fails_valid_args_cases_on_the_SELinux_gate_not_the_new_validations_
 0.16	service plugin - use: service on a systemd host#test_probes_systemctl_and_succeeds_instead_of_failing_fail_if_missing_1157_
 0.16	single-operand name-span failures do not truncate#test_renders_one_inline_marker_for_an_attribute_error_and_keeps_later_literal_text
-0.16	snap plugin registered-result shapes (round-1100100 oracle)#test_joins_per_name_cmd_reprs_with_for_a_multi_name_install_without_channel
 0.16	solo daemon path dispatch-vs-response-lost classification#test_re_raises_a_raw_non_DaemonDispatchUnknownError_exception_when_the_daemon_was_spawned_by_THIS_call_and_never_came_up
 0.16	stat loop-item register key order#test_reads_changed_stat_invocation_failed_like_real_s_loop_item
 0.16	strict boolean conditionals#test_relaxes_to_truthiness_under_ANSIBLE_ALLOW_BROKEN_CONDITIONALS
@@ -1522,7 +1500,6 @@
 0.15	looped+registered getent invocation#test_does_not_expose_invocation_on_a_NON_looped_register_while_INJECT_INVOCATION_is_off
 0.15	lvg plugin - kpg34 arg surface and vgs gate#test_accepts_state_inactive_Ansible_7_1_0_active_inactive_choices_
 0.15	make plugin#test_runs_the_default_target_then_reports_unchanged_on_a_second_identical_run_Ansible_s_own_q_idempotency_check_
-0.15	maven_artifact plugin#test_fails_explicitly_on_s3_repository_URLs_deliberate_limitation_
 0.15	modprobe plugin#test_finds_an_already_loaded_module_via_proc_modules_dash_normalized_check_mode_would_unload_
 0.15	module locale fallback for command and shell#test_leaves_an_installed_locale_untouched
 0.15	module remote_tmp init fallback warning#test_stays_silent_on_a_warm_rerun_once_the_remote_tmp_dir_persists
@@ -1545,7 +1522,6 @@
 0.15	raw: without _raw_params#test_bare_string_raw_still_runs_its_command_IS_real_s_raw_params
 0.15	role argument_specs from the meta main file#test_runs_the_role_s_own_tasks_when_the_required_option_is_provided
 0.15	role-name prefix on TASK[]/HANDLER[] banners#test_prefixes_a_role_s_own_named_and_nameless_tasks_but_not_a_play_level_task
-0.15	round 994002 kop_misc2 registered key order::community.general.maven_artifact#test_skips_in_check_mode_like_Ansible_s_action_level_gate
 0.15	round 994002 kop_misc2 registered key order::community.libvirt.virt_net state: msg carries Ansible's libvirt rc (round 996005)#test_registers_state_active_as_changed_msg_0_failed
 0.15	seboolean plugin python library gate#test_fails_with_Ansible_s_missing_required_lib_wording_when_a_binding_is_absent
 0.15	service registered shapes (round994002/994003 systemd dispatch)#test_registers_the_same_shape_unchanged_on_a_warm_rerun
@@ -1629,7 +1605,6 @@
 0.14	deb822_repository param coverage#test_defaults_Types_to_deb_when_types_is_omitted_Ansible_module_s_own_argument_spec_default_
 0.14	deep lazy-var chain variable preparation#test_runs_the_role_s_own_looped_task_over_the_deep_chain_not_skipping_it
 0.14	delegated task's ansible_connection magic var (issue #352)#test_takes_the_delegate_host_s_own_inventory_ansible_connection_for_the_guarded_when_
-0.14	deploy_helper plugin::ansible_facts publishing#test_state_present_is_idempotent_second_call_changed_false_
 0.14	dnf/yum check mode - an unresolvable spec fails like the real install (issue 1055)#test_check_mode_fails_a_missing_package_with_the_install_failure_shape_like_real_ansible
 0.14	docker_image_build buildx plugin gate#test_fails_with_the_podman_suspicion_wording_when_ClientInfo_is_absent
 0.14	dpkg_selections plugin result key order#test_serializes_an_already_set_selection_as_changed_before_after_real_changed_before_after_
@@ -1681,7 +1656,6 @@
 0.14	loop_control: extended#test_exposes_ansible_loop_with_Ansible_s_values
 0.14	looped task register shape with when:-skipped items#test_binds_the_custom_loop_var_and_index_var_on_a_skipped_item_after_the_skip_keys
 0.14	lvg plugin - PV diff on an existing VG (round 993003 warm run)#test_skips_the_vgreduce_when_remove_extra_pvs_false
-0.14	maven_artifact plugin#test_fails_cleanly_when_a_file_repository_lacks_the_artifact
 0.14	max_fail_percentage:#test_keeps_the_block_chain_and_later_tasks_running_after_a_mid_block_failure
 0.14	module_defaults:#test_honors_block_and_task_scope_over_play_scope
 0.14	mount plugin#test_accepts_name_as_a_documented_alias_for_path_
@@ -1715,7 +1689,6 @@
 0.14	star-args call inside module args (issue #842)#test_unpacks_sequence_into_lookup_terms_instead_of_multiplying
 0.14	stat plugin#test_accepts_y_n_as_bool_spellings_for_follow_get_mime_Ansible_s_boolean_coercion_
 0.14	storage plugin registered key order (round 992003 kop_storage)#test_mount_unmounted_registers_backup_file_deprecations_no_src_fstype_
-0.14	storage plugin registered key order (round 992003 kop_storage)#test_zfs_on_a_non_ZFS_host_registers_the_missing_binary_failure_failed_msg_changed_exception_
 0.14	strict boolean conditionals#test_fails_an_X_is_defined_and_X_chain_ending_in_a_list_as_Task_failed_round_84003_
 0.14	strict boolean conditionals#test_gives_assert_that_item_a_third_chain_record_at_the_failing_loop_item
 0.14	task name template error warning blocks#test_points_an_inventory_var_error_at_the_inventory_line_with_a_full_line_caret
@@ -1804,9 +1777,6 @@
 0.13	debugger:::assignment#test_still_reports_a_genuinely_unknown_command
 0.13	delegate_to: localhost#test_does_not_crash_when_delegate_facts_true_targets_a_host_never_seen_before_not_one_of_the_play_s_own_hosts_
 0.13	delegated result marker ([host -> target])#test_prints_the_marker_for_a_delegated_task_with_until_retries_
-0.13	deploy_helper plugin - finalize without the release tree (kpg34)#test_fails_with_Ansible_s_dangling_source_wording_when_current_points_elsewhere
-0.13	deploy_helper plugin - finalize without the release tree (kpg34)#test_is_idempotent_when_current_already_points_at_the_release
-0.13	deploy_helper plugin#test_fails_with_Python_s_os_makedirs_error_when_path_is_empty
 0.13	derived TRANSFORMED hostile strings stay unsafe (registry closed under derivation)#test_never_re_renders_a_lower_derivative_whose_text_no_longer_matches_any_registered_leaf
 0.13	docker_login plugin argument validation#test_rejects_unsupported_parameters_with_the_all_aliases_parenthetical
 0.13	docker_network_info plugin argument validation#test_rejects_unsupported_parameters_with_the_all_aliases_parenthetical
@@ -1892,7 +1862,6 @@
 0.13	service plugin - use: service on a systemd host#test_keeps_the_params_the_generic_service_module_really_uses_with_no_systemd_warnings
 0.13	set_fact keeps a Jinja string expression a string (2.19 native typing)#test_keeps_a_numeric_looking_string_fact_string_across_a_second_set_fact_hop
 0.13	set_fact keeps a Jinja string expression a string (2.19 native typing)#test_keeps_block_tag_True_False_output_a_string_so_when_fails_the_bool_check
-0.13	snap plugin registered-result shapes (round-1100100 oracle)#test_removes_an_installed_snap_with_the_changed_shape_and_classic_channel_state_cmd_repr
 0.13	strict boolean conditionals#test_keeps_changed_false_in_a_failing_set_fact_s_fatal_dump_msg_alone_in_debug_s
 0.13	strict boolean conditionals#test_shows_a_when_failed_loop_item_s_full_result_for_non_debug_aggregate_fatal_only_for_debug
 0.13	strict-undefined loop ITEM entries and dict-subscript-miss messages#test_fails_the_task_with_the_attribute_error_message_for_a_dict_miss_loop_item
@@ -2037,7 +2006,6 @@
 0.12	inventory sources#test_skips_backup_hidden_and_ignored_extension_files_in_the_directory
 0.12	inventory-defined localhost is a regular ssh host (issue #677)#test_ssh_s_an_inventory_localhost_with_ansible_port_to_that_port_unreachable_not_local
 0.12	issue 245 templated list element rendering (templated_list_element_test.cr)#test_keeps_a_literal_msg_list_s_whole_span_element_a_structured_dict
-0.12	java_cert plugin#test_reports_a_python_mkstemp_shaped_temp_path_in_the_failing_extract_cmd
 0.12	krikri ad-hoc CLI::JSON-object -a args#test_parses_a_JSON_object_as_the_module_params
 0.12	krikri-playbook CLI (--check mode)#test_always_prints_all_7_PLAY_RECAP_counters_even_when_0_matching_ansible_playbook
 0.12	krikri-playbook CLI (--check mode)#test_keeps_a_nested_loop_s_own_item_bound_inside_a_looped_include_tasks_not_the_outer_include_s_item
@@ -2060,8 +2028,6 @@
 0.12	loop: source typing errors#test_still_skips_an_undefined_loop_behind_when_false
 0.12	mandatory filter with a defined null (issue #132)#test_renders_a_null_value_as_empty_and_still_fails_on_undefined
 0.12	map(attribute=...) with an all-digit segment indexes like Jinja's getitem#test_indexes_into_strings_with_a_numeric_attribute
-0.12	maven_artifact local repository#test_names_the_maven_metadata_local_xml_file_in_the_missing_metadata_failure
-0.12	maven_artifact plugin#test_fails_explicitly_on_version_by_spec_deliberate_limitation_
 0.12	modprobe plugin#test_fails_with_Ansible_s_missing_name_arg_spec_message
 0.12	modprobe plugin#test_reports_a_never_loaded_module_as_an_absent_no_op_when_modules_builtin_exists
 0.12	module_defaults: action groups#test_expands_a_collection_s_action_group_to_its_member_modules
@@ -2206,7 +2172,6 @@
 0.11	debug: msg and var mutually exclusive#test_fails_the_task_when_both_msg_and_var_are_given
 0.11	debugger:#test_fires_on_a_successful_task_for_always
 0.11	default mode of newly created files tracks the umask (no explicit mode:)#test_file_state_touch_creating_a_NEW_file_uses_0666_umask
-0.11	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_finalize_without_release_fails_Ansible_s_required_if_check
 0.11	dnf/yum failed install - Ansible's per-spec failures shape (issue 19)#test_reports_one_No_package_X_available_entry_for_a_missing_spec_dnf_
 0.11	dnf/yum failed install - Ansible's per-spec failures shape (issue 19)#test_reports_the_modular_filtering_wording_with_the_spec_prefix_dnf_
 0.11	dnf5: libdnf5 python-bindings bootstrap (issue #767)#test_carries_the_empty_failures_list_real_s_ensure_dnf_fail_json_passes
@@ -2278,7 +2243,6 @@
 0.11	lvg plugin - PV diff on an existing VG (round 993003 warm run)#test_refuses_to_remove_a_non_empty_VG_without_force_true_Ansible_s_exact_message_no_vgremove_
 0.11	lvg plugin#test_fails_when_vg_is_missing
 0.11	lvol plugin#test_fails_when_vg_is_missing
-0.11	maven_artifact import-time library checks#test_fails_version_by_spec_with_the_semantic_version_missing_required_lib_boilerplate
 0.11	meta/argument_specs.yml required-ness#test_passes_when_the_required_option_is_provided
 0.11	modprobe plugin failure key order (round 992001)#test_carries_Ansible_s_failure_values_rc_1_msg_stderr_derived_lines
 0.11	module_defaults:#test_accepts_a_builtin_action_group_key_that_resolves_to_no_installed_modules
@@ -2323,9 +2287,6 @@
 0.11	set_fact cacheable/keys match Ansible 2.19.11 validation#test_fails_a_native_int_cacheable_and_a_native_list_cacheable_like_real
 0.11	set_fact keeps a Jinja string expression a string (2.19 native typing)#test_evaluates_a_whole_span_expression_exactly_once_side_effecting_lookups_
 0.11	set_fact: strict-undefined arg finalization#test_stays_lenient_for_a_method_call_on_a_DEFINED_root
-0.11	snap plugin registered-result shapes (round-1100100 oracle)#test_installs_a_fresh_snap_with_the_changed_shape_cmd_repr_and_no_msg
-0.11	snap plugin registered-result shapes (round-1100100 oracle)#test_is_idempotent_in_check_mode_for_an_installed_snap
-0.11	snap plugin#test_fails_when_name_is_missing
 0.11	stat plugin#test_skips_the_checksum_when_get_checksum_false
 0.11	static import referencing a fact#test_still_allows_an_import_role_name_from_a_play_var
 0.11	storage plugin registered key order (round 992003 kop_storage)#test_rejects_a_number_below_1_with_Ansible_s_exact_message
@@ -2463,10 +2424,6 @@
 0.1	debug: var result key#test_registers_a_verbosity_skipped_debug_with_skipped_but_no_msg
 0.1	default(False) inside a set_fact block tag#test_matches_Ansible_instead_of_failing_with_False_is_undefined
 0.1	delegate_to: localhost#test_applies_an_attempt_s_set_fact_before_evaluating_until_on_the_same_attempt
-0.1	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_clean_in_check_mode_counts_the_changes_without_deleting_anything
-0.1	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_clean_removes_the_release_s_unfinished_link_file_at_the_project_root
-0.1	deploy_helper plugin#test_fails_on_an_invalid_state
-0.1	deploy_helper plugin::ansible_facts publishing#test_state_query_also_carries_the_deploy_helper_fact_dict
 0.1	dnf/yum failed install - Ansible's per-spec failures shape (issue 19)#test_reports_ansible_s_depsolve_shape_from_package_issue_216_
 0.1	docker sdk gate at plugin level#test_gates_docker_login_s_logout_path_too_real_constructs_its_client_before_LoginManager_
 0.1	docker_compose_v2 plugin argument validation#test_fails_an_invalid_state_choice_in_declaration_order
@@ -2572,7 +2529,6 @@
 0.1	lvg plugin - PV diff on an existing VG (round 993003 warm run)#test_surfaces_Ansible_s_Failed_executing_pvs_command_failure_with_the_probe_s_rc_err
 0.1	make plugin#test_fails_a_failing_target_with_check_rc_s_shape_the_sanitized_stderr_as_msg_plus_rc
 0.1	mapping-form action deprecation and lazy module resolution#test_warns_at_load_for_the_mapping_action_and_refuses_only_the_later_bare_ec2_task
-0.1	maven_artifact plugin#test_fails_when_dest_is_missing
 0.1	meta/argument_specs.yml required-ness#test_keeps_working_when_the_role_has_no_meta_argument_specs_yml
 0.1	mode: piped through a variable that's itself an unquoted-octal YAML literal#test_keeps_a_non_permission_async_status_mode_s_decimal_text_literal_and_templated
 0.1	module_defaults:#test_applies_play_defaults_lets_the_task_override_and_matches_short_vs_FQCN_names
@@ -2638,11 +2594,6 @@
 0.1	skipped-block banner shapes (block: when: false)#test_prints_the_role_prefixed_per_item_banners_for_a_skipped_role_roles_with_when_
 0.1	slash-containing role names resolve as subdirectories inside a role checkout (subdir_role_test.cr)#test_loads_a_meta_main_yml_dependency_written_as_a_subdir_name_of_the_declaring_role
 0.1	slash-containing role names resolve as subdirectories inside a role checkout (subdir_role_test.cr)#test_runs_a_two_level_subdir_role_chain_with_banner_names_following_the_resolved_subpath
-0.1	snap plugin registered-result shapes (round-1100100 oracle)#test_emits_channel_then_classic_order_when_the_task_passes_channel_at_all
-0.1	snap plugin registered-result shapes (round-1100100 oracle)#test_fails_a_store_missing_name_with_the_module_crash_skeleton
-0.1	snap plugin registered-result shapes (round-1100100 oracle)#test_is_idempotent_for_an_already_installed_snap_with_the_ok_shape
-0.1	snap plugin registered-result shapes (round-1100100 oracle)#test_no_ops_state_absent_for_a_snap_that_is_not_installed
-0.1	snap plugin#test_fails_when_the_snap_binary_is_missing
 0.1	stat plugin#test_includes_attr_flags_attributes_by_default_get_attributes_defaults_to_true_matching_Ansible_
 0.1	stat plugin#test_reports_file_attributes_for_a_regular_file_matching_Ansible_s_stat_module_field_shapes
 0.1	stat plugin#test_uses_the_requested_checksum_algorithm
@@ -2726,7 +2677,6 @@
 0.1	with_together: templated scalar sources#test_skips_the_whole_task_cleanly_when_both_sources_resolve_to_empty_lists
 0.1	xml plugin result key order#test_serializes_a_count_query_as_actions_changed_count_msg
 0.1	yum_repository plugin#test_reports_changed_false_on_an_idempotent_rerun
-0.1	zfs plugin - argument validation#test_reports_a_missing_state_alone
 0.1	{% do %} tag in a variable's value fails every read path (#322)#test_fails_debug_var_assert_when_and_loop_without_crashing_or_reporting_ok
 0.09	--extra-vars#test_loads_a_YAML_file_with_
 0.09	--start-at-task#test_can_start_at_a_task_nested_inside_a_block
@@ -2829,10 +2779,6 @@
 0.09	debug native typing and include_vars failures#test_keeps_literal_and_whole_span_scalar_types_in_debug_msg
 0.09	debug: var renders lazy template values (and surfaces their errors)#test_still_renders_a_lazy_var_that_extracts_an_existing_attribute
 0.09	debug: verbosity: gate#test_shows_as_a_real_skipping_task_counted_under_skipped_not_ok_when_run_verbosity_is_below_the_gate
-0.09	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_clean_crashes_with_Ansible_s_bare_os_listdir_OSError_when_the_tree_was_never_created
-0.09	deploy_helper plugin - finalize without the release tree (kpg34)#test_reports_Ansible_s_module_crash_OSError_wording_with_paths_joined_onto_path_
-0.09	deploy_helper plugin#test_query_publishes_no_top_level_releases_list_for_a_nonexistent_tree
-0.09	deploy_helper plugin::ansible_facts publishing#test_state_present_carries_the_deploy_helper_fact_dict_matching_the_created_tree
 0.09	deprecated ansible.module_utils import warnings from native plugins#test_carries_mount_s_to_bytes_to_native_pair_on_a_module_result
 0.09	docker_image_build CLI image lookup#test_runs_the_build_when_the_only_row_has_a_different_tag
 0.09	docker_image_build buildx plugin gate#test_continues_past_the_gate_to_the_path_check_when_buildx_is_present
@@ -2910,8 +2856,6 @@
 0.09	inventory sources#test_applies_group_vars_across_file_boundaries
 0.09	inventory sources#test_warns_and_continues_when_the_named_inventory_source_cannot_be_read
 0.09	issue 245 templated list element rendering (templated_list_element_test.cr)#test_keeps_a_bare_template_list_element_a_real_rendered_dict_in_debug_var_
-0.09	java_cert plugin#test_fails_when_cert_path_is_used_without_an_alias
-0.09	java_cert plugin#test_fails_when_certificate_sources_are_mutually_exclusive
 0.09	jinja constant embedded-template warning blocks#test_warns_through_the_native_typed_whole_span_route_too_set_fact_debug_msg_
 0.09	kernel_blacklist plugin#test_fails_with_Ansible_s_wrapped_Errno_2_open_failure_when_the_parent_dir_is_missing_no_mkdir_p_
 0.09	kernel_blacklist plugin#test_is_idempotent_when_the_module_is_already_blacklisted
@@ -3033,8 +2977,6 @@
 0.09	set_fact run scope#test_keeps_a_play_1_set_fact_above_a_play_2_play_var_of_the_same_name
 0.09	shell plugin#test_keeps_shell_operators_inert_inside_argv_elements_quoted_not_split_
 0.09	shell plugin#test_preserves_trailing_newlines_when_strip_empty_ends_is_false
-0.09	snap plugin registered-result shapes (round-1100100 oracle)#test_refreshes_on_a_channel_mismatch_with_the_changed_shape
-0.09	snap plugin registered-result shapes (round-1100100 oracle)#test_reports_changed_plus_snaps_installed_without_cmd_in_check_mode_for_a_not_installed_snap
 0.09	strict boolean conditionals#test_accepts_a_genuine_boolean
 0.09	strict boolean conditionals#test_fails_a_bare_list_whose_item_is_an_undefined_template_on_the_item_s_reference_with_real_s_three_record_chain
 0.09	strict boolean conditionals#test_fails_for_a_string_valued_condition_naming_the_type_and_the_derived_result
@@ -3254,12 +3196,6 @@
 0.08	debug: var result key#test_registers_a_defined_var_s_value_under_the_var_name_with_no_msg
 0.08	debug: var result key#test_registers_an_undefined_var_as_Ansible_2_19_11_s_inline_error_marker_and_still_succeeds
 0.08	delegated task result lines keep the -> delegate marker#test_marks_a_delegated_task_s_loop_source_failure_fatal_line_under_ignore_errors
-0.08	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_clean_crashes_with_Not_a_directory_when_releases_path_is_a_file
-0.08	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_finalize_creates_the_dangling_current_symlink_first_then_crashes_on_the_missing_releases_dir
-0.08	deploy_helper plugin#test_fails_when_path_is_missing
-0.08	deploy_helper plugin#test_rejects_the_unfinished_state_Ansible_s_choices_check_rejects
-0.08	deploy_helper plugin::ansible_facts publishing#test_state_absent_destroys_the_facts_as_an_empty_list
-0.08	deploy_helper plugin::ansible_facts publishing#test_state_present_fails_when_current_exists_as_a_real_directory_real_check_link_
 0.08	deprecated ansible.module_utils import warnings from native plugins#test_carries_no_import_deprecations_for_a_module_whose_installed_source_migrated_off_text_issue_1061_
 0.08	dnf local-rpm remote-rpm failure shape#test_does_not_report_an_existing_file_rpm_as_unopenable
 0.08	dnf/yum repo-metadata download failure - ansible's bare msg shape (issue 267)#test_reports_just_libdnf_s_metadata_text_from_package_state_installed
@@ -3343,8 +3279,6 @@
 0.08	inventory sources#test_accepts_a_comma_separated_host_list
 0.08	inventory sources#test_expands_ranges_inside_a_host_list
 0.08	inventory sources#test_reports_ungrouped_in_group_names_for_a_host_with_no_group_of_its_own
-0.08	java_cert plugin#test_fails_on_an_invalid_state
-0.08	java_cert plugin#test_fails_when_keytool_is_not_installed
 0.08	jinja constant embedded-template warning blocks#test_points_an_assert_that_item_s_origin_at_the_surviving_value_under_duplicate_keys_issue_1136_
 0.08	kernel_blacklist plugin#test_blacklists_a_module_in_a_new_file_creating_it_before_the_change
 0.08	kernel_blacklist plugin#test_does_not_write_in_check_mode_but_still_creates_a_missing_file
@@ -3398,8 +3332,6 @@
 0.08	make plugin#test_carries_the_shlex_quoted_base_command_in_command_no_msg_resolving_gmake_first_like_real_get_bin_path
 0.08	make plugin#test_expands_a_led_chdir_against_HOME_before_the_isdir_check_issue_789_
 0.08	make plugin#test_uses_an_explicit_make_binary_path_verbatim
-0.08	maven_artifact local repository#test_resolves_version_latest_through_maven_metadata_local_xml
-0.08	maven_artifact local repository#test_treats_an_existing_dest_directory_without_a_trailing_slash_as_a_directory
 0.08	mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)#test_nsupdate_surfaces_a_refused_TCP_connect_as_Python_s_OSError_shape
 0.08	module remote_tmp init fallback warning#test_warns_with_the_OSError_fallback_block_when_the_remote_tmp_dir_cannot_be_created
 0.08	mount plugin - failed mount restores fstab (round 993003)#test_keeps_the_fstab_entry_when_the_mount_succeeds
@@ -3499,8 +3431,6 @@
 0.08	skipped loop item labels under a raw-truthy no_log#test_prints_item_None_for_a_block_inherited_templated_no_log_that_resolves_false
 0.08	skipped loop item labels under a raw-truthy no_log#test_prints_item_None_for_a_templated_no_log_that_resolves_false
 0.08	slurp plugin result key order#test_serializes_a_successful_read_as_content_source_encoding_failed_changed
-0.08	snap plugin registered-result shapes (round-1100100 oracle)#test_fails_with_get_bin_path_wording_when_snap_is_not_on_PATH
-0.08	snap plugin registered-result shapes (round-1100100 oracle)#test_no_ops_state_disabled_for_a_snap_that_is_not_installed_None_is_falsy_
 0.08	stat plugin#test_applies_the_get_mime_mime_type_alias_later_in_the_spec_s_alias_list_than_mime_so_it_wins_
 0.08	stat plugin#test_carries_disk_usage_bytes_right_after_blocks_2_21_
 0.08	stat plugin#test_expands_a_leading_in_path_using_HOME_Ansible_s_stat_module_is_type_path_
@@ -3766,7 +3696,6 @@
 0.07	deep lazy-var chain variable preparation#test_renders_a_four_level_distinct_name_chain_to_full_depth_through_the_engine
 0.07	delegated result marker ([host -> target])#test_propagates_an_import_tasks_line_s_delegate_to_onto_every_inlined_task
 0.07	delegated task result lines keep the -> delegate marker#test_marks_a_delegated_include_vars_success_line
-0.07	deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)#test_state_finalize_fails_Ansible_s_keep_releases_guard_before_touching_anything
 0.07	diff:/check_mode: keyword post-validation#test_fails_a_templated_diff_that_renders_to_a_non_boolean_value
 0.07	dnf failed-install results carry the resolved transaction (issue 1020)#test_reports_the_replayed_transaction_entries_in_the_fatal_results_package_state_latest_
 0.07	dnf plugin - parameter coverage (CLI-invocation shape)#test_maps_download_only_true_to_downloadonly_and_adds_downloaddir_only_alongside_it
@@ -3910,8 +3839,6 @@
 0.07	ini_file plugin::msg and diff shape (Ansible's field set)#test_says_section_and_option_added_when_both_are_newly_created
 0.07	ini_file plugin::msg and diff shape (Ansible's field set)#test_says_section_removed_when_state_absent_drops_the_whole_section
 0.07	iptables plugin (pre-execution argument failures)#test_still_reports_Ansible_s_log_jump_failure_for_a_well_formed_rule
-0.07	java_cert keytool probe#test_fails_a_missing_executable_override_with_the_OSError_shape
-0.07	java_cert plugin#test_fails_when_keystore_pass_is_missing
 0.07	kernel_blacklist plugin#test_reports_Ansible_s_missing_required_arguments_wording
 0.07	known_hosts plugin#test_fails_when_state_present_is_given_without_a_key
 0.07	known_hosts plugin#test_is_a_no_op_removing_an_entry_that_isn_t_present
@@ -3946,7 +3873,6 @@
 0.07	make plugin - unspawnable explicit make binary (kpg34)#test_drops_an_invalid_chdir_like_Ansible_s_ignore_invalid_cwd_instead_of_failing_on_it
 0.07	make plugin#test_places_jobs_before_the_target_and_str_formats_params_bare_key_for_None_
 0.07	make plugin#test_rejects_target_and_targets_together_with_Ansible_s_mutually_exclusive_wording
-0.07	maven_artifact plugin#test_fails_when_artifact_id_is_missing
 0.07	meta/argument_specs.yml required-ness#test_combines_every_missing_required_option_into_one_sorted_message
 0.07	meta/argument_specs.yml required-ness#test_fails_on_a_required_option_with_no_value_and_no_default
 0.07	mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)#test_file_reports_the_touch_failure_with_Ansible_s_plain_msg_and_path_echo
@@ -4064,9 +3990,6 @@
 0.07	skipped loop item labels under a raw-truthy no_log#test_keeps_the_item_and_censored_label_for_a_literal_no_log_false
 0.07	skipped loop item labels under a raw-truthy no_log#test_prints_item_None_for_a_quoted_string_no_log
 0.07	skipped task's templated no_log deprecation#test_emits_the_no_log_templating_deprecation_before_a_task_level_when_false_skip
-0.07	snap plugin registered-result shapes (round-1100100 oracle)#test_fails_with_the_plain_validation_shape_for_a_bad_state
-0.07	snap plugin registered-result shapes (round-1100100 oracle)#test_fails_with_the_plain_validation_shape_for_a_missing_name
-0.07	snap plugin#test_fails_on_an_invalid_state
 0.07	stat errno surface#test_reports_exists_false_for_a_plain_missing_path_ENOENT_
 0.07	stat path variable expansion#test_expands_braced_HOME_in_path_like_ansible_s_path_type_args
 0.07	stat plugin result key order#test_serializes_the_existing_path_result_in_real_stat_s_key_order
@@ -4222,9 +4145,6 @@
 0.07	yum_repository plugin#test_renders_a_single_value_baseurl_gpgkey_without_a_continuation_line
 0.07	yum_repository plugin#test_resolves_the_TLS_aliases_ca_cert_client_cert_client_key_validate_certs_to_their_canonical_keys
 0.07	yum_versionlock plugin#test_fails_cleanly_when_yum_is_not_installed
-0.07	zfs plugin - argument validation#test_rejects_an_invalid_state_choice_in_the_spec_s_own_order_with_the_got_colon
-0.07	zfs plugin - argument validation#test_reports_a_missing_name_alone
-0.07	zfs plugin - argument validation#test_reports_both_missing_required_args_sorted_in_the_plural_wording
 0.06	--list-tasks#test_matches_ansible_playbook_s_listing_exactly
 0.06	Krikri::CollectionIndex#test_bare_redirect_into_an_absent_collection_refuses_with_no_ansible_core_on_the_machine
 0.06	Krikri::CollectionIndex#test_does_not_count_a_dangling_library_symlink_as_a_module_source
@@ -4578,9 +4498,6 @@
 0.06	ini_file plugin#test_inserts_every_values_list_entry_in_order_including_an_empty_string_as_a_real_value
 0.06	ini_file plugin#test_removes_an_option_when_state_absent
 0.06	ipwrap is rejected as an unknown filter#test_fails_the_task_with_No_filter_named_ipwrap_and_a_non_zero_exit
-0.06	java_cert keytool probe#test_fails_a_missing_keytool_with_the_OSError_shape
-0.06	java_cert plugin#test_fails_when_state_present_has_no_certificate_source
-0.06	java_cert plugin#test_reaches_the_keytool_probe_not_an_alias_check_for_content_without_cert_alias
 0.06	krikri-playbook CLI (--check mode)::strict-undefined module-arg templating#test_fails_not_silently_continues_when_a_bare_module_arg_reference_is_genuinely_undefined
 0.06	lineinfile plugin - parameter coverage (firstmatch/search_string/validate/attributes/SELinux/unsafe_writes)::atomic write / unsafe_writes:#test_follows_a_symlink_dest_and_edits_the_target_keeping_the_link
 0.06	lineinfile plugin - parameter coverage (firstmatch/search_string/validate/attributes/SELinux/unsafe_writes)::firstmatch:#test_inserts_after_the_first_insertafter_match_when_firstmatch_is_set
@@ -4607,8 +4524,6 @@
 0.06	lvol plugin - lvm binary gate (kpg34)#test_still_validates_the_argspec_before_the_lvm_lookup
 0.06	lvol plugin#test_fails_when_neither_lv_nor_thinpool_is_given
 0.06	make plugin#test_requires_chdir_with_parameters_py_s_plural_wording
-0.06	maven_artifact plugin#test_fails_when_group_id_is_missing
-0.06	maven_artifact plugin#test_fails_when_version_and_version_by_spec_are_both_given
 0.06	meta/argument_specs.yml required-ness#test_fails_on_a_required_option_whose_default_is_null_round_979000_regression_
 0.06	mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)#test_cron_rejects_special_time_combined_with_explicit_time_fields
 0.06	mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)#test_file_fails_a_hard_link_whose_src_does_not_exist_with_Ansible_s_wording
@@ -4873,8 +4788,6 @@
 0.06	yum_versionlock validation order#test_fails_with_the_choices_message_for_an_invalid_state_before_the_yum_binary_check
 0.06	yum_versionlock validation order#test_fails_with_the_required_arguments_message_when_name_is_missing
 0.06	yum_versionlock validation order#test_still_fails_on_the_missing_yum_binary_for_a_valid_invocation
-0.06	zfs plugin - argument validation#test_fails_origin_on_snapshot_before_the_zfs_zpool_binary_lookup
-0.06	zfs plugin - argument validation#test_fails_the_binary_lookup_with_Ansible_s_quoted_executable_wording
 0.05	--list-tasks with import_role#test_expands_a_static_import_role_like_ansible_playbook_byte_for_byte
 0.05	Krikri::BatchScript#test_halts_on_a_nonzero_exit_code_even_when_the_nonexistent_plugin_never_produces_JSON_at_all
 0.05	Krikri::CollectionIndex#test_finds_a_role_local_action_plugins_file_as_a_bare_name_source

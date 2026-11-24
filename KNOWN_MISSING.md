@@ -703,6 +703,23 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   out of reach - Alpine is musl and this engine's glibc-linked plugin binaries cannot execute there, so
   the upload fails before any module runs; a musl plugin build is the prerequisite, not an apk backend.
 
+### Narrowly-scoped module ports removed (issue #1753)
+
+Twelve ports were removed deliberately, not lost: `community.general.zypper`,
+`community.general.zypper_repository`, `community.rabbitmq.rabbitmq_plugin`,
+`community.rabbitmq.rabbitmq_user`, `community.general.java_cert`,
+`community.general.maven_artifact`, `community.general.pacman`, `community.general.pkgng`,
+`community.general.snap`, `community.general.zfs`, `community.general.elasticsearch_plugin` and
+`community.general.deploy_helper`. Each existed only to close one confirmed divergence, all of them
+on hosts or branches unrelated to the Ubuntu/RHEL-family targets this engine supports (SUSE/Arch/
+FreeBSD package managers, bare-metal ZFS management, Java/Maven tooling, Capistrano layouts,
+Elasticsearch installers, RabbitMQ plugins). Keeping them cost ~3.4k plugin LOC, ~1.9k test LOC and
+their divergence-corpus cases for seconds of build time, so the trade-off went the other way. A
+playbook using one of them now takes the normal unreachable/unavailable-module path: a graceful
+per-task skip plus the corresponding `unreachable unavailable module` exit-code contribution. The
+builtin-namespace redirects that used to map `ansible.builtin.`/`ansible.legacy.` spellings of
+zypper, zypper_repository, pacman, pkgng and snap onto their collection modules went with them.
+
 ### Arbitrary Python
 
 - **Role-private custom `lookup_plugins/*.py` lookups run on the controller**
@@ -921,8 +938,7 @@ because anyone intends to fix them.
   write the timestamped block, adds nothing itself, and skips the add for an already-locked
   package).
 
-- **The kpg state oracle's `#ports` section sees the guest's own transient UDP sockets (kpg
-  check-mode cases, issue #1721).** The snapshot reads `/proc/net/udp` and keeps every socket in
+- **The kpg state oracle's `#ports` section sees the guest's own transient UDP sockets.** The snapshot reads `/proc/net/udp` and keeps every socket in
   state `07`, which covers an unconnected outbound socket a boot-time service has open (an NTP or
   DNS query from `systemd-timesyncd`/`systemd-resolved` sits at `0.0.0.0:<ephemeral>` until its
   reply arrives) as well as a real listener. Only the before/after DELTA is compared, so such a
@@ -934,10 +950,7 @@ because anyone intends to fix them.
   identical, so two real Ansible runs disagree here the same way and this is not a krikri gap. The
   generator must stop treating a wildcard-bound ephemeral-port UDP entry as host state (or let the
   guest settle before the before-snapshot) before that half of the oracle is trusted on a freshly
-  booted host. Everything this playbook does exercise already matches: the rendered list `name`,
-  the handlers/retries/delegation around it, and zypper.py's AnsibleModule validation -
-  `test/unit/zypper_test.cr` pins that a wrong-typed bool is reported before `get_cmd()`'s probe
-  even under `--check`, which is the whole failure real prints for this task.
+  booted host.
 
 ### Everything else
 
@@ -1001,45 +1014,9 @@ because anyone intends to fix them.
   quadlet unit-file generation (real drives `podman`/writes `/etc/containers/systemd/*.container`).
   The plugin answers a plain ok there, so on a host WITH podman krikri reports ok where real reports
   the real work's changed/ok - revisit if a round lands on a podman-present host.
-- `community.general.pacman` (issue #1583) - ported surface: the AnsibleModule argument validation
-  (community.general 12.x setup_module spec, required_one_of, mutually_exclusive) and the
-  `get_bin_path(executable, required=True)` probe Pacman.__init__ runs before ANY package work,
-  check mode included - so a host without pacman fatals the task with real's
-  `Failed to find required executable "pacman" in paths: ...` (jpedrodelacerda.yay on Ubuntu used to
-  get the graceful skip + engine-limit exit 4 there, which let the play run on past the point real
-  stopped). Everything AFTER a successful probe is deliberately unported: the package inventory and
-  install/remove/upgrade/update_cache work (real drives `pacman --print-format` against a real Arch
-  package database). The plugin answers a plain ok there, so on an Arch host krikri reports ok where
-  real reports the real work's changed/ok - out of scope with apt/dnf/yum backends, this engine
-  targets Ubuntu and RHEL-family hosts.
-- `community.general.pkgng` (issue #1679) - ported surface: the AnsibleModule argument validation
-  (main()'s argument_spec and `rootdir`/`chroot`/`jail` mutual exclusion) and the
-  `get_bin_path("pkg", required=True)` probe main() runs before ANY package work, check mode
-  included - so a host without pkg fatals the task with real's
-  `Failed to find required executable "pkg" in paths: ...` (onelove-roles.freebsd-consul-template on
-  Ubuntu used to get the graceful skip + engine-limit exit 4 there, which let the play run on into
-  the role's directory/template tasks and its service handler). Everything AFTER a successful probe
-  is deliberately unported: `pkgng_older_than` and the install/remove/upgrade/annotation/autoremove
-  work (real drives `pkg info`/`pkg install` against a real FreeBSD package database). The plugin
-  answers a plain ok there, so on a FreeBSD host krikri reports ok where real reports the real
-  work's changed/ok - out of scope with apt/dnf/yum backends, this engine targets Ubuntu and
-  RHEL-family hosts.
-- `community.general.zypper` / `community.general.zypper_repository` (issue #1677) - ported
-  surface: the AnsibleModule argument validation (community.general 12.x setup_module specs, with
-  `priority` checked in its declaration position) and the `get_bin_path("zypper", required=True)`
-  probe both modules run before any package/repository work, plus `zypper_repository.py`'s
-  `supports_check_mode=False` basic.py skip (so under `--check` it prints real's
-  `skipping:` line and nothing else, while `zypper.py`'s `supports_check_mode=True` lets the probe
-  fatal there exactly like real). A host without zypper therefore fails both tasks with real's
-  `Failed to find required executable "zypper" in paths: ...` (chkpnt.mailserver on Ubuntu used to
-  get the graceful skip + engine-limit exit 4 on both, then report a later task's failure).
-  Everything AFTER a successful probe is deliberately unported: the package/repository work behind
-  `package_present()`/`package_absent()`/`addrepo`/`removerepo`/`refresh` (real drives zypper
-  against a real openSUSE database), and real's own pre-probe argument guards (dist-upgrade with
-  specific packages, absent-prefix/URL/patch removal, `state=present` without repo, .repo fetches).
-  The plugins answer a plain ok after a successful probe, so on an openSUSE host krikri reports ok
-  where real reports the real work's changed/ok - out of scope with the apt/dnf/yum backends, this
-  engine targets Ubuntu and RHEL-family hosts.
+- `community.general.pacman`, `community.general.pkgng`, `community.general.zypper`,
+  `community.general.zypper_repository`, `community.general.snap` - not implemented. Pointless on
+  the Ubuntu/RHEL-family targets this engine supports.
 - `meta:` - every action in Ansible's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,
   `reset_connection`), each matched to Ansible's observed behavior. Non-obvious ones: `end_play` and
@@ -1095,14 +1072,14 @@ because anyone intends to fix them.
 
 ### Verified
 
-- `kop_snap`, `kop_iptables`, `kop_apt_fail` (rounds 1100100+): `snap`, `iptables`, `apt` real-mutation/failure shapes.
+- `kop_iptables`, `kop_apt_fail` (rounds 1100100+): `iptables`, `apt` real-mutation/failure shapes.
 - `kop_docker_build`, `kop_docker_invalidrepo` (rounds 1600100/1800100, 5331000): `docker_image_build` buildx gate, CLI image lookup, both resolve_repository_name refusals (`http://foo`, `registry.example.com-/thing`), on a real docker.io 26.1.3 + buildx host, byte-identical cold and warm. The refusals escape the module body uncaught and register as `msg: "Task failed: Module failed: <raw text>"` with keys failed/changed/exception/msg.
 - Docker plugins: API failures, container start failures, daemon-unreachable wording (SDK and CLI modules) and `docker_network` `ipam_config` verified against community.docker 5.2.1 on a podman socket. TCP-unreachable wording is a deliberate limit (see above).
 
 ### Not a gap to close
 
 - `homebrew*`, `ovirt_auth`/`redhat_subscription`/`rhsm_*` (macOS-first, or need a live oVirt engine / Red Hat entitlement; well under 2% of roles).
-- `ec2_*`, `iam_user_info`, `nsupdate`, `rabbitmq_*` (need an external account or appliance neither engine can reach).
+- `ec2_*`, `iam_user_info`, `nsupdate` (need an external account neither engine can reach).
 - Host noise (apt/dnf output text, per-host keys/UUIDs, snap revisions, mount/systemd dependency ordering) is not a krikri difference.
 
 ---

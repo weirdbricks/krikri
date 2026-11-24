@@ -1,6 +1,0 @@
----
-- hosts: localhost
-  connection: local
-  gather_facts: true
-  roles:
-    - tenantcloud.elk_backup

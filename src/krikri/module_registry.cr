@@ -77,41 +77,8 @@ module Krikri
       "ansible.posix.synchronize",
       "community.general.pam_limits",
       "community.general.apache2_module",
-      # elasticsearch_plugin (issue #1588): tenantcloud.elk_backup's first
-      # task. Real runs the module under --check too, and its installer
-      # probe (get_plugin_bin()) fails on any host without Elasticsearch,
-      # so dropping the task as unimplemented made krikri skip it and
-      # report a later task's fatal instead.
-      "community.general.elasticsearch_plugin",
       "community.general.capabilities",
       "community.general.make",
-      # pacman (issue #1583): jpedrodelacerda.yay calls it on Ubuntu,
-      # where real resolves community.general.pacman and fatals on its
-      # own get_bin_path("pacman", required=True) probe. Without an
-      # entry the task was a graceful unavailable-module skip plus the
-      # engine-limit exit 4, so the play ran on past the point real
-      # stopped (see plugins/pacman.cr for the ported surface).
-      "community.general.pacman",
-      # pkgng (issue #1679): onelove-roles.freebsd-consul-template calls
-      # it on Ubuntu, where real resolves community.general.pkgng and
-      # fatals on its own get_bin_path("pkg", required=True) probe
-      # (check mode included). Without an entry the task was a graceful
-      # unavailable-module skip plus the engine-limit exit 4, so the
-      # play ran on past the point real stopped (see plugins/pkgng.cr
-      # for the ported surface).
-      "community.general.pkgng",
-      # zypper/zypper_repository (issue #1677): chkpnt.mailserver writes
-      # both FQCNs on an Ubuntu host. zypper.py declares
-      # supports_check_mode=True, so real RUNS it under --check and
-      # fatals on the get_bin_path("zypper", required=True) probe inside
-      # get_cmd(); zypper_repository.py declares
-      # supports_check_mode=False, so real answers --check with basic.py's
-      # own skip. Without entries both were graceful unavailable-module
-      # skips that also kept the engine-limit exit 4, so the play ran on
-      # to a later task's failure with a transcript of its own (see
-      # plugins/zypper.cr and plugins/zypper_repository.cr).
-      "community.general.zypper",
-      "community.general.zypper_repository",
       "ansible.builtin.user",
       "ansible.builtin.group",
       "ansible.builtin.git",
@@ -307,10 +274,6 @@ module Krikri
       # ansible-core still redirects the old core spelling to it.
       "ansible.builtin.alternatives",
       "community.general.filesystem",
-      # zfs (0.9.952): ZFS dataset/volume/snapshot management via the
-      # `zfs` CLI (micxer.zfs round 400133 hard-stopped on the bare
-      # `zfs:` spelling). See plugins/zfs.cr.
-      "community.general.zfs",
       # lvol (0.9.929): LVM logical volume management, one native port
       # registered under both FQCNs seen in the wild - real roles write
       # both spellings (ansible.builtin.lvol in ome.lvm_partition,
@@ -326,12 +289,6 @@ module Krikri
       # resolve). See plugins/parted.cr and plugins/lvg.cr.
       "community.general.parted",
       "community.general.lvg",
-      # snap/deploy_helper (0.9.1151): snap package management
-      # (mircomasa.microk8s, racqspace.microk8s) and the
-      # capistrano-style release-directory module (f500.project_deploy).
-      # See plugins/snap.cr and plugins/deploy_helper.cr.
-      "community.general.snap",
-      "community.general.deploy_helper",
       # dpkg_divert (0.9.929): Debian file-diversion management
       # (ansible-lockdown ubuntu24 CIS and MindPointGroup debian11 CIS
       # rounds both hard-stopped on it). Debian-family only by nature -
@@ -347,10 +304,6 @@ module Krikri
       # the SMTP round trip). Pure SMTP client + MIME multipart - see
       # plugins/mail.cr for the smtplib semantics it reproduces.
       "community.general.mail",
-      # java_cert (0.9.931): Java keystore certificate management via
-      # keytool (no live round found - implemented from the real
-      # module's semantics, digest-compare import included).
-      "community.general.java_cert",
       # virt_net (0.9.954): libvirt network management via the virsh CLI
       # (mattgeddes.libvirt_kvm round 410102 and ovirt.hosted_engine_setup
       # round 410038 both hard-stopped on the bare `virt_net:` spelling).
@@ -363,9 +316,6 @@ module Krikri
       # made the block's `when:` fatal where real answered ok, issue
       # #1360).
       "virt_pool",
-      # maven_artifact (0.9.934): Maven artifact download
-      # (lean_delivery.jmeter round 210778 hard-stopped on it).
-      "community.general.maven_artifact",
       # nsupdate (0.9.936): RFC2136 dynamic-DNS record management -
       # native wire-format + TSIG port (no dnspython); talks to a real
       # DNS server, so only the parameter-validation failures are
@@ -513,11 +463,6 @@ module Krikri
       "ec2_vpc_subnet_info",
       "ec2_vpc_net_info",
       "ec2_ami_info",
-      # round 196: native ports of the collection modules the corpus
-      # actually calls (previously rc=4 "unavailable modules" where
-      # ansible ran them - mrlesmithjr.rabbitmq and linux-system-roles.rhc).
-      "community.rabbitmq.rabbitmq_plugin",
-      "community.rabbitmq.rabbitmq_user",
       # The arbitrary-Python-module runner's internal dispatch name -
       # NOT a module real playbooks call. A task whose module resolves
       # to nothing keeps the graceful unavailable_module path (since
@@ -557,14 +502,6 @@ module Krikri
       # / `openssl_csr:` / `openssl_certificate:` task names:
       # ansible-core 2.19.4 resolves them; crystal 0.9.622 warned and
       # skipped.
-      # community.rabbitmq (0.9.944): rabbitmq_plugin/rabbitmq_user are
-      # registered only under their FQCN, but real roles write the bare
-      # short names (SimpliField.rabbitmq and rockandska.rabbitmq rounds
-      # both write `rabbitmq_plugin:` unqualified) - without this entry
-      # the bare name is unresolvable and the task is dropped as
-      # "unavailable module" where Ansible resolves it through
-      # collection search.
-      "community.rabbitmq",
       "community.crypto",
     ]
 
@@ -668,20 +605,6 @@ module Krikri
       "ansible.legacy.openssl_certificate_info"    => "community.crypto.x509_certificate_info",
       "community.crypto.openssl_certificate_info"  => "community.crypto.x509_certificate_info",
       "community.general.openssl_certificate_info" => "community.crypto.x509_certificate_info",
-      # snap moved out of ansible-core into community.general long before
-      # FQCNs existed, but ansible-core's builtin runtime still redirects
-      # the ansible.builtin./ansible.legacy. spellings onto
-      # community.general.snap (live-verified against 2.19.11: an
-      # `ansible.builtin.snap:` task on a host without the snap CLI
-      # resolves and RUNS, failing with the module's own 'Failed to find
-      # required executable "snap"' - it does not skip). pitabwire.
-      # ansible_role_microceph (round 1791896374) writes the FQCN
-      # spelling; krikri only registered community.general.snap, so the
-      # task was silently skipped as an unavailable module. The bare
-      # spelling needs no entry here - community.general is already in
-      # MODULE_SEARCH_COLLECTIONS.
-      "ansible.builtin.snap" => "community.general.snap",
-      "ansible.legacy.snap"  => "community.general.snap",
       # make was never in ansible-core, but its builtin runtime redirects
       # the ansible.builtin./ansible.legacy. spellings onto
       # community.general.make and resolves and runs the module (issue
@@ -691,28 +614,6 @@ module Krikri
       # MODULE_SEARCH_COLLECTIONS.
       "ansible.builtin.make" => "community.general.make",
       "ansible.legacy.make"  => "community.general.make",
-      # pacman lived in ansible-core before the collection split, so its
-      # builtin runtime still redirects the ansible.builtin./ansible.legacy.
-      # spellings onto community.general.pacman and real runs the module
-      # (issue #1583). The bare spelling needs no entry -
-      # community.general is already in MODULE_SEARCH_COLLECTIONS.
-      "ansible.builtin.pacman" => "community.general.pacman",
-      "ansible.legacy.pacman"  => "community.general.pacman",
-      # pkgng has the same pre-collection history as pacman: ansible-core
-      # 2.21.6's own builtin runtime redirects both builtin spellings onto
-      # community.general.pkgng and real runs the module (issue #1679).
-      "ansible.builtin.pkgng" => "community.general.pkgng",
-      "ansible.legacy.pkgng"  => "community.general.pkgng",
-      # zypper/zypper_repository also lived in ansible-core before the
-      # collection split; its builtin runtime still redirects the
-      # ansible.builtin./ansible.legacy. spellings onto community.general
-      # and real runs the module (issue #1677). The bare spellings need
-      # no entries - community.general is already in
-      # MODULE_SEARCH_COLLECTIONS.
-      "ansible.builtin.zypper"            => "community.general.zypper",
-      "ansible.legacy.zypper"             => "community.general.zypper",
-      "ansible.builtin.zypper_repository" => "community.general.zypper_repository",
-      "ansible.legacy.zypper_repository"  => "community.general.zypper_repository",
       # community.general shipped the docker_* modules before they moved
       # to community.docker, and its own meta/runtime.yml still redirects
       # every one of those pre-2.0 FQCNs to the new collection (only

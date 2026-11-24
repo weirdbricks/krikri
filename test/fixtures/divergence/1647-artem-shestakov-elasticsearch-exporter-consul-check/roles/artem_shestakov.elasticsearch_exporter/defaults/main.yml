@@ -1,9 +1,0 @@
----
-# The role's own defaults, verbatim.
-version: 1.3.0
-consul_host: "localhost"
-consul_service_name: elasticsearch_exporter
-consul_service_port: 9114
-consul_service_tags:
-  - exporter
-consul_service_interval: 60s

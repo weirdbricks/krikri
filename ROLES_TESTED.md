@@ -12,6 +12,14 @@ the run produced a real timing (rc=0 or a genuine both-fail past setup) -
 see `AGENTS.md`'s benchmark-round workflow. Rows predating that convention
 may be bundled and/or missing timings; not backfilled.
 
+**Staleness note (0.9.3067, issue #1753):** twelve narrowly-scoped module ports were removed
+(`community.general.zypper`/`zypper_repository`/`java_cert`/`maven_artifact`/`pacman`/`pkgng`/
+`snap`/`zfs`/`elasticsearch_plugin`/`deploy_helper`, `community.rabbitmq.rabbitmq_plugin`/
+`rabbitmq_user` - see `KNOWN_MISSING.md`). Rows below whose clean/identical status depended on one
+of those ports are stale until re-run: the role's tasks now take the graceful unavailable-module
+skip instead, so expect a wider `skipped=` delta or a divergent status, the same way the
+pre-fix rows for those roles read.
+
 ## Benchmark: 10 random verified-clean roles, fresh host pair each
 
 Measured against `ansible-playbook` (`ansible-core` 2.19.4): 10 real

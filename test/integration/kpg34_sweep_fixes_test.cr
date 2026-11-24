@@ -4,7 +4,7 @@ require "json"
 # Regression tests for the system/storage module groups a
 # krikri-playbook-generator sweep (seed 34) flagged: parted, lvg, lvol,
 # firewalld, selinux, sefcontext, filesystem, mount_facts,
-# kernel_blacklist, async_status, make and deploy_helper. The expected
+# kernel_blacklist, async_status and make. The expected
 # strings are ansible-playbook 2.19.11's own, captured from local
 # runs (ansible_connection=local, no gather caching) or live-verified
 # module source; the missing-binary/library gates use a restricted child
@@ -373,60 +373,6 @@ describe "make plugin - unspawnable explicit make binary (kpg34)" do
     result["failed"].as_bool.must_equal(false)
     result["changed"].as_bool.must_equal(false)
     result["command"].as_s.must_equal("/bin/true krikri-no-such-target")
-  end
-end
-
-describe "deploy_helper plugin - finalize without the release tree (kpg34)" do
-  it "reports Ansible's module-crash OSError wording with paths joined onto path:" do
-    root = PluginSpecHelper.tmp_path("kpg34-deploy-finalize")
-
-    result = PluginSpecHelper.run("deploy_helper", {
-      "mode"                => "0644",
-      "owner"               => "root",
-      "path"                => root,
-      "releases_path"       => "zilrji",
-      "shared_path"         => "/tmp/kpg34-no-such-shared",
-      "state"               => "finalize",
-      "unfinished_filename" => "wppgti",
-      "release"             => "ljthig",
-    })
-
-    result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal(
-      "Task failed: Module failed: [Errno 2] No such file or directory: " \
-      "'#{root}/zilrji/ljthig' -> '#{root}/current'")
-  end
-
-  it "fails with Ansible's dangling-source wording when current points elsewhere" do
-    root = PluginSpecHelper.tmp_path("kpg34-deploy-dangling")
-    Dir.mkdir_p(File.join(root, "releases", "old"))
-    File.symlink(File.join(root, "releases", "old"), File.join(root, "current"))
-
-    result = PluginSpecHelper.run("deploy_helper", {
-      "path"          => root,
-      "releases_path" => "releases",
-      "state"         => "finalize",
-      "release"       => "never-created",
-    })
-
-    result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("the symlink target #{root}/releases/never-created doesn't exists")
-  end
-
-  it "is idempotent when current already points at the release" do
-    root = PluginSpecHelper.tmp_path("kpg34-deploy-idem")
-    Dir.mkdir_p(File.join(root, "releases", "r1"))
-    File.symlink(File.join(root, "releases", "r1"), File.join(root, "current"))
-
-    result = PluginSpecHelper.run("deploy_helper", {
-      "path"          => root,
-      "releases_path" => "releases",
-      "state"         => "finalize",
-      "release"       => "r1",
-    })
-
-    result["failed"]?.must_be_nil
-    result["changed"].as_bool.must_equal(false)
   end
 end
 

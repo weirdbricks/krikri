@@ -1,5 +1,5 @@
 ---
-# Key-order probes for lvg, lvol, parted, zfs, mount.
+# Key-order probes for lvg, lvol, parted, mount.
 # Storage backing devices are loop devices over sparse files under /var/tmp,
 # created by this role and torn down in an `always:` block so a mid-role
 # failure still cleans up. Convention: every probed task registers r and is
@@ -34,17 +34,6 @@
       ansible.builtin.debug:
         msg: "KEYORDER|parted_helper_install|{{ r | to_json }}"
 
-    - name: Ensure zfsutils-linux is installed
-      ansible.builtin.apt:
-        name: zfsutils-linux
-        state: present
-      register: r
-      ignore_errors: true
-
-    - name: Report zfs_helper_install
-      ansible.builtin.debug:
-        msg: "KEYORDER|zfs_helper_install|{{ r | to_json }}"
-
     - name: Create sparse backing file for LVM
       ansible.builtin.command:
         cmd: truncate -s 200M /var/tmp/kop_d1.img
@@ -57,14 +46,6 @@
       ansible.builtin.command:
         cmd: truncate -s 200M /var/tmp/kop_d2.img
         creates: /var/tmp/kop_d2.img
-      register: r
-      changed_when: false
-      ignore_errors: true
-
-    - name: Create sparse backing file for zfs
-      ansible.builtin.command:
-        cmd: truncate -s 256M /var/tmp/kop_d3.img
-        creates: /var/tmp/kop_d3.img
       register: r
       changed_when: false
       ignore_errors: true
@@ -83,13 +64,6 @@
       changed_when: true
       ignore_errors: true
 
-    - name: Attach loop device for zfs
-      ansible.builtin.command:
-        cmd: losetup -f --show /var/tmp/kop_d3.img
-      register: kop_loop3_res
-      changed_when: true
-      ignore_errors: true
-
     - name: Remember LVM loop device
       ansible.builtin.set_fact:
         kop_loop1: "{{ kop_loop1_res.stdout | default('') }}"
@@ -97,10 +71,6 @@
     - name: Remember parted loop device
       ansible.builtin.set_fact:
         kop_loop2: "{{ kop_loop2_res.stdout | default('') }}"
-
-    - name: Remember zfs loop device
-      ansible.builtin.set_fact:
-        kop_loop3: "{{ kop_loop3_res.stdout | default('') }}"
 
     - name: Create VG kop_vg (changed)
       community.general.lvg:
@@ -229,65 +199,6 @@
       ansible.builtin.debug:
         msg: "KEYORDER|parted_fail|{{ r | to_json }}"
 
-    - name: Create zpool koppool on loop device
-      ansible.builtin.command:
-        cmd: "zpool create -f koppool {{ kop_loop3 | default('/var/tmp/kop_nosuch.img') }}"
-        creates: /koppool
-      register: r
-      changed_when: false
-      ignore_errors: true
-
-    - name: Report zfs_helper_zpool_create
-      ansible.builtin.debug:
-        msg: "KEYORDER|zfs_helper_zpool_create|{{ r | to_json }}"
-
-    - name: Create ZFS dataset koppool/kopfs (changed)
-      community.general.zfs:
-        name: koppool/kopfs
-        state: present
-      register: r
-      ignore_errors: true
-
-    - name: Report zfs_create
-      ansible.builtin.debug:
-        msg: "KEYORDER|zfs_create|{{ r | to_json }}"
-
-    - name: Create ZFS dataset koppool/kopfs again (ok)
-      community.general.zfs:
-        name: koppool/kopfs
-        state: present
-      register: r
-      ignore_errors: true
-
-    - name: Report zfs_exists
-      ansible.builtin.debug:
-        msg: "KEYORDER|zfs_exists|{{ r | to_json }}"
-
-    - name: Create ZFS dataset koppool/kopfs2 in check mode (changed)
-      community.general.zfs:
-        name: koppool/kopfs2
-        state: present
-      register: r
-      check_mode: true
-      ignore_errors: true
-
-    - name: Report zfs_check
-      ansible.builtin.debug:
-        msg: "KEYORDER|zfs_check|{{ r | to_json }}"
-
-    - name: Create ZFS dataset with an invalid property (failure)
-      community.general.zfs:
-        name: koppool/kopfail
-        state: present
-        extra_zfs_properties:
-          kop_bogus_property: "1"
-      register: r
-      ignore_errors: true
-
-    - name: Report zfs_fail
-      ansible.builtin.debug:
-        msg: "KEYORDER|zfs_fail|{{ r | to_json }}"
-
     - name: Mount tmpfs at /var/tmp/kop_mnt (changed)
       ansible.posix.mount:
         path: /var/tmp/kop_mnt
@@ -377,12 +288,6 @@
         - /var/tmp/kop_mntfail
       ignore_errors: true
 
-    - name: Destroy the zpool
-      ansible.builtin.command:
-        cmd: zpool destroy koppool
-      changed_when: true
-      ignore_errors: true
-
     - name: Remove VG kop_vg
       community.general.lvg:
         vg: kop_vg
@@ -395,7 +300,6 @@
       loop:
         - "{{ kop_loop1 | default('') }}"
         - "{{ kop_loop2 | default('') }}"
-        - "{{ kop_loop3 | default('') }}"
       changed_when: true
       ignore_errors: true
 
@@ -406,5 +310,4 @@
       loop:
         - /var/tmp/kop_d1.img
         - /var/tmp/kop_d2.img
-        - /var/tmp/kop_d3.img
       ignore_errors: true

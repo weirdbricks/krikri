@@ -51,11 +51,7 @@ jobs:
         # texts they pin) and python3-pymysql (the same gate for the mysql_*
         # plugins: every mysql spec pins a host where the driver imports, so
         # without it they get "A MySQL module is required: ..." instead of
-        # the connection texts they pin). NOTE: do NOT add
-        # python3-semantic-version here: the maven_artifact tests pin a
-        # host where that import FAILS (version_by_spec is rejected with
-        # the missing_required_lib boilerplate before the spec parser
-        # runs), so installing it makes those specs fail. acl (setfacl/
+        # the connection texts they pin). acl (setfacl/
         # getfacl for the acl module), parted and lvm2 (the parted/lvg/
         # lvol modules' binaries), npm (the community.general npm
         # module's binary, whose key-order and executable specs need a

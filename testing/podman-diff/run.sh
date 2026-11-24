@@ -181,17 +181,6 @@ if printf '%s\n' "${cases[@]}" | grep -qE '^(openssh_keypair|openssl_publickey)'
   done
 fi
 
-# java_cert cases need a real keytool (JRE) in BOTH containers, plus
-# openssl (the Ansible module shells to it for x509 parsing, krikri's
-# plugin needs it for the same fixture-generation the real side does).
-if printf '%s\n' "${cases[@]}" | grep -q '^java_cert'; then
-  log "installing default-jre-headless + openssl for java_cert cases"
-  for c in "$NAME_A" "$NAME_B"; do
-    podman exec "$c" bash -c "apt-get install -y -qq --no-install-recommends default-jre-headless openssl >/dev/null" \
-      || { log "FATAL: JRE/openssl install failed in $c"; exit 1; }
-  done
-fi
-
 # gem cases need a real ruby + rubygems (the `gem` CLI) in BOTH
 # containers - debian:bookworm-slim ships without it, which would make
 # every case fail with "Failed to find required executable" instead of
@@ -310,19 +299,6 @@ if printf '%s\n' "${cases[@]}" | grep -qE '^(ec2_|iam_)'; then
   log "installing amazon.aws collection for the ec2_/iam_ cases"
   podman exec "$NAME_A" bash -c "ansible-galaxy collection install amazon.aws:==11.4.0 >/dev/null 2>&1" \
     || { log "FATAL: amazon.aws install failed"; exit 1; }
-fi
-
-# rabbitmq_user cases are argument-validation only (no RabbitMQ server
-# or even rabbitmqctl binary in either container - both engines must
-# fail identically on the missing binary / missing args). The real side
-# still needs the community.rabbitmq collection (a collection module,
-# not shipped with ansible-core), or every case fails on module lookup
-# instead of on the args. Gated on the requested case list like the
-# postgresql cases.
-if printf '%s\n' "${cases[@]}" | grep -q '^rabbitmq'; then
-  log "installing community.rabbitmq collection for rabbitmq cases"
-  podman exec "$NAME_A" bash -c "ansible-galaxy collection install community.rabbitmq:==1.7.0 >/dev/null 2>&1" \
-    || { log "FATAL: community.rabbitmq install failed"; exit 1; }
 fi
 
 # xml cases: the real community.general.xml imports lxml in the REAL
@@ -584,24 +560,6 @@ if printf '%s\n' "${cases[@]}" | grep -q '^easy_install'; then
       || { log "FATAL: python3-setuptools install failed in $c"; exit 1; }
   done
 fi
-
-# maven_artifact cases: the REAL module fails on the lxml import
-# before anything but argument validation (python3-lxml), and only
-# reaches its version_by_spec logic with semantic_version installed
-# (python3-semantic-version). krikri's plugin parses the metadata
-# natively and needs nothing. The file:// repository fixtures are
-# seeded by the case playbook itself. Gated on the requested case
-# list like the xml cases above.
-if printf '%s\n' "${cases[@]}" | grep -q '^maven_artifact'; then
-  log "installing python3-lxml + python3-semantic-version for maven_artifact cases"
-  podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-lxml python3-semantic-version >/dev/null" \
-    || { log "FATAL: maven_artifact python deps install failed"; exit 1; }
-fi
-
-# zfs cases are argument-validation only: neither container installs
-# zfs/zpool (no /dev/zfs in a container anyway), so Ansible's
-# get_bin_path failure is the first reachable non-argument failure on
-# both sides - no installs needed, listed here for the record.
 
 overall_rc=0
 for case_file in "${cases[@]}"; do

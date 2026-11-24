@@ -4,7 +4,7 @@ require "system/user"
 # The registered `src` echo for content copies, pinned to Ansible's shape:
 # the copy action plugin stages the content on the target as
 # <remote_tmp>/ansible-tmp-<epoch.micro>-<pid>-<random>/.source and the
-# module echoes that path back (round 995005 deploy_helper_helper_block:
+# module echoes that path back (round 995005 blocked-current-path probe:
 # real /root/.ansible/tmp/ansible-tmp-.../.source, krikri its own
 # .krikri-playbook-copy-<hex>.tmp next to the dest). Krikri's write flow
 # keeps its own staging locations; only the ECHO is shaped like Ansible's.

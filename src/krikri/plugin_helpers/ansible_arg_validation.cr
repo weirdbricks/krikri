@@ -50,7 +50,7 @@ module Krikri
       # parameters.py fills the "is of type" slot with native_type_name(value),
       # the Python class's bare __name__, not the "<class 'str'>" class repr an
       # earlier core printed. ansible-core 2.21.6 says "is of type str"
-      # (live-verified through community.general.pacman's remove_nosave).
+      # (live-verified through a bool-typed module option on 2.21.6).
       def bool_type_error(param : String, raw : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "argument '#{param}' is of type str and we were unable to convert to bool: " \

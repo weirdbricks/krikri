@@ -6,7 +6,7 @@
 #   apt, apt_key, apt_repository, deb822_repository, dpkg_divert,
 #   dpkg_selections, dnf, dnf_versionlock, yum, yum_repository,
 #   yum_versionlock, package, package_facts, gem, npm, pip,
-#   easy_install, snap, service, service_facts, systemd, cron, cronvar,
+#   easy_install, service, service_facts, systemd, cron, cronvar,
 #   sysctl, modprobe, timezone, hostname, locale_gen, alternatives
 #
 # Safety rules, same conventions as synthetic_batch_bench.yml:
@@ -27,8 +27,7 @@
 # - Modules with no reachable backend on the target OS are gated with
 #   fact/capability probes so they SKIP the way Ansible does
 #   (skipped: in the recap), never faked: the rpm-family managers
-#   (dnf/yum/...) on this Debian-family host, snapd in an
-#   unprivileged container, kernel module loading without
+#   (dnf/yum/...) on this Debian-family host, kernel module loading without
 #   privileges, systemd units without systemd as PID 1, and
 #   easy_install (see tasks_packages_lang.yml for that rationale).
 
@@ -567,37 +566,6 @@
     # ---------------------------------------------------------------
     - name: Include language-runtime package tasks
       ansible.builtin.include_tasks: tasks_packages_lang.yml
-
-    # ---------------------------------------------------------------
-    # snap: gated on the snap binary. snapd cannot run in an
-    # unprivileged container at all (needs systemd as PID 1 plus the
-    # squashfs kernel filesystem), so installing snapd via apt would
-    # only produce a broken daemon - the probe-gated skip is the
-    # honest outcome, same pattern as the batching playbook's ZFS
-    # section.
-    # ---------------------------------------------------------------
-    - name: Probe snap availability
-      ansible.builtin.command: which snap
-      register: pkg_snap_probe
-      failed_when: false
-      changed_when: false
-
-    - name: Report snap unavailable on this host
-      ansible.builtin.debug:
-        msg: "skipping snap section: no snapd (cannot run in an unprivileged container)"
-      when: pkg_snap_probe.rc != 0
-
-    - name: Install snap package
-      community.general.snap:
-        name: hello-world
-        state: present
-      when: pkg_snap_probe.rc == 0
-
-    - name: Remove snap package
-      community.general.snap:
-        name: hello-world
-        state: absent
-      when: pkg_snap_probe.rc == 0
 
     # ---------------------------------------------------------------
     # service: exercised through a throwaway SysV init script written

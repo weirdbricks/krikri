@@ -1,7 +1,5 @@
 ---
-# Key-order probes for synchronize, subversion, apache2_module, java_cert.
-# snap is deliberately NOT probed here (see README.md: snapd install is
-# too slow/heavy for a probe round).
+# Key-order probes for synchronize, subversion, apache2_module, openssl_csr_info.
 # Convention: every probed task registers r and is followed by a debug
 # emitting "KEYORDER|<module>_<case>|<registered result as json>".
 # ignore_errors everywhere so failure shapes are captured without aborting
@@ -241,109 +239,6 @@
   ansible.builtin.debug:
     msg: "KEYORDER|apache2_module_fail|{{ r | to_json }}"
 
-- name: Ensure default-jdk-headless is installed (provides keytool)
-  ansible.builtin.apt:
-    name: default-jdk-headless
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-  register: r
-  ignore_errors: true
-
-- name: Report java_cert_helper_install
-  ansible.builtin.debug:
-    msg: "KEYORDER|java_cert_helper_install|{{ r | to_json }}"
-
-- name: Generate a self-signed certificate
-  ansible.builtin.command:
-    cmd: >
-      openssl req -x509 -newkey rsa:2048 -nodes
-      -keyout /var/tmp/kop_cert.key -out /var/tmp/kop_cert.pem
-      -days 2 -subj "/CN=kop-probe"
-    creates: /var/tmp/kop_cert.pem
-  register: r
-  changed_when: false
-  ignore_errors: true
-
-- name: Report java_cert_helper_cert
-  ansible.builtin.debug:
-    msg: "KEYORDER|java_cert_helper_cert|{{ r | to_json }}"
-
-- name: Import certificate into a fresh keystore (changed)
-  community.general.java_cert:
-    cert_path: /var/tmp/kop_cert.pem
-    keystore_path: /var/tmp/kop_ks.jks
-    keystore_pass: kopKeystorePass1
-    keystore_create: true
-    cert_alias: kopcert
-    state: present
-  register: r
-  ignore_errors: true
-
-- name: Report java_cert_import
-  ansible.builtin.debug:
-    msg: "KEYORDER|java_cert_import|{{ r | to_json }}"
-
-- name: Import same certificate again (ok)
-  community.general.java_cert:
-    cert_path: /var/tmp/kop_cert.pem
-    keystore_path: /var/tmp/kop_ks.jks
-    keystore_pass: kopKeystorePass1
-    keystore_create: true
-    cert_alias: kopcert
-    state: present
-  register: r
-  ignore_errors: true
-
-- name: Report java_cert_exists
-  ansible.builtin.debug:
-    msg: "KEYORDER|java_cert_exists|{{ r | to_json }}"
-
-- name: Import second alias in check mode (changed)
-  community.general.java_cert:
-    cert_path: /var/tmp/kop_cert.pem
-    keystore_path: /var/tmp/kop_ks.jks
-    keystore_pass: kopKeystorePass1
-    keystore_create: true
-    cert_alias: kopcert2
-    state: present
-  register: r
-  check_mode: true
-  ignore_errors: true
-
-- name: Report java_cert_check
-  ansible.builtin.debug:
-    msg: "KEYORDER|java_cert_check|{{ r | to_json }}"
-
-- name: Remove certificate from keystore (changed)
-  community.general.java_cert:
-    cert_path: /var/tmp/kop_cert.pem
-    keystore_path: /var/tmp/kop_ks.jks
-    keystore_pass: kopKeystorePass1
-    cert_alias: kopcert
-    state: absent
-  register: r
-  ignore_errors: true
-
-- name: Report java_cert_remove
-  ansible.builtin.debug:
-    msg: "KEYORDER|java_cert_remove|{{ r | to_json }}"
-
-- name: Import a nonexistent certificate (failure)
-  community.general.java_cert:
-    cert_path: /var/tmp/kop_nosuch.pem
-    keystore_path: /var/tmp/kop_ks.jks
-    keystore_pass: kopKeystorePass1
-    keystore_create: true
-    cert_alias: kopfail
-    state: present
-  register: r
-  ignore_errors: true
-
-- name: Report java_cert_fail
-  ansible.builtin.debug:
-    msg: "KEYORDER|java_cert_fail|{{ r | to_json }}"
-
 - name: Generate a private key for the CSR probe
   ansible.builtin.command:
     cmd: >
@@ -441,8 +336,5 @@
     path: "{{ item }}"
     state: absent
   loop:
-    - /var/tmp/kop_cert.key
-    - /var/tmp/kop_cert.pem
-    - /var/tmp/kop_ks.jks
     - /var/tmp/kop_csr.key
     - /var/tmp/kop_probe.csr

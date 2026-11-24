@@ -6,15 +6,12 @@
 # coverage yet, each exercised with REAL side effects (not just parsing)
 # so a divergence is directly comparable by running the same playbook
 # through ansible-playbook and krikri-playbook side by side:
-#   pause, mount_facts, current_container_facts, deploy_helper,
+#   pause, mount_facts, current_container_facts,
 #   py_module (via the playbook-dir library/ fixture krikri_py_probe.py
 #   next to this playbook), apache2_module, rpm_key, dnf5, mysql_db,
 #   postgresql_db
 #
 # Safety contract, same conventions as the sibling playbooks:
-# - deploy_helper's whole release tree is confined to
-#   /tmp/krikri-modmisc2-<epoch>/deploy; state=absent removes it again
-#   in the cleanup section.
 # - The apache2_module / rpm_key / dnf5 / mysql_db / postgresql_db
 #   sections are gated on capability probes (`which <tool>`, plus for
 #   the databases an actual connect probe, all failed_when: false) and
@@ -54,7 +51,6 @@
     # Every target-side path hangs off this run-scoped root, so two
     # back-to-back engine runs never see each other's leftovers.
     mm2_dir: "/tmp/krikri-modmisc2-{{ mm2_run_id }}"
-    mm2_deploy_dir: "{{ mm2_dir }}/deploy"
     # Valid SQL identifiers: run_id is the epoch, digits only.
     mm2_mysql_db_name: "krikri_modmisc2_{{ mm2_run_id }}"
     mm2_pg_db_name: "krikri_modmisc2_pg_{{ mm2_run_id }}"
@@ -139,99 +135,6 @@
     - name: Debug container facts
       ansible.builtin.debug:
         msg: "current_container_facts: running_in_container={{ ansible_module_running_in_container }} type='{{ ansible_module_container_type }}' id='{{ ansible_module_container_id }}'"
-
-    # ---------------------------------------------------------------
-    # deploy_helper: capistrano-style release tree, entirely under the
-    # run-scoped deploy dir. query -> present -> write into the new
-    # release -> finalize -> query again; state=absent tears the whole
-    # tree down in the cleanup section. The published deploy_helper
-    # fact (real gather_facts() dict) is what production roles consume
-    # (deploy_helper.new_release_path).
-    # ---------------------------------------------------------------
-    - name: Query deploy layout before anything exists
-      community.general.deploy_helper:
-        path: "{{ mm2_deploy_dir }}"
-        state: query
-      register: mm2_dh_query_before
-
-    - name: Debug query-before result
-      ansible.builtin.debug:
-        msg: "deploy_helper query-before: prospective_release={{ deploy_helper.new_release }} previous_release={{ deploy_helper.previous_release }}"
-
-    - name: Create the deploy layout and a new release
-      community.general.deploy_helper:
-        path: "{{ mm2_deploy_dir }}"
-        state: present
-        release: "r{{ mm2_run_id }}"
-      register: mm2_dh_present
-
-    - name: Debug present result
-      ansible.builtin.debug:
-        msg: "deploy_helper present: release={{ deploy_helper.new_release }} new_release_path={{ deploy_helper.new_release_path }}"
-
-    - name: Assert present published the layout facts
-      ansible.builtin.assert:
-        that:
-          - mm2_dh_present.changed
-          - deploy_helper.new_release == 'r' ~ mm2_run_id
-          - deploy_helper.new_release_path == mm2_deploy_dir ~ '/releases/r' ~ mm2_run_id
-
-    - name: Create the new release directory (deploy_helper does not mkdir it)
-      ansible.builtin.file:
-        path: "{{ deploy_helper.new_release_path }}"
-        state: directory
-        mode: "0755"
-
-    - name: Write a payload file into the new release
-      ansible.builtin.copy:
-        content: "release = r{{ mm2_run_id }}\nrun = {{ mm2_run_id }}\n"
-        dest: "{{ deploy_helper.new_release_path }}/index.html"
-        mode: "0644"
-
-    - name: Read back the release payload
-      ansible.builtin.command: cat "{{ deploy_helper.new_release_path }}/index.html"
-      register: mm2_dh_payload
-      changed_when: false
-
-    - name: Check release payload byte-diff
-      ansible.builtin.assert:
-        that:
-          - mm2_dh_payload.stdout is search('release = r' ~ mm2_run_id)
-          - mm2_dh_payload.stdout is search('run = ' ~ mm2_run_id)
-
-    - name: Finalize the release (point current at it)
-      community.general.deploy_helper:
-        path: "{{ mm2_deploy_dir }}"
-        state: finalize
-        release: "r{{ mm2_run_id }}"
-      register: mm2_dh_finalize
-
-    - name: Stat the current symlink
-      ansible.builtin.stat:
-        path: "{{ mm2_deploy_dir }}/current"
-      register: mm2_dh_current
-
-    - name: Debug current symlink shape
-      ansible.builtin.debug:
-        msg: "deploy current: islnk={{ mm2_dh_current.stat.islnk }} lnk_target='{{ mm2_dh_current.stat.lnk_target | default('') }}'"
-
-    - name: Check finalized current symlink
-      ansible.builtin.assert:
-        that:
-          - mm2_dh_finalize.changed
-          - mm2_dh_current.stat.islnk
-          - mm2_dh_current.stat.lnk_target == mm2_deploy_dir ~ '/releases/r' ~ mm2_run_id
-
-    - name: Query deploy layout after finalize
-      community.general.deploy_helper:
-        path: "{{ mm2_deploy_dir }}"
-        state: query
-        release: "r{{ mm2_run_id }}"
-      register: mm2_dh_query_after
-
-    - name: Debug query-after result
-      ansible.builtin.debug:
-        msg: "deploy_helper query-after: previous_release={{ deploy_helper.previous_release }} new_release={{ deploy_helper.new_release }}"
 
     # ---------------------------------------------------------------
     # py_module: role-private library/<name>.py execution. The fixture
@@ -613,36 +516,6 @@
         that:
           - mm2_pg_drop.changed
       when: mm2_psql_probe.rc == 0 and mm2_psql_conn.rc | default(1) == 0
-
-    # ---------------------------------------------------------------
-    # KNOWN KRIKRI DIVERGENCE (documented, deliberately not worked
-    # around): real deploy_helper's state=present creates project_path,
-    # releases_path and shared_path but NEVER current_path (and its
-    # check_link fails outright when current exists as a non-symlink);
-    # ---------------------------------------------------------------
-    # Cleanup: deploy_helper state=absent removes the whole release
-    # tree (and publishes its empty-list facts sentinel), then the
-    # run-scoped root goes away entirely.
-    # ---------------------------------------------------------------
-    - name: Tear down the deploy tree
-      community.general.deploy_helper:
-        path: "{{ mm2_deploy_dir }}"
-        state: absent
-      register: mm2_dh_absent
-
-    - name: Debug deploy_helper absent result
-      ansible.builtin.debug:
-        msg: "deploy_helper absent: changed={{ mm2_dh_absent.changed }}"
-
-    - name: Check deploy tree gone
-      ansible.builtin.stat:
-        path: "{{ mm2_deploy_dir }}"
-      register: mm2_deploy_gone
-
-    - name: Assert deploy tree removed
-      ansible.builtin.assert:
-        that:
-          - not mm2_deploy_gone.stat.exists
 
     - name: Remove benchmark root directory
       ansible.builtin.file:

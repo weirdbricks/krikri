@@ -8,8 +8,7 @@
 # divergence is directly comparable by running the same playbook
 # through ansible-playbook and krikri-playbook side by side:
 #   mysql_user, mysql_variables, postgresql_user, postgresql_privs,
-#   maven_artifact, subversion, rabbitmq_plugin,
-#   rabbitmq_user, virt_net
+#   subversion, virt_net
 #
 # Safety contract, same conventions as the sibling playbooks:
 # - Everything mutating is confined to run-scoped names/paths derived
@@ -18,14 +17,13 @@
 #   user, database, table and libvirt network names - all removed again
 #   in the cleanup section.
 # - Every section is gated on capability probes (`which <tool>`, plus
-#   for the databases/rabbitmq/libvirt an actual service-reachability
+#   for the databases/libvirt an actual service-reachability
 #   probe and for the Python-backed modules an import probe, all
 #   failed_when: false) and skips with a clean debug notice when the
 #   tool/service is absent: this playbook must run cleanly (no
 #   failures, no hard dependency on any of them) on a plain Ubuntu
 #   container and a plain Rocky container that have none of
-#   mysql/postgres/svn/homebrew/rabbitmq/libvirt installed and no
-#   outbound network for Maven Central. NO packages are installed and
+#   mysql/postgres/svn/homebrew/libvirt installed. NO packages are installed and
 #   NO services are started as a side effect here (installing packages
 #   is modules_packages.yml's theme).
 # - The gated sections only ever perform IDEMPOTENT, self-reverting
@@ -39,14 +37,8 @@
 #   global/persist/persist_only and only apply to writes, so the read
 #   path is just `variable:` with no `value:`; mode: set is deliberately
 #   NOT exercised - mutating server config is out of this file's
-#   safety contract); maven_artifact downloads one small pinned
-#   commons-io jar from Maven Central behind a connectivity probe and
-#   re-asserts it (checksum-idempotent); subversion works entirely on
+#   safety contract); subversion works entirely on
 #   a run-scoped local svnadmin repo via file:// URLs;
-#   rabbitmq_plugin enables the stock rabbitmq_management
-#   plugin idempotently when it is already enabled, and enables+disables
-#   it (restoring the found state) when it is not;
-#   rabbitmq_user creates and removes a run-scoped throwaway user;
 #   virt_net DEFINES a run-scoped throwaway network but never activates
 #   or autostarts it, then undefines it.
 # - mysql_user's `name:` is `type: str` in the Ansible module's
@@ -67,7 +59,6 @@
     # Every target-side path hangs off this run-scoped root, so two
     # back-to-back engine runs never see each other's leftovers.
     mm3_dir: "/tmp/krikri-modmisc3-{{ mm3_run_id }}"
-    mm3_maven_dir: "{{ mm3_dir }}/maven"
     mm3_svn_dir: "{{ mm3_dir }}/svn"
     mm3_svn_repo: "{{ mm3_svn_dir }}/repo"
     mm3_svn_dest: "{{ mm3_svn_dir }}/checkout"
@@ -78,7 +69,6 @@
     mm3_pg_user_name: "krikri_mm3_pg_{{ mm3_run_id }}"
     mm3_pg_table_name: "krikri_mm3_t_{{ mm3_run_id }}"
     mm3_db_password: "mm3pw_{{ mm3_run_id }}x"
-    mm3_rmq_user_name: "krikri_mm3_{{ mm3_run_id }}"
     mm3_net_name: "krikri_mm3_{{ mm3_run_id }}"
     # Throwaway libvirt network XML: TEST-NET-1 addresses, no DHCP
     # (no dnsmasq involvement), never started - definition only.
@@ -100,12 +90,6 @@
     - name: Create benchmark root directory
       ansible.builtin.file:
         path: "{{ mm3_dir }}"
-        state: directory
-        mode: "0755"
-
-    - name: Create the maven download directory
-      ansible.builtin.file:
-        path: "{{ mm3_maven_dir }}"
         state: directory
         mode: "0755"
 
@@ -152,18 +136,6 @@
       changed_when: false
       when: mm3_psql_probe.rc == 0
 
-    - name: Probe Maven Central connectivity
-      ansible.builtin.command: curl -sI --max-time 15 https://repo1.maven.org/maven2/
-      register: mm3_maven_conn
-      failed_when: false
-      changed_when: false
-
-    - name: Probe python lxml (maven_artifact needs it on the target)
-      ansible.builtin.command: python3 -c "import lxml"
-      register: mm3_lxml_probe
-      failed_when: false
-      changed_when: false
-
     - name: Probe svn client
       ansible.builtin.command: which svn
       register: mm3_svn_probe
@@ -175,25 +147,6 @@
       register: mm3_svnadmin_probe
       failed_when: false
       changed_when: false
-
-    - name: Probe rabbitmqctl
-      ansible.builtin.command: which rabbitmqctl
-      register: mm3_rmq_probe
-      failed_when: false
-      changed_when: false
-
-    - name: Probe rabbitmq-plugins
-      ansible.builtin.command: which rabbitmq-plugins
-      register: mm3_rmqplugins_probe
-      failed_when: false
-      changed_when: false
-
-    - name: Probe rabbitmq broker reachability
-      ansible.builtin.command: rabbitmqctl list_users
-      register: mm3_rmq_conn
-      failed_when: false
-      changed_when: false
-      when: mm3_rmq_probe.rc == 0
 
     - name: Probe virsh
       ansible.builtin.command: which virsh
@@ -224,20 +177,10 @@
         msg: "skipping postgresql_user/postgresql_privs section: psql absent or server unreachable"
       when: mm3_psql_probe.rc != 0 or mm3_psql_conn.rc | default(1) != 0
 
-    - name: Notice maven_artifact section skipped
-      ansible.builtin.debug:
-        msg: "skipping maven_artifact section: no Maven Central connectivity or python lxml absent"
-      when: mm3_maven_conn.rc != 0 or mm3_lxml_probe.rc != 0
-
     - name: Notice subversion section skipped
       ansible.builtin.debug:
         msg: "skipping subversion section: svn/svnadmin absent"
       when: mm3_svn_probe.rc != 0 or mm3_svnadmin_probe.rc != 0
-
-    - name: Notice rabbitmq_plugin/rabbitmq_user section skipped
-      ansible.builtin.debug:
-        msg: "skipping rabbitmq_plugin/rabbitmq_user section: rabbitmqctl/rabbitmq-plugins absent or broker unreachable"
-      when: mm3_rmq_probe.rc != 0 or mm3_rmqplugins_probe.rc != 0 or mm3_rmq_conn.rc | default(1) != 0
 
     - name: Notice virt_net section skipped
       ansible.builtin.debug:
@@ -502,58 +445,6 @@
       when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
 
     # ---------------------------------------------------------------
-    # maven_artifact: downloads one small, stable, pinned artifact
-    # (commons-io 2.11.0, ~330KB) from Maven Central into the
-    # run-scoped maven dir, verifies the file, re-asserts it
-    # (checksum-idempotent, changed=false), cleans up in the cleanup
-    # section. Gated on an actual connectivity probe plus the python
-    # lxml import the Ansible module hard-requires.
-    # ---------------------------------------------------------------
-    - name: Download a small maven artifact
-      community.general.maven_artifact:
-        group_id: commons-io
-        artifact_id: commons-io
-        version: 2.11.0
-        extension: jar
-        repository_url: https://repo1.maven.org/maven2
-        dest: "{{ mm3_maven_dir }}"
-        keep_name: true
-      register: mm3_maven_download
-      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
-
-    - name: Re-download the maven artifact (idempotency check)
-      community.general.maven_artifact:
-        group_id: commons-io
-        artifact_id: commons-io
-        version: 2.11.0
-        extension: jar
-        repository_url: https://repo1.maven.org/maven2
-        dest: "{{ mm3_maven_dir }}"
-        keep_name: true
-      register: mm3_maven_download_again
-      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
-
-    - name: Stat the downloaded jar
-      ansible.builtin.stat:
-        path: "{{ mm3_maven_dir }}/commons-io-2.11.0.jar"
-      register: mm3_maven_stat
-      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
-
-    - name: Debug maven artifact result
-      ansible.builtin.debug:
-        msg: "maven_artifact: changed={{ mm3_maven_download.changed }} re-run={{ mm3_maven_download_again.changed }} size={{ mm3_maven_stat.stat.size }}"
-      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
-
-    - name: Check maven artifact download and idempotency
-      ansible.builtin.assert:
-        that:
-          - mm3_maven_download.changed
-          - mm3_maven_download_again.changed == false
-          - mm3_maven_stat.stat.exists
-          - mm3_maven_stat.stat.size | int > 100000
-      when: mm3_maven_conn.rc == 0 and mm3_lxml_probe.rc == 0
-
-    # ---------------------------------------------------------------
     # subversion: works entirely on a run-scoped local svnadmin repo
     # via file:// URLs. Gated on both svn and svnadmin. svn import
     # seeds one file; the module then checks out, re-runs idempotently
@@ -611,86 +502,6 @@
           - mm3_svn_checkout_again.changed == false
           - mm3_svn_payload.stdout is search('svn payload = ' ~ mm3_run_id)
       when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
-
-    # ---------------------------------------------------------------
-    # rabbitmq_plugin: rabbitmqctl + rabbitmq-plugins + a working
-    # broker probe. Exercises the stock rabbitmq_management plugin
-    # idempotently and leaves the found state: if it was already
-    # enabled, the enable call is a changed=false no-op; if it was
-    # not, it gets enabled and then disabled again to restore.
-    # ---------------------------------------------------------------
-    - name: List enabled rabbitmq plugins
-      ansible.builtin.command: rabbitmq-plugins list -E -m
-      register: mm3_rmq_plugins_list
-      changed_when: false
-      failed_when: false
-      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: Enable rabbitmq_management plugin
-      community.rabbitmq.rabbitmq_plugin:
-        names: rabbitmq_management
-        state: enabled
-      register: mm3_rmq_plugin_enable
-      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: Debug rabbitmq_plugin enable result
-      ansible.builtin.debug:
-        msg: "rabbitmq_plugin rabbitmq_management state=enabled: changed={{ mm3_rmq_plugin_enable.changed }} (false when it was already enabled)"
-      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: Restore rabbitmq_management to disabled if it was not enabled before
-      community.rabbitmq.rabbitmq_plugin:
-        names: rabbitmq_management
-        state: disabled
-      register: mm3_rmq_plugin_restore
-      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0 and not ((mm3_rmq_plugins_list.stdout | default('')) is search('rabbitmq_management'))
-
-    - name: Debug rabbitmq_plugin restore result
-      ansible.builtin.debug:
-        msg: "rabbitmq_plugin rabbitmq_management state=disabled: changed={{ mm3_rmq_plugin_restore.changed }} (state restored)"
-      when: mm3_rmq_probe.rc == 0 and mm3_rmqplugins_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0 and not ((mm3_rmq_plugins_list.stdout | default('')) is search('rabbitmq_management'))
-
-    # ---------------------------------------------------------------
-    # rabbitmq_user: same broker gate. Creates a run-scoped throwaway
-    # user with a password, verifies idempotency, removes it again in
-    # the cleanup section.
-    # ---------------------------------------------------------------
-    - name: Create throwaway rabbitmq user
-      community.rabbitmq.rabbitmq_user:
-        name: "{{ mm3_rmq_user_name }}"
-        password: "{{ mm3_db_password }}"
-        tags: monitoring
-        state: present
-      register: mm3_rmq_user_create
-      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: Re-assert throwaway rabbitmq user present
-      community.rabbitmq.rabbitmq_user:
-        name: "{{ mm3_rmq_user_name }}"
-        password: "{{ mm3_db_password }}"
-        tags: monitoring
-        state: present
-      register: mm3_rmq_user_create_again
-      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: Check rabbitmq user create idempotency
-      ansible.builtin.assert:
-        that:
-          - mm3_rmq_user_create.changed
-          - mm3_rmq_user_create_again.changed == false
-      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: List rabbitmq users for the throwaway account
-      ansible.builtin.command: rabbitmqctl list_users
-      register: mm3_rmq_user_check
-      changed_when: false
-      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: Check rabbitmq user listing shows the throwaway user
-      ansible.builtin.assert:
-        that:
-          - mm3_rmq_user_check.stdout is search(mm3_rmq_user_name)
-      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
 
     # ---------------------------------------------------------------
     # virt_net: libvirtd only. Gated on virsh, a working `virsh list`
@@ -821,19 +632,6 @@
         that:
           - mm3_pg_db_drop.changed
       when: mm3_psql_probe.rc == 0 and mm3_psql_conn.rc | default(1) == 0
-
-    - name: Remove throwaway rabbitmq user
-      community.rabbitmq.rabbitmq_user:
-        name: "{{ mm3_rmq_user_name }}"
-        state: absent
-      register: mm3_rmq_user_drop
-      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
-
-    - name: Check rabbitmq user removal happened
-      ansible.builtin.assert:
-        that:
-          - mm3_rmq_user_drop.changed
-      when: mm3_rmq_probe.rc == 0 and mm3_rmq_conn.rc | default(1) == 0
 
     - name: Undefine throwaway libvirt network
       community.libvirt.virt_net:

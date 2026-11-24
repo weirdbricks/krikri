@@ -52,13 +52,12 @@ five roles, Rocky Linux 9 for `kop_rocky` (see its row).
 | `kop_accounts` | `ansible.builtin.user`, `ansible.builtin.group`, `ansible.posix.authorized_key`, `ansible.builtin.known_hosts` | embedded throwaway ed25519 key |
 | `kop_kernel` | `ansible.posix.sysctl` (vm.swappiness only, `reload: true`, no `sysctl_file`), `ansible.builtin.mount_facts` (read-only), `community.general.modprobe` (`dummy` module) | if `dummy` is unavailable on the kernel, `modprobe_load`/`modprobe_exists` fail and are captured as-is (the module itself is still exercised) |
 | `kop_firewall` | `community.general.ufw` | installs ufw via apt; forces `state: disabled` first and never `state: enabled`, so SSH can't be locked out; only adds/deletes an allow rule for 8080/tcp |
-| `kop_storage` | `community.general.lvg`, `community.general.lvol`, `community.general.parted`, `community.general.zfs`, `ansible.builtin.mount` (tmpfs mount/unmount only) | loop devices from sparse files under `/var/tmp` created and detached by the role; zfs probes a *dataset* on a `zpool create`d pool (`community.general.zfs` does not create pools) |
-| `kop_pkg_misc` | `ansible.posix.synchronize`, `ansible.builtin.subversion`, `community.general.apache2_module`, `community.general.java_cert`, `community.crypto.openssl_csr_info` | synchronize copies between two `/var/tmp` dirs in push mode, delegated to the host itself (`delegate_to: inventory_hostname`) so rsync reads and writes on the host and never needs the controller; subversion checks out from a local `svnadmin create` repo; apache2 (harmless modules: headers/rewrite/proxy_http) and default-jdk-headless are installed via apt first |
+| `kop_storage` | `community.general.lvg`, `community.general.lvol`, `community.general.parted`, `ansible.builtin.mount` (tmpfs mount/unmount only) | loop devices from sparse files under `/var/tmp` created and detached by the role |
+| `kop_pkg_misc` | `ansible.posix.synchronize`, `ansible.builtin.subversion`, `community.general.apache2_module`, `community.crypto.openssl_csr_info` | synchronize copies between two `/var/tmp` dirs in push mode, delegated to the host itself (`delegate_to: inventory_hostname`) so rsync reads and writes on the host and never needs the controller; subversion checks out from a local `svnadmin create` repo; apache2 (harmless modules: headers/rewrite/proxy_http) is installed via apt first; openssl_csr_info queries a generated CSR |
 | `kop_rocky` | `ansible.posix.selinux`, `ansible.posix.seboolean`, `community.general.sefcontext`, `community.general.seport`, `ansible.posix.firewalld` | Rocky Linux 9 only (needs a real SELinux/firewalld host; see `queue_rocky.txt`). SELinux is never set to `disabled` and never switched to `enforcing` from permissive - the `state: enforcing` probe and the cleanup restore only run when the host booted enforcing (`getenforce` guard via helper + `set_fact` + `when:`). firewalld is started first, the ssh service and the default zone are never touched, and every added rule (http service, 8789/tcp port, rich rule) is removed again; sefcontext/seport use throwaway paths (`/srv/kop_web(/.*)?`) and port 8789/tcp on `http_port_t` |
-| `kop_misc2` | `community.general.deploy_helper`, `community.general.easy_install`, `community.general.maven_artifact`, `community.docker.current_container_facts`, `community.libvirt.virt_net` | deploy_helper runs present/finalize/clean/absent plus check-mode and failure probes (a regular file blocking the `current` path) in `/var/tmp/kop_deploy`, with the unfinished-file (`DEPLOY_UNFINISHED`) handling probed via `state=clean`; easy_install installs `python3-setuptools` via apt first and probes `easy_install3` (easy_install is deprecated - whatever the host lets it do, including failures, is captured); maven_artifact installs `maven` + `python3-lxml` via apt and downloads `junit:junit:4.13.2` from Maven Central into `/var/tmp`; current_container_facts is read-only (on a bare VM it just reports not-in-container facts); virt_net installs `libvirt-daemon-system` + `python3-libvirt` + `python3-lxml`, starts libvirtd, then defines/starts/stops a tiny NAT network (`10.99.99.0/24`, `command: define` with inline XML) with idempotent/check/failure probes, and undefines everything in cleanup |
+| `kop_misc2` | `community.general.easy_install`, `community.docker.current_container_facts`, `community.libvirt.virt_net` | easy_install installs `python3-setuptools` via apt first and probes `easy_install3` (easy_install is deprecated - whatever the host lets it do, including failures, is captured); current_container_facts is read-only (on a bare VM it just reports not-in-container facts); virt_net installs `libvirt-daemon-system` + `python3-libvirt` + `python3-lxml`, starts libvirtd, then defines/starts/stops a tiny NAT network (`10.99.99.0/24`, `command: define` with inline XML) with idempotent/check/failure probes, and undefines everything in cleanup |
 | `kop_docker` | `community.docker.docker_container`, `docker_network`, `docker_image` | Ubuntu 22.04; installs `docker.io` + `python3-docker` via apt and pulls `alpine:3.19`. Probes check-mode `create_parameters`, list options with comma elements (`command`/`entrypoint`), stop/remove idempotency and the failure shapes (missing image, unsupported param, no image). Everything is `kop_`-prefixed and removed again |
 | `kop_ufw_active` | `community.general.ufw` with `state: enabled` combined with a rule / default / logging in one task | Ubuntu 22.04; ENABLES ufw (unlike `kop_firewall`), so it adds `allow 22/tcp` first and does `ufw --force reset` before and after. Found (round 999010/999020): krikri ran only `ufw -f enable` and dropped the rule/default/logging commands Ansible runs after it |
-| `kop_snap` | `community.general.snap` | Ubuntu 22.04; snapd is not assumed preinstalled - the role checks for the `snap` binary and, when missing, apt-installs snapd and waits for seeding (`snap wait system seed.loaded`). hello-world install/install-again/`channel: stable` re-probe/remove/remove-again, check-mode install of core20 (check mode never actually installs), and a nonexistent-snap-name failure; `classic:` variant skipped (a real classic snap is a big download, not cheap) |
 | `kop_iptables` | `ansible.builtin.iptables` with real mutation | Ubuntu 22.04; every rule lives in a custom chain `KOP_TEST` created/deleted via `chain_management`; INPUT/OUTPUT/FORWARD and all policies are never touched and no rule involves port 22, so SSH cannot be locked out; flush + chain delete also run in `always:` teardown. Probes chain create/create-again/append/append-again (with `comment:`)/`tcp_flags`+`match` rule/check-mode append/delete/nonexistent-jump-target failure/flush/chain delete. First iptables coverage in the keyorder probes - earlier roles only touch the firewall stack indirectly through ufw |
 | `kop_apt_fail` | `ansible.builtin.apt` mutating failure paths | Ubuntu 22.04; install of a nonexistent package, `bash=0.0.0` pinned nonexistent version, remove of a nonexistent package (ok/no change), `deb:` at a nonexistent path, `state: fixed` on a healthy system (ok), and `update_cache` against a bogus `/etc/apt/sources.list.d/kop-bogus.list` entry dropped by the role and removed again in `always:`. Captures apt's failure-result shapes (KNOWN_MISSING: matched to Ansible's command construction but never verified end-to-end) |
 | *(not probed)* | krikri's `py_module` runner | **deliberately skipped**: `py_module` is not a Ansible module - it is krikri's transport for role-private custom `library/*.py` modules. Ansible invokes such a module by its own name, so there is no matching `py_module` result shape to diff key order against. |
@@ -123,9 +122,9 @@ local:$KRIKRI_ROOT/testing/keyorder_probes/kop_misc2
 Run it the same way as `queue.txt` above (`bin/krikri-role-tester run
 testing/keyorder_probes/queue_misc2.txt --backend atlantic ...`).
 
-`queue_ufw_active.txt`, `queue_docker.txt`, `queue_snap.txt`,
+`queue_ufw_active.txt`, `queue_docker.txt`,
 `queue_iptables.txt` and `queue_apt_fail.txt` follow the same one-role-per-file
-pattern for `kop_ufw_active`, `kop_docker`, `kop_snap`, `kop_iptables` and
+pattern for `kop_ufw_active`, `kop_docker`, `kop_iptables` and
 `kop_apt_fail` respectively (one `local:$KRIKRI_ROOT/...` line each, same
 run command shape).
 
@@ -142,9 +141,9 @@ Validated locally on the dev laptop (no root, no real kernel):
   prefix the 429 task lines are identical.)
 - `ansible-lint` over the roles (run from inside this directory so
   `.ansible-lint` applies; the deliberate per-probe `ignore_errors` is
-  skipped there) - pass, including `kop_snap`, `kop_iptables` and
+  skipped there) - pass, including `kop_iptables` and
   `kop_apt_fail`.
-- `kop_snap`, `kop_iptables` and `kop_apt_fail` are validated by the same
+- `kop_iptables` and `kop_apt_fail` are validated by the same
   three static checks only (no smoke coverage; snapd, iptables mutation and
   apt failure paths all need a real root VM - exactly what the Atlantic.net
   round provides).
@@ -175,12 +174,11 @@ KEYORDER set both runs (`ignored=8` = the deliberate failure probes):
   root has none).
 - `kop_pkg_misc` in full: synchronize (rsync local-to-local, source
   delegated to the host itself, so rsync runs entirely on the host), subversion (local svnadmin repo),
-  apache2_module, java_cert (default-jdk-headless + self-signed cert),
-  openssl_csr_info.
-- `kop_misc2` (deploy_helper, easy_install, maven_artifact,
-  current_container_facts) via its own `kop_misc2/smoke_wrapper.yml` +
+  apache2_module, openssl_csr_info.
+- `kop_misc2` (easy_install, current_container_facts) via its own
+  `kop_misc2/smoke_wrapper.yml` +
   `kop_misc2/smoke_inside.sh` (containers named `kp-misc2-*`, removed after
-  the run; apt-installs `python3-setuptools`, `maven`, `python3-lxml` and
+  the run; apt-installs `python3-setuptools`, `python3-lxml` and
   the community.general/community.docker/community.libvirt collections).
   Result: both runs rc=0, `failed=0`, identical 39-probe KEYORDER set both
   runs. Inside the container the virt_net probes all fail (no libvirtd
@@ -195,7 +193,7 @@ what the Atlantic.net round provides):
 - `kop_kernel` in full (sysctl, modprobe need the real kernel; mount_facts
   needs real mounts).
 - `kop_firewall` in full (ufw manipulates iptables/ufw state).
-- `kop_storage` in full (losetup/LVM/parted/zfs/mount need a real kernel
+- `kop_storage` in full (losetup/LVM/parted/mount need a real kernel
   and loop-device privileges; tmpfs mounts fail in a rootless container).
 - `kop_misc2`'s `virt_net` probes (libvirtd and its dnsmasq-driven NAT
   networking do not work in a rootless container - exactly what the
@@ -208,7 +206,7 @@ what the Atlantic.net round provides):
   krikri-playbook resolve roles next to the playbook, so the wrapper
   playbooks need no `ANSIBLE_ROLES_PATH`).
 - `syntax_check.yml` - wrapper for `--syntax-check`/`--list-tasks` over all
-  roles (currently the ten Ubuntu/Rocky probe roles; `kop_docker` and
+  roles (currently the nine Ubuntu/Rocky probe roles; `kop_docker` and
   `kop_ufw_active` are not listed yet - pre-existing gap, noted here so it
   does not look like a new omission).
 - `smoke_wrapper.yml` + `smoke_inside.sh` - rootless-podman smoke test for
@@ -220,6 +218,6 @@ what the Atlantic.net round provides):
 - `queue_misc2.txt` - queue file holding only the `kop_misc2` role (see
   "Queueing a round" above).
 - `kop_misc2/smoke_wrapper.yml` + `kop_misc2/smoke_inside.sh` - rootless-
-  podman smoke test for kop_misc2's container-safe modules (deploy_helper,
-  easy_install, maven_artifact, current_container_facts; virt_net is not
+  podman smoke test for kop_misc2's container-safe modules
+  (easy_install, current_container_facts; virt_net is not
   container-runnable).

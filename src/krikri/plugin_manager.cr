@@ -2855,8 +2855,8 @@ module Krikri
     # pipe" / "cat: write error: Broken pipe" to the captured stderr. Real
     # Ansible feeds the become password via run_command(data=...), where
     # CPython ignores EPIPE on the stdin write, so silencing the feeder
-    # matches real output instead of masking a divergence (same rationale
-    # as java_cert_command's stdin feeder). sudo's own stderr still flows.
+    # matches real output instead of masking a divergence (the same
+    # rationale every stdin feeder uses). sudo's own stderr still flows.
     def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String, become_flags : String? = nil, term : String? = nil) : String
       q_user = Shell.quote_arg(become_user)
       # The TERM assignment goes on the sudo invocations, never in front of
