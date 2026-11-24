@@ -1,0 +1,6 @@
+#!/bin/sh
+# External module plugin fixture for issue #1758: echoes the whole config
+# JSON back inside the result, so a spec can assert on the typed `args`
+# copy the executor adds beside the flattened `params` wire.
+config=$(cat)
+printf '{"changed": false, "got": %s}\n' "$config"

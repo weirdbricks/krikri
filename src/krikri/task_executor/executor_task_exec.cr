@@ -3634,6 +3634,16 @@ module Krikri
         Krikri.encode_binary_wire_value(value)
       end
 
+      # The typed counterpart of `params` for an externally supplied
+      # plugin (issue #1758): the same arguments with the JSON types the
+      # playbook wrote, so a plugin taking a bool/number/list/dict - or a
+      # string that merely looks like one - does not have to
+      # reverse-engineer the flattened strings-only wire. protocol: 1
+      # promises unknown keys are ignored, so adding one is compatible.
+      # nil (no key typed) for krikri's own compiled plugins, whose
+      # plugins were all written against `params`.
+      typed_args = PluginManager.runtime_plugin?(task.module_name) ? typed_plugin_params(task, final_params, vars_context) : nil
+
       # Only debug:/assert: actually read the vars context inside the
       # plugin process (BasePlugin itself only ever pulls the connection
       # keys out of it - see PluginManager::WIRE_VAR_KEYS, which is also
@@ -3698,6 +3708,7 @@ module Krikri
           "port" => task_conn.port,
         },
         "params" => final_params,
+        "args"   => typed_args,
         "vars"   => wire_vars,
         # Read by the plugin binary (BasePlugin#resolved_collection_version):
         # the pinned release whose module source this task's name resolves
@@ -3746,6 +3757,120 @@ module Krikri
       else
         config.to_json
       end
+    end
+
+    # The typed counterpart of an external plugin's `params` (issue
+    # #1758): one entry per argument, with the JSON type the playbook
+    # actually wrote. Built here rather than plugin-side because the
+    # strings-only wire has already erased the type by then - see
+    # LiteralParam for the parse-time record and #typed_plugin_param for
+    # how a value the playbook did not write as a literal is recovered.
+    private def typed_plugin_params(
+      task : Task,
+      params : Hash(String, String),
+      vars_context : Hash(String, JSON::Any),
+    ) : Hash(String, JSON::Any)
+      typed = Hash(String, JSON::Any).new
+      params.each do |key, value|
+        typed[key] = typed_plugin_param(task, key, value, vars_context)
+      end
+      typed
+    end
+
+    private def typed_plugin_param(
+      task : Task,
+      key : String,
+      value : String,
+      vars_context : Hash(String, JSON::Any),
+    ) : JSON::Any
+      # krikri's injected keys (`_ansible_check_mode`, `_module_name`,
+      # `_verbosity`, `_environment`, ...) stay the strings `params`
+      # documents them as: they are engine bookkeeping, not task args.
+      return JSON::Any.new(value) if key.starts_with?('_')
+      # A literal the playbook wrote keeps its YAML type - the ONLY exact
+      # source for a dict/list, since the flat wire turns both into text a
+      # genuine string argument can match. The wire-text comparison
+      # rejects a param the executor replaced after parsing
+      # (module_defaults, a templated action's re-parse), so those fall
+      # through to the recovery rules below instead of being typed from a
+      # stale literal.
+      if literal = task.literal_params.try(&.[key]?)
+        if literal.wire == task.params[key]?
+          if native = literal.value
+            return native
+          elsif members = literal.members
+            return typed_plugin_list_members(members, value, vars_context)
+          elsif literal.container
+            return json_container_param(value) || JSON::Any.new(value)
+          end
+        end
+      end
+      return JSON::Any.new(nil) if value == Krikri::NONE_SENTINEL
+      if value.starts_with?(Krikri::BINARY_WIRE_PREFIX)
+        return JSON::Any.new(Krikri.decode_binary_wire_value(value))
+      end
+      if native = Krikri.non_string_scalar(value)
+        return native
+      end
+      if members = Krikri.non_string_list_members(value)
+        return JSON::Any.new(members)
+      end
+      if value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+        if decoded = (JSON.parse(value[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil)
+          return decoded
+        end
+      end
+      # A whole-span `{{ var }}` argument: Ansible native-types it, and a
+      # pure indirection resolves to the referenced value's own type with
+      # no rendering at all - so no lookup can run a second time here.
+      raw = task.params[key]?
+      if raw && (native = VariableSubstitutor::Rerender.bare_indirection_value(vars_context, raw))
+        return native
+      end
+      # A whole-span `{{ expr }}` whose rendered result was a container
+      # travels as JSON text (and a literal container without templates
+      # never gets here - see LiteralParam); type it back the same way the
+      # py-module args do. Gated to a WHOLE-value template: mixed text that
+      # happens to render into valid JSON is still a string in Ansible.
+      if raw && VarSubstitutor.single_top_level_span?(raw) && (container = json_container_param(value))
+        return container
+      end
+      JSON::Any.new(value)
+    end
+
+    # A flat list's comma-joined wire, rebuilt as an array from its
+    # parse-time member texts (LiteralParam#members). Substitution only
+    # ever ADDS separators - a rendered member containing a comma splits
+    # into extra parts - so a part count equal to the member count proves
+    # no member rendered one and every part is that member's value. A
+    # mismatch keeps the wire text, the one shape this recovery cannot
+    # resolve (the plugin still has `params`).
+    private def typed_plugin_list_members(
+      members : Array(String),
+      wire : String,
+      vars_context : Hash(String, JSON::Any),
+    ) : JSON::Any
+      parts = wire.split(',')
+      return JSON::Any.new(wire) unless parts.size == members.size
+      typed = parts.map_with_index do |part, index|
+        if native = Krikri.non_string_member_scalar(part)
+          native
+        elsif (member = members[index]?) && (native = VariableSubstitutor::Rerender.bare_indirection_value(vars_context, member))
+          native
+        else
+          JSON::Any.new(part)
+        end
+      end
+      JSON::Any.new(typed)
+    end
+
+    # The JSON container behind a param value that IS one (a whole-span
+    # `{{ expr }}`'s rendered dict/list), or nil for anything else.
+    private def json_container_param(value : String) : JSON::Any?
+      stripped = value.lstrip
+      return nil unless stripped.starts_with?('{') || stripped.starts_with?('[')
+      parsed = (Krikri::BigJson.parse(stripped) rescue nil)
+      parsed && (parsed.raw.is_a?(Hash) || parsed.raw.is_a?(Array)) ? parsed : nil
     end
 
     # Matches Ansible's `stdout_lines`/`stderr_lines` (built from

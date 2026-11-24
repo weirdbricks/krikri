@@ -1,0 +1,28 @@
+#!/usr/bin/python3
+"""krikri half of the issue #1758 corpus case: an external module plugin
+(protocol: 1, config JSON on stdin) that reports the task's arguments.
+
+`args` is the typed copy krikri added in protocol: 1's additive style;
+`params` is the flattened wire every protocol-1 plugin used to get, kept as
+the fallback so the unfixed engine reproduces the issue instead of failing.
+"""
+
+import json
+import sys
+
+KEYS = (
+    "a_bool",
+    "a_int",
+    "a_float",
+    "a_str",
+    "a_none",
+    "a_dict",
+    "a_list_of_str",
+    "a_list_of_int",
+    "a_list_with_comma",
+    "a_dict_text",
+)
+
+config = json.load(sys.stdin)
+args = config.get("args", config["params"])
+print(json.dumps({"changed": False, "got": {"params": {key: args[key] for key in KEYS}}}, sort_keys=True))

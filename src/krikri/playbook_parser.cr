@@ -30,6 +30,34 @@ module Krikri
     conditions : Array(String),
     origins : Hash(String, {String, Int32, Int32})?
 
+  # One task argument the playbook wrote as a literal, kept with its YAML
+  # type for the external-plugin protocol's typed `args` copy (issue
+  # #1758). `wire` is the strings-only text Task#params held right after
+  # parsing: it is the staleness guard, so a value the executor replaced
+  # later (module_defaults, a templated action's re-parse) is never typed
+  # from the playbook's own literal.
+  #
+  # `value` is the native YAML value (JSON::Any) - set only when the
+  # literal contains no template anywhere, since an unrendered value
+  # would otherwise ship `{{ }}` text as if it were the argument.
+  #
+  # `members` is set for a flat scalar list instead: the as-written member
+  # texts, templates included. Its length is what makes the substituted
+  # comma-joined wire recoverable - a rendered member containing a comma
+  # only ever ADDS separators, so a part count equal to the member count
+  # proves no member rendered one (see TaskExecutor#typed_plugin_param).
+  #
+  # `container` marks a dict or container-membered list that DOES have
+  # templates inside: its wire is still JSON text, so the executor decodes
+  # it there to keep the structure (the templated leaves can only come
+  # back as their rendered text, but the argument is an object/list, not a
+  # string).
+  record LiteralParam,
+    wire : String,
+    value : JSON::Any? = nil,
+    members : Array(String)? = nil,
+    container : Bool = false
+
   # Represents a single task in a playbook
   class Task
     property name : String
@@ -159,6 +187,15 @@ module Krikri
     # (the stanza is then omitted, never mislabeled).
     property unresolvable_mapping_origin : {String, Int32, Int32}?
     property params : Hash(String, String)
+    # The YAML-typed counterpart of #params, for the external-plugin
+    # protocol's typed `args` copy (issue #1758). `params` is a
+    # strings-only wire: a dict travels as JSON text and a list of
+    # scalars as comma-joined text, so a plugin cannot tell `{k: v}`
+    # from the STRING '{"k":"v"}', or `[x, y]` from `["x,y"]`. The
+    # parser still has the original YAML value at hand, so it records it
+    # here - see LiteralParam and PlaybookParser.literal_param_values.
+    # nil when the task wrote no such argument.
+    property literal_params : Hash(String, LiteralParam)?
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (Ansible keyword). Raw,
     # unsubstituted string values, same convention as `params` - the
@@ -5096,6 +5133,7 @@ module Krikri
         # name is templated), so it can still be shaped at parse time; the
         # string form's params only exist once the module name resolves.
         task.params = (mp3 = module_params) && mp3.as_h? ? parse_module_params(mp3, module_name) : Hash(String, String).new
+        task.literal_params = (mp3 && mp3.as_h?) ? literal_param_values(mp3, task.params) : nil
         task.module_args_string_form = true if module_params.try(&.as_s?)
       else
         task.unavailable_module = unavailable_module_name
@@ -5115,7 +5153,9 @@ module Krikri
         # py_module runner (see PythonModuleRunner), and its argument
         # dict IS these params - previously they were dropped here, so
         # the module always ran with empty args.
-        task.params = parse_module_params((module_params || raise "BUG: module_params missing"), module_name)
+        params_yaml = module_params || raise "BUG: module_params missing"
+        task.params = parse_module_params(params_yaml, module_name)
+        task.literal_params = literal_param_values(params_yaml, task.params)
         task.module_args_string_form = true if module_params.try(&.as_s?)
       end
 
@@ -5133,7 +5173,11 @@ module Krikri
       # format" - a confusing failure with no evident tie back to args:
       # never being read.
       if args_yaml = task_hash["args"]?.try(&.as_h?)
-        parse_module_params(YAML::Any.new(args_yaml), module_name).each { |key, value| task.params[key] = value }
+        args_params = parse_module_params(YAML::Any.new(args_yaml), module_name)
+        args_params.each { |key, value| task.params[key] = value }
+        if typed_args = literal_param_values(YAML::Any.new(args_yaml), args_params)
+          (task.literal_params ||= Hash(String, LiteralParam).new).merge!(typed_args)
+        end
       end
 
       # The legacy k=v merge deprecation (issue #792): keyed off the
@@ -9163,6 +9207,105 @@ module Krikri
       end
 
       params
+    end
+
+    # Records the task args *yaml* wrote as literals, with their YAML
+    # types, for the external-plugin protocol's typed `args` copy (see
+    # LiteralParam). *params* is the strings-only wire
+    # #parse_module_params produced from the same *yaml*; each entry keeps
+    # that wire text as the staleness guard so the executor never types a
+    # param the playbook's own literal no longer describes (a
+    # module_defaults override, a templated action's re-parse).
+    #
+    # Only arguments whose TYPE the flat wire loses are worth an entry:
+    #
+    # - a dict or a nested/mixed list, as its native JSON value - or, when
+    #   it has templates inside, as the bare fact that it IS a container,
+    #   so the executor decodes the JSON text on the wire and keeps the
+    #   structure (the unrendered `{{ }}` must never reach a plugin as if
+    #   it were the argument).
+    # - a flat scalar list, as its member texts including templates: its
+    #   comma-joined wire is recoverable part-by-part because a rendered
+    #   comma only ever ADDS separators (see TaskExecutor#typed_plugin_param).
+    # - a non-string scalar, as its native bool/int/float/null.
+    # - a string only when the wire alone cannot say it is one: a string
+    #   starting with a param marker (U+E000... / NONE_SENTINEL), or one
+    #   that merely looks like a JSON container. A plain string arg costs
+    #   nothing, since the wire already carries it verbatim.
+    def self.literal_param_values(yaml : YAML::Any, params : Hash(String, String)) : Hash(String, LiteralParam)?
+      hash = yaml.as_h?
+      return nil unless hash
+      typed = nil
+      hash.each do |key, value|
+        name = key.to_s
+        wire = params[name]?
+        next unless wire
+        literal = literal_param(value, wire)
+        next unless literal
+        (typed ||= Hash(String, LiteralParam).new)[name] = literal
+      end
+      typed
+    end
+
+    private def self.literal_param(value : YAML::Any, wire : String) : LiteralParam?
+      case raw = value.raw
+      when Array
+        # A list with dict/nested-list members travels as JSON text (the
+        # parse-time branch above), so the wire keeps every member's type;
+        # only an all-scalar list is comma-joined and needs a member record.
+        if raw.any? { |item| item.raw.is_a?(Hash) || item.raw.is_a?(Array) }
+          return LiteralParam.new(wire, container: true) if templated_value?(value)
+          return LiteralParam.new(wire, value: native_param_json(value))
+        end
+        if templated_value?(value)
+          return LiteralParam.new(wire, members: raw.map { |item| marked_list_member(item) })
+        end
+        LiteralParam.new(wire, value: native_param_json(value))
+      when Hash
+        if templated_value?(value)
+          LiteralParam.new(wire, container: true)
+        else
+          LiteralParam.new(wire, value: native_param_json(value))
+        end
+      when String
+        return nil if templated_text?(raw)
+        if raw.starts_with?("\u{E000}") || raw == NONE_SENTINEL
+          LiteralParam.new(wire, value: JSON::Any.new(raw))
+        else
+          stripped = raw.lstrip
+          json_looking = stripped.starts_with?('{') || stripped.starts_with?('[')
+          json_looking ? LiteralParam.new(wire, value: JSON::Any.new(raw)) : nil
+        end
+      else
+        # Every other scalar (bool/int/float/null, and a YAML timestamp,
+        # which travels as text either way) keeps its own type.
+        LiteralParam.new(wire, value: native_param_json(value))
+      end
+    end
+
+    # The typed `args` copy is an extra, never a parse-time requirement: a
+    # YAML shape Crystal's own conversion cannot put into JSON::Any (it is
+    # already a string on the params wire) simply goes untyped.
+    private def self.native_param_json(value : YAML::Any) : JSON::Any
+      Vault.yaml_value_to_json(value)
+    rescue
+      JSON::Any.new(value.to_s)
+    end
+
+    # Whether *value* holds a template delimiter anywhere - a leaf string
+    # (or, for a mapping, a key). Such a container's type is only known
+    # after rendering.
+    private def self.templated_value?(value : YAML::Any) : Bool
+      case raw = value.raw
+      when String then templated_text?(raw)
+      when Array  then raw.any? { |item| templated_value?(item) }
+      when Hash   then raw.any? { |key, item| templated_text?(key.to_s) || templated_value?(item) }
+      else             false
+      end
+    end
+
+    private def self.templated_text?(text : String) : Bool
+      text.includes?("{{") || text.includes?("{%") || text.includes?("{#")
     end
 
     # Parses Ansible's free-form inline `key=value key2="quoted
