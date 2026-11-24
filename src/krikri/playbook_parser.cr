@@ -5118,6 +5118,33 @@ module Krikri
           unless bare_name_with_library_source?(module_name, role_path, playbook_dir)
             raise_unresolvable_module_error(module_name)
           end
+          # A BARE spelling ansible-core's own runtime data redirects into
+          # a collection whose captured release ships no such module is a
+          # definitive miss: real's loader follows that redirect, finds
+          # nothing, and refuses the WHOLE playbook at load time (rc=4, no
+          # PLAY output, the "[ERROR]: couldn't resolve module/action
+          # 'X'." line plus the offending task's Origin, even behind a
+          # `when: false`). Live-verified vs 2.19.11 (issue #1763: bare
+          # `aws_s3:` -> amazon.aws.aws_s3, a module amazon.aws 2.0
+          # removed). Two escapes keep it from refusing where real would
+          # resolve: the collection shipping in the PLAYBOOK-ADJACENT
+          # `collections/` tree (play input, the layout a round's role
+          # dependencies land in) and the task/play naming that collection
+          # in `collections:`. Undecidable verdicts (nil) and FQCNs keep
+          # the graceful unavailable-module flow above - an FQCN names a
+          # collection release krikri cannot pin.
+          if !module_name.includes?('.') && resolution[:resolves] == false &&
+             (redirect_target = CollectionIndex.builtin_module_redirect(module_name))
+            target_parts = redirect_target.split('.')
+            scoped = target_parts.size >= 3 &&
+                     (task_collections || [] of String).includes?("#{target_parts[0]}.#{target_parts[1]}")
+            unless scoped || CollectionIndex.playbook_collection_provides?(redirect_target, playbook_dir)
+              message = "couldn't resolve module/action '#{module_name}'. " \
+                        "This often indicates a misspelling, missing collection, or incorrect module path."
+              raise UnresolvedModuleError.new(message,
+                origin_error_render(message, source_file, source_map, task_source_prefix(source_prefix, index)))
+            end
+          end
         end
       end
       module_name = resolved_module_name || module_name

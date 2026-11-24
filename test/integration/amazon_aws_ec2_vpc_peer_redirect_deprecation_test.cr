@@ -43,15 +43,17 @@ private DEPRECATION_LINE = "[DEPRECATION WARNING]: amazon.aws.ec2_vpc_peer has b
 # [DEPRECATION WARNING]: prefix (ResultDisplay adds it).
 private TABLE_TEXT = DEPRECATION_LINE.sub("[DEPRECATION WARNING]: ", "")
 
-# The collection tree the spawned playbook resolves against. Real reads
-# plugin files and meta/runtime.yml from the FIRST search path holding a
-# collection and never a later copy (issue #1492), so a machine-wide
-# amazon.aws/community.aws copy that is incomplete would shadow the real
-# one and leave these names unresolvable. A fixture pins the two rename
-# hops these specs need: ansible_builtin_runtime.yml sends the bare
-# `ec2_vpc_peer` spelling to community.aws.ec2_vpc_peer, whose runtime.yml
-# redirects onto amazon.aws.ec2_vpc_peer, which amazon.aws's own
-# runtime.yml renames to ec2_vpc_peering.
+# The collection tree the spawned playbook resolves against. It is placed
+# PLAYBOOK-ADJACENT (`<playbook_dir>/collections`), the layout real's loader
+# and a role-tester round both use for a role's installed collections; the
+# parser reads that same tree when deciding whether a bare redirect spelling
+# is a dead miss (issue #1763). A machine-wide amazon.aws/community.aws copy
+# that is incomplete would shadow the real one and leave these names
+# unresolvable (issue #1492). A fixture pins the two rename hops these specs
+# need: ansible_builtin_runtime.yml sends the bare `ec2_vpc_peer` spelling to
+# community.aws.ec2_vpc_peer, whose runtime.yml redirects onto
+# amazon.aws.ec2_vpc_peer, which amazon.aws's own runtime.yml renames to
+# ec2_vpc_peering.
 private def collections_fixture : String
   root = PluginSpecHelper.tmp_path("aws-vpc-peer-collections")
   aws = File.join(root, "ansible_collections", "amazon", "aws")
@@ -76,21 +78,22 @@ private def collections_fixture : String
 end
 
 private def run_play(task_lines : Array(String)) : {Bool, String}
-  playbook = File.tempname("aws-ec2-vpc-peer-deprecation", ".yml")
+  dir = PluginSpecHelper.tmp_path("aws-ec2-vpc-peer-play")
+  FileUtils.mkdir_p(dir)
+  FileUtils.cp_r(collections_fixture, File.join(dir, "collections"))
   body = [
     "- hosts: localhost",
     "  gather_facts: false",
     "  connection: local",
     "  tasks:",
   ] + task_lines
-  File.write(playbook, body.join("\n") + "\n")
+  File.write(File.join(dir, "playbook.yml"), body.join("\n") + "\n")
   output = IO::Memory.new
-  status = Process.run("sh", ["-c", "exec \"$0\" \"$@\" 2>&1", BINARY, "-i", INVENTORY, playbook],
-    output: output, input: IO::Memory.new,
-    env: {"ANSIBLE_COLLECTIONS_PATH" => collections_fixture})
+  status = Process.run("sh", ["-c", "exec \"$0\" \"$@\" 2>&1", BINARY, "-i", INVENTORY, "playbook.yml"],
+    output: output, input: IO::Memory.new, chdir: dir)
   {status.success?, output.to_s}
 ensure
-  File.delete(playbook) if playbook && File.exists?(playbook)
+  FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
 
 describe "amazon.aws.ec2_vpc_peer redirect deprecation" do

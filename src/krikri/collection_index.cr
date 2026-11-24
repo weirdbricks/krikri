@@ -468,9 +468,16 @@ module Krikri
       # the library file exists.
       return {resolves: true} if library_module?(name, role_path, playbook_dir)
 
+      # A chain the capture could not decide must stay undecidable rather
+      # than fall through to "cannot exist anywhere": the capture kept no
+      # file tree for that target (google.cloud's gcp_compute_disk, issue
+      # #1744), and a caller that refuses definitive misses would then
+      # abort a run a controller with the collection installed performs.
+      uncertain = false
       if target = baked_redirects("modules")[name]?
         result = chain_resolves?("modules", target, Set(String).new)
         return {resolves: result[:resolves]} unless result[:resolves].nil?
+        uncertain = true
       end
 
       # Action routing: the module file is gone but an action-plugin redirect
@@ -478,6 +485,7 @@ module Krikri
       if target = baked_redirects("action")[name]?
         action = action_chain_resolves?(target, Set(String).new)
         return {resolves: action} unless action.nil?
+        uncertain = true
       end
 
       return {resolves: true} if task_collections.any? { |entry| listed_collection_provides?(name, entry) }
@@ -488,7 +496,30 @@ module Krikri
       # `warn:` resolve at load time.
       return {resolves: true} if local_action_plugin?(name, role_path, playbook_dir)
 
-      {resolves: false}
+      {resolves: uncertain ? nil : false}
+    end
+
+    # Whether the PLAYBOOK-ADJACENT collection tree - the
+    # `<playbook_dir>/collections/ansible_collections` real's loader
+    # searches, where a round's role dependencies land
+    # (krikri-role-tester hard-links them beside site.yml) - ships
+    # `<ns>.<coll>`. Deliberately only that tree: it is play INPUT that
+    # travels with the playbook, unlike the controller's installed set,
+    # which no name-resolution answer reads (see this file's header and
+    # KNOWN_MISSING.md's "never consults an installed ansible-core or
+    # collections tree").
+    def self.playbook_collection?(ns : String, coll : String, playbook_dir : String?) : Bool
+      return false if playbook_dir.nil? || playbook_dir.empty?
+      File.directory?(File.join(playbook_dir, "collections", "ansible_collections", ns, coll))
+    end
+
+    # Would that adjacent tree resolve the redirect target `fqcn`? Only the
+    # target collection's own presence is checked: whether that release
+    # still ships the leaf is the accepted controller-version limit.
+    def self.playbook_collection_provides?(fqcn : String, playbook_dir : String?) : Bool
+      parts = fqcn.split('.')
+      return false if parts.size < 3
+      playbook_collection?(parts[0], parts[1], playbook_dir)
     end
 
     # The redirect-chain resolution for an FQCN along one routing kind: the

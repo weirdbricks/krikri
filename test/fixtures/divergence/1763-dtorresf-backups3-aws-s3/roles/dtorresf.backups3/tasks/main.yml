@@ -1,0 +1,41 @@
+---
+# tasks file for backups3
+- name: Verify python dependencies for aws s3
+  pip: name={{ item }}
+  with_items:
+    - boto
+    - boto3
+    - botocore
+
+- name: Verify if backup dir is created
+  file: path={{ local_backup_dir }} state=directory
+
+- name: Create tar file for Paths
+  archive:
+    path: "{{ item.value.path }}"
+    dest: /{{ local_backup_dir }}/{{ item.value.tag }}-backup-{{ env }}-{{ ansible_hostname }}-{{ ansible_date_time.date }}.tar.gz
+  with_dict: "{{ paths_to_backup }}"
+
+- name: Copy tar file to s3 bucket
+  aws_s3:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    bucket: "{{ bucket_name }}"
+    object: /backups/{{ env }}/{{ item.value.tag }}-{{ env }}-backups/{{ item.value.tag }}-backup-{{ env}}-{{ ansible_hostname }}-{{ ansible_date_time.date }}.tar.gz
+    src: /{{ local_backup_dir }}/{{ item.value.tag }}-backup-{{ env }}-{{ ansible_hostname }}-{{ ansible_date_time.date }}.tar.gz
+    mode: put
+  with_dict: "{{ paths_to_backup }}"
+
+- name: Find older backups
+  find:
+    paths: "{{ local_backup_dir }}"
+    patterns: '*-backup-*.tar.gz'
+    age: 2w
+    age_stamp: mtime
+  register: old_backups
+
+- name: Delete older backups
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  with_items: "{{ old_backups.files }}"

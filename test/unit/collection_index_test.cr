@@ -40,6 +40,27 @@ describe Krikri::CollectionIndex do
     Krikri::CollectionIndex.reference_resolves?("docker")[:resolves].must_equal(false)
   end
 
+  # amazon.aws is in module_scope with an empty captured tree, and ships no
+  # `aws_s3` (removed in 2.0), so the builtin redirect chain is a miss;
+  # google.cloud kept routing data only, so its chain is undecidable and
+  # must never read as a definitive miss (issue #1744: a controller with
+  # google.cloud installed resolves gcp_compute_disk).
+  it "keeps a redirect into an uncaptured collection undecidable, not a miss" do
+    Krikri::CollectionIndex.builtin_module_redirect("aws_s3").must_equal("amazon.aws.aws_s3")
+    Krikri::CollectionIndex.reference_resolves?("aws_s3")[:resolves].must_equal(false)
+    Krikri::CollectionIndex.reference_resolves?("gcp_compute_disk")[:resolves].must_be_nil
+  end
+
+  it "reads only the playbook-adjacent collection tree for the redirect-target escape" do
+    dir = PluginSpecHelper.tmp_path("index-adjacent-collections")
+    FileUtils.mkdir_p(File.join(dir, "collections", "ansible_collections", "amazon", "aws"))
+    Krikri::CollectionIndex.playbook_collection?("amazon", "aws", dir).must_equal(true)
+    Krikri::CollectionIndex.playbook_collection?("community", "aws", dir).must_equal(false)
+    Krikri::CollectionIndex.playbook_collection?("amazon", "aws", nil).must_equal(false)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
   it "leaves ansible.builtin. spellings to the engine's own resolution (never refuses)" do
     Krikri::CollectionIndex.reference_resolves?("ansible.builtin.sysvinit")[:resolves].must_be_nil
   end
