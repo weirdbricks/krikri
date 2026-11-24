@@ -1,0 +1,16 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    dell_powerconnect_switch_provider:
+      host: switch.example.com
+      username: admin
+      auth_pass: secret
+    dell_powerconnect_switch_interface_config:
+      GigabitEthernet1/0/1:
+        description: uplink
+        config:
+          - switchport mode access
+  roles:
+    - pabluskinc.dell_powerconnect_switch

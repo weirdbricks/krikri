@@ -148,3 +148,122 @@ describe "loop_control: loop_var replaces item" do
     output.must_include("ITEM=NOITEM")
   end
 end
+
+# ansible-core validates `loop_control:` at task LOAD time and refuses the
+# whole run (rc=4, no play banner) for a non-mapping value, an unknown key,
+# or a list/dict given to one of LoopControl's isa='string' attributes
+# (loop_var, index_var, label). krikri read the mapping with as_h?/as_s?,
+# silently dropped whatever it could not type and ran the play real refused
+# (issue #1768 - pabluskinc.dell_powerconnect_switch's mapping `label:`).
+# Messages, Origins and rc=4 live-verified against ansible-core 2.21.6.
+describe "loop_control: load-time validation" do
+  it "refuses a mapping label before the play starts" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: labelled
+            ansible.builtin.debug: {msg: "x"}
+            loop: [{n: one}]
+            loop_control:
+              label:
+                interface: "{{ item.n }}"
+      YAML
+
+    code.must_equal(4)
+    output.must_include("The field 'label' is supposed to be a string type, however the incoming data structure is a <class 'ansible.module_utils._internal._datatag._AnsibleTaggedDict'>")
+    # The Origin points at the value's own start (the mapping's first key).
+    output.must_match(/Origin: .*\/pb\.yml:9:11\n/)
+    output.wont_include("PLAY [")
+  end
+
+  it "refuses a list label with the tagged-list class name" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: labelled
+            ansible.builtin.debug: {msg: "x"}
+            loop: [1]
+            loop_control:
+              label:
+                - a
+      YAML
+
+    code.must_equal(4)
+    output.must_include("_AnsibleTaggedList")
+    output.wont_include("PLAY [")
+  end
+
+  it "refuses a mapping loop_var" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug: {msg: "x"}
+            loop: [1]
+            loop_control:
+              loop_var:
+                a: b
+      YAML
+
+    code.must_equal(4)
+    output.must_include("The field 'loop_var' is supposed to be a string type")
+    output.wont_include("PLAY [")
+  end
+
+  it "refuses an unknown key, Origin at the key itself" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug: {msg: "x"}
+            loop: [1]
+            loop_control:
+              bogus: 1
+      YAML
+
+    code.must_equal(4)
+    output.must_include("'bogus' is not a valid attribute for a LoopControl")
+    output.must_match(/Origin: .*\/pb\.yml:8:9\n/)
+    output.wont_include("PLAY [")
+  end
+
+  it "refuses a loop_control that is not a mapping" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug: {msg: "x"}
+            loop: [1]
+            loop_control: "{{ some_var }}"
+      YAML
+
+    code.must_equal(4)
+    output.must_include("the `loop_control` value must be specified as a dictionary and cannot be a variable itself (though it can contain variables)")
+    output.must_match(/Origin: .*\/pb\.yml:7:21\n/)
+    output.wont_include("PLAY [")
+  end
+
+  # A null value carries no tag, so real prints the bare [ERROR] line with
+  # no Origin at all - unlike every other shape above.
+  it "refuses a null loop_control with no Origin" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - name: t
+            ansible.builtin.debug: {msg: "x"}
+            loop: [1]
+            loop_control:
+      YAML
+
+    code.must_equal(4)
+    output.must_include("must be specified as a dictionary")
+    output.wont_include("Origin:")
+    output.wont_include("PLAY [")
+  end
+end
