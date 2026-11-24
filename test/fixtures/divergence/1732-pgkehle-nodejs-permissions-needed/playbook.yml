@@ -1,0 +1,19 @@
+---
+# pgkehle.nodejs' tasks/main.yml (v2.0.1) tasks 6-7, kept verbatim except for
+# the registration guard: the role skips the setcap command whenever
+# `enable_gui` is false, so `when: false` reproduces the skipped result dict
+# without touching the host's capabilities.
+- hosts: local
+  gather_facts: false
+  tasks:
+    - name: Test User Permissions To Use Ports 80/443
+      command: setcap -v cap_net_bind_service=+ep /usr/bin/nodejs
+      become: true
+      register: results_cap
+      when: false
+      failed_when: results_cap.rc > 1
+      changed_when: false
+
+    - name: Determine if the permissions are needed
+      set_fact:
+        differs: "{{ results_cap.stdout.find('differs') >= 1 }}"

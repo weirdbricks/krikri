@@ -1027,6 +1027,32 @@ module Krikri
             else
               render_via_jinja(expr)
             end
+          rescue KrikriJinja::TemplateError
+            # The lenient render consumed an undefined value (an attribute
+            # missing on a registered result, a name nothing defines): real
+            # Jinja2 raises at that READ - "object of type 'dict' has no
+            # attribute 'stdout'", "'missing_var' is undefined" - and
+            # ansible fails the task with that wording (live-verified vs
+            # 2.21.6 on pgkehle.nodejs' `{{ results_cap.stdout.find('differs')
+            # >= 1 }}`, issue #1732). The hand-rolled fallback below never
+            # reaches the read: it resolves the operand to JSON null, so the
+            # task died with Python's NoneType ordering TypeError instead.
+            # Only the strict probe can recover the wording real produces; it
+            # declines (nil) for evaluator gaps and for genuinely
+            # incomparable operands, which keep the ComparisonEvaluator
+            # TypeError below.
+            #
+            # `first`/`last` over an EMPTY sequence is Jinja's StopIteration,
+            # not an undefined READ: real renders it as a filter runtime
+            # failure, which the conditional/arg-finalization layers word
+            # from FilterFailureError (issue #548). Escalating it here
+            # turned a `when:`'s expected conditional-evaluation failure
+            # into an uncaught UndefinedVariableError that killed the run.
+            if (msg = Krikri.strict_undefined_probe_message(expr, @vars)) &&
+               !msg.ends_with?("sequence was empty.")
+              raise UndefinedVariableError.new(msg)
+            end
+            capitalize_bool_text(@comparison.evaluate(expr))
           rescue
             capitalize_bool_text(@comparison.evaluate(expr))
           end
