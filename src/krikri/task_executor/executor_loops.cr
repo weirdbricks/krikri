@@ -2839,6 +2839,13 @@ module Krikri
         # jahrik.nerd_fonts round 813005 plus a live repro against
         # ansible-playbook (ansible-core 2.19).
         if result["skipped"]?.try(&.as_bool) || false
+          # Real displays a result's captured deprecations with that
+          # result, ahead of its own status line - a check-mode-skipped
+          # item's args/label reads included (the module skip happens
+          # after arg finalization). This branch prints the skip line
+          # inline instead of going through display_result, which owns
+          # that flush for executed items.
+          ResultDisplay.flush_task_deprecation_capture_for_display
           connection_host = host.name
           # no_log censors the loop item on the skipping line too (Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)

@@ -1,0 +1,9 @@
+# The round's check-phase play: Anthony25.letsencrypt as the only role.
+# Both command tasks skip under --check (command supports no check mode),
+# but real still finalizes and labels every loop item, so the deprecation
+# blocks their args and item labels read print too.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - Anthony25.letsencrypt

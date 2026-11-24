@@ -2323,3 +2323,49 @@ describe "INJECT_FACTS_AS_VARS deprecation from a fact read inside a loop item's
     stderr.must_include("               ^ column 13")
   end
 end
+
+# Issue #1773 (Anthony25.letsencrypt, round 29925788): under --check a
+# looped command module skips every item, and real still templates (and
+# labels) those items exactly as in a real run - the skip comes from the
+# module's own check-mode gate, after arg finalization. Real therefore
+# prints the loop source's block, the args' block and the item label's
+# "While processing 'item'" block, all ahead of the skipping line. Krikri's
+# loop display printed the skipped item's line without flushing the
+# per-item capture window that the executed-item display path flushes, so
+# only the loop-source block survived.
+describe "INJECT_FACTS_AS_VARS deprecation from a check-mode-skipped loop item" do
+  private def run_check_playbook(playbook_text : String) : {String, String, String}
+    dir = PluginSpecHelper.tmp_path("inject-facts-check-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, playbook_text)
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", "--check", playbook], output: stdout, error: stderr, chdir: dir)
+    {stderr.to_s, stdout.to_s, playbook}
+  end
+
+  it "prints the source, args and item-label blocks with a skipping item" do
+    stderr, stdout, playbook = run_check_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          domains:
+            - "{{ ansible_fqdn }}"
+        tasks:
+          - name: looped command reading a fact in its args
+            command: "echo {{ item }} {{ ansible_domain }}"
+            with_items: "{{ domains }}"
+      PLAYBOOK
+
+    stdout.must_include("skipping: [localhost] => (item=")
+    stderr.scan(/INJECT_FACTS_AS_VARS default to `True`/).size.must_equal(3)
+    stderr.must_include("Origin: #{playbook}:6:9\n")
+    stderr.must_include("Origin: #{playbook}:9:16\n")
+    stderr.must_include("9       command: \"echo {{ item }} {{ ansible_domain }}\"\n")
+    stderr.must_include("                 ^ column 16")
+    stderr.must_include("[DEPRECATION WARNING]: While processing 'item': INJECT_FACTS_AS_VARS")
+    stderr.must_include("Origin: <unknown>\n\nitem\n")
+  end
+end

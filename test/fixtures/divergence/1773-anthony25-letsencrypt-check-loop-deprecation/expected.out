@@ -1,0 +1,45 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Anthony25.letsencrypt : Attempt to get the certificate using the webroot authenticator] ***
+skipping: [localhost] => (item=Linux) 
+skipping: [localhost]
+
+TASK [Anthony25.letsencrypt : Attempt to get the certificate using the standalone authenticator (in case eg the webserver isn't running yet)] ***
+skipping: [localhost] => (item=Linux) 
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/Anthony25.letsencrypt/defaults/main.yml:3:7
+
+1 ---
+2   letsencrypt_cert_domains:
+3     - "{{ ansible_system }}"
+        ^ column 7
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/Anthony25.letsencrypt/defaults/main.yml:6:22
+
+4   letsencrypt_webroot_path: /var/www
+5   letsencrypt_authenticator: webroot
+6   letsencrypt_email: "webmaster@{{ ansible_domain }}"
+                       ^ column 22
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: While processing 'item': INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <unknown>
+
+item
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
