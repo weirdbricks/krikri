@@ -7962,6 +7962,21 @@ module Krikri
     # its clause label and adds the detail as a third record - exactly the
     # shortening the when: chain applies (both live-verified vs 2.21.6).
     private def emit_conditional_clause_error_block(task : Task, clause_key : String, raw : String?, segment : String, detail : String) : Nil
+      return unless text = conditional_clause_error_block_text(task, clause_key, raw, segment, detail)
+      ErrorBlock.emit_rendered(text)
+    end
+
+    # Renders the clause block above WITHOUT printing it, so a batch member
+    # whose changed_when:/failed_when: raises while the group is being
+    # BUILT can defer the print to that member's own display (see
+    # record_conditional_clause_failure's defer_block): every member is
+    # prepared before any of the group's results display, and a member an
+    # earlier member's failure halts the play before is never reached at
+    # all - printing here put the chain ahead of the earlier member's own
+    # result and invented one real never shows (jgkim.dotfiles, issue
+    # #1764). Returns nil when the task's source can't be located - no
+    # block either way, same as the inline path.
+    private def conditional_clause_error_block_text(task : Task, clause_key : String, raw : String?, segment : String, detail : String) : String?
       path = task.source_file || @playbook_file
       return unless path && File.file?(path)
 
@@ -7992,7 +8007,7 @@ module Krikri
       end
       mid = ErrorBlock::Node.new("#{segment} failed.")
       mid.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause)
-      ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: task_origin)
+      "[ERROR]: " + ErrorBlock.format_event(ErrorBlock::Node.new("Task failed.", source_context: task_origin)
         .with_chain(ErrorBlock::DIRECT_CAUSE, true, mid))
     end
 

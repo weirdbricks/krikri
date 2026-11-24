@@ -1,0 +1,44 @@
+---
+- name: Ensure the dotfiles repository is cloned locally.
+  git:
+    repo: "{{ dotfiles_remote }}"
+    dest: "{{ dotfiles_local }}"
+    update: no
+
+- name: Ensure the local repository is up-to-date.
+  command: git pull origin master
+  args:
+    chdir: "{{ dotfiles_local }}"
+    warn: no
+  register: return_value
+  changed_when: "return_value.stdout.find('up to date') == -1"
+
+- name: Find all dotfiles to link.
+  command: find {{ dotfiles_local }} -maxdepth 1 -name ".*" -exec basename \{} \;
+  register: dotfiles
+  check_mode: no
+  changed_when: False
+
+- name: Ensure all dotfiles except ignored ones are links.
+  command: ls -F {{ dotfiles_home }}/{{ item }}
+  register: existing_dotfiles
+  with_items: "{{ dotfiles.stdout_lines }}"
+  when: "item not in dotfiles_ignore"
+  check_mode: no
+  failed_when: False
+  changed_when: False
+
+- name: Remove the existing dotfile if a replacement is being linked.
+  file:
+    path: "{{ dotfiles_home }}/{{ dotfiles.stdout_lines[item.0] }}"
+    state: absent
+  when: "(dotfiles.stdout_lines[item.0] not in dotfiles_ignore) and ('@' not in item.1.stdout)"
+  with_indexed_items: "{{ existing_dotfiles.results }}"
+
+- name: Link dotfiles into the home folder.
+  file:
+    src: "{{ dotfiles_local }}/{{ item }}"
+    dest: "{{ dotfiles_home }}/{{ item }}"
+    state: link
+  with_items: "{{ dotfiles.stdout_lines }}"
+  when: "item not in dotfiles_ignore"

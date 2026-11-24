@@ -2604,7 +2604,7 @@ module Krikri
         # an undefined value, 2.19-parity strictness fails the task on it.
         interpreted = attach_batch_step_invocation(task, steps[idx], interpreted, InvocationInjection.enabled?(vars_context))
         interpreted = shape_script_result(task, interpreted)
-        cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
+        cache[task] = {apply_batch_build_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
     end
 
@@ -3026,14 +3026,14 @@ module Krikri
       # Same pre-inline copy src+content gate as execute_task_once (see
       # there) - the batched path must fail identically.
       if violation = copy_src_content_conflict(task, substituted_params)
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
       if violation = copy_literal_type_failure(task, substituted_params)
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
       copied = inline_copy_source_content(task, substituted_params, host, vars_context)
       if copied.is_a?(JSON::Any)
-        return apply_changed_failed_when(task, copied, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, copied, vars_context, host)
       end
       substituted_params = copied
       # Ansible's unarchive/assemble action plugins crash on non-string
@@ -3041,28 +3041,28 @@ module Krikri
       # the src staging paths could leak the marker into a message or
       # upload path - see unarchive_assemble_literal_type_failure.
       if violation = unarchive_assemble_literal_type_failure(task, substituted_params)
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
       staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
       if staged.is_a?(JSON::Any)
-        return apply_changed_failed_when(task, staged, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, staged, vars_context, host)
       end
       substituted_params = staged
       staged_script = stage_script_src(task, substituted_params, host, vars_context)
       if staged_script.is_a?(JSON::Any)
-        return apply_changed_failed_when(task, staged_script, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, staged_script, vars_context, host)
       end
       substituted_params = staged_script
       staged_assemble = stage_assemble_dir(task, substituted_params, host, vars_context)
       if staged_assemble.is_a?(JSON::Any)
-        return apply_changed_failed_when(task, staged_assemble, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, staged_assemble, vars_context, host)
       end
       substituted_params = staged_assemble
 
       # Action-only directives: pre-action validation gate (see
       # execute_task_once's identical hook).
       if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: true, check_mode: resolve_task_check_mode(task, vars_context))
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
 
       # Ansible's assemble action expands the destination's user path itself
@@ -3071,7 +3071,7 @@ module Krikri
       # action instead of failing the copy spec. See
       # assemble_dest_expand_failure.
       if violation = assemble_dest_expand_failure(task, substituted_params)
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
 
       # Ansible's dest expand crash fires only after the src lookup succeeded
@@ -3079,7 +3079,7 @@ module Krikri
       # the required-argument checks (see execute_task_once's identical
       # hook placement).
       if violation = copy_dest_expand_failure(task, substituted_params)
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
 
       # Ansible's add_host: the name failure / groups failure (action stage)
@@ -3087,7 +3087,7 @@ module Krikri
       # which aborts the whole run) - see add_host_literal_type_failure.
       # Same hook as execute_task_once's own, for the batched path.
       if violation = add_host_literal_type_failure(task, substituted_params)
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
 
       # Ansible validates the become: keyword for every task before any
@@ -3103,7 +3103,7 @@ module Krikri
       # action plugin, i.e. after the become: keyword check and before any
       # fact module - see gather_facts_parallel_failure.
       if violation = gather_facts_parallel_failure(task, substituted_params, vars_context)
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
@@ -3143,7 +3143,7 @@ module Krikri
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
           shape_debug_var_expression_failure(task, result_json)
-          return apply_changed_failed_when(task, result_json, vars_context, host)
+          return apply_batch_build_changed_failed_when(task, result_json, vars_context, host)
         end
 
         bump_hv_generation_for_add_host(task.module_name)
@@ -3153,7 +3153,7 @@ module Krikri
         # ActionResult#final_result's own comment). No module upload/
         # dispatch of any kind, batched or not.
         if final = action_result.final_result
-          return apply_changed_failed_when(task, final, vars_context, host)
+          return apply_batch_build_changed_failed_when(task, final, vars_context, host)
         end
 
         substituted_params = action_result.modified_params || substituted_params
@@ -3166,14 +3166,14 @@ module Krikri
       # would run (see the helper's own comment).
       substituted_params = raw_missing_command_params(task, substituted_params)
       if raw_skip = raw_check_mode_skip(task, resolve_task_check_mode(task, vars_context))
-        return apply_changed_failed_when(task, raw_skip, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, raw_skip, vars_context, host)
       end
       if raw_failure = raw_missing_raw_params_failure(task, substituted_params, resolve_task_check_mode(task, vars_context))
-        return apply_changed_failed_when(task, raw_failure, vars_context, host) if raw_failure["skipped"]?
+        return apply_batch_build_changed_failed_when(task, raw_failure, vars_context, host) if raw_failure["skipped"]?
         return raw_failure
       end
       if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
-        return apply_changed_failed_when(task, violation, vars_context, host)
+        return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
 
       become = begin
@@ -3193,7 +3193,7 @@ module Krikri
             "failed"  => true,
             "msg"     => "become_user #{become_user.inspect} is not a valid username",
           }.to_json)
-          return apply_changed_failed_when(task, failed, vars_context, host)
+          return apply_batch_build_changed_failed_when(task, failed, vars_context, host)
         end
       end
 
@@ -5429,7 +5429,7 @@ module Krikri
     # (live-verified: a /bin/false task with a raising failed_when
     # registers the module's own msg plus
     # failed_when_suppressed_exception: "(traceback unavailable)").
-    private def record_conditional_clause_failure(hash : Hash(String, JSON::Any), task : Task, clause_key : String, raw : String?, host : Host, module_failed : Bool, detail : String) : Nil
+    private def record_conditional_clause_failure(hash : Hash(String, JSON::Any), task : Task, clause_key : String, raw : String?, host : Host, module_failed : Bool, detail : String, defer_block : Bool = false) : Nil
       segment = module_failed ? "Module" : "Action"
       if module_failed
         hash["#{clause_key}_suppressed_exception"] = hash.delete("exception") || JSON::Any.new("(traceback unavailable)")
@@ -5444,7 +5444,19 @@ module Krikri
           hash["msg"] = JSON::Any.new(conditional_clause_failure_text(clause_key, segment, detail))
         end
       end
-      emit_conditional_clause_error_block(task, clause_key, raw, segment, detail)
+      if defer_block
+        # A batch group's members are all prepared - and their real results
+        # all applied - before ANY of them displays, and a member an earlier
+        # failure halts the play before is never reached at all. Ride the
+        # same deferred-block marker an arg-finalization failure uses so the
+        # display path prints this chain under this member's own banner, and
+        # only if the play actually reaches it (issue #1764).
+        if text = conditional_clause_error_block_text(task, clause_key, raw, segment, detail)
+          hash["_ansible_finalization_error_block"] = JSON::Any.new(text)
+        end
+      else
+        emit_conditional_clause_error_block(task, clause_key, raw, segment, detail)
+      end
       # The block above is the whole display for this failure - keep
       # ResultDisplay's generic "Action failed."/"Module failed." chain
       # from printing a second, unlabelled one.
@@ -5466,7 +5478,7 @@ module Krikri
       end
     end
 
-    private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
+    private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host, defer_block : Bool = false) : JSON::Any
       # assert:'s non-bool that: failure rides its raw item text for the
       # fatal msg's lineage clause - inert for every other result shape.
       result = decorate_assert_that_origin(task, result, host)
@@ -5612,7 +5624,7 @@ module Krikri
           hash["failed"] = JSON::Any.new(true)
           detail = changed_failed_when_error_text(task, "changed_when", changed_when, host, e)
           hash["changed_when_result"] = JSON::Any.new(detail)
-          record_conditional_clause_failure(hash, task, "changed_when", changed_when, host, module_failed, detail)
+          record_conditional_clause_failure(hash, task, "changed_when", changed_when, host, module_failed, detail, defer_block)
         end
 
         begin
@@ -5687,11 +5699,23 @@ module Krikri
           hash["failed"] = JSON::Any.new(true)
           detail = changed_failed_when_error_text(task, "failed_when", failed_when, host, e)
           hash["failed_when_result"] = JSON::Any.new(detail)
-          record_conditional_clause_failure(hash, task, "failed_when", failed_when, host, module_failed, detail)
+          record_conditional_clause_failure(hash, task, "failed_when", failed_when, host, module_failed, detail, defer_block)
         end
       end
 
       JSON::Any.new(hash)
+    end
+
+    # apply_changed_failed_when for a result produced while a batch group is
+    # being BUILT - prepare_batch_step's controller-side failures, and a
+    # group's real step results applied as the round trip returns. Both
+    # happen before ANY member's result displays, so a raising clause's
+    # [ERROR] chain is stashed on the result (printed by the display path
+    # under this member's own banner) instead of being emitted here: an
+    # earlier member's failure may halt the play before this one is ever
+    # reached, and real then shows no block at all for it (issue #1764).
+    private def apply_batch_build_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
+      apply_changed_failed_when(task, result, vars_context, host, defer_block: true)
     end
 
     # Register / notify / display / update stats for a (non-looped) task result.
