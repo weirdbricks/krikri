@@ -1,0 +1,13 @@
+# lerwys.logrotate's tasks/main.yml first task, verbatim: the task-level
+# `vars:` values read the distribution facts, and the `with_first_found`
+# candidate list consumes `distribution`/`distribution_version`. Real
+# templates each value lazily at that candidate render, so the
+# INJECT_FACTS_AS_VARS block names the value's own declaration (17:19), not
+# the candidate line that read it. The `vars/defaults.yml` fallback is the
+# only addition, so first_found matches on any distribution and the task
+# itself succeeds.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - logrotate

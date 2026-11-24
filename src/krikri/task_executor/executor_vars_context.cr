@@ -666,6 +666,11 @@ module Krikri
       # their declarations must resolve against THIS task, not whatever
       # task the previous registration names.
       VarSubstitutor.register_var_origin_lookup(host.name) { |name, leaf| re_rendered_value_origin_block(task, host, name, leaf) }
+      # real injects a fact at the top level under its fact-cache KEY
+      # spelling, so setup's `ansible_*` keys are not readable as their
+      # bare `ansible_facts` name - see
+      # VarSubstitutor#top_level_fact_name? (issue #1766).
+      VarSubstitutor.register_injected_fact_spelling_lookup(host.name) { |name| @facts[host.name].has_key?(name) }
       render_task_vars(task, vars_context, host.name, loop_lenient: loop_lenient_vars)
 
       # connection: local (or any other connection: override) on this
