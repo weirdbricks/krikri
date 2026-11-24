@@ -1,5 +1,5 @@
 name: krikri
-version: 0.9.3060
+version: 0.9.3061
 
 description: |
   Fast, Ansible-compatible automation tool written in Crystal
@@ -37,7 +37,7 @@ dependencies:
     tag: v1.0.0
   krikri-aws-ssm:
     github: weirdbricks/krikri-aws-ssm
-    tag: v1.0.1
+    tag: v1.0.2
 
 development_dependencies:
   ameba:

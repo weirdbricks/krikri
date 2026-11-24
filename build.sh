@@ -148,7 +148,7 @@ while [[ $# -gt 0 ]]; do
             echo "             image) plus Alpine's static dev libs:"
             echo "               pcre2-dev pcre2-static openssl-dev openssl-libs-static"
             echo "               zlib-static bzip2-static xz-static yaml-static"
-            echo "               libxml2-static gmp-dev gmp-static libevent-static"
+            echo "               gmp-dev gmp-static libevent-static"
             echo "             (gmp-static is required: Alpine's gmp-dev ships no libgmp.a"
             echo "             and the link fails with 'cannot find -lgmp' without it -"
             echo "             Crystal's Big* types link libgmp). glibc doesn't support"
@@ -239,7 +239,7 @@ if [ "$STATIC_PODMAN" = true ]; then
     # gmp-static is required: Alpine's gmp-dev ships no libgmp.a and the
     # link fails with 'cannot find -lgmp' without it (Crystal's Big*
     # types link libgmp).
-    CONTAINER_SH="apk add --no-cache bash pcre2-dev pcre2-static openssl-dev openssl-libs-static zlib-static bzip2-static xz-static yaml-static libxml2-static gmp-dev gmp-static libevent-static && ./build.sh $INNER_ARGS"
+    CONTAINER_SH="apk add --no-cache bash pcre2-dev pcre2-static openssl-dev openssl-libs-static zlib-static bzip2-static xz-static yaml-static gmp-dev gmp-static libevent-static && ./build.sh $INNER_ARGS"
     # Outer shell must be busybox sh - the bare Alpine Crystal image
     # ships no bash; `apk add bash` below installs it for build.sh
     # itself (which needs bashisms and runs via its own shebang).
@@ -376,30 +376,6 @@ if [ "$STATIC" = false ] && [ "$IS_DARWIN" = false ] && [ -f "scripts/fmod_compa
     # without an explicit `-lm` the linker fails with an undefined `fmod`.
     LINK_SHIM_ARGS="--link-flags=$SHIM_OBJ --link-flags=-lm"
     BUILD_FLAGS="$BUILD_FLAGS $LINK_SHIM_ARGS"
-fi
-
-# libxml2 (dynamic Linux builds only, the same partial-static trick as
-# libbz2 further down): krikri-aws-ssm's STS client reads AWS's
-# Query-protocol answers with Crystal's stdlib XML, which links
-# libxml2.so.2 dynamically - and base_plugin -> ssh_manager ->
-# ssm_transport -> krikri-aws-ssm carries it into EVERY plugin binary,
-# i.e. onto the hosts those plugins are uploaded to. A stock Ubuntu
-# image has no libxml2.so.2, and round 29923741's
-# alesauce.provision_new_stock_linux_server showed what that costs:
-# real ansible's Gathering Facts is pure Python and returned ok, while
-# each krikri plugin died at process start ("error while loading shared
-# libraries: libxml2.so.2") before main() ever ran, so the whole play
-# failed at facts. Statically link just libxml2, plus the zlib/liblzma/
-# libm archives it needs, so the binary still works where those .so
-# files are absent; every other dependency stays dynamic.
-#
-# Must stay one --link-flags entry per token: the build calls below
-# expand $BUILD_FLAGS unquoted, so a single `-Wl,-Bstatic -lxml2 ...`
-# value would split into separate argv entries and be rejected.
-LINK_XML_ARGS=""
-if [ "$STATIC" = false ] && [ "$IS_DARWIN" = false ]; then
-    LINK_XML_ARGS="--link-flags=-Wl,-Bstatic --link-flags=-lxml2 --link-flags=-Wl,-Bdynamic --link-flags=-lz --link-flags=-llzma --link-flags=-lm"
-    BUILD_FLAGS="$BUILD_FLAGS $LINK_XML_ARGS"
 fi
 
 # The flavor this run asks for, as recorded in the stamp file.

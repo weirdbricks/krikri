@@ -15,10 +15,11 @@ with Crystal's stdlib `XML`, which links libxml2.so.2 - and
 put that dependency into every plugin binary, including the `facts`
 binary uploaded to the target. A stock Ubuntu image ships no
 libxml2.so.2, so the loader killed the process before `main()` ran.
-`build.sh` now statically links libxml2 (with the zlib/liblzma/libm
-archives it pulls in) for dynamic Linux builds; the linkage itself is
-pinned by `test/unit/plugin_shared_libraries_test.cr`, and the
-playbook here pins the transcript of the task that diverged.
+krikri-aws-ssm v1.0.2 parses those responses with `krikri-xml`, the
+project's pure-Crystal XML implementation, so no plugin binary links
+libxml2 at all. `test/unit/plugin_shared_libraries_test.cr` keeps that
+linkage from coming back, and the playbook here pins the transcript of
+the task that diverged.
 
 Capture notes: the round's `site.yml` reduced to the failing task - the
 role's own user/authorized_key tasks never ran, and the first of them
