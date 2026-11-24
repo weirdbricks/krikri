@@ -2468,7 +2468,19 @@ module Krikri
     # a pseudo-module like "_block"), otherwise the first
     # MODULE_SEARCH_COLLECTIONS prefix that matches. nil if nothing
     # matches at all (a genuinely unimplemented/unknown module).
-    def self.resolve_module_name(raw : String) : String?
+    #
+    # *collections* is the task's own `collections:` scope (its keyword,
+    # else the play's list plus the role's meta/main.yml declaration). It
+    # is consulted for external module plugins only: real's loader walks
+    # that scope for a bare name BEFORE its legacy module path, so
+    # `hello:` on a play with `collections: [acme.tools]` runs the
+    # collection's hello module - for krikri, the external
+    # `acme.tools.hello` plugin (issue #1757). Checked AHEAD of
+    # MODULE_SEARCH_COLLECTIONS for the same reason real searches the task
+    # scope first, and it can never shadow a native module because every
+    # namespace those fallbacks use is reserved from external plugin names
+    # (RuntimePluginRegistry::STRIPPED_NAMESPACE/AVAILABLE_PLUGINS).
+    def self.resolve_module_name(raw : String, collections : Array(String)? = nil) : String?
       return MODULE_ALIASES[raw] if MODULE_ALIASES.has_key?(raw)
       return raw if AVAILABLE_PLUGINS.includes?(raw)
       # An external module plugin (issue #1755) is registered, not compiled
@@ -2476,6 +2488,13 @@ module Krikri
       # left with a real module name, so `Task#unavailable_module` is never
       # set and the task is dispatched rather than skipped.
       return raw if RuntimePluginRegistry.registered?(raw)
+
+      if collections
+        collections.each do |collection|
+          qualified = "#{collection}.#{raw}"
+          return qualified if RuntimePluginRegistry.registered?(qualified)
+        end
+      end
 
       MODULE_SEARCH_COLLECTIONS.each do |collection|
         qualified = "#{collection}.#{raw}"
@@ -4962,7 +4981,25 @@ module Krikri
         resolved_module_name = nil
         unavailable_module_name = nil
       else
-        resolved_module_name = resolve_module_name(module_name)
+        # The task's own collection scope: its `collections:` keyword,
+        # else the play's list plus the role's own meta/main.yml
+        # declaration (both folded into bare-name resolution by real).
+        # The scope is recorded on the Task (the executor's action-plugin
+        # scope uses it), feeds bare-name resolution for an external module
+        # plugin (issue #1757: real's loader searches this scope for
+        # `hello:` before the legacy module path, so `collections:
+        # [acme.tools]` must find the external `acme.tools.hello`), and
+        # feeds the mapping-form check below. It is computed BEFORE
+        # resolution runs because resolution is what consumes it.
+        task_collections = task_hash["collections"]?.try do |collections_yaml|
+          if list = collections_yaml.as_a?
+            list.compact_map(&.as_s?)
+          else
+            (s = collections_yaml.as_s?) ? [s] : nil
+          end
+        end
+        task_collections ||= play.collections + CollectionIndex.role_meta_collections(role_path)
+        resolved_module_name = resolve_module_name(module_name, task_collections)
         unavailable_module_name = resolved_module_name ? nil : module_name
         # A tombstoned-removed module name (ec2_remote_facts and
         # friends) hard-stops the whole run at parse time with
@@ -4996,12 +5033,6 @@ module Krikri
             source_file, source_map, task_source_prefix(source_prefix, index))
         end
 
-        # The task's own collection scope: its `collections:` keyword,
-        # else the play's list plus the role's own meta/main.yml
-        # declaration (both folded into bare-name resolution by real).
-        # The scope is recorded on the Task (the executor's action-plugin
-        # scope uses it) and feeds the mapping-form check below.
-        #
         # krikri does NOT refuse a playbook wholesale over a module name it
         # cannot resolve. Resolution here comes from krikri's OWN baked
         # tables (CollectionIndex) - never from what this controller has
@@ -5016,14 +5047,6 @@ module Krikri
         # becomes a per-host task FAILURE if the task is ever reached
         # ("Cannot resolve '...' to an action or module.", issue #666) and
         # an ordinary skip behind `when: false`.
-        task_collections = task_hash["collections"]?.try do |collections_yaml|
-          if list = collections_yaml.as_a?
-            list.compact_map(&.as_s?)
-          else
-            (s = collections_yaml.as_s?) ? [s] : nil
-          end
-        end
-        task_collections ||= play.collections + CollectionIndex.role_meta_collections(role_path)
         resolution = CollectionIndex.reference_resolves?(module_name, task_collections, role_path, playbook_dir)
         mapping_module_unresolvable =
           action_mapping && resolution[:resolves] == false && resolved_module_name.nil?

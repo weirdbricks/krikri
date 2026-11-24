@@ -35,7 +35,10 @@ module Krikri
   #     executable file in the directory" fallback deliberately does NOT
   #     apply here: for those dirs it exists because one binary serves
   #     every module name, while here it would silently run a DIFFERENT
-  #     plugin than the task named.
+  #     plugin than the task named. A task's own `collections:` scope is
+  #     searched as `<collection>.<name>` first (issue #1757), which is the
+  #     lookup real ansible performs; that never makes a bare name resolve
+  #     on its own.
   #
   # Discovered from `--plugin-path DIR` (repeatable) and the
   # `KRIKRI_PLUGIN_PATH` environment variable (path-separator separated),

@@ -45,7 +45,7 @@ private DIVERGENCE_CASES = Dir.children(DIVERGENCE_ROOT)
     issue, slug = entry.split('-', 2)
     {issue: issue.to_i, slug: slug}
   end
-  .sort_by { |kase| {kase[:issue], kase[:slug]} }
+  .sort_by! { |kase| {kase[:issue], kase[:slug]} }
 
 private def divergence_case_dir(issue : Int32, slug : String) : String
   "#{issue}-#{slug}"
@@ -58,11 +58,8 @@ private def replay_divergence_case(issue : Int32, slug : String) : String
   source = File.join(DIVERGENCE_ROOT, name)
   dir = PluginSpecHelper.tmp_path("divergence-#{name}-#{Random::Secure.hex(4)}")
   FileUtils.mkdir_p(File.join(dir, "home"))
-  Dir.children(source).each do |entry|
-    # expected.out/NOTES.md are the case's recorded result, not its input.
-    next if Krikri::DivergenceCase::RECORDED.includes?(entry)
-    FileUtils.cp_r(File.join(source, entry), File.join(dir, entry))
-  end
+  # expected.out/NOTES.md are the case's recorded result, not its input.
+  Krikri::DivergenceCase.copy_inputs(source, dir)
 
   stdout = IO::Memory.new
   stderr = IO::Memory.new
