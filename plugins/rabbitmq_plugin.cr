@@ -4,97 +4,142 @@
 # module (round 196: mrlesmithjr.rabbitmq uses it; previously unavailable
 # → rc=4 "unavailable modules" where Ansible rc=0'd).
 #
-# The module's argument is `names` (list or comma-separated string) -
-# the `name` spelling is kept as a fallback for the historical param.
+# The module's argument is `names` (a comma-separated string); `name` is the
+# same argument under its alias.
 #
 # Idempotency: Ansible module checks `rabbitmq-plugins list -E -m` (all
 # enabled plugins, minimal output - bare names, one per line) for the
 # plugin's name as an exact line match before doing anything.
+#
+# Every rabbitmq-plugins call goes through run_command(check_rc=True), so a
+# non-zero rc is basic.py's own failure rather than a module-authored message:
+# msg is the bare rstripped stderr, and cmd/rc/stdout/stderr plus the
+# controller-derived *_lines ride along. A successful task returns only
+# changed/enabled/disabled - the module exits through exit_json, which adds no
+# msg.
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/get_bin_path"
 
 module Krikri
   class RabbitmqPluginPlugin < BasePlugin
     def execute : PluginResult
-      name = @params["names"]? || @params["name"]?
-      unless name
+      raw_names = @params["names"]? || @params["name"]?
+      unless raw_names
         return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: names")
       end
-      # the module accepts a list (YAML) or a comma-separated string
-      plugins = name.split(",").map(&.strip).reject(&.empty?)
-      state = @params["state"]? || "enabled"
-      unless state == "enabled" || state == "disabled"
-        return PluginResult.new(changed: false, failed: true, msg: "state must be enabled or disabled")
-      end
+      # names.split(',') never trims: a playbook writing "a, b" asks for the
+      # plugin " b", exactly as the Ansible module does.
+      plugins = raw_names.split(",")
+      failure = param_failure
+      return failure if failure
 
-      bin = plugin_bin
+      resolved = plugin_bin
+      bin_failure = resolved[:failure]
+      return bin_failure if bin_failure
+      bin = resolved[:path]
+
       # Ansible module: `rabbitmq-plugins list -E -m` - ALL enabled plugins
       # (explicit + implicit), minimal output (bare names, one per line),
-      # membership checked as an exact line match. The older `list -e`
-      # whole-text grep worked but the changed flag below never consulted
-      # it, so every warm pass reported changed.
-      listing = remote_exec("#{bin} list -E -m")
-      if listing[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to list RabbitMQ plugins: #{listing[:stderr]}")
-      end
-      enabled_lines = enabled_plugin_lines(listing)
+      # membership checked as an exact line match.
+      listing = run_check_rc([bin, "list", "-E", "-m"])
+      listing_failure = listing[:failure]
+      return listing_failure if listing_failure
+      enabled_lines = enabled_plugin_lines(listing[:stdout])
 
       enabled = [] of String
       disabled = [] of String
-      error = state == "enabled" ? apply_enabled_state(bin, plugins, enabled_lines, enabled, disabled) : apply_disabled_state(bin, plugins, enabled_lines, disabled)
-      return error if error
+      apply_failure = desired_state == "enabled" ? apply_enabled(bin, plugins, enabled_lines, enabled, disabled) : apply_disabled(bin, plugins, enabled_lines, disabled)
+      return apply_failure if apply_failure
 
-      # changed only reflects what actually ran - hardcoding true here was
-      # the warm-run bug: apply-nothing fell through to changed=true
-      # (mrlesmithjr.rabbitmq re-run, warm changed=2 vs real changed=0).
-      # The module's result dict is {changed, enabled, disabled} with no
-      # msg at all (exit_json(**result)), so the lists are what a
-      # registered result or -v run must show.
+      # changed only reflects what would actually change - the module's result
+      # dict is {changed, enabled, disabled} with no msg at all
+      # (exit_json(**result)), so the lists are what a registered result or -v
+      # run must show.
       PluginResult.new(changed: !enabled.empty? || !disabled.empty?, failed: false,
         enabled: enabled, disabled: disabled)
     end
 
-    private def apply_enabled_state(bin : String, plugins : Array(String), enabled_lines : Array(String), enabled : Array(String), disabled : Array(String)) : PluginResult?
-      unless new_only?
-        # Ansible module (state=enabled, new_only=false) disables every
-        # enabled plugin not in the requested names. Header lines
-        # ("Listing plugins with pattern ...") contain spaces and are
-        # skipped the same way the Ansible module skips them.
-        enabled_lines.each do |line|
-          next if line.includes?(" ")
-          next if plugins.includes?(line)
-          unless check_mode?
-            r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
-            return PluginResult.new(changed: false, failed: true,
-              msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
-          end
-          disabled << line
-        end
+    private def desired_state : String
+      @params["state"]? || "enabled"
+    end
+
+    private def broker_state : String
+      @params["broker_state"]? || "online"
+    end
+
+    # AnsibleModule's choices validation, which runs before the module body.
+    private def param_failure : PluginResult?
+      unless desired_state.in?("enabled", "disabled")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: enabled, disabled, got: #{desired_state}")
       end
-      plugins.each do |plugin|
-        next if enabled_lines.includes?(plugin)
-        unless check_mode?
-          r = remote_exec("#{Process.quote(bin)} enable #{Process.quote(plugin)}")
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Failed to enable plugin #{plugin}: #{r[:stderr]}") if r[:exit_code] != 0
-        end
-        enabled << plugin
+      unless broker_state.in?("online", "offline")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "value of broker_state must be one of: online, offline, got: #{broker_state}")
       end
       nil
     end
 
-    private def apply_disabled_state(bin : String, plugins : Array(String), enabled_lines : Array(String), disabled : Array(String)) : PluginResult?
-      enabled_lines.each do |line|
-        next unless plugins.includes?(line)
-        unless check_mode?
-          r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
+    private def apply_enabled(bin : String, plugins : Array(String), enabled_lines : Array(String), enabled : Array(String), disabled : Array(String)) : PluginResult?
+      unless new_only?
+        # state=enabled, new_only=false disables every enabled plugin not in
+        # the requested names. Header lines ("Listing plugins with pattern
+        # ...") contain spaces and are skipped the same way the Ansible module
+        # skips them.
+        enabled_lines.each do |line|
+          next if line.includes?(" ") || plugins.includes?(line)
+          failure = apply(bin, "disable", broker_state, line, disabled)
+          return failure if failure
         end
-        disabled << line
+      end
+      plugins.each do |plugin|
+        next if enabled_lines.includes?(plugin)
+        failure = apply(bin, "enable", broker_state, plugin, enabled)
+        return failure if failure
       end
       nil
+    end
+
+    private def apply_disabled(bin : String, plugins : Array(String), enabled_lines : Array(String), disabled : Array(String)) : PluginResult?
+      enabled_lines.each do |line|
+        next unless plugins.includes?(line)
+        failure = apply(bin, "disable", broker_state, line, disabled)
+        return failure if failure
+      end
+      nil
+    end
+
+    # `rabbitmq-plugins <enable|disable> --<broker_state> <plugin>` - the
+    # module always passes the broker_state flag, so a failed call's cmd names
+    # it too. A plugin is recorded only once its call succeeded, and check mode
+    # records it without running the call: the module's _exec only lists
+    # (force_exec_in_check_mode) and skips every enable/disable.
+    private def apply(bin : String, action : String, broker_state : String, plugin : String, applied : Array(String)) : PluginResult?
+      unless check_mode?
+        result = run_check_rc([bin, action, "--#{broker_state}", plugin])
+        failure = result[:failure]
+        return failure if failure
+      end
+      applied << plugin
+      nil
+    end
+
+    # run_command(..., check_rc=True): a non-zero rc fails the task with
+    # stderr's rstripped text as msg and the command's own output attached.
+    # cmd renders the argv the way basic.py's _clean_args does - shlex.quote
+    # per token, spaces between; Shell.quote_arg leaves an already-safe token
+    # bare exactly like shlex.quote does.
+    private def run_check_rc(argv : Array(String)) : NamedTuple(stdout: String, stderr: String, failure: PluginResult?)
+      result = remote_exec(argv.map { |arg| shell_single_quote(arg) }.join(' '))
+      return {stdout: result[:stdout], stderr: result[:stderr], failure: nil} if result[:exit_code] == 0
+
+      failure = PluginResult.new(changed: false, failed: true, msg: result[:stderr].rstrip,
+        cmd: argv.map { |arg| Shell.quote_arg(arg) }.join(' '), rc: result[:exit_code],
+        stdout: result[:stdout], stderr: result[:stderr],
+        stdout_lines: result[:stdout].lines.map(&.chomp),
+        stderr_lines: result[:stderr].lines.map(&.chomp))
+      {stdout: result[:stdout], stderr: result[:stderr], failure: failure}
     end
 
     private def new_only? : Bool
@@ -102,11 +147,11 @@ module Krikri
     end
 
     # rabbitmq_plugin.py declares supports_check_mode=True and routes every
-    # mutating command through _exec(), which skips it in check mode (only
-    # the `list -E -m` probe is force-executed). The requested names still
-    # land in enabled/disabled, so a check-mode run reports changed for a
-    # plugin that is not there - running the enable for real instead failed
-    # the whole task (#1751).
+    # rabbitmq-plugins invocation through _exec(), which skips the command in
+    # check mode (only the `list -E -m` probe is force-executed). The requested
+    # names still land in enabled/disabled, so check mode predicts `changed`
+    # for a plugin the broker does not even ship; running the enable for real
+    # instead failed the whole task (#1751).
     private def check_mode? : Bool
       true?(@params["_ansible_check_mode"]?)
     end
@@ -119,19 +164,33 @@ module Krikri
       end
     end
 
-    private def plugin_bin : String
-      prefix = @params["prefix"]?
-      new_basedir = @params["new_basedir"]?
-      bin = prefix ? "#{prefix}/usr/lib/rabbitmq/bin/rabbitmq-plugins" : "rabbitmq-plugins"
-      bin = "#{new_basedir}/rabbitmq-plugins" if new_basedir
-      Process.quote(bin)
+    # Ansible's RabbitMqPlugins.__init__ resolves the binary once, before any
+    # listing: a `prefix:` names a RabbitMQ install root whose bin/ (else
+    # sbin/) directory holds rabbitmq-plugins, and without one the executable
+    # comes from get_bin_path(required=True). Both misses are fail_json with a
+    # bare msg, no command having run yet.
+    private def plugin_bin : NamedTuple(path: String, failure: PluginResult?)
+      if prefix = @params["prefix"]?.presence
+        dir = [File.join(prefix, "bin"), File.join(prefix, "sbin")].find { |candidate| remote_dir_exists?(candidate) }
+        unless dir
+          return {path: "", failure: PluginResult.new(changed: false, failed: true,
+            msg: "No binary folder in prefix #{prefix}")}
+        end
+        return {path: File.join(dir, "rabbitmq-plugins"), failure: nil}
+      end
+
+      if found = find_required_binary("rabbitmq-plugins")
+        return {path: found, failure: nil}
+      end
+      {path: "", failure: PluginResult.new(changed: false, failed: true,
+        msg: PluginHelpers::GetBinPath.missing_executable_error("rabbitmq-plugins", @bin_searched_paths))}
     end
 
-    private def enabled_plugin_lines(listing : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Array(String)
+    private def enabled_plugin_lines(stdout : String) : Array(String)
       # real get_all(): collect output lines until the first empty line.
       # With -m the plugin rows are bare names; banner lines (ANSI on some
       # versions) contain spaces and never equal a requested name.
-      (listing[:stdout].gsub(/\e\[[0-9;]*m/, "")).each_line
+      stdout.gsub(/\e\[[0-9;]*m/, "").each_line
         .take_while { |line| !line.strip.empty? }
         .map(&.strip)
         .reject(&.empty?)
