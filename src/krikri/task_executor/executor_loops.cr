@@ -2524,7 +2524,7 @@ module Krikri
         # creates]) }}` set_fact over the registered results).
         interpreted = attach_batch_step_invocation(task, steps[i], interpreted, InvocationInjection.enabled?(vars_context))
         interpreted = shape_script_result(task, interpreted)
-        item_results[idx] = apply_changed_failed_when(task, interpreted, vars_context, host)
+        item_results[idx] = apply_batch_build_changed_failed_when(task, interpreted, vars_context, host)
       end
 
       item_results

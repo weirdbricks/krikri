@@ -1,0 +1,19 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [jgkim.dotfiles : Ensure the dotfiles repository is cloned locally.] ******
+[ERROR]: Task failed: Module failed: Failed to find required executable "git" in paths: /nonexistent:/sbin:/usr/sbin:/usr/local/sbin
+Origin: <WORK>/roles/jgkim.dotfiles/tasks/main.yml:2:3
+
+1 ---
+2 - name: Ensure the dotfiles repository is cloned locally.
+    ^ column 3
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Failed to find required executable \"git\" in paths: /nonexistent:/sbin:/usr/sbin:/usr/local/sbin"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

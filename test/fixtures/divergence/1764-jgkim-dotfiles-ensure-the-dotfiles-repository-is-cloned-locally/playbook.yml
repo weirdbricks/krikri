@@ -1,0 +1,9 @@
+# jgkim.dotfiles' role as the round ran it - the same task order that made
+# krikri print the next task's changed_when: chain for a task the play never
+# reached. `env.txt` takes git off PATH, which is how the round's host differed
+# (its git module failed with "Failed to find required executable \"git\"").
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - jgkim.dotfiles
