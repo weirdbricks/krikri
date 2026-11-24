@@ -1,0 +1,17 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [flatpak remote-add] ******************************************************
+[ERROR]: Task failed: Module failed: Executable 'flatpak' was not found on the system.
+Origin: <WORK>/playbook.yml:21:7
+
+19     PATH: /usr/local/sbin:/usr/local/bin
+20   tasks:
+21     - name: flatpak remote-add
+         ^ column 7
+
+failed: [localhost] (item={'state': 'present', 'name': 'flathub', 'flatpakrepo_url': 'https://dl.flathub.org/repo/flathub.flatpakrepo'}) => {"ansible_loop_var": "item", "changed": false, "item": {"flatpakrepo_url": "https://dl.flathub.org/repo/flathub.flatpakrepo", "name": "flathub", "state": "present"}, "msg": "Executable 'flatpak' was not found on the system."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
