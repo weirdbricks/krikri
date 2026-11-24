@@ -41,6 +41,14 @@ module Krikri
   # opens /dev/tty unconditionally to render a banner, even when (as
   # there) every credential comes from `--password-file` and it never
   # actually reads from it.
+  #
+  # This is a REMOTE-only need. Real's local connection never asks ssh
+  # for a pty, so a local module's children carry exactly the terminal
+  # ansible-playbook itself inherited - usually none when the controller
+  # runs detached. The spawn plugins therefore call #ensure only when the
+  # executor marked the payload `__krikri_remote_tty`: manufacturing one
+  # for a local run makes a /dev/tty reader that real answers with EOF -
+  # sudo's password prompt - block forever instead (issue #1728).
   module ControllingTty
     # Linux asm-generic/ioctls.h. `arg: 0` = don't steal the tty from
     # another session (impossible for a pty we just allocated anyway).

@@ -996,6 +996,31 @@ because anyone intends to fix them.
   guest settle before the before-snapshot) before that half of the oracle is trusted on a freshly
   booted host.
 
+- **apt's live progress meter differs between any two runs (`ddilts.change_password`, issue
+  #1728).** The role's first task is `raw: test -e /usr/bin/python || (apt -y update && apt install
+  -y python-minimal)`. raw runs under `ssh -tt`'s pty, so `apt` paints its ANSI-coloured status
+  meter, rewriting one line with `\r` on every tick (`0% [Working]`, `0% [Waiting for headers]`,
+  `Reading package lists... N%`), and both the number of ticks and their percentages follow the
+  target's network timing and load. The two engines run in their own containers at the same moment,
+  so one can starve while the other does not: the issue's cold block was 16573 B on krikri against
+  real's 12151 B, almost all of it extra status chunks (repeated both in `stdout` and in its
+  `stdout_lines` entries) - one 59-chunk repaint burst while the krikri container's fetch ran at 183
+  kB/s against real's 1017 kB/s, both moving the same 6005 kB. Run back to back on the same seeded
+  package index (both ~5 s, sequential) krikri returns the same payload keys, `rc`, `msg`, `changed`,
+  the `Shared connection ... closed.` stderr and every non-progress stdout line as real Ansible,
+  differing only in those repaint chunks - and repeating one engine's own run differs in the same
+  class (a repeated real Ansible cold run swapped a `[Waiting for headers] [Waiting for headers]`
+  chunk for a single one). Not a krikri gap: `krikri-role-tester`'s `Compare::MASKS` needs a mask for
+  apt's progress-meter chunks (and its `Fetched ... in Ns` line), anchored on the `\r`-separated
+  status shapes rather than just the percentages. The task's in-process transcript - which is what
+  the real host's pty is emulating - is pinned by the corpus case
+  `test/fixtures/divergence/1728-ddilts-change-password-raw-apt/`; krikri's own half of this, giving
+  a remote run a real pty and forwarding its bytes untouched, is what
+  `test/unit/task_executor_raw_pty_shape_test.cr` pins. That case also exposed a local-connection
+  divergence this issue fixed: the spawned plugins manufactured a controlling terminal for a local
+  run, where real keeps only the terminal ansible-playbook itself inherited, so `sudo`'s password
+  prompt blocked forever instead of failing - `test/unit/controlling_tty_test.cr` pins both sides.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is

@@ -15,7 +15,7 @@ require "../minitest_helper"
 # The socket is a podman `system service` endpoint
 # (`podman system service --time=0 unix:///tmp/krikri-kp-dk.sock`); the
 # specs skip when it is not up. Nothing here creates a container,
-# network or image outside the krikri-spec___dk- prefix.
+# network or image outside the krikri-spec prefix.
 DOCKER_RESULT_SHAPE_SOCKET = "unix:///tmp/krikri-kp-dk.sock"
 
 def docker_shape_params(name : String, extra : Hash(String, String) = {} of String => String) : Hash(String, String)
@@ -166,12 +166,16 @@ describe "docker result shape: docker_network_info" do
   end
 end
 
-# A tiny local image, re-tagged under the krikri-spec___dk- prefix so the
-# specs below can exercise the present/absent paths without a registry
-# and without touching any image the machine already had.
+# A tiny local image, re-tagged under the krikri-spec prefix so the specs
+# below can exercise the present/absent paths without a registry and
+# without touching any image the machine already had. Docker's reference
+# grammar allows single '_', '__', '.' and '-' as separators but NOT the
+# triple underscore the container/network names use, so these image names
+# spell it with a hyphen - krikri-fix-issues' prune pass still matches them
+# (`^krikri-spec-`).
 module DockerImageShapeSpec
   SOURCE = "docker.io/library/alpine:latest"
-  REF    = "docker.io/library/krikri-kp-dk-img"
+  REF    = "docker.io/library/krikri-spec-dk-img"
 
   def self.tag_image : Nil
     Process.run("podman", ["tag", SOURCE, "#{REF}:1"], output: Process::Redirect::Close)
@@ -186,20 +190,20 @@ describe "docker result shape: docker_image" do
   serial!
 
   # The daemon only resolves a fully-qualified reference, so the specs
-  # below tag a tiny local image under the krikri-spec___dk- prefix rather
+  # below tag a tiny local image under the krikri-spec- prefix rather
   # than reaching for a registry.
   # real: {"changed": false, "actions": [], "image": {<inspect>}, "failed": false}
   it "matches Ansible's present key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     DockerImageShapeSpec.tag_image
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-spec___dk-img", "tag" => "1", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec-dk-img", "tag" => "1", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(false)
     result["actions"].as_a.must_be_empty
     # `image` is the daemon's own inspect dict, verbatim
     result["image"]["Id"].as_s.must_include("sha256:")
-    result["image"]["RepoTags"].as_a.map(&.as_s).must_include("docker.io/library/krikri-kp-dk-img:1")
+    result["image"]["RepoTags"].as_a.map(&.as_s).must_include("docker.io/library/krikri-spec-dk-img:1")
     result.as_h.has_key?("msg").must_equal(false)
 
     DockerImageShapeSpec.untag_image
@@ -209,12 +213,12 @@ describe "docker result shape: docker_image" do
   it "matches Ansible's check_mode pull key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run_raw("docker_image",
-      {"name" => JSON::Any.new("krikri-spec___dk-img-cm"), "tag" => JSON::Any.new("1"),
+      {"name" => JSON::Any.new("krikri-spec-dk-img-cm"), "tag" => JSON::Any.new("1"),
        "source" => JSON::Any.new("pull"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET),
        "_ansible_check_mode" => JSON::Any.new(true)})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(true)
-    result["actions"].as_a.map(&.as_s).must_equal(["Pulled image krikri-spec___dk-img-cm:1"])
+    result["actions"].as_a.map(&.as_s).must_equal(["Pulled image krikri-spec-dk-img-cm:1"])
     # nothing was pulled, so `image` is Ansible's seeded empty dict
     result["image"].as_h.empty?.must_equal(true)
   end
@@ -224,17 +228,17 @@ describe "docker result shape: docker_image" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     DockerImageShapeSpec.tag_image
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-spec___dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec-dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(true)
-    result["actions"].as_a.map(&.as_s).must_equal(["Removed image krikri-spec___dk-img:1"])
+    result["actions"].as_a.map(&.as_s).must_equal(["Removed image krikri-spec-dk-img:1"])
     result["image"]["state"].as_s.must_equal("Deleted")
   end
 
   it "matches Ansible's already-absent key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-spec___dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec-dk-img", "tag" => "1", "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["changed", "actions", "image", "failed"])
     result["changed"].as_bool.must_equal(false)
     result["actions"].as_a.must_be_empty
@@ -244,10 +248,10 @@ describe "docker result shape: docker_image" do
   it "matches Ansible's missing-image failure key set and order" do
     skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
     result = PluginSpecHelper.run("docker_image",
-      {"name" => "krikri-spec___dk-nope", "tag" => "9", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+      {"name" => "krikri-spec-dk-nope", "tag" => "9", "source" => "local", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
     docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Cannot find the image krikri-spec___dk-nope:9 locally.")
+    result["msg"].as_s.must_equal("Cannot find the image krikri-spec-dk-nope:9 locally.")
   end
 end
 
@@ -416,12 +420,12 @@ describe "docker result shape: docker_container" do
     name = "krikri-spec___dk-shape-c4"
     remove_krikri_kp_dk_container(name)
     result = PluginSpecHelper.run("docker_container", {
-      "name" => name, "image" => "krikri-spec___dk-nosuchimage:9", "command" => "sleep 30",
+      "name" => name, "image" => "krikri-spec-dk-nosuchimage:9", "command" => "sleep 30",
       "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
     })
     docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Error pulling image krikri-spec___dk-nosuchimage:9 - ")
+    result["msg"].as_s.must_include("Error pulling image krikri-spec-dk-nosuchimage:9 - ")
     remove_krikri_kp_dk_container(name)
   end
 
