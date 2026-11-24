@@ -4240,10 +4240,11 @@ module Krikri
 
       # An unported module family that imports a client library at MODULE
       # level (`k8s`/kubernetes.core.k8s, issue #1155; community.vmware.*,
-      # issue #1523) runs its synthesized import gate on the target
-      # instead of taking the unavailable-module skip above: on a target
-      # without that library real ansible fails the task with basic.py's
-      # missing_required_lib text before touching anything - a failed
+      # issue #1523; community.libvirt.virt, issue #1742) runs its
+      # synthesized import gate on the target instead of taking the
+      # unavailable-module skip above: on a target without that library
+      # real ansible fails the task with the module's own
+      # missing-library text before touching anything - a failed
       # task, never a skip. When the gate reports the libraries
       # importable, the module would go on to talk to a cluster/vCenter
       # this engine cannot reach either, so the designed
@@ -4255,7 +4256,7 @@ module Krikri
           return task_timeout_result(period)
         end
         result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
-        if result.as_h?.try { |gate_result| gate_result.has_key?("_krikri_k8s_lib_present") || gate_result.has_key?("_krikri_vmware_libs_present") }
+        if result.as_h?.try { |gate_result| gate_result.has_key?("_krikri_k8s_lib_present") || gate_result.has_key?("_krikri_vmware_libs_present") || gate_result.has_key?("_krikri_libvirt_libs_present") }
           register_unavailable_module(task, vars_context)
           # A LOOPED caller (defer_loop_stats) must not print or book-keep
           # here: like the skip above, its "skipping:" line prints from
@@ -5088,6 +5089,23 @@ module Krikri
     # k8s above, under --check too (issue #1523).
     VMWARE_IMPORT_GATE_PREFIX = "community.vmware."
 
+    # community.libvirt's `virt` (domain management) is unported - unlike
+    # its virt_net/virt_pool siblings, which this engine implements over
+    # the virsh CLI - and real runs it: virt.py imports libvirt/lxml at
+    # MODULE level and fails the task with its own "<library> module is
+    # not importable" text before any domain work, under --check too
+    # because it declares supports_check_mode=True. Both spellings a task
+    # can carry route to the same gate
+    # (PythonModuleRunner.libvirt_import_gate_source), the
+    # MODULE-level-library class of k8s/vmware above (issue #1742:
+    # siavashoutadi.virt_guest's define task, exit 4 against real's 2).
+    # Only `virt` is listed: virt_install reaches the same libvirt/lxml
+    # gate through the collection's module_utils but makes none of
+    # virt.py's deprecated `_text` imports, and virt_volume does not
+    # support check mode at all, so neither shares this gate's exact
+    # output.
+    LIBVIRT_IMPORT_GATE_MODULES = Set{"virt", "community.libvirt.virt"}
+
     # The import-gate source an unported task dispatches, or nil when no
     # gate applies (nil also means the unavailable-module skip keeps its
     # usual behavior). A role-private `library/<name>.py` or
@@ -5098,6 +5116,7 @@ module Krikri
       return nil unless python_module_source_for(task).nil?
       return PythonModuleRunner.k8s_import_gate_source if K8S_IMPORT_GATE_MODULES.includes?(name)
       return PythonModuleRunner.vmware_import_gate_source if name.starts_with?(VMWARE_IMPORT_GATE_PREFIX)
+      return PythonModuleRunner.libvirt_import_gate_source if LIBVIRT_IMPORT_GATE_MODULES.includes?(name)
       nil
     end
 

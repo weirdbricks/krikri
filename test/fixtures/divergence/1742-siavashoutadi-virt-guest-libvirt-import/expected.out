@@ -1,0 +1,28 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [siavashoutadi.virt_guest : Create directory] *****************************
+skipping: [localhost]
+
+TASK [siavashoutadi.virt_guest : Create the disks] *****************************
+skipping: [localhost]
+
+TASK [siavashoutadi.virt_guest : Change owner of the disks] ********************
+skipping: [localhost]
+
+TASK [siavashoutadi.virt_guest : Create the guest] *****************************
+[ERROR]: Task failed: Module failed: The `libvirt` module is not importable. Check the requirements.
+Origin: <WORK>/roles/siavashoutadi.virt_guest/tasks/main.yml:24:3
+
+22     - "{{ virt_guest_disks }}"
+23
+24 - name: Create the guest
+     ^ column 3
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "The `libvirt` module is not importable. Check the requirements."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=3    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: Importing 'to_native' from 'ansible.module_utils._text' is deprecated. This feature will be removed from ansible-core version 2.24. Use ansible.module_utils.common.text.converters instead.

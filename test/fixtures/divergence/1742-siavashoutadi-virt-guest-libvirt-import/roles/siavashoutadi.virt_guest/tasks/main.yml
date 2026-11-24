@@ -1,0 +1,34 @@
+---
+- name: Create directory
+  file:
+    path: "{{ item.1.path}}"
+    state: directory
+  with_indexed_items:
+    - "{{ virt_guest_disks }}"
+
+- name: Create the disks
+  qemu_img:
+    dest: "{{ item.1.path}}/{{virt_guest_name}}_{{item.0 }}.qcow2"
+    size: "{{ item.1.size}}"
+  with_indexed_items:
+    - "{{ virt_guest_disks }}"
+
+- name: Change owner of the disks
+  file:
+    dest: "{{ item.1.path}}/{{virt_guest_name}}_{{item.0 }}.qcow2"
+    owner: "{{ virt_guest_disks_owner }}"
+    group: "{{ virt_guest_disks_group }}"
+  with_indexed_items:
+    - "{{ virt_guest_disks }}"
+
+- name: Create the guest
+  virt:
+    name: "{{ virt_guest_name }}"
+    command: define
+    xml: "{{ lookup('template', 'guest.xml.j2') }}"
+
+- name: Ensure the guest is running and started at boot
+  virt:
+    name: "{{ virt_guest_name }}"
+    autostart: true
+    state: running

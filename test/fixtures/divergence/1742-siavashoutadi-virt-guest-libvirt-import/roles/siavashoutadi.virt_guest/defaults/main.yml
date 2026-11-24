@@ -1,0 +1,30 @@
+---
+
+# Guest name
+virt_guest_name: "vm1"
+
+# CPU cores
+virt_guest_vcpus: 1
+
+# Memory unit. Valid values are GB or MB
+virt_guest_memory_unit: "GB"
+
+# Memory
+virt_guest_memory: 2
+
+# Disks to add
+# The format is:
+# - path: /var/lib/libvirt/images/
+#   size: SIZE in MB
+virt_guest_disks: []
+
+virt_guest_disks_owner: qemu
+virt_guest_disks_group: qemu
+
+# Networks to add
+# The format is:
+# - NET_NAME
+virt_guest_networks: []
+
+# Path to iso file to attach to cdrom
+virt_guest_iso: ""
