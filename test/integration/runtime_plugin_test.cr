@@ -51,11 +51,11 @@ private def make_plugin_dir(name : String, empty : Bool = false, arch_key : Stri
   dir
 end
 
-private def run_playbook(yaml : String, args : Array(String), env : Hash(String, String)? = nil, chdir : String? = nil) : {Process::Status, String}
+private def run_playbook(yaml : String, args : Array(String), env : Hash(String, String)? = nil, chdir : String? = nil, inventory : String = INVENTORY) : {Process::Status, String}
   playbook = PluginSpecHelper.tmp_path("external-pb-#{Random::Secure.hex(4)}.yml")
   File.write(playbook, yaml)
   captured = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY] + args + [playbook],
+  status = Process.run(BINARY, ["-i", inventory] + args + [playbook],
     output: captured, error: captured, env: env, chdir: chdir)
   {status, captured.to_s}
 ensure
@@ -209,5 +209,106 @@ describe "external module plugins (issue #1755)" do
     status, output = run_external(["--plugin-path", dir])
     status.success?.must_equal(false, output)
     output.includes?("group- or world-writable").must_equal(true, output)
+  end
+end
+
+# Issue #1756 - a plugin the eager pre-upload pass cannot stage for a host
+# must not be reported before the plays for a host that never runs it. The
+# ssh endpoint below answers ONLY the platform probe (krikri's pre-upload
+# round trip runs `uname` inside the script it sends on stdin) and reports
+# an architecture unlike the controller's, so staging the flat-only plugin
+# on it would raise - which is exactly the false failure being pinned. For
+# the scenarios that do not run the plugin nothing else ever talks to it,
+# so no real host is involved.
+private def issue_1756_case : {String, String}
+  dir = PluginSpecHelper.tmp_path("ext-unrun-#{Random::Secure.hex(4)}")
+  plugins = File.join(dir, "plugins")
+  Dir.mkdir_p(plugins)
+  File.chmod(dir, 0o755)
+  File.chmod(plugins, 0o755)
+  FileUtils.cp(FIXTURE, File.join(plugins, "mycompany.internal.foo"))
+  File.chmod(File.join(plugins, "mycompany.internal.foo"), 0o755)
+
+  uname = IO::Memory.new
+  controller_arch = if Process.run("uname", ["-m"], output: uname, error: Process::Redirect::Close).success?
+                      uname.to_s.strip.downcase
+                    else
+                      ""
+                    end
+  unlike = {"aarch64", "arm64"}.includes?(controller_arch) ? "x86_64" : "aarch64"
+  probe = File.join(dir, "probe-ssh")
+  File.write(probe, "#!/bin/sh\ncat >/dev/null\necho \"KRIKRI-ARCH #{unlike}\"\n")
+  File.chmod(probe, 0o755)
+
+  inventory = File.join(dir, "inventory.ini")
+  File.write(inventory, <<-INI)
+    linuxhost ansible_connection=ssh ansible_host=192.0.2.1 ansible_user=root ansible_ssh_executable=#{probe} ansible_python_interpreter=/usr/bin/python3
+    localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3
+    INI
+  {inventory, plugins}
+end
+
+describe "remote hosts that never run the plugin (issue #1756)" do
+  it "does not report a platform miss for a host that only appears in another play" do
+    inventory, plugins = issue_1756_case
+    playbook = <<-YAML
+      - hosts: linuxhost
+        gather_facts: false
+        tasks: []
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: external plugin
+            mycompany.internal.foo:
+              name: world
+            register: r
+          - ansible.builtin.debug:
+              msg: "EXT {{ r.msg }}"
+      YAML
+    status, output = run_playbook(playbook, ["--plugin-path", plugins], inventory: inventory)
+    status.success?.must_equal(true, output)
+    output.includes?("fatal: [linuxhost]").must_equal(false, output)
+    output.includes?("binary for external plugin").must_equal(false, output)
+    output.includes?("EXT hello from world").must_equal(true, output)
+  end
+
+  it "does not report a platform miss for a host whose task is skipped" do
+    inventory, plugins = issue_1756_case
+    playbook = <<-YAML
+      - hosts: linuxhost
+        gather_facts: false
+        tasks:
+          - name: external plugin
+            mycompany.internal.foo:
+              name: world
+            when: false
+      YAML
+    status, output = run_playbook(playbook, ["--plugin-path", plugins], inventory: inventory)
+    status.success?.must_equal(true, output)
+    output.includes?("fatal: [linuxhost]").must_equal(false, output)
+    output.includes?("binary for external plugin").must_equal(false, output)
+    output.includes?("skipping: [linuxhost]").must_equal(true, output)
+  end
+
+  # The error is still owed to the task that really runs the plugin - as a
+  # task failure under its own banner, never before the plays.
+  it "fails the task that really runs the plugin, under its own banner" do
+    inventory, plugins = issue_1756_case
+    playbook = <<-YAML
+      - hosts: linuxhost
+        gather_facts: false
+        tasks:
+          - name: external plugin
+            mycompany.internal.foo:
+              name: world
+      YAML
+    status, output = run_playbook(playbook, ["--plugin-path", plugins], inventory: inventory)
+    status.success?.must_equal(false, output)
+    play_at = output.byte_index("PLAY [linuxhost]") || -1
+    fatal_at = output.byte_index("fatal: [linuxhost]") || -1
+    (fatal_at > play_at).must_equal(true, output)
+    output.includes?("binary for external plugin mycompany.internal.foo").must_equal(true, output)
+    output.includes?("failed=1").must_equal(true, output)
   end
 end

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Answers only the eager pre-upload pass's platform probe: krikri runs
+# `uname` inside the script it sends on stdin, so reporting a platform no
+# krikri build targets makes the plugins-<arch>/ lookup miss. The skipped
+# task never reaches this endpoint again.
+cat >/dev/null
+echo "KRIKRI-ARCH mips64"

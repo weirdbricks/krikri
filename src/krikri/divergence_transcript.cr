@@ -112,27 +112,29 @@ module Krikri
 
     # Copy a case's INPUT (everything but RECORDED) into *work_dir*, which must
     # already exist. `FileUtils.cp_r` copies a file's permission bits but
-    # creates directories with the process umask's mode, so a directory a case
-    # ships as 0755 came out group-writable in the scratch copy - and an
-    # external plugin root (a case's `plugins/`, issue #1757) refuses a
-    # group/world-writable directory, failing the replay before the playbook
-    # runs. A case's directory modes are part of its input, so re-apply them.
+    # creates directories with the process umask's mode - and a case's own
+    # directory mode in the checkout comes from the umask too, since git
+    # records no directory modes. Mirroring either one made a case's replay
+    # depend on who ran it: a `plugins/` root that is a normal 0755 in one
+    # checkout is 0775 under umask 002, and krikri's external plugin registry
+    # refuses a group/world-writable root, failing the replay before the
+    # playbook runs (issue #1757). Normalize instead of trusting either side;
+    # a directory mode no recording can reproduce is not part of the case.
     def self.copy_inputs(case_dir : String, work_dir : String) : Nil
       Dir.children(case_dir).each do |entry|
         next if RECORDED.includes?(entry)
         source = File.join(case_dir, entry)
         dest = File.join(work_dir, entry)
         FileUtils.cp_r(source, dest)
-        copy_directory_modes(source, dest) if File.directory?(source)
+        normalize_directory_modes(dest) if File.directory?(source)
       end
     end
 
-    private def self.copy_directory_modes(source : String, dest : String) : Nil
-      File.chmod(dest, File.info(source).permissions)
-      Dir.each_child(source) do |entry|
-        source_child = File.join(source, entry)
-        dest_child = File.join(dest, entry)
-        copy_directory_modes(source_child, dest_child) if File.directory?(source_child)
+    private def self.normalize_directory_modes(dir : String) : Nil
+      File.chmod(dir, 0o755)
+      Dir.each_child(dir) do |entry|
+        child = File.join(dir, entry)
+        normalize_directory_modes(child) if File.directory?(child)
       end
     end
 
