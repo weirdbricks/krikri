@@ -3150,6 +3150,9 @@ module Krikri
       # real's raw action crashes/skips before any module-side validation
       # would run (see the helper's own comment).
       substituted_params = raw_missing_command_params(task, substituted_params)
+      if raw_skip = raw_check_mode_skip(task, resolve_task_check_mode(task, vars_context))
+        return apply_changed_failed_when(task, raw_skip, vars_context, host)
+      end
       if raw_failure = raw_missing_raw_params_failure(task, substituted_params, resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, raw_failure, vars_context, host) if raw_failure["skipped"]?
         return raw_failure
@@ -4012,6 +4015,9 @@ module Krikri
       # argument spec at all - real's raw action crashes/skips before any
       # module-side validation would run (see the helper's own comment).
       substituted_params = raw_missing_command_params(task, substituted_params)
+      if raw_skip = raw_check_mode_skip(task, resolve_task_check_mode(task, vars_context))
+        return apply_changed_failed_when(task, raw_skip, vars_context, host)
+      end
       if raw_failure = raw_missing_raw_params_failure(task, substituted_params, resolve_task_check_mode(task, vars_context))
         # The check-mode skip rides the same pipeline a plugin-produced skip
         # does; the crash escapes before the changed_when/failed_when pass
@@ -4355,6 +4361,22 @@ module Krikri
       }.to_json)
       Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
       result_json
+    end
+
+    # raw: is an ACTION plugin with no module side, and its run() answers
+    # check mode with the bare skip shape before reading a single argument
+    # (ansible/plugins/action/raw.py: `if self._task.check_mode: result
+    # ['skipped'] = True; return result`, live-verified vs 2.21.6), so
+    # `args: {creates: ...}` never reaches the command module's gate
+    # logic. krikri aliases raw: onto the shell plugin, whose own check-
+    # mode branch DOES honor creates:/removes: and answered the gated
+    # would-run case with "changed" where real prints "skipping:"
+    # (dustinrue.xenial-bootstrap's "Install python 2.7 on xenial",
+    # issue #1738).
+    private def raw_check_mode_skip(task : Task, check_mode : Bool) : JSON::Any?
+      return nil unless check_mode
+      return nil unless RAW_MODULES.includes?(task.action_name || task.module_name)
+      JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
     end
 
     # raw: is aliased to the shell plugin binary, whose result carries

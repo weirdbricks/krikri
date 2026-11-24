@@ -1,0 +1,15 @@
+---
+# dustinrue.xenial-bootstrap's tasks/main.yml verbatim (the role
+# dustinrue.docker pulls in as a dependency). Under --check its
+# "Install python 2.7 on xenial" task skips: raw: is an action plugin
+# with no module side, and it answers check mode before reading a single
+# argument, so `args: {creates: ...}` never runs the command module's
+# gate logic.
+- name: xenial bootstrap
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Install python 2.7 on xenial
+      raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)
+      args:
+        creates: /usr/bin/python
