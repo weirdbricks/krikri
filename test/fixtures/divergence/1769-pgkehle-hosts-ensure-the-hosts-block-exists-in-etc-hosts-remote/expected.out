@@ -1,0 +1,42 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Ensure the hosts block exists in /etc/hosts (remote)] ********************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.blockinfile' failed: Error while resolving value for 'block': 'b1' is undefined
+
+Task failed.
+Origin: <WORK>/playbook.yml:8:7
+
+6   gather_facts: true
+7   tasks:
+8     - name: Ensure the hosts block exists in /etc/hosts (remote)
+        ^ column 7
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.blockinfile' failed.
+Origin: <WORK>/playbook.yml:9:7
+
+7   tasks:
+8     - name: Ensure the hosts block exists in /etc/hosts (remote)
+9       blockinfile:
+        ^ column 7
+
+<<< caused by >>>
+
+Error while resolving value for 'block': 'b1' is undefined
+Origin: <WORK>/playbook.yml:11:16
+
+ 9       blockinfile:
+10         dest: /etc/hosts
+11         block: "{{ b1 | join('\n') }}"
+                  ^ column 16
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.blockinfile' failed: Error while resolving value for 'block': 'b1' is undefined"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

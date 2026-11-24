@@ -1,0 +1,23 @@
+{
+  "name": "ansible-hosts",
+  "version": "1.0.8",
+  "description": "Update hosts file with a list of hosts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postversion": "git push && git push --tags"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pgkehle/ansible-hosts.git"
+  },
+  "author": "Paul Kehle (pgkehle@gmail.com)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/pgkehle/ansible-hosts/issues"
+  },
+  "homepage": "https://github.com/pgkehle/ansible-hosts#readme",
+  "main": "tasks/main.yml",
+  "keywords": [
+    "ansible"
+  ]
+}

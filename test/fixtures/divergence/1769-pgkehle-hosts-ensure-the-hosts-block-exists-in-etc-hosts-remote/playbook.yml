@@ -1,0 +1,14 @@
+---
+# The task krikri-role-tester extracted from pgkehle.hosts; only the play is adapted
+# to run it against localhost (the round ran it against its testhost inventory).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Ensure the hosts block exists in /etc/hosts (remote)
+      blockinfile:
+        dest: /etc/hosts
+        block: "{{ b1 | join('\n') }}"
+        insertafter: EOF
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - HOSTS"
+      become: true

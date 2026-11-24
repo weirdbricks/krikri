@@ -1,0 +1,22 @@
+---
+- name: Set local include when local
+  set_fact:
+    incl_type: local
+  when: inventory_hostname == 'localhost'
+
+- name: Set address list
+  set_fact:
+    address_list: "{{ hostvars[ item ].network.ip }} {{ item }} {{ hostvars[ item ].fqdn }}"
+  with_items: "{{ groups.all }}"
+  when:
+    - hostvars[ item ].network is defined
+    - hostvars[ item ].network.ip is defined
+    - (hostvars[ item ].include_in_hosts is undefined or hostvars[ item ].include_in_hosts)
+  register: r
+  run_once: true
+
+- name: Create block list from address_list
+  set_fact:
+    b1: "{{ r.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.address_list') | list }}"
+
+- include_tasks: hosts.{{ incl_type }}.yml
