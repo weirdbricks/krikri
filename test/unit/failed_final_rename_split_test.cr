@@ -59,7 +59,32 @@ describe "failed final rename error split" do
     rendered.includes?("[Errno 16] Device or resource busy").must_equal(true)
   end
 
+  # Issue #1769: the stage-creation failure of the same atomic_move ladder is
+  # its own `raise ... from ex` in basic.py, so real prints it exactly the way
+  # it prints the final-rename one - the joined brief first, then the outer
+  # message under it and the chained OSError after "<<< caused by >>>"
+  # (live-verified vs 2.21.6: a symlinked dest resolving into a non-writable
+  # directory).
+  it "splits the destination-directory detail the same way" do
+    msg = "The destination directory '/etc' is not writable by the current user: [Errno 13] Permission denied: b'/etc/.ansible_tmpdoic2gq_hosts'"
+    split = Krikri::ResultDisplay.failed_final_rename_split(msg)
+    split.wont_be_nil
+    inner, errno_text = split || {"", ""}
+    inner.must_equal("The destination directory '/etc' is not writable by the current user")
+    errno_text.must_equal("[Errno 13] Permission denied: b'/etc/.ansible_tmpdoic2gq_hosts'")
+
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.blockinfile", msg, "Origin: /pb.yml:10")
+    module_failed = chain.chain.as(Krikri::ErrorBlock::Node)
+    module_failed.msg.must_equal("Module failed.")
+    detail = module_failed.chain.as(Krikri::ErrorBlock::Node)
+    detail.msg.must_equal("The destination directory '/etc' is not writable by the current user.")
+    detail.chain.as(Krikri::ErrorBlock::Node).msg.starts_with?("[Errno 13] ").must_equal(true)
+  end
+
   it "ignores unrelated messages" do
     Krikri::ResultDisplay.failed_final_rename_split("something else: [Errno 2] x").must_be_nil
+    # Real collapses these atomic_move details instead (live-verified vs
+    # 2.21.6 on assemble's missing-parent-dir crash), so they must not split.
+    Krikri::ResultDisplay.failed_final_rename_split("Task failed: Module failed: Could not replace '/x' with '/y': [Errno 2] No such file or directory: b'/y' -> b'/x'").must_be_nil
   end
 end

@@ -3118,7 +3118,23 @@ module Krikri
       ErrorBlock::Node.new(msg, help_text: CONTROLLER_FILE_NOT_FOUND_HELP)
     end
 
-    # The failed-final-rename detail's one safe split: the atoms neither the
+    # The atomic_move crash details whose chained OSError real renders as its
+    # own "<<< caused by >>>" segment. Each is a `raise ... from ex` in
+    # module_utils/basic.py, so the outer message and the OSError stay two
+    # chain events (the outer one carrying the task's source context, which
+    # is what stops real's formatter from collapsing them - live-verified vs
+    # 2.21.6: the "failed final rename" detail of issue #304/#1171 and the
+    # "destination directory" one of issue #1769's /etc/hosts repro).
+    # "Could not replace"/"Failed to replace" are deliberately absent: real
+    # prints those joined onto one collapsed segment (live-verified vs
+    # 2.21.6 on assemble's missing-parent-dir crash).
+    ATOMIC_MOVE_CAUSE_SPLIT_PREFIXES = [
+      "Unable to make b'",
+      "Unable to make '",
+      "The destination directory '",
+    ]
+
+    # The failed-atomic_move detail's one safe split: the atoms neither the
     # src nor the stage path can carry ("Errno" inside a bracketed errno
     # segment text) decide where ": [Errno N] ..." begins - rindex because
     # the errno text itself can contain further ": b'...'" colons.
@@ -3131,8 +3147,7 @@ module Krikri
     # Public only so the unit suite can pin the split directly, the same
     # reason task_error_chain is.
     def self.failed_final_rename_split(msg : String) : {String, String}?
-      return nil unless msg.starts_with?("Unable to make b'") || msg.starts_with?("Unable to make '")
-      return nil unless msg.includes?("failed final rename from '")
+      return nil unless ATOMIC_MOVE_CAUSE_SPLIT_PREFIXES.any? { |prefix| msg.starts_with?(prefix) }
       idx = msg.rindex(": [Errno ")
       return nil unless idx
       {msg[0...idx].rstrip(". "), msg[(idx + 2)..]}

@@ -260,4 +260,60 @@ describe "blockinfile plugin" do
     result["msg"].as_s.must_equal("File created")
     File.read(path).must_equal("")
   end
+
+  # Issue #1769 (pgkehle.hosts): the role's blockinfile onto /etc/hosts hit
+  # the round's bind-mounted dest, whose final rename fails EBUSY. Real
+  # crashes the whole MODULE there with "Unable to make ... failed final
+  # rename from ..." - krikri's own "Failed to move file to destination"
+  # wording diverged from real on exactly that crash. This spec reproduces
+  # the same ladder-and-crash shape without root or a bind mount, on the
+  # sticky dir's other workaround errno: in a root-owned sticky directory
+  # (/tmp) a rename over a dest NEITHER we NOR the directory owns fails
+  # EPERM, so the whole ladder runs and its final rename fails the same
+  # way. Preparing such a dest needs a foreign uid, which podman's --user
+  # mapping provides without root (live-verified side by side with real
+  # ansible 2.21.6 on the same dest: byte-identical modulo tmp names).
+  it "crashes with real's failed-final-rename wording when the final rename cannot land (sticky-dir EPERM)" do
+    skip "root owns every sticky dir, so root never sees this EPERM" if PluginSpecHelper.running_as_root?
+
+    podman = Process.run("podman", ["--version"], output: Process::Redirect::Close, error: Process::Redirect::Close)
+    skip "needs podman to prepare a foreign-owned dest in root-owned sticky /tmp" unless podman.success?
+
+    name = "krikri-spec-foreign-#{Process.pid}-#{Random::Secure.hex(4)}"
+    dest = File.join("/tmp", name)
+    prepared = Process.run("podman",
+      ["run", "--rm", "--user", "1000:1000", "-v", "/tmp:/hosttmp", "docker.io/library/alpine",
+       "sh", "-c", "echo stale > /hosttmp/#{name} && chmod 644 /hosttmp/#{name}"],
+      output: Process::Redirect::Close, error: Process::Redirect::Close)
+    skip "podman could not prepare the foreign dest" unless prepared.success? && File.exists?(dest)
+
+    begin
+      result = PluginSpecHelper.run("blockinfile", {
+        "path"  => dest,
+        "block" => "krikri ladder test",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      msg = result["msg"].as_s
+      # Real's crash chain, ": "-joined by the module crash wrapper: the
+      # raise's own text (its trailing period stripped by the join) + the
+      # final rename's OSError, whose repr carries both byte paths. The
+      # echoed source keeps real's remote-tmp mkstemp shape and the stage
+      # its .ansible_tmp + 8-random + basename shape.
+      msg.starts_with?("Task failed: Module failed: Unable to make '").must_equal(true)
+      msg.includes?("/.ansible/tmp/ansible-tmp-").must_equal(true)
+      msg.includes?("into to '#{dest}', failed final rename from '/tmp/.ansible_tmp").must_equal(true)
+      msg.includes?("[Errno 1] Operation not permitted: b'").must_equal(true)
+      msg.includes?("-> b'#{dest}'").must_equal(true)
+      # The failed ladder left dest untouched.
+      File.read(dest).must_equal("stale\n")
+    ensure
+      # Neither we nor /tmp owns the file, so the sticky bit blocks our
+      # own unlink - the foreign uid cleans up after itself.
+      Process.run("podman",
+        ["run", "--rm", "--user", "1000:1000", "-v", "/tmp:/hosttmp", "docker.io/library/alpine",
+         "rm", "-f", "/hosttmp/#{name}"],
+        output: Process::Redirect::Close, error: Process::Redirect::Close)
+    end
+  end
 end

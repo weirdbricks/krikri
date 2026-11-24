@@ -1,0 +1,27 @@
+---
+- name: Register Date
+  command: date
+  delegate_to: localhost
+  register: date_cmd
+  when: true
+
+- name: Init block with date
+  set_fact:
+    b1: "['# Updated at {{ date_cmd.stdout }}', ''] + {{ b1 }}"
+
+- name: Ensure the hosts block exists in /etc/hosts (local)
+  delegate_to: localhost
+  blockinfile:
+    dest: /etc/hosts
+    block: "{{ b1 | join('\n') }}"
+    insertafter: EOF
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - HOSTS"
+  become: true
+
+- name: Ensure hostname is in /etc/hosts (local)
+  delegate_to: localhost
+  lineinfile:
+    dest: /etc/hosts
+    regexp: '^127\.0\.0\.1'
+    line: "127.0.0.1 localhost"
+  become: true
