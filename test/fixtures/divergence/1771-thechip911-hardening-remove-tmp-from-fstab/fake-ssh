@@ -1,0 +1,53 @@
+#!/usr/bin/python3
+"""Stub ssh transport for this case: run the "remote" command locally.
+
+The divergence only exists on a non-local connection (see inventory.ini),
+and the corpus cannot provision a second machine. Parsing an ssh argv -
+options, then user@host, then the command - and executing the remainder
+here is enough to give both engines the same remote dispatch.
+"""
+import os
+import sys
+
+args = sys.argv[1:]
+
+i = 0
+subsystem = False
+while i < len(args):
+    arg = args[i]
+    if arg == "-O":
+        # ControlMaster op (-O exit/check): nothing to run.
+        sys.exit(0)
+    if arg == "-s":
+        # A subsystem request (scp's SFTP protocol) - see below.
+        subsystem = True
+        i += 1
+        continue
+    if arg == "--":
+        i += 2
+        break
+    if arg.startswith("-"):
+        if len(arg) == 2 and arg in ("-o", "-i", "-p", "-l", "-L", "-R", "-D", "-w", "-b", "-c", "-E", "-e", "-F", "-I", "-J", "-m", "-P", "-Q", "-S", "-W", "-B"):
+            i += 2
+        else:
+            i += 1
+        continue
+    # First bare word: user@host (or just host).
+    i += 1
+    break
+
+# This box has no sftp-server, so answer scp's subsystem request with scp's
+# own "no such subsystem" exit code and let scp fall back to its legacy
+# protocol (which arrives here as a plain `scp -t/-f <path>` command).
+if subsystem:
+    sys.exit(255)
+
+command = args[i:]
+
+if not command:
+    sys.exit(0)
+
+if len(command) == 1:
+    os.execv("/bin/sh", ["/bin/sh", "-c", command[0]])
+
+os.execvp(command[0], command)

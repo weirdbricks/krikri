@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Remove /tmp from fstab
+      ansible.posix.mount:
+        path: /mnt/krikri1771
+        state: absent
+        fstab: "{{ playbook_dir }}/fstab"

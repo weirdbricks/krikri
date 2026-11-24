@@ -127,13 +127,17 @@ module Krikri
       # never written into the .sources file. check_mode/diff_mode/
       # _verbosity/_environment are engine-internal
       # keys injected by the executor (see build_plugin_config), not
-      # part of Ansible's argument_spec, so none are rejected.
+      # part of Ansible's argument_spec, so none are rejected. Every
+      # engine-internal key carries a leading underscore - __krikri_remote_tty
+      # rides with EVERY remote dispatch (see executor_run_loop.cr) - so the
+      # whole prefix is exempt, the way dnf/yum/systemd already do it
+      # (issue #1771).
       deb822_supported = {"allow_downgrade_to_insecure", "allow_insecure", "allow_weak", "architectures", "by_hash", "check_date", "check_valid_until", "components", "date_max_future", "enabled", "exclude", "include", "inrelease_path", "install_python_debian", "languages", "mode", "name", "pdiffs", "signed_by", "state", "suites", "targets", "trusted", "types", "uris"}
       deb822_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
       # Ansible collects unsupported params but reports them LAST, so a
       # missing-required or choices error beats a typo'd parameter (see
       # dnf.cr).
-      unsupported = @params.keys.reject { |k| deb822_supported.includes?(k) || deb822_internal.includes?(k) }
+      unsupported = @params.keys.reject { |k| deb822_supported.includes?(k) || deb822_internal.includes?(k) || k.starts_with?("_") }
       unsupported_rejection : PluginResult? = nil
       unless unsupported.empty?
         unsupported_rejection = PluginResult.new(

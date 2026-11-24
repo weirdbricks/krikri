@@ -29,6 +29,21 @@ describe "replace plugin" do
     File.read(path).must_equal("gpgcheck=1\n")
   end
 
+  # __krikri_remote_tty rides with every remote dispatch as engine
+  # bookkeeping (issue #1728/#1771); real replace never sees it, so the
+  # module's unsupported-parameter check must not name it.
+  it "does not reject the executor's __krikri_remote_tty remote-dispatch marker" do
+    path = fresh_file("remote-tty.conf", "gpgcheck=0\n")
+
+    result = PluginSpecHelper.run("replace", {
+      "path" => path, "regexp" => "^gpgcheck.*", "replace" => "gpgcheck=1", "__krikri_remote_tty" => "1",
+    })
+
+    result["failed"]?.try(&.as_bool?).must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("gpgcheck=1\n")
+  end
+
   it "interprets Python re.sub control escapes in the replacement (round900159 juju4.harden_apache)" do
     # Real replace.py runs `replace:` through Python re.sub's own
     # replacement-template parser, so a YAML single-quoted '\t' (two

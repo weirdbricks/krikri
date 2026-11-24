@@ -65,10 +65,13 @@ module Krikri
       # internal keys injected by the executor (see build_plugin_config),
       # not part of Ansible's argument_spec, so none are rejected. The
       # parenthesized alias list mirrors Ansible's msg (attr, dest,
-      # destfile, name).
+      # destfile, name). Every engine-internal key carries a leading
+      # underscore - __krikri_remote_tty rides with EVERY remote dispatch
+      # (see executor_run_loop.cr) - so the whole prefix is exempt, the way
+      # dnf/yum/systemd already do it (issue #1771).
       replace_supported = {"after", "attributes", "backup", "before", "encoding", "group", "mode", "owner", "path", "regexp", "replace", "selevel", "serole", "setype", "seuser", "unsafe_writes", "validate", "attr", "dest", "destfile", "name"}
       replace_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
-      unsupported = @params.keys.reject { |k| replace_supported.includes?(k) || replace_internal.includes?(k) }
+      unsupported = @params.keys.reject { |k| replace_supported.includes?(k) || replace_internal.includes?(k) || k.starts_with?("_") }
       unless unsupported.empty?
         return PluginResult.new(
           changed: false,

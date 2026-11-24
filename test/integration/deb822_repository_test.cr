@@ -28,6 +28,23 @@ describe "deb822_repository plugin" do
     result["msg"].as_s.must_include("body_string")
   end
 
+  # __krikri_remote_tty rides with every remote dispatch as engine
+  # bookkeeping (issue #1728/#1771); real deb822_repository never sees it,
+  # so the module's unsupported-parameter check must not name it.
+  it "does not reject the executor's __krikri_remote_tty remote-dispatch marker" do
+    result = PluginSpecHelper.run("deb822_repository", {
+      "name"                => "testrepo-remote-tty",
+      "uris"                => "https://example.com/repo",
+      "suites"              => "stable",
+      "components"          => "main",
+      "_ansible_check_mode" => "true",
+      "__krikri_remote_tty" => "1",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+  end
+
   it "rejects a non-bool install_python_debian with Ansible's bool-type error (core 2.20+ bool arg)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                  => "testrepo-bad-ipd",
