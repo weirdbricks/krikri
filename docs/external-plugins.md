@@ -57,6 +57,15 @@ it exists because one krikri binary serves every module name, while here it
 would silently run a different plugin than the task named. The file must be a
 regular, executable file; a non-executable match is not a match.
 
+One scope is honoured on top of the exact name: a task's `collections:`
+keyword (its own, else the play's, plus the role's `meta/main.yml` list) is
+searched for the qualified `<collection>.<task name>` before resolution gives
+up, which is the same lookup real ansible performs - `hello:` on a play with
+`collections: [acme.tools]` therefore reaches an external `acme.tools.hello`.
+A bare `hello:` with no matching collection scope still does not resolve
+(supply the FQCN, or name the plugin `hello`), and the scope never overrides
+an exact-name or built-in match.
+
 ## Naming rules
 
 - `[A-Za-z0-9][A-Za-z0-9_.-]*` - no slashes, no leading dot, no spaces or glob

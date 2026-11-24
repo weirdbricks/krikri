@@ -80,10 +80,7 @@ end
 # Copy the case's INPUT into the scratch tree. expected.out/NOTES.md are the
 # case's recorded result, not part of what it runs.
 def capture_copy_case(case_dir : String, work_dir : String) : Nil
-  Dir.children(case_dir).each do |entry|
-    next if Krikri::DivergenceCase::RECORDED.includes?(entry)
-    FileUtils.cp_r(File.join(case_dir, entry), File.join(work_dir, entry))
-  end
+  Krikri::DivergenceCase.copy_inputs(case_dir, work_dir)
   Dir.mkdir_p(File.join(work_dir, "home"))
 end
 

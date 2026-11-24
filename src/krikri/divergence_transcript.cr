@@ -110,6 +110,32 @@ module Krikri
       File.read_lines(path).map(&.strip).reject(&.empty?)
     end
 
+    # Copy a case's INPUT (everything but RECORDED) into *work_dir*, which must
+    # already exist. `FileUtils.cp_r` copies a file's permission bits but
+    # creates directories with the process umask's mode, so a directory a case
+    # ships as 0755 came out group-writable in the scratch copy - and an
+    # external plugin root (a case's `plugins/`, issue #1757) refuses a
+    # group/world-writable directory, failing the replay before the playbook
+    # runs. A case's directory modes are part of its input, so re-apply them.
+    def self.copy_inputs(case_dir : String, work_dir : String) : Nil
+      Dir.children(case_dir).each do |entry|
+        next if RECORDED.includes?(entry)
+        source = File.join(case_dir, entry)
+        dest = File.join(work_dir, entry)
+        FileUtils.cp_r(source, dest)
+        copy_directory_modes(source, dest) if File.directory?(source)
+      end
+    end
+
+    private def self.copy_directory_modes(source : String, dest : String) : Nil
+      File.chmod(dest, File.info(source).permissions)
+      Dir.each_child(source) do |entry|
+        source_child = File.join(source, entry)
+        dest_child = File.join(dest, entry)
+        copy_directory_modes(source_child, dest_child) if File.directory?(source_child)
+      end
+    end
+
     # A case that executes modules ships an inventory whose `[local]` host pins
     # ansible_connection/ansible_python_interpreter - the one placement both
     # engines resolve identically, and what keeps the interpreter-discovery

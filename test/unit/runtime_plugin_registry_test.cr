@@ -254,6 +254,47 @@ describe "external module plugin registry (issue #1755)" do
       Krikri::PlaybookParser.validate(playbook).must_equal([] of String)
     end
 
+    it "resolves a short name through the task's collections: scope" do
+      acme = make_root("registry-scope-acme")
+      write_plugin(acme, "acme.tools.hello")
+      other = make_root("registry-scope-other")
+      write_plugin(other, "other.tools.hello")
+      Krikri::RuntimePluginRegistry.configure([acme, other])
+
+      # Issue #1757: with no scope an external plugin still resolves by exact
+      # filename only - the opt-in is the task's own `collections:` list, which
+      # is exactly what ansible searches before the legacy module path.
+      Krikri::PlaybookParser.resolve_module_name("hello").must_be_nil
+      Krikri::PlaybookParser.resolve_module_name("hello", ["acme.tools"]).must_equal("acme.tools.hello")
+      # The scope list decides the winner, in its own order.
+      Krikri::PlaybookParser.resolve_module_name("hello", ["other.tools", "acme.tools"]).must_equal("other.tools.hello")
+      Krikri::PlaybookParser.resolve_module_name("hello", ["nowhere.tools"]).must_be_nil
+      # Exact-name lookup is unchanged by a scope that holds no match.
+      Krikri::PlaybookParser.resolve_module_name("acme.tools.hello", ["nowhere.tools"]).must_equal("acme.tools.hello")
+    end
+
+    it "resolves a play-level collections: short name at parse time" do
+      root = make_root("registry-scope-parse")
+      write_plugin(root, "acme.tools.hello")
+      Krikri::RuntimePluginRegistry.configure([root])
+
+      dir = PluginSpecHelper.tmp_path("registry-scope-pb-#{Random::Secure.hex(4)}")
+      Dir.mkdir_p(dir)
+      path = File.join(dir, "site.yml")
+      File.write(path, <<-YAML)
+        - hosts: localhost
+          gather_facts: false
+          collections: [acme.tools]
+          tasks:
+            - hello:
+        YAML
+      playbook = Krikri::PlaybookParser.parse(path)
+      task = playbook.plays.first.tasks.first
+      task.module_name.must_equal("acme.tools.hello")
+      task.unavailable_module.must_be_nil
+      Krikri::PlaybookParser.validate(playbook).must_equal([] of String)
+    end
+
     it "makes a registered name daemon-ineligible while native modules stay eligible" do
       root = make_root("registry-daemon")
       write_plugin(root, "mycompany.internal.foo")
