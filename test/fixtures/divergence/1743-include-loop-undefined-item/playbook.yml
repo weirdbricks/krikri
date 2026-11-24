@@ -1,0 +1,26 @@
+---
+# t2d.ansible_role_libvirt_vm's tasks/main.yml looped `include_tasks:
+# volumes.yml` (line 18) over the role's own `libvirt_vms` default. The default
+# is the backwards-compatibility singleton list whose entries are templates of
+# the deprecated variables (defaults/main.yml:47-79), and `name` is
+# `"{{ libvirt_vm_name }}"` - one of the vars the role documents as required
+# and this play, like the round, leaves unset.
+- name: t2d.ansible_role_libvirt_vm include volumes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    libvirt_vms:
+      - state: "{{ libvirt_vm_state }}"
+        name: "{{ libvirt_vm_name }}"
+        clock_offset: "localtime"
+        xml_file: vm.xml.j2
+    libvirt_vm_state:
+  tasks:
+    - name: include_tasks
+      include_tasks: included.yml
+      vars:
+        volumes: "{{ vm.volumes | default([], true) }}"
+      with_items: "{{ libvirt_vms }}"
+      loop_control:
+        loop_var: vm
+      when: (vm.state | default('present', true)) == 'present'
