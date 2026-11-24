@@ -1,0 +1,42 @@
+
+PLAY [hardening ssh version fact] **********************************************
+
+TASK [Get installed ssh version] ***********************************************
+skipping: [localhost]
+
+TASK [Set ssh version as fact] *************************************************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'ssh_installed_version': The filter plugin 'ansible.builtin.join' failed: 'NoneType' object is not iterable
+
+Task failed.
+Origin: <WORK>/playbook.yml:20:7
+
+18         - sshd_config
+19
+20     - name: Set ssh version as fact
+         ^ column 7
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.set_fact' failed.
+Origin: <WORK>/playbook.yml:21:7
+
+19
+20     - name: Set ssh version as fact
+21       ansible.builtin.set_fact:
+         ^ column 7
+
+<<< caused by >>>
+
+Error while resolving value for 'ssh_installed_version': The filter plugin 'ansible.builtin.join' failed: 'NoneType' object is not iterable
+Origin: <WORK>/playbook.yml:22:32
+
+20     - name: Set ssh version as fact
+21       ansible.builtin.set_fact:
+22         ssh_installed_version: "{{ ssh_version.stderr | regex_search('^OpenSSH_([0-9+].[0-9]+)', '\\1') | join('.'...
+                                  ^ column 32
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'ssh_installed_version': The filter plugin 'ansible.builtin.join' failed: 'NoneType' object is not iterable"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=1    rescued=0    ignored=0   
+
