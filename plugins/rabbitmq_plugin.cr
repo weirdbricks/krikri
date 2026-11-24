@@ -47,9 +47,12 @@ module Krikri
 
       # changed only reflects what actually ran - hardcoding true here was
       # the warm-run bug: apply-nothing fell through to changed=true
-      # (mrlesmithjr.rabbitmq re-run, warm changed=2 vs real changed=0)
+      # (mrlesmithjr.rabbitmq re-run, warm changed=2 vs real changed=0).
+      # The module's result dict is {changed, enabled, disabled} with no
+      # msg at all (exit_json(**result)), so the lists are what a
+      # registered result or -v run must show.
       PluginResult.new(changed: !enabled.empty? || !disabled.empty?, failed: false,
-        msg: build_msg(enabled, disabled))
+        enabled: enabled, disabled: disabled)
     end
 
     private def apply_enabled_state(bin : String, plugins : Array(String), enabled_lines : Array(String), enabled : Array(String), disabled : Array(String)) : PluginResult?
@@ -61,17 +64,21 @@ module Krikri
         enabled_lines.each do |line|
           next if line.includes?(" ")
           next if plugins.includes?(line)
-          r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
+          unless check_mode?
+            r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
+            return PluginResult.new(changed: false, failed: true,
+              msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
+          end
           disabled << line
         end
       end
       plugins.each do |plugin|
         next if enabled_lines.includes?(plugin)
-        r = remote_exec("#{Process.quote(bin)} enable #{Process.quote(plugin)}")
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to enable plugin #{plugin}: #{r[:stderr]}") if r[:exit_code] != 0
+        unless check_mode?
+          r = remote_exec("#{Process.quote(bin)} enable #{Process.quote(plugin)}")
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Failed to enable plugin #{plugin}: #{r[:stderr]}") if r[:exit_code] != 0
+        end
         enabled << plugin
       end
       nil
@@ -80,9 +87,11 @@ module Krikri
     private def apply_disabled_state(bin : String, plugins : Array(String), enabled_lines : Array(String), disabled : Array(String)) : PluginResult?
       enabled_lines.each do |line|
         next unless plugins.includes?(line)
-        r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
+        unless check_mode?
+          r = remote_exec("#{Process.quote(bin)} disable #{Process.quote(line)}")
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Failed to disable plugin #{line}: #{r[:stderr]}") if r[:exit_code] != 0
+        end
         disabled << line
       end
       nil
@@ -92,19 +101,22 @@ module Krikri
       as_bool(@params["new_only"]?)
     end
 
+    # rabbitmq_plugin.py declares supports_check_mode=True and routes every
+    # mutating command through _exec(), which skips it in check mode (only
+    # the `list -E -m` probe is force-executed). The requested names still
+    # land in enabled/disabled, so a check-mode run reports changed for a
+    # plugin that is not there - running the enable for real instead failed
+    # the whole task (#1751).
+    private def check_mode? : Bool
+      true?(@params["_ansible_check_mode"]?)
+    end
+
     private def as_bool(value) : Bool
       case value
       when Bool   then value
       when String then value == "true" || value == "True" || value == "yes"
       else             false
       end
-    end
-
-    private def build_msg(enabled : Array(String), disabled : Array(String)) : String
-      parts = [] of String
-      parts << "Plugins enabled: #{enabled.join(", ")}" unless enabled.empty?
-      parts << "Plugins disabled: #{disabled.join(", ")}" unless disabled.empty?
-      parts.empty? ? "Plugins already in desired state" : parts.join("; ")
     end
 
     private def plugin_bin : String
