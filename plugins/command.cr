@@ -482,13 +482,18 @@ module Krikri
         # and everything under it) a controlling terminal, the way
         # ansible-core's `ssh -tt` does for the whole remote process
         # tree - see ControllingTty's own comment for why the tty is
-        # manufactured here rather than requested from ssh. stdin/
-        # stdout/stderr of the spawned command are untouched by this:
-        # the tty is reachable only by explicitly opening /dev/tty, so
-        # stdout and stderr stay the separate pipes they already were
-        # (Ansible's own module keeps them separate too - only its
-        # ssh-level channel is merged by -tt).
-        ControllingTty.ensure
+        # manufactured here rather than requested from ssh. Only a remote
+        # dispatch gets one: real's LOCAL connection never asks for a pty,
+        # so its module children carry exactly the terminal
+        # ansible-playbook itself inherited (usually none), and a
+        # manufactured tty there turns a /dev/tty reader that real sees EOF
+        # on - sudo's password prompt - into a permanent hang (issue
+        # #1728). stdin/stdout/stderr of the spawned command are untouched
+        # by this: the tty is reachable only by explicitly opening
+        # /dev/tty, so stdout and stderr stay the separate pipes they
+        # already were (Ansible's own module keeps them separate too - only
+        # its ssh-level channel is merged by -tt).
+        ControllingTty.ensure if @params["__krikri_remote_tty"]?
 
         # Without stdin: Ansible's child always has a valid fd 0 (inherited
         # from the module). A CLOSED fd 0 makes the child's first open()

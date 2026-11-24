@@ -408,10 +408,14 @@ module Krikri
       # spawn, and everything under it) a controlling terminal, the way
       # ansible-core's `ssh -tt` does for the whole remote process
       # tree - see ControllingTty's own comment for why the tty is
-      # manufactured here rather than requested from ssh. No-op when one
-      # already exists (local connection from a real terminal), and a
-      # no-op fallback to today's behavior if it cannot be arranged.
-      ControllingTty.ensure
+      # manufactured here rather than requested from ssh. Only a remote
+      # dispatch gets one: real's LOCAL connection never asks for a pty, so
+      # its module children carry exactly the terminal ansible-playbook
+      # itself inherited (usually none), and a manufactured tty there turns
+      # a /dev/tty reader that real sees EOF on - sudo's password prompt -
+      # into a permanent hang (issue #1728). No-op when a terminal already
+      # exists, and a no-op fallback if it cannot be arranged.
+      ControllingTty.ensure if @params["__krikri_remote_tty"]?
 
       # Execute command
       # Note: the command is ALWAYS handed to the module's `executable:`

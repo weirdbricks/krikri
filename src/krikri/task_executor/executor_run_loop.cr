@@ -3205,6 +3205,14 @@ module Krikri
       remote_vars_context = vars_context.dup
       remote_vars_context["ansible_connection"] = JSON::Any.new("local")
 
+      # The spawn plugins manufacture a controlling terminal only for a
+      # remote dispatch (see execute_task_once's own marker): a batched
+      # step always runs on the target, over the same ssh -tt real gives it.
+      if PluginManager.remote_execution?(task.module_name, host, vars_context)
+        substituted_params = substituted_params.dup
+        substituted_params["__krikri_remote_tty"] = "1"
+      end
+
       config_json = build_plugin_config(task, host, substituted_params, remote_vars_context, substituted_become_user, substituted_env, become_flag: become)
 
       # The batch script runs the plugin binary directly, so it must be on
@@ -4154,6 +4162,21 @@ module Krikri
         if (term = ENV["TERM"]?) && !term.empty?
           substituted_params["__raw_pty_term"] = term
         end
+      end
+
+      # Real's controlling terminal comes from the ssh transport's -tt, so
+      # a LOCAL connection has none of its own: its module process carries
+      # exactly the terminal ansible-playbook itself inherited, usually
+      # none when the controller runs detached (a CI job, this suite's own
+      # subprocess, `| tee`). Marking a remote dispatch is what lets the
+      # spawn plugins manufacture the tty only there - a synthetic one
+      # under a local connection turns a /dev/tty reader that real sees EOF
+      # on into a permanent hang: `sudo`'s password prompt blocks forever
+      # where real answers "sudo: a terminal is required" at once (issue
+      # #1728's role starts with a raw `apt -y update`).
+      if goes_remote
+        substituted_params = substituted_params.dup
+        substituted_params["__krikri_remote_tty"] = "1"
       end
 
       config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become, become_flags: substituted_become_flags)

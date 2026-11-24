@@ -1,0 +1,12 @@
+---
+# ddilts.change_password's tasks/main.yml verbatim (its first task; every
+# later task in the role is never reached because this one fails). On a real
+# host raw runs under ssh's pty, so `apt` paints its \r-repainted progress
+# meter - see NOTES.md for why the transcript this case pins is the local
+# host's own.
+- name: change password
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: install python 2
+      raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)

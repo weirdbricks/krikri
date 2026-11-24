@@ -151,8 +151,10 @@ module Krikri
       # aliases to the shell plugin) and __script_pty_term with remote
       # script (issue #862): without them here the plugin's own
       # unsupported-param check would reject the executor's pty markers
-      # as user params.
-      private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment", "__raw_pty_merge", "__raw_pty_term", "__script_pty_term"}
+      # as user params. __krikri_remote_tty rides with every remote
+      # dispatch and only decides whether the spawn plugins manufacture a
+      # controlling terminal (issue #1728).
+      private INTERNAL = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment", "__raw_pty_merge", "__raw_pty_term", "__script_pty_term", "__krikri_remote_tty"}
 
       # community.crypto's _time.py get_relative_time_option: a timespec
       # is either sshd_config(5)-relative (a leading +/-, then

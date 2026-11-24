@@ -1,5 +1,5 @@
 require "../minitest_helper"
-require "../../src/krikri/task_executor/executor_run_loop"
+require "../../src/krikri/task_executor"
 require "../../src/krikri/plugin_helpers/script_pty_capture"
 require "../../src/krikri/plugin_helpers/pty_command_runner"
 
@@ -115,6 +115,40 @@ describe Krikri::TaskExecutor do
       hash["stderr_lines"].as_a.map(&.as_s)
         .must_equal(["Shared connection to 203.0.113.9 closed."])
       hash.has_key?("_krikri_real_pty").must_equal(false)
+    end
+
+    # Issue #1728: apt paints its status meter by rewriting ONE line with
+    # \r per tick, so a raw `apt update` result's stdout is a stream of
+    # \r-separated status chunks. How many ticks appear and which
+    # percentages they show follow the target's network timing (real
+    # Ansible disagrees with itself the same way across runs), but the
+    # bytes handed back must be the pty's own: no collapsing of repaints,
+    # no re-serialising of the line list.
+    it "forwards an apt progress-meter stream's CR-separated repaints byte for byte" do
+      stream = "\e[33m\r0% [Working]\e[0m\r            \r" \
+               "Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease\r\n" \
+               "\e[33m\r20% [Working]\e[0m\r             \r" \
+               "\e[1;31mE: \e[0mPackage 'python-minimal' has no installation candidate\e[0m\r\n"
+      lines = ["\e[33m", "0% [Working]\e[0m", "            ",
+               "Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease",
+               "\e[33m", "20% [Working]\e[0m", "             ",
+               "\e[1;31mE: \e[0mPackage 'python-minimal' has no installation candidate\e[0m"]
+      hash = JSON.parse({
+        "rc"               => 100,
+        "stdout"           => stream,
+        "stdout_lines"     => lines,
+        "stderr"           => "",
+        "stderr_lines"     => [] of String,
+        "changed"          => true,
+        "failed"           => true,
+        "msg"              => "non-zero return code",
+        "_krikri_real_pty" => true,
+      }.to_json).as_h
+      Krikri::TaskExecutor.raw_remote_pty_shape(hash, true, "203.0.113.9")
+      hash["stdout"].as_s.must_equal(stream)
+      hash["stdout_lines"].as_a.map(&.as_s).must_equal(lines)
+      hash["stderr"].as_s
+        .must_equal("Shared connection to 203.0.113.9 closed.\r\n")
     end
 
     # The emulation path must keep working for a result whose plugin could
