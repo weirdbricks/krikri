@@ -1,0 +1,18 @@
+# babisk.kubectl's tasks/main.yml "Install kubectl from snap", verbatim
+# (name, module params and tags as the Galaxy role ships them) with only
+# `become: true` dropped: the case runs on localhost as an ordinary user,
+# and the snap module's own get_bin_path probe runs before any privileged
+# work, check mode included.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Install kubectl from snap
+      community.general.snap:
+        name: kubectl
+        classic: true
+        state: present
+        channel: stable
+      tags:
+        - kubectl
+        - kubectl.install

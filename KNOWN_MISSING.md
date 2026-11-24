@@ -768,7 +768,11 @@ their divergence-corpus cases for seconds of build time, so the trade-off went t
 playbook using one of them now takes the normal unreachable/unavailable-module path: a graceful
 per-task skip plus the corresponding `unreachable unavailable module` exit-code contribution. The
 builtin-namespace redirects that used to map `ansible.builtin.`/`ansible.legacy.` spellings of
-zypper, zypper_repository, pacman, pkgng and snap onto their collection modules went with them.
+zypper, zypper_repository, pacman and pkgng onto their collection modules went with them.
+`community.general.snap` was the one removal that turned out to be wrong (issue #1775): snap is
+Ubuntu's own package manager and snap.py supports check mode, so babisk.kubectl's task ran under
+`--check` on a host this engine targets where krikri skipped it. The port and its
+`ansible.builtin.snap`/`ansible.legacy.snap` redirects are back in `plugins/snap.cr`.
 
 ### Arbitrary Python
 
@@ -1099,7 +1103,7 @@ because anyone intends to fix them.
   The plugin answers a plain ok there, so on a host WITH podman krikri reports ok where real reports
   the real work's changed/ok - revisit if a round lands on a podman-present host.
 - `community.general.pacman`, `community.general.pkgng`, `community.general.zypper`,
-  `community.general.zypper_repository`, `community.general.snap` - not implemented. Pointless on
+  `community.general.zypper_repository` - not implemented. Pointless on
   the Ubuntu/RHEL-family targets this engine supports.
 - `meta:` - every action in Ansible's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,

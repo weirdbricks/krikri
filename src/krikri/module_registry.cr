@@ -289,6 +289,13 @@ module Krikri
       # resolve). See plugins/parted.cr and plugins/lvg.cr.
       "community.general.parted",
       "community.general.lvg",
+      # snap (issue #1775, babisk.kubectl on ubuntu): snap is Ubuntu's own
+      # package manager, not a SUSE/Arch-only branch, and snap.py declares
+      # supports_check_mode=True - real RUNS it under --check (answering
+      # ok for an already-installed snap) where the unavailable-module
+      # path skipped the task and exited 4, so the role's kubectl task
+      # never ran on a target this engine supports. See plugins/snap.cr.
+      "community.general.snap",
       # dpkg_divert (0.9.929): Debian file-diversion management
       # (ansible-lockdown ubuntu24 CIS and MindPointGroup debian11 CIS
       # rounds both hard-stopped on it). Debian-family only by nature -
@@ -614,6 +621,17 @@ module Krikri
       "ansible.legacy.openssl_certificate_info"    => "community.crypto.x509_certificate_info",
       "community.crypto.openssl_certificate_info"  => "community.crypto.x509_certificate_info",
       "community.general.openssl_certificate_info" => "community.crypto.x509_certificate_info",
+      # snap moved out of ansible-core into community.general long before
+      # FQCNs existed, but ansible-core's builtin runtime still redirects
+      # the ansible.builtin./ansible.legacy. spellings onto
+      # community.general.snap (live-verified against 2.19.11: an
+      # `ansible.builtin.snap:` task on a host without the snap CLI
+      # resolves and RUNS, failing with the module's own 'Failed to find
+      # required executable "snap"' - it does not skip). The bare
+      # spelling needs no entry here - community.general is already in
+      # MODULE_SEARCH_COLLECTIONS.
+      "ansible.builtin.snap" => "community.general.snap",
+      "ansible.legacy.snap"  => "community.general.snap",
       # make was never in ansible-core, but its builtin runtime redirects
       # the ansible.builtin./ansible.legacy. spellings onto
       # community.general.make and resolves and runs the module (issue
