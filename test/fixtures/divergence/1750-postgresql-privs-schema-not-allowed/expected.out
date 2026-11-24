@@ -1,0 +1,18 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Postgresql_privs #0.0] ***************************************************
+[ERROR]: Task failed: Module failed: Argument "schema" is not allowed for type "database".
+Origin: <WORK>/playbook.yml:8:7
+
+6   # (only delegate_to was dropped, since this case runs on localhost).
+7   tasks:
+8     - name: 'Postgresql_privs #0.0'
+        ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Argument \"schema\" is not allowed for type \"database\"."}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+
