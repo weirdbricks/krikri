@@ -1,0 +1,6 @@
+---
+# The include target never loads: real fails the include_tasks: statement
+# while templating the loop source, before any item's file is looked up.
+- name: Ensure the VM volumes exist
+  debug:
+    msg: "{{ vm.name }}"

@@ -65,4 +65,64 @@ describe "looped include_tasks with an undefined loop source" do
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: 'ssls' is undefined\"}")
     output.must_include("failed=1")
   end
+
+  # Issue #1743 - the loop source itself resolves, but an ITEM's own template
+  # reads a variable nothing defines (t2d.ansible_role_libvirt_vm's
+  # libvirt_vms default holds `name: "{{ libvirt_vm_name }}"`). Real
+  # templates the whole list strictly before iterating, so the include fails
+  # right there; krikri's lenient item render baked the "undefined" sentinel
+  # into the item, loaded the file and ran to a green recap.
+  it "fails on an undefined name inside a loop item's own template" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          libvirt_vms:
+            - state: "{{ libvirt_vm_state }}"
+              name: "{{ libvirt_vm_name }}"
+          libvirt_vm_state:
+        tasks:
+          - name: include_tasks
+            ansible.builtin.include_tasks: "no_such_file.yml"
+            with_items: "{{ libvirt_vms }}"
+            loop_control:
+              loop_var: vm
+            when: (vm.state | default('present', true)) == 'present'
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: 'libvirt_vm_name' is undefined")
+    output.must_include("<<< caused by >>>")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: 'libvirt_vm_name' is undefined\"}")
+    output.wont_include("included:")
+    output.wont_include("'undefined'")
+    output.must_include("failed=1")
+  end
+
+  # Same undefined item, but the task-level when: is False without `item`
+  # bound: real defers the loop templating error until the conditional has
+  # had its say, so this is ONE bare skipping line (the items never existed,
+  # hence no per-item lines) and skipped=1.
+  it "skips once when the when: is false without item bound" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          libvirt_vms:
+            - name: "{{ libvirt_vm_name }}"
+        tasks:
+          - name: include_tasks
+            ansible.builtin.include_tasks: "no_such_file.yml"
+            with_items: "{{ libvirt_vms }}"
+            when: flag | default(false)
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("skipping: [localhost]\n")
+    output.wont_include("(item=")
+    output.wont_include("is undefined")
+    output.must_include("skipped=1")
+  end
 end

@@ -2618,30 +2618,6 @@ module Krikri
       end
     end
 
-    # Renders one looped include_tasks:'s item the way real's loop-keyword
-    # templating does. The item's own strings are templated with the loop
-    # SOURCE's file position registered and, when the source is one bare
-    # `{{ name }}` reference, its container on the preparing stack - without
-    # both, a top-level fact read inside a role default's leaf (dzangolab.
-    # gitlab_runner's `- name: '{{ ansible_hostname }}'`) has no placeable
-    # Origin and the [DEPRECATION WARNING] real prints when it templated the
-    # item there vanished (issue #1417). The returned flag says the item's
-    # own value ended up being a deprecated fact's value, which the label
-    # read on a when:-skipped item trips again (see
-    # VarSubstitutor#emit_loop_item_fact_deprecation).
-    private def render_include_loop_item(
-      task : Task,
-      item : JSON::Any,
-      loop_vars_context : Hash(String, JSON::Any),
-      host_name : String,
-    ) : {JSON::Any, Bool}
-      with_loop_source_site(task) do
-        VarSubstitutor.with_preparing_loop_source_container(task.loop_template, loop_vars_context, host_name) do
-          VarSubstitutor.with_fact_read_probe { deep_render_item(item, loop_vars_context, host_name, strict: false) }
-        end
-      end
-    end
-
     # Runs a nested task list (block:/rescue:/always:), printing its own
     # TASK header per task since these live inside a block rather than the
     # play's top-level task list, so `run` never prints one for them. Stops
@@ -2753,34 +2729,55 @@ module Krikri
         warn_loop_var_collision(task, base_vars_context)
         loop_var = task.loop_var
         index_var = task.index_var
-        unsafe_items = loop_items_derive_from_unsafe_data?(task, host.name)
         # One flag per (flattened) item: whether its value IS a deprecated
         # fact's own value, so its when:-skip line's label read trips that
-        # block again (see render_include_loop_item).
+        # block again (see VarSubstitutor#emit_loop_item_fact_deprecation).
         pending_fact_reads = [] of Bool
+        # Item rendering IS loop-source resolution: real templates the whole
+        # loop list strictly before iterating (`run()`'s _get_loop_items),
+        # so an undefined name inside an item's own `{{ }}` fails this
+        # include task instead of baking this engine's literal "undefined"
+        # sentinel into the item - t2d.ansible_role_libvirt_vm's
+        # `with_items: "{{ libvirt_vms }}"`, whose default entry holds
+        # `name: "{{ libvirt_vm_name }}"` with libvirt_vm_name never set
+        # (issue #1743: krikri included volumes.yml with a 'undefined'
+        # item name and ran on to a green recap where real fails here).
+        # A task-level when: that is False without `item` bound still
+        # skips the whole task: real only raises the loop error it
+        # deferred in _get_loop_items once the conditional did not skip.
+        rendered_items = begin
+          with_loop_source_site(task) do
+            render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host.name, pending_fact_reads)
+          end
+        rescue ex : WhenEvaluationError
+          prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+          emit_loop_error_chain(task, prefixed, host, ex.cause_origin)
+          finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: base_vars_context)
+          return
+        end
+        if rendered_items.nil?
+          puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          register_skip_result(task, host)
+          return
+        end
+        loop_items = rendered_items
         if task.loop_items_needs_flatten?
-          # with_items:'s implicit flatten(levels=1) needs each raw item
-          # RENDERED first (a raw item here is still an unrendered "{{
-          # default_directories }}"-style template string, not yet the
-          # real array it resolves to) - flatten only makes sense against
-          # the rendered values. Unsafe-derived items are already rendered
-          # data; their pass would be a second render, so it is skipped
-          # (see loop_items_derive_from_unsafe_data?).
+          # with_items:'s implicit flatten(levels=1) runs on the rendered
+          # values, so each element of a spliced nested list inherits its
+          # source item's fact-read flag.
           aligned_fact_reads = [] of Bool
-          loop_items = flatten_with_items_one_level(
-            unsafe_items ? loop_items : loop_items.map do |item|
-              rendered_item, read_fact = render_include_loop_item(task, item, loop_vars_context, host.name)
-              if inner = rendered_item.as_a?
-                inner.size.times { aligned_fact_reads << read_fact }
-              else
-                aligned_fact_reads << read_fact
-              end
-              rendered_item
+          loop_items.each_with_index do |item, idx|
+            read_fact = pending_fact_reads[idx]? || false
+            if inner = item.as_a?
+              inner.size.times { aligned_fact_reads << read_fact }
+            else
+              aligned_fact_reads << read_fact
             end
-          )
+          end
+          loop_items = flatten_with_items_one_level(loop_items)
           pending_fact_reads = aligned_fact_reads
         end
-        mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
         looped_keyword_failed = false
         block_vars_context : Hash(String, JSON::Any)? = nil
@@ -2799,24 +2796,12 @@ module Krikri
         include_loop_entries = [] of JSON::Any
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
-          # Render any string field of the item that is itself a template
-          # (e.g. dev-sec os_hardening's mount-list entries: `enabled:
-          # "{{ os_mnt_tmp_enabled }}"`) before binding it into scope -
-          # otherwise a bare `when: mount.enabled | bool` (no outer
-          # `{{ }}` for ConditionalEvaluator to render through) sees the
-          # literal unrendered "{{ os_mnt_tmp_enabled }}" text, which the
-          # `bool` filter treats as truthy regardless of the real value.
-          # Item rendering is loop-source-grade templating, so it renders
-          # against the alias-free snapshot, while the per-iteration
-          # context the included tasks see keeps the full one. For an
-          # unsafe-derived loop this pass would be the item's second
-          # render, so it is skipped - the item value is already rendered
-          # data (see loop_items_derive_from_unsafe_data?).
-          rendered_item, item_fact_read = if unsafe_items
-                                            {item, false}
-                                          else
-                                            render_include_loop_item(task, item, loop_vars_context, host.name)
-                                          end
+          # Already rendered by the strict loop-source pass above (which
+          # also resolved each item's fact-read flag); binding the raw
+          # value here would let a bare `when: mount.enabled | bool` see
+          # unrendered "{{ ... }}" text instead of the real value.
+          rendered_item = item
+          item_fact_read = pending_fact_reads[idx]? || false
           # loop_control.loop_var REPLACES "item" - ansible-core binds
           # the item ONLY under the custom name (see the task-loop sites in
           # executor_loops.cr).
@@ -2873,7 +2858,7 @@ module Krikri
             loop_entries: include_loop_entries,
             loop_index: idx,
             deferred: deferred,
-            item_fact_read: pending_fact_reads[idx]? || item_fact_read)
+            item_fact_read: item_fact_read)
           looped_when_failed = true if status == :failed
           looped_keyword_failed = true if status == :failed_keyword
           block_vars_context = vars_context
