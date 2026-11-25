@@ -194,6 +194,21 @@ describe "firewalld_info plugin" do
       "Please note: zone:(wmnfiv,lecefn) have been ignored in the gathering process.")
   end
 
+  # Issue #1814's kpg case (playbook 000019-multi-firewalld_info-happy, check
+  # mode): the same set-difference note with the playbook's own zone names.
+  # Repeated local runs of real ansible alternated between both orders too;
+  # krikri keeps the declared order, one of real's possible outputs.
+  it "keeps the declared order of issue #1814's ignored zones" do
+    stub = firewalld_zone_stub
+
+    result = PluginSpecHelper.run("firewalld_info", {"zones" => %(["lnzequ", "sujcww"])},
+      env: {"PYTHONPATH" => stub}, collection_version: "2.1.0")
+
+    result["undefined_zones"].as_a.map(&.as_s).must_equal(%w[lnzequ sujcww])
+    result["warnings"].as_a[0].as_s.must_equal(
+      "Please note: zone:(lnzequ,sujcww) have been ignored in the gathering process.")
+  end
+
   # Same release split, but over the host's own firewalld stack rather than
   # a stub, and asserting the whole note - the kpg repro for issue #1299
   # only caught it because a real 2.2.x collection was installed.
