@@ -1,0 +1,20 @@
+---
+- name: 'Krikri-playbook-generator: multi-task #12'
+  hosts: localhost
+  gather_facts: false
+  vars:
+    kpg_delegate: localhost
+  tasks:
+    - name: 'Known_hosts #12.0'
+      ansible.builtin.known_hosts:
+        hash_host: "false"
+        key: example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+        name: example.com
+        path: 37
+        state: present
+      register: kpg_task_0
+      ignore_errors: true
+      delegate_to: '{{ kpg_delegate }}'
+    - name: Kpg task result
+      ansible.builtin.debug:
+        var: kpg_task_0
