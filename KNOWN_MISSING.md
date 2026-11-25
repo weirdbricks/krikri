@@ -1043,6 +1043,25 @@ because anyone intends to fix them.
   `test/integration/tempfile_test.cr` (the name's shape and the on-disk 0600 mode and empty size
   that the oracle's `f ... 0 0 600 0` and `e3b0c442...` lines report).
 
+- **Real ansible's own `async_status: mode: cleanup` deletes its job file under `--check`, so the kpg
+  check-mode oracle counts a shared mutation as a krikri finding (kpg multi-apt_repository case,
+  issue #1804, `check-mode:3bb5f161acaf`).** The playbook's second play runs
+  `ansible.builtin.async_status` with `jid: kpgjob` and `mode: cleanup` against the fixture's
+  pre-seeded `/root/.ansible_async/kpgjob`. `async_status.py` declares `supports_check_mode=True`
+  (since 2.17) yet unlinks the job file for `mode=cleanup` with no `module.check_mode` gate, so a
+  real `--check` pass really does delete it: live-verified on ansible-core 2.21.6 with a minimal
+  `connection: local` playbook whose `ANSIBLE_ASYNC_DIR` holds the seeded file (task `ok`, file
+  gone). Both engine deltas are byte-identical (`file removed f 0 0 644 105
+  /root/.ansible_async/kpgjob` and `hash removed d7b93f61...`) with stdout, stderr and the recap
+  matching - which is what the oracle's own `--control` noise check reports with real
+  `ansible-playbook` on both hosts (`raw_identical: true`, still `check_mode_mutated: true`, the
+  same two-block diff). So no krikri change can silence it: a check-mode skip is what would break
+  parity, and the ansible-side delta alone keeps the row divergent. The oracle needs to prune each
+  home's async dir (`~/.ansible_async`, engine control-side state like the `~/.ansible` staging root
+  already pruned) before judging a check-mode delta. What krikri owns - `mode: cleanup` removing the
+  job file even when `_ansible_check_mode` is set, returning ansible's ok/`erased` shape - is pinned
+  in-process by `test/unit/async_status_plugin_test.cr`.
+
 - **A Subversion working copy's `.svn/wc.db` records the fixture repository's random UUID, so its
   hash can never match across the kpg reference images (kpg subversion case, issue #1802).** The
   fixtures run `svnadmin create /opt/kpg-fixtures/svnrepo` during seeding, in EACH reference image
