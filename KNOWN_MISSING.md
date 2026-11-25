@@ -448,7 +448,9 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   process.` note lists the ignored zones from `list(set(specified_zones) - set(collected_zones))`
   (firewalld_info.py), so **Python string-hash randomization** reorders them per module process:
   five real `ansible-playbook` runs of issue #1628's task in one container alternated between
-  `zone:(wmnfiv,lecefn)` and `zone:(lecefn,wmnfiv)`. krikri keeps the declared order (which is one
+  `zone:(wmnfiv,lecefn)` and `zone:(lecefn,wmnfiv)`, and repeated runs of the kpg check-mode
+  playbook `000019-multi-firewalld_info-happy` (issue #1814) alternate between
+  `zone:(lnzequ,sujcww)` and `zone:(sujcww,lnzequ)`. krikri keeps the declared order (which is one
   of real's possible orders; sorting would match no better) - unmatchable by design, still to be
   masked in the generator like `FSTYPE-SET-ORDER`.
 - `unarchive`'s "Failed to find handler for ..." message joins the per-handler failure reasons
