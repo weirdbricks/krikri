@@ -172,6 +172,26 @@ module Krikri
       value.raw.nil? || value.as_s? == Krikri::NONE_SENTINEL
     end
 
+    # Ansible leaves this job file behind for every parallel gather: its
+    # async_wrapper writes the finished module result into the async dir
+    # the shell plugin's `async_dir` option names (~/.ansible_async by
+    # default, ANSIBLE_ASYNC_DIR when the play sets it) - AsyncJobs.dir
+    # already resolves both the same way. 0644 rather than the 0600 an
+    # async: task's status file gets: async_wrapper's worker daemonizes
+    # under umask 022 whatever the login umask was, while krikri's own
+    # launch script opens its sidecars 0600.
+    private def write_async_job_file(jid : String, payload : String) : Nil
+      Dir.mkdir_p(AsyncJobs.dir)
+      File.open(AsyncJobs.status_path(jid), "w") do |file|
+        file.chmod(0o644)
+        file.write(payload.to_slice)
+      end
+    rescue ex
+      # Host state, not this gather's result: a read-only async dir must
+      # not fail a gather whose facts are already in hand.
+      STDERR.puts "failed to write the parallel gather's async job file: #{ex.message}"
+    end
+
     # The failure Ansible's fact module produces for an unknown parameter,
     # and - when the gather_facts action is the caller - the failed_modules
     # wrapper it puts around it. Real's setup module dies in AnsibleModule
@@ -188,6 +208,7 @@ module Krikri
       unsupported : Array(String),
       invoked_as : String,
       async : Bool,
+      jid : String?,
       discovered : String?,
       warnings : Array(String),
       discovery_warnings : Array(String),
@@ -211,7 +232,14 @@ module Krikri
       if path = discovered
         module_result["ansible_facts"] = JSON.parse({"discovered_interpreter_python" => path}.to_json)
       end
-      module_result["ansible_job_id"] = JSON::Any.new(Krikri::AsyncJobs.generate_jid) if async
+      if async && (job_id = jid)
+        # async_wrapper writes the module's own fail_json into this job
+        # file before the action reads it back through async_status, so
+        # a play that resolves the reported jid finds exactly this
+        # payload.
+        write_async_job_file(job_id, {"failed" => true, "msg" => message}.to_json)
+        module_result["ansible_job_id"] = JSON::Any.new(job_id)
+      end
       module_result["changed"] = JSON::Any.new(false)
       module_result["deprecations"] = JSON::Any.new([] of JSON::Any)
       module_result["exception"] = JSON::Any.new("(traceback unavailable)")
@@ -3054,12 +3082,28 @@ module Krikri
       # interpreter like any other first-gather result (live-verified vs
       # 2.21.6, serial and parallel).
       invoked_as = params.try(&.["_module_name"]?).try(&.as_s?) || ""
+      # Ansible's gather_facts action runs each fact module under
+      # async_wrapper whenever `parallel:` (or the ansible_facts_parallel
+      # var, which wins) resolves truthy, and the job file async_wrapper
+      # leaves in the target's async dir is never removed: the action
+      # polls with async_status' STATUS mode, and only `mode: cleanup`
+      # unlinks. A later async_status: on the reported ansible_job_id -
+      # or any task that lists ~/.ansible_async - therefore sees it on
+      # real ansible, so the gather has to leave the same artifact (issue
+      # #1808: the kpg state oracle compared both hosts' files and found
+      # only real's).
+      async = params.try(&.["_ansible_gather_async"]?).try(&.as_s?) == "true"
+      async_jid = async ? AsyncJobs.generate_jid : nil
       unsupported = unsupported_setup_params(params, invoked_as)
       unless unsupported.empty?
         return unsupported_params_failure(
           unsupported,
           invoked_as,
-          async: params.try(&.["_ansible_gather_async"]?).try(&.as_s?) == "true",
+          async: async,
+          # Real's failed-module payload reports the jid of the job file
+          # async_wrapper wrote for this very gather, so the two have to
+          # be the same string.
+          jid: async_jid,
           # Only a gather that actually stamps the discovery result carries
           # it (see the first_gather gate on the success path below).
           discovered: first_gather ? discovered_interpreter : nil,
@@ -3091,6 +3135,13 @@ module Krikri
       # _get_shebang never raises InterpreterDiscoveryRequiredError, so
       # no discovery fact exists at all.
       facts = apply_fact_filter(facts, filter_spec)
+
+      # The job file real's async_wrapper leaves holds the fact module's
+      # own result, which is just the ansible_facts dict - the
+      # discovered_interpreter_python stamp below is controller-side
+      # (real resolves the interpreter before the module runs), so the
+      # write has to happen before it.
+      write_async_job_file(async_jid, {"ansible_facts" => facts}.to_json) if async_jid
 
       if first_gather && (discovered = discovered_interpreter)
         facts["discovered_interpreter_python"] = discovered unless discovered.empty?

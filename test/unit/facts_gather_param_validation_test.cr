@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "file_utils"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
 
 # Ansible's gather_facts ACTION plugin pops its own `parallel` option and
@@ -12,6 +13,22 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 # Every expected shape below was captured from an ansible-playbook 2.21.6
 # run of the same task on a local connection (see the issue's playbook).
 describe "Krikri::FactsGatherer unknown-parameter failures (facts_gather_param_validation_test.cr)" do
+  # A parallel (async) gather leaves its job file in AsyncJobs.dir, which
+  # resolves ANSIBLE_ASYNC_DIR/HOME in-process - so the override cannot go
+  # to a child, and a non-serial test would keep reading it (the reason
+  # async_jobs_test.cr quiesces too).
+  exclusive!
+
+  private def in_temp_async_dir(&)
+    original = ENV["ANSIBLE_ASYNC_DIR"]?
+    dir = File.join(Dir.tempdir, "krikri-facts-gather-async-#{Random::Secure.hex(4)}")
+    ENV["ANSIBLE_ASYNC_DIR"] = dir
+    yield dir
+  ensure
+    original ? (ENV["ANSIBLE_ASYNC_DIR"] = original) : ENV.delete("ANSIBLE_ASYNC_DIR")
+    FileUtils.rm_rf(dir) if dir
+  end
+
   # `_first_gather` off keeps interpreter discovery - and the
   # environment-dependent warning and discovered-interpreter fact it
   # stamps - out of these payloads; the failure shape itself is identical
@@ -60,14 +77,16 @@ describe "Krikri::FactsGatherer unknown-parameter failures (facts_gather_param_v
   end
 
   it "adds the async job id and finished flag for a parallel: gather" do
-    result = JSON.parse(Krikri::FactsGatherer.run(config({"parallel_bogus" => flag("true")}, async: true)))
+    in_temp_async_dir do
+      result = JSON.parse(Krikri::FactsGatherer.run(config({"parallel_bogus" => flag("true")}, async: true)))
 
-    failed = result["failed_modules"].as_h["ansible.legacy.setup"].as_h
-    # Real's jid is "j<random digits>.<pid>" (the action plugin's
-    # secrets.randbelow plus async_wrapper's pid), so only the shape can be
-    # asserted.
-    failed["ansible_job_id"].as_s.must_match(/\Aj\d+\.\d+\z/)
-    failed["finished"].as_bool.must_equal(true)
+      failed = result["failed_modules"].as_h["ansible.legacy.setup"].as_h
+      # Real's jid is "j<random digits>.<pid>" (the action plugin's
+      # secrets.randbelow plus async_wrapper's pid), so only the shape can be
+      # asserted.
+      failed["ansible_job_id"].as_s.must_match(/\Aj\d+\.\d+\z/)
+      failed["finished"].as_bool.must_equal(true)
+    end
   end
 
   it "fails a direct setup: task with the invoked name and no wrapper" do
@@ -114,10 +133,12 @@ describe "Krikri::FactsGatherer unknown-parameter failures (facts_gather_param_v
   end
 
   it "never fails on parallel itself - the action consumes it" do
-    result = JSON.parse(Krikri::FactsGatherer.run(config({"parallel" => flag("true")}, async: true)))
+    in_temp_async_dir do
+      result = JSON.parse(Krikri::FactsGatherer.run(config({"parallel" => flag("true")}, async: true)))
 
-    expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
-    result["ansible_facts"].as_h.wont_be_empty
+      expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
+      result["ansible_facts"].as_h.wont_be_empty
+    end
   end
 
   it "never fails on a null-valued unknown parameter - the action strips Nones" do
