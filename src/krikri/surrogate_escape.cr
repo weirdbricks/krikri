@@ -53,6 +53,18 @@ module Krikri
       output[0, w]
     end
 
+    # Length of the complete, valid UTF-8 sequence starting at *index*,
+    # or nil when that byte starts none (or the sequence is truncated).
+    # Bounds-checked, unlike a Char::Reader walk, which reads past the
+    # end of a truncated tail sequence - the byte-at-a-time resync here
+    # is what lets a caller reproduce CPython's `errors="replace"` output
+    # for such a string.
+    def self.valid_sequence_length(bytes : Bytes, index : Int32) : Int32?
+      return nil unless lead = utf8_sequence_length(bytes[index])
+      return lead if index + lead <= bytes.size && valid_continuation?(bytes, index, lead)
+      nil
+    end
+
     # Bytes in the UTF-8 sequence this lead byte starts, or nil when it
     # cannot start one. Strict UTF-8, exactly as CPython's decoder
     # validates: no overlong forms, no surrogates, max U+10FFFF - a
