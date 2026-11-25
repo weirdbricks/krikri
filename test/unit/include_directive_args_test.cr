@@ -503,6 +503,25 @@ describe "PlaybookParser include directive argument validation" do
     ]).join("\n") + "\n\n")
   end
 
+  it "swaps in free.py's include-result frame for a play the free strategy ran" do
+    pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
+    # free.py's run() calls process_include_results with its own
+    # `host_results` list at line 223, and host_pinned.py only subclasses
+    # it; linear.py passes `results` at line 241, and debug.py inherits
+    # that run() unchanged - live-verified vs 2.21.6 for all four, and
+    # the frame a kpg check-mode round of an ANSIBLE_STRATEGY=free play
+    # printed (issue #1783).
+    linear = Krikri::PlaybookParser.include_tasks_non_string_file_crash_render("_AnsibleTaggedInt")
+    free = Krikri::PlaybookParser.include_tasks_non_string_file_crash_render("_AnsibleTaggedInt", free_strategy: true)
+    free.must_equal(linear.sub(
+      "  File \"#{pkg}/plugins/strategy/linear.py\", line 241, in run\n" \
+      "    included_files = IncludedFile.process_include_results(\n" \
+      "        results,\n",
+      "  File \"#{pkg}/plugins/strategy/free.py\", line 223, in run\n" \
+      "    included_files = IncludedFile.process_include_results(\n" \
+      "        host_results,\n"))
+  end
+
   it "keeps the missing-file render for a block-nested import, whose real traceback frames differ" do
     block_path = write_playbook(PluginSpecHelper.tmp_path("incdir_import_int_block"), <<-YAML)
         - block:

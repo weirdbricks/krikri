@@ -7257,8 +7257,8 @@ module Krikri
 
     # The stderr block real ansible-playbook prints when a dynamic
     # include_tasks:'s `file:` value is a non-string scalar (an int, a
-    # float, a bool): load and the TASK banner pass, then the linear
-    # strategy's include-result processing feeds the tagged scalar to
+    # float, a bool): load and the TASK banner pass, then the strategy's
+    # include-result processing feeds the tagged scalar to
     # DataLoader.path_dwim, which runs len() over it in
     # parsing/quoting.py; the TypeError escapes uncaught and the process
     # dies with the "[ERROR]: Unexpected Exception, this is probably a
@@ -7271,7 +7271,14 @@ module Krikri
     # kpg podman image's (debian:trixie-slim, pip-installed
     # ansible-core 2.21.6); the tilde/caret runs are Python 3.13's
     # PEP 657 anchors, captured per line.
-    def self.include_tasks_non_string_file_crash_render(type_name : String) : String
+    #
+    # The strategy-side frame names the plugin the play actually ran:
+    # linear.py (and debug.py, which only subclasses it) passes its own
+    # `results` list, while free.py (and host_pinned.py, which only
+    # subclasses it) passes `host_results` - live-verified vs 2.21.6 for
+    # all four, and the frame a kpg check-mode round of a play under
+    # ANSIBLE_STRATEGY=free printed (issue #1783).
+    def self.include_tasks_non_string_file_crash_render(type_name : String, free_strategy : Bool = false) : String
       pkg = "/usr/local/lib/python3.13/dist-packages/ansible"
       len_event = "object of type '#{type_name}' has no len()"
       event = "Unexpected Exception, this is probably a bug: #{len_event}"
@@ -7282,7 +7289,11 @@ module Krikri
         io << trace_frame(pkg, "cli/playbook.py", 152, "run", "results = pbex.run()")
         io << trace_frame(pkg, "executor/playbook_executor.py", 179, "run", "result = self._tqm.run(play=play)")
         io << trace_frame(pkg, "executor/task_queue_manager.py", 403, "run", "play_return = strategy.run(iterator, play_context)")
-        io << trace_frame(pkg, "plugins/strategy/linear.py", 241, "run", "included_files = IncludedFile.process_include_results(\n        results,\n    ...<2 lines>...\n        variable_manager=self._variable_manager\n    )")
+        if free_strategy
+          io << trace_frame(pkg, "plugins/strategy/free.py", 223, "run", "included_files = IncludedFile.process_include_results(\n        host_results,\n    ...<2 lines>...\n        variable_manager=self._variable_manager\n    )")
+        else
+          io << trace_frame(pkg, "plugins/strategy/linear.py", 241, "run", "included_files = IncludedFile.process_include_results(\n        results,\n    ...<2 lines>...\n        variable_manager=self._variable_manager\n    )")
+        end
         io << trace_frame(pkg, "playbook/included_file.py", 196, "process_include_results", "include_file = loader.path_dwim(include_utr.include_file)")
         io << trace_frame(pkg, "parsing/dataloader.py", 237, "path_dwim", "given = unquote(given)")
         io << trace_frame(pkg, "parsing/quoting.py", 27, "unquote", "if is_quoted(data):")
