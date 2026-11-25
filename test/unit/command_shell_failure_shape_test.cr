@@ -322,4 +322,44 @@ describe "command/shell failure-path result shape" do
       result.as_h.has_key?("skipped").must_equal(false)
     end
   end
+
+  # Issue #1762 (basecomponent.docker): a shell command that RUNS and exits
+  # non-zero keeps command.py's failure shape with changed TRUE, and the
+  # command's own stdout/stderr is carried verbatim - the only bytes that
+  # differ in that role's diff (`yum  install ...`, double space intact,
+  # exits 1) are dnf's transfer-rate line and metadata-age stamp, which live
+  # inside the command's stdout and which two runs of real Ansible disagree
+  # on identically (KNOWN_MISSING.md's nondeterministic-output notes).
+  describe "shell that runs and exits non-zero" do
+    it "keeps changed true and passes the command's own streams and cmd through verbatim" do
+      cmd = %q{printf 'Docker Repository    31 kB/s |  15 kB     00:00    \nNo match for argument: docker-ce-17.03.*\n'; printf 'Error: Unable to find a match: docker-ce-17.03.*\n' >&2; exit 1}
+      result = PluginSpecHelper.run("shell", {"cmd" => cmd})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      result["rc"].as_i.must_equal(1)
+      result["msg"].as_s.must_equal("The command exited with a non-zero return code.")
+      result["cmd"].as_s.must_equal(cmd)
+      result["stdout"].as_s.must_equal("Docker Repository    31 kB/s |  15 kB     00:00    \nNo match for argument: docker-ce-17.03.*")
+      result["stdout_lines"].as_a.map(&.as_s).must_equal([
+        "Docker Repository    31 kB/s |  15 kB     00:00    ",
+        "No match for argument: docker-ce-17.03.*",
+      ])
+      result["stderr"].as_s.must_equal("Error: Unable to find a match: docker-ce-17.03.*")
+      result["stderr_lines"].as_a.map(&.as_s).must_equal(["Error: Unable to find a match: docker-ce-17.03.*"])
+    end
+
+    it "reports exactly ansible's failed-command key set" do
+      result = PluginSpecHelper.run("shell", {"cmd" => "printf 'out\n'; printf 'err\n' >&2; exit 3"})
+
+      result["rc"].as_i.must_equal(3)
+      # fail_json() adds `exception` on the non-zero-rc path too; a registered
+      # result carries it (live-verified against 2.21.6 through a register:
+      # dump), while the printed fatal line drops it on both engines.
+      result["exception"].as_s.must_equal("(traceback unavailable)")
+      result.as_h.keys.sort!.must_equal(%w[
+        changed cmd delta end exception failed msg rc start stderr stderr_lines stdout stdout_lines
+      ])
+    end
+  end
 end

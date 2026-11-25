@@ -1033,6 +1033,25 @@ because anyone intends to fix them.
   run, where real keeps only the terminal ansible-playbook itself inherited, so `sudo`'s password
   prompt blocked forever instead of failing - `test/unit/controlling_tty_test.cr` pins both sides.
 
+- **dnf's own repo-metadata line differs between any two runs (`basecomponent.docker`, issue #1762).**
+  The role's `install docker packages` task is a `shell: yum  install -y --setopt=obsoletes=0
+  docker-ce-17.03.* ...` (double space included) which exits 1 on a Rocky host because those packages
+  no longer exist in the repo. Both engines report that failure identically - the full command-module
+  shape (`cmd` verbatim, `changed: true`, `rc: 1`, `msg` "The command exited with a non-zero return
+  code.", the command's own `stderr`/`stderr_lines` and `stdout`/`stdout_lines`) - but that command's
+  own stdout opens with dnf's metadata line: `Docker Repository     <N> kB/s |  15 kB     00:00` on a
+  cold run, `Last metadata expiration check: 0:00:<N> ago on <date>` on a warm one. The rate and age
+  are dnf's measurement of that host's own fetch, so the two engines' separate hosts - and two runs of
+  real Ansible - can never agree on them: the round's own numbers were 41 vs 38 kB/s cold and
+  `0:00:30` vs `0:00:04` warm, with every other byte of the block identical. Not a krikri gap;
+  `krikri-role-tester`'s `Compare::MASKS` needs a mask for dnf's transfer-rate and metadata-age stamps.
+  `test/unit/command_shell_failure_shape_test.cr` pins the non-zero-exit shape krikri owns (including
+  the `exception: "(traceback unavailable)"` field a registered result carries). The replayable half is
+  `test/fixtures/divergence/1762-basecomponent-docker-yum-install-failure/`: the role's task against a
+  fixed `bin/yum` stand-in. Recording it also needed the corpus to mask a command result's own
+  `start`/`end`/`delta` values as `<TIME>`, the same three fields the round harness masks; no earlier
+  case printed a command result, so those values had never been compared.
+
 ### Everything else
 
 - **`ansible-playbook`'s CLI flag surface is fully covered by name, and all but one flag is

@@ -10,11 +10,21 @@
 # orderings or failure reports.
 module Krikri
   module DivergenceTranscript
-    # What a case's scratch directory is rewritten to. The scratch path and
-    # the order of convert_bool's boolean enumeration below are the only
-    # normalized things; everything else in a transcript has to match byte
-    # for byte.
+    # What a case's scratch directory is rewritten to. The scratch path, the
+    # order of convert_bool's boolean enumeration and the values of
+    # command/shell's three timing fields below are the only normalized things;
+    # everything else in a transcript has to match byte for byte.
     WORK = "<WORK>"
+
+    # command/shell report `start`/`end`/`delta`, and all three are the wall
+    # clock at each engine's OWN run moment: two runs of real ansible disagree
+    # on them exactly like the two engines do, so a case whose transcript
+    # carries a failed (or otherwise printed) command result could never match
+    # without this. The round harness masks the same three fields as `<TIME>`.
+    # Keys, quoting and the value's format stay in the transcript; only the
+    # per-run numbers are replaced.
+    TIMING_FIELD = /(["'](?:start|end|delta)["']: ["'])(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)?|(?:\d+ days?, )?\d+:\d\d:\d\d(?:\.\d+)?)(["'])/
+    TIME         = "<TIME>"
 
     # convert_bool builds "Valid booleans include:" by iterating a Python
     # frozenset, so its order is randomized per module process (string hash
@@ -26,14 +36,17 @@ module Krikri
     # `"}` must stay outside the sort.
     BOOLEAN_ENUMERATION = /(Valid booleans include: )((?:'[^']*'|True|False|\d+(?:\.\d+)?)(?:, (?:'[^']*'|True|False|\d+(?:\.\d+)?))*)(?=\n|"|\z)/
 
-    # Rewrite *work_dir* (and everything under it) to `<WORK>`, and sort the
-    # boolean enumeration. A transcript can name the case directory dozens of
-    # times (Origin blocks, `included:` lines, every copied role path) and each
-    # run happens in a fresh directory, so the path is the one path that cannot
-    # be pinned verbatim.
+    # Rewrite *work_dir* (and everything under it) to `<WORK>`, sort the
+    # boolean enumeration and blank the command timing values. A transcript can
+    # name the case directory dozens of times (Origin blocks, `included:` lines,
+    # every copied role path) and each run happens in a fresh directory, so the
+    # path is the one path that cannot be pinned verbatim.
     def self.normalize(text : String, work_dir : String) : String
       text = text.gsub(BOOLEAN_ENUMERATION) do |_match, captures|
         "#{captures[1]}#{captures[2].to_s.split(", ").sort!.join(", ")}"
+      end
+      text = text.gsub(TIMING_FIELD) do |_match, captures|
+        "#{captures[1]}#{TIME}#{captures[2]}"
       end
       return text if work_dir.empty?
       # Only rewrite *work_dir* when it is a whole path, not a prefix of a
