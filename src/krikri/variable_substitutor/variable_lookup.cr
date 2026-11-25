@@ -349,6 +349,10 @@ module Krikri
         # deprecation again on every read, at this operation's site (see
         # VarSubstitutor#emit_loop_item_fact_deprecation).
         VarSubstitutor.emit_loop_item_fact_deprecation(name)
+        # A value that came straight out of the `vars` dict still carries
+        # its deprecation tag, so reading it trips it again (see
+        # VarSubstitutor#set_vars_dict_tagged_name).
+        VarSubstitutor.emit_vars_dict_tagged_value_deprecation(name, @vars)
         return unless VarSubstitutor.top_level_fact_name?(name, @vars)
         VarSubstitutor.emit_fact_deprecation(VarSubstitutor.fact_read_origin(name))
       end

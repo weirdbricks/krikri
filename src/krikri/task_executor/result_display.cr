@@ -2511,12 +2511,34 @@ module Krikri
       lines = File.read_lines(path)
       return free_form_param_origin(path, lines, source_line, key) unless idx = param_key_line_index(lines, source_line, key, text)
       line = lines[idx]
-      needle = "#{key}:"
-      col = line.index!(needle) + needle.size
+      col = mapping_key_positions(line, key).try(&.[1]) || (line.index!("#{key}:") + key.size + 1)
       while col < line.size && line[col] == ' '
         col += 1
       end
       ErrorBlock.origin_context(path, idx + 1, col + 1)
+    end
+
+    # The `<key>:` token in *line*, as {index of the key text, index just
+    # past the colon}. A QUOTED mapping key (`"{{ item }}":`, which
+    # set_fact's own dynamically-named facts use) carries YAML's closing
+    # quote between the key's text and its colon, so a plain `<key>:`
+    # search finds nothing and the read had no Origin at all - real still
+    # tags that value at its own token (issue #1825: kaos2oak.
+    # oracle_java's `"{{ item[8:] }}": "{{ vars[...] }}"`).
+    private def self.mapping_key_positions(line : String, key : String) : Tuple(Int32, Int32)?
+      needle = "#{key}:"
+      if at = line.index(needle)
+        return {at, at + needle.size}
+      end
+      search = 0
+      while at = line.index(key, search)
+        after = at + key.size
+        if (quote = line[after]?) && (quote == '"' || quote == '\'') && line[after + 1]? == ':'
+          return {at, after + 2}
+        end
+        search = after
+      end
+      nil
     end
 
     # The command-family modules whose free-form task arg is one raw
@@ -2670,9 +2692,8 @@ module Krikri
       # `<key>=` token.
       return param_value_origin(path, source_line, key, text: text) unless idx = param_key_line_index(lines, source_line, key, text)
       key_line = lines[idx]
-      needle = "#{key}:"
-      rest = key_line[(key_line.index!(needle) + needle.size)..]
-      return param_value_origin(path, source_line, key, text: text) unless rest.strip.empty?
+      value_start = mapping_key_positions(key_line, key).try(&.[1]) || (key_line.index!("#{key}:") + key.size + 1)
+      return param_value_origin(path, source_line, key, text: text) unless key_line[value_start..].strip.empty?
 
       key_indent = key_line.size - key_line.lstrip.size
       items = [] of {Int32, Int32}
@@ -2726,7 +2747,6 @@ module Krikri
     # *source_line*: nothing but whitespace/quotes (or the list dash opening
     # the task's own mapping) may precede the key.
     private def self.param_key_line_index(lines : Array(String), source_line : Int32, key : String, text : String? = nil) : Int32?
-      needle = "#{key}:"
       want = text ? strip_yaml_scalar_quotes(text.strip) : nil
       fallback = nil
       block_hit = nil
@@ -2743,8 +2763,10 @@ module Krikri
           indent = line.size - line.lstrip.size
           break if indent <= task_indent && line.lstrip.starts_with?("- ")
         end
-        at = line.index(needle)
-        next unless at
+        positions = mapping_key_positions(line, key)
+        next unless positions
+        at = positions[0]
+        value_start = positions[1]
         prefix = line[0...at]
         # only a mapping key: nothing but whitespace/quotes before it, or the
         # list dash that opens the task's own mapping (`- include_vars:
@@ -2757,21 +2779,24 @@ module Krikri
         # tasks/ntp.yml - real pins the read on that directive's value,
         # issue #1021), so a dotted namespace before the key matches too.
         stripped = prefix.strip
-        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped)) ||
+        # A QUOTED key's own opening quote is the only thing before it
+        # (`"{{ item }}":` - see #mapping_key_positions; the old
+        # Char-vs-String set test never matched it, issue #1825).
+        next unless stripped.empty? || stripped == "\"" || stripped == "'" ||
                     stripped == "-" ||
                     stripped.matches?(/\A(?:-\s+)?(?:[A-Za-z0-9_]+\.)+\z/)
         # The rendered-text match wins when several `key:` lines qualify:
         # a task's own `name:` opens the mapping while a module's `name:`
         # param sits deeper in it, and each read belongs to the one whose
         # value is the text being rendered.
-        return idx if want && strip_yaml_scalar_quotes(line[(at + needle.size)..].strip) == want
+        return idx if want && strip_yaml_scalar_quotes(line[value_start..].strip) == want
         # A param whose value is a block SEQUENCE keeps its scalars on the
         # item lines BELOW the key, so its key line can never match *want*
         # itself - real tags each item, and the container text being
         # rendered names them (issue #1267, alexpdp7.ansible_puppet's
         # `yum: name:` list; without this the task's own `name:` line wins
         # as the first fallback).
-        if want && block_hit.nil? && line[(at + needle.size)..].strip.empty? &&
+        if want && block_hit.nil? && line[value_start..].strip.empty? &&
            block_sequence_names?(lines, idx, want)
           block_hit = idx
         end
@@ -2784,7 +2809,7 @@ module Krikri
         # continuation into it). The deepest such line wins the same way an
         # exact match does: the task's `name:` above it is shallower
         # (issue #1667, antmelekhin.postgres_exporter).
-        if want && scalar_continues?(line[(at + needle.size)..], want) &&
+        if want && scalar_continues?(line[value_start..], want) &&
            (continuation_hit.nil? || line.size - line.lstrip.size > lines[continuation_hit].size - lines[continuation_hit].lstrip.size)
           continuation_hit = idx
         end
