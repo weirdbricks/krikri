@@ -273,8 +273,33 @@ module Krikri
             value
           end
         when "join"
+          # Jinja2's do_join is `sep.join(map(str, value))`: a str operand
+          # iterates per CHARACTER and a dict over its KEYS, but a
+          # non-iterable operand raises Python's TypeError instead of
+          # yielding an empty string. as_array's lenient `[]` coercion used
+          # to swallow every non-array operand, which is what let a
+          # `--check` run of thechip911.hardening pass a task real ansible
+          # fails: a skipped `command:` registers a result with no
+          # `stderr`, so `ssh_version.stderr | regex_search(...)` is None
+          # and the join raises "'NoneType' object is not iterable" (issue
+          # #1781). Live-verified against ansible-core 2.21.6 for None,
+          # int, bool and float.
           sep = filter_args.strip.empty? ? "" : parse_filter_arg(filter_args)
-          JSON::Any.new(as_array(value).map { |v| as_string(v) }.join(sep))
+          items = case raw = value.raw
+                  when Array then value.as_a
+                  when Hash  then raw.keys.map { |key| JSON::Any.new(key) }
+                  when String
+                    # A bigint-marked string IS the integer (see
+                    # Krikri.bigint_sentinel), not text to iterate.
+                    raise "'int' object is not iterable" if Krikri.bigint_digits(raw)
+                    raw.chars.map { |char| JSON::Any.new(char.to_s) }
+                  when Nil     then raise "'NoneType' object is not iterable"
+                  when Bool    then raise "'bool' object is not iterable"
+                  when Float64 then raise "'float' object is not iterable"
+                  when Int64   then raise "'int' object is not iterable"
+                  else              raise "'#{raw.class}' object is not iterable"
+                  end
+          JSON::Any.new(items.map { |v| as_string(v) }.join(sep))
         when "list"
           value
         when "first"

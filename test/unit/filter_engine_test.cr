@@ -361,6 +361,39 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(JSON.parse(%(["a", "b", "c"])), %(join(','))).as_s.must_equal("a,b,c")
   end
 
+  it "joins a string per character and a dict over its keys" do
+    # Jinja2's do_join iterates whatever it is handed: a str is a sequence
+    # of characters and a dict iterates its keys (live-verified against
+    # ansible-core 2.21.6). as_array reduced both to an empty array.
+    engine.apply(s("abc"), %(join('-'))).as_s.must_equal("a-b-c")
+    engine.apply(JSON.parse(%({"a": 1, "b": 2})), %(join('-'))).as_s.must_equal("a-b")
+  end
+
+  it "fails join on a non-iterable operand like ansible, instead of joining nothing" do
+    # Python's TypeError for iter(None)/iter(int)/iter(bool)/iter(float)
+    # surfaces as ansible's "The filter plugin ... failed" wrapper. The
+    # None case is what a --check run of thechip911.hardening hits: a
+    # skipped command: registers a result with no stderr, so
+    # `ssh_version.stderr | regex_search(...) | join('.')` fails the task
+    # (issue #1781). as_array's silent [] coercion made it pass.
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError,
+      "The filter plugin 'ansible.builtin.join' failed: 'NoneType' object is not iterable") do
+      engine.apply(JSON::Any.new(nil), "join(',')")
+    end
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError,
+      "The filter plugin 'ansible.builtin.join' failed: 'int' object is not iterable") do
+      engine.apply(JSON::Any.new(5), "join(',')")
+    end
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError,
+      "The filter plugin 'ansible.builtin.join' failed: 'bool' object is not iterable") do
+      engine.apply(JSON::Any.new(true), "join(',')")
+    end
+    assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::FilterFailureError,
+      "The filter plugin 'ansible.builtin.join' failed: 'float' object is not iterable") do
+      engine.apply(JSON::Any.new(1.5), "join(',')")
+    end
+  end
+
   it "extracts an attribute from each hash in an array via map(attribute=...)" do
     value = JSON.parse(%([{"path": "/a", "size": 1}, {"path": "/b", "size": 2}]))
     result = engine.apply(value, %(map(attribute='path'))).as_a.map(&.as_s)
