@@ -1,0 +1,29 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [ssh : For each host, scan for its ssh public key] ************************
+[ERROR]: Task failed: object of type 'dict' has no attribute 'servers'
+
+Task failed.
+Origin: <WORK>/roles/ssh/tasks/main.yml:5:3
+
+3 # tasks file for jedimt.ssh
+4
+5 - name: For each host, scan for its ssh public key
+    ^ column 3
+
+<<< caused by >>>
+
+object of type 'dict' has no attribute 'servers'
+Origin: <WORK>/roles/ssh/defaults/main.yml:5:18
+
+3
+4 ssh_known_hosts_file: "{{ lookup('env','HOME') + '/.ssh/known_hosts' }}"
+5 ssh_known_hosts: "{{ groups['servers'] }}"
+                   ^ column 18
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: object of type 'dict' has no attribute 'servers'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

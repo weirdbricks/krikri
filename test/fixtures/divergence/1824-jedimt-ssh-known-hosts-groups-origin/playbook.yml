@@ -1,0 +1,11 @@
+# jedimt.ssh's tasks/main.yml first task, verbatim: its `with_items:` reads
+# the role default `ssh_known_hosts`, whose own value templates
+# `groups['servers']` - a group this inventory does not define. Real
+# templates that default lazily and points the failure chain's "caused by"
+# Origin at the default's value token (defaults/main.yml:5:18), not at the
+# `with_items:` that read it.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - ssh
