@@ -1,0 +1,30 @@
+# marsante.ansible_role_medshakeehr's tasks/install-msehr.yml composer tasks,
+# verbatim (names, params, arguments) apart from:
+#   - become/become_user dropped: the case runs as the local user;
+#   - msehr_dir pointed at a scratch tree (the fake php never reads it);
+#   - executable:/composer_executable: pointed at the case's own php stub -
+#     this host has no php, and composer.py always execs "<php> <composer>".
+- hosts: local
+  gather_facts: false
+  vars:
+    msehr_dir: "{{ playbook_dir }}/msehr"
+    case_php: "{{ playbook_dir }}/bin/php"
+    case_composer: "{{ playbook_dir }}/bin/composer"
+  tasks:
+    - name: "Composer update on {{ msehr_dir }}"
+      community.general.composer:
+        command: update
+        arguments: --no-cache
+        working_dir: "{{ msehr_dir }}"
+        executable: "{{ case_php }}"
+        composer_executable: "{{ case_composer }}"
+      tags: update
+
+    - name: "Composer upgrade on {{ msehr_dir }}/public_html"
+      community.general.composer:
+        command: update
+        arguments: --no-cache
+        working_dir: "{{ msehr_dir }}/public_html"
+        executable: "{{ case_php }}"
+        composer_executable: "{{ case_composer }}"
+      tags: update
