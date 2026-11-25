@@ -12,6 +12,13 @@ module Krikri
     property handlers : Array(Task)
     property hosts : Array(Host)
 
+    # A last-moment check TaskExecutor runs for a handler that is about to
+    # display and execute - free/host_pinned's BYPASS_HOST_LOOP refusal
+    # (issue #1810) has to land before the RUNNING HANDLER banner, which
+    # real never prints for the handler it aborts on. The proc itself is a
+    # no-op outside free/host_pinned.
+    property pre_execute_check : Proc(Task, Nil)? = nil
+
     # Track which handlers have been notified for each host
     @notified_handlers : Hash(String, Set(String))
 
@@ -267,6 +274,7 @@ module Krikri
       # make a plain `notify: my handler` stop matching a
       # role handler's own bare notified name.
       role_prefix = (rn = handler.role_name) ? "#{rn} : " : ""
+      pre_execute_check.try &.call(handler)
       print_handler_display(handler, handler_index, rendered_name, host, bannered, role_prefix)
 
       # Execute handler using the callback

@@ -1,0 +1,18 @@
+
+PLAY [Krikri-playbook-generator: multi-task #30.0] *****************************
+
+TASK [Package_facts #30.0] *****************************************************
+ok: [target -> target2]
+
+TASK [Kpg notifier] ************************************************************
+skipping: [target]
+
+PLAY [Krikri-playbook-generator: multi-task #30.1] *****************************
+[ERROR]: The 'ansible.builtin.pause' module bypasses the host loop, which is currently not supported in the free strategy and would instead execute for every host in the inventory list.
+Origin: <WORK>/playbook.yml:43:7
+
+41     kpg_stmt_for: '{% for item in [1, 2] %}{{ item }}{% endfor %}'
+42   tasks:
+43     - name: 'Pause #30.1'
+         ^ column 7
+

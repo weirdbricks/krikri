@@ -1757,6 +1757,15 @@ playbook.plays.each_with_index do |play, _play_index|
       # (live-verified vs 2.21.6, issue #1454).
       STDERR.print ex.render
       exit 1
+    rescue ex : Krikri::TaskExecutor::BypassHostLoopFatalError
+      # free/host_pinned refuses a pause:/add_host: task as it dequeues it
+      # (it bypasses the host loop real's strategy relies on). That is a
+      # strategy-level AnsibleError too: the [ERROR] + Origin block goes
+      # to STDERR and the run ends with rc=1 - no TASK banner, no fatal:
+      # line, no PLAY RECAP, and no way for ignore_errors:/when: to catch
+      # it (live-verified vs ansible-core 2.21.6, issue #1810).
+      STDERR.print ex.render
+      exit 1
     rescue ex : Krikri::TaskExecutor::MetaWhenFatalError
       # A meta: task's `when:` that raised is NOT a task failure in real:
       # its strategy evaluates those conditions itself, so the exception
