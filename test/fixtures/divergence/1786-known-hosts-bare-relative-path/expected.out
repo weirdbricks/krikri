@@ -1,0 +1,28 @@
+
+PLAY [Krikri-playbook-generator: multi-task #12] *******************************
+
+TASK [Known_hosts #12.0] *******************************************************
+[ERROR]: Task failed: Module failed: [Errno 2] No such file or directory: b''
+Origin: <WORK>/playbook.yml:8:7
+
+6     kpg_delegate: localhost
+7   tasks:
+8     - name: 'Known_hosts #12.0'
+        ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Module failed: [Errno 2] No such file or directory: b''"}
+...ignoring
+
+TASK [Kpg task result] *********************************************************
+ok: [localhost] => {
+    "kpg_task_0": {
+        "changed": false,
+        "exception": "(traceback unavailable)",
+        "failed": true,
+        "msg": "Task failed: Module failed: [Errno 2] No such file or directory: b''"
+    }
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+

@@ -87,4 +87,20 @@ describe "known_hosts plugin" do
     result["changed"].as_bool.must_equal(false)
     File.exists?(File.dirname(path)).must_equal(false)
   end
+
+  it "crashes like real atomic_move on a new bare relative path" do
+    dir = PluginSpecHelper.tmp_path("known_hosts_bare_relative")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "37")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("known_hosts", {"name" => "example.com", "key" => KEY1, "path" => "37"}, chdir: dir)
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Task failed: Module failed: [Errno 2] No such file or directory: b''")
+    result["exception"].as_s.must_equal("(traceback unavailable)")
+    # real's rename happens before the stat that raises, so the new file stays
+    File.read(path).must_include("example.com")
+  end
 end

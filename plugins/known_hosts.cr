@@ -395,7 +395,8 @@ module Krikri
     # temp file in the same directory + rename. Attributes mirror Ansible's
     # atomic_move: an existing dest keeps its mode/owner, a newly created
     # file gets 0666 & ~umask. Returns a failure result (Ansible raises out
-    # of enforce_state with "Failed to write to file '<path>'.") or nil.
+    # of enforce_state with "Failed to write to file '<path>'."), the crash
+    # its own atomic_move raises for a bare relative path, or nil.
     private def rewrite(path : String, found_line : Int32?, replace_or_add : Bool, state : String, key : String?) : PluginResult?
       existed = File.exists?(path)
       content = existed ? File.read(path) : ""
@@ -410,6 +411,22 @@ module Krikri
       rescue
         cleanup_tmp(tmp)
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write to file '#{path}'.")
+      end
+
+      # known_hosts.py hands its written temp file to AnsibleModule#atomic_move,
+      # which - only when the destination did not exist before the rename -
+      # ends by stat'ing os.path.dirname(b_dest) for the directory's setgid
+      # bit. A path with no directory component (the generator's `path: 37`)
+      # has an EMPTY dirname, and that stat runs on bytes, so os.stat(b'')
+      # raises out of atomic_move: real ansible fails the task with
+      # "[Errno 2] No such file or directory: b''" and, because the rename
+      # already happened, the file it just created stays behind
+      # (live-verified vs ansible-core 2.21.6). File.dirname answers "."
+      # where posixpath gives "", hence the raw-slash test.
+      if !existed && !path.includes?('/')
+        detail = "[Errno 2] No such file or directory: b''"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
       end
       nil
     end
