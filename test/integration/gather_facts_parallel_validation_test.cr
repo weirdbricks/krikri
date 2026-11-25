@@ -25,11 +25,13 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook(yaml : String)
+private def run_playbook(yaml : String, args : Array(String) = [] of String,
+                         env : Hash(String, String)? = nil)
   playbook = File.tempname("gather-facts-parallel", ".yml")
   File.write(playbook, yaml)
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  status = Process.run(BINARY, ["-i", INVENTORY, *args, playbook],
+    output: output, error: output, env: env)
   {status, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -145,5 +147,37 @@ describe "gather_facts parallel matches Ansible 2.19.11 strict boolean conversio
     status.success?.must_equal(true)
     output.must_include("Unsupported parameters for (setup) module: parallel.")
     output.wont_include("is not a valid boolean")
+  end
+
+  # Regression for issue #1809: real ansible's gather_facts ACTION runs the
+  # fact module under async_wrapper when `parallel:` is truthy, so its
+  # --check pass leaves ~/.ansible_async/<jid>.<pid> (0644, the whole facts
+  # payload) on the target - the kpg check-mode oracle's entire diff. krikri
+  # gathers in-process and leaves the async dir untouched, which is what
+  # this pins; no krikri change can silence the oracle, because the jid and
+  # the file's contents are drawn afresh each run and the oracle flags
+  # either engine's mutation (KNOWN_MISSING's issue #1809 entry).
+  it "gathers in-process without an async job file, even under --check" do
+    async_dir = PluginSpecHelper.tmp_path("async-dir")
+    Dir.mkdir_p(async_dir)
+
+    status, output = run_playbook(<<-YAML, ["--check"], {"ANSIBLE_ASYNC_DIR" => async_dir})
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: gf parallel
+            gather_facts:
+              parallel: true
+            register: r
+          - name: facts shape
+            debug:
+              msg: "{{ r.ansible_facts.gather_subset }} {{ r.ansible_facts.module_setup }}"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("msg\": \"['all'] True")
+    output.must_include("ok=2")
+    Dir.children(async_dir).must_be_empty
   end
 end
