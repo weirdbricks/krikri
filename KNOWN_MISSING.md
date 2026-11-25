@@ -1026,6 +1026,23 @@ because anyone intends to fix them.
   guest settle before the before-snapshot) before that half of the oracle is trusted on a freshly
   booted host.
 
+- **The kpg state oracle counts a `tempfile` module's own random name as a file-tree change (kpg
+  multi-template case, issue #1803).** The playbook's second play runs `ansible.builtin.tempfile`
+  with `path: /tmp/kpg-work`, `prefix: kpg.` and `suffix: .tmp`, and both engines create exactly
+  one empty 0600 file there - but mkstemp's eight random `[a-z0-9_]` characters sit between the
+  prefix and the suffix, so the name differs on every run by construction. The oracle lists that
+  path in its `#files` and `#hashes` sections (unlike the engines' own staging prefixes, a
+  module's requested output cannot be pruned), so both deltas read `file added f 0 0 600 0
+  /tmp/kpg-work/kpg.<rnd>.tmp` and `hash added e3b0c442...` with nothing but the random run
+  mismatched, while stdout, stderr and the recap stay byte-identical. The generator's own
+  `--control` noise check (real `ansible-playbook` on both hosts, same playbook and check mode)
+  reports the same `state:9b6901ec1080` signature, so two real Ansible runs disagree here
+  identically and no krikri change can match it. The oracle needs to normalise a mkstemp-shaped
+  name - the same eight-character run its `ByteDiff::MASKS` already drops from tempfile's failure
+  message - before comparing or hashing that path. What krikri owns is pinned in-process by
+  `test/integration/tempfile_test.cr` (the name's shape and the on-disk 0600 mode and empty size
+  that the oracle's `f ... 0 0 600 0` and `e3b0c442...` lines report).
+
 - **apt's live progress meter differs between any two runs (`ddilts.change_password` issue #1728,
   `crivetimihai.bootstrap` issue #1789).** In the ddilts round the role's first task is
   `raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)`.
