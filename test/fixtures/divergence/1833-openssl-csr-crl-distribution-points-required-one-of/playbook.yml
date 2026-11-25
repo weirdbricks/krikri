@@ -1,0 +1,46 @@
+# krikri-playbook-generator playbook 000021-multi-synchronize-chaos.yml's
+# "Openssl_csr #21.1" task VERBATIM, except for what cannot run in the corpus:
+# the path is the case's own file instead of the generator image's
+# /tmp/kpg-work/out3.cfg (a case may not touch the machine), the
+# kpg_owner/kpg_group role vars the round passed with -e are pinned in the
+# play's vars, delegate_to is dropped because the case runs on localhost, and
+# the round's `when: kpg_task_0 is not skipped` gate goes with the preceding
+# synchronize task it referred to.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    kpg_owner: root
+    kpg_group: root
+  tasks:
+    - name: 'Openssl_csr #21.1'
+      community.crypto.openssl_csr:
+        authority_key_identifier: ipoijk
+        basic_constraints_critical: false
+        create_subject_key_identifier: false
+        crl_distribution_points:
+          - {}
+        extended_key_usage_critical: false
+        force: false
+        group: '{{ ''{{ kpg_group }}'' }}'
+        key_usage:
+          - kvofdb
+          - oiqkvr
+        mode: "0400"
+        name_constraints_permitted:
+          - yxtswh
+          - awojsl
+          - diuqud
+        ocsp_must_staple_critical: true
+        organization_name: ruwsbd
+        organizational_unit_name: cotywt
+        owner: '{{ kpg_owner }}'
+        path: "{{ playbook_dir }}/out3.cfg"
+        privatekey_content: yvluus
+        privatekey_passphrase: igkdlu
+        return_content: true
+        state_or_province_name: jcridr
+        subject: {}
+        subject_alt_name_critical: true
+      register: kpg_task_1
+      ignore_errors: true
