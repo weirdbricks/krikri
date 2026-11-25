@@ -325,6 +325,81 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
     ensure
       File.delete(dest) if dest && File.exists?(dest)
     end
+    # Live-verified against ansible-core 2.21.6: the copy module's
+    # exit-time set_fs_attributes_if_different runs over the task's dest
+    # for a remote_src DIRECTORY copy, so mode:/owner:/group: land on the
+    # destination directory itself (a local tree copy walks the files in
+    # the ACTION plugin and leaves dest's own mode alone - see the
+    # directory_mode: block below). Community.general.composer running as
+    # www-data could not write composer.lock into a tree copied this way
+    # while the directory stayed root-owned (issue #1797).
+    it "applies the task's mode to the destination directory of a remote_src tree copy" do
+      src_dir = File.join(Dir.tempdir, "krikri-rsdir-src-#{Random.new.hex(8)}")
+      Dir.mkdir_p(File.join(src_dir, "sub"))
+      File.chmod(File.join(src_dir, "sub"), 0o770)
+      File.write(File.join(src_dir, "a.txt"), "a\n")
+      File.write(File.join(src_dir, "sub", "b.txt"), "b\n")
+
+      dest_dir = File.join(Dir.tempdir, "krikri-rsdir-dest-#{Random.new.hex(8)}")
+      result = PluginSpecHelper.run("copy", {
+        "src"        => "#{src_dir}/",
+        "dest"       => dest_dir,
+        "remote_src" => "true",
+        "mode"       => "0700",
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      (File.info(dest_dir).permissions.value & 0o777).must_equal(0o700)
+      # Subdirectories keep the SOURCE mode (shutil.copytree's copystat),
+      # not the task's mode: - live-verified against the same run.
+      (File.info(File.join(dest_dir, "sub")).permissions.value & 0o777).must_equal(0o770)
+      File.read(File.join(dest_dir, "sub", "b.txt")).must_equal("b\n")
+    ensure
+      FileUtils.rm_rf(src_dir) if src_dir
+      FileUtils.rm_rf(dest_dir) if dest_dir
+    end
+
+    # Owner/group reach every directory in the copied tree, not just the
+    # files (copy_directory's chown_recursive; the local path gets the
+    # same from the ACTION plugin's file-module call per directory). The
+    # role's own composer task runs as the tree's owner and writes INTO a
+    # subdirectory (public_html), which a root-owned subdir blocks
+    # (issue #1797).
+    it "gives a remote_src tree copy's subdirectories the task's group" do
+      gid = chgrp_target_group
+      src_dir = File.join(Dir.tempdir, "krikri-rsgrp-src-#{Random.new.hex(8)}")
+      Dir.mkdir_p(File.join(src_dir, "sub"))
+      File.write(File.join(src_dir, "sub", "b.txt"), "b\n")
+
+      dest_dir = File.join(Dir.tempdir, "krikri-rsgrp-dest-#{Random.new.hex(8)}")
+      result = PluginSpecHelper.run("copy", {
+        "src"        => "#{src_dir}/",
+        "dest"       => dest_dir,
+        "remote_src" => "true",
+        "group"      => gid.to_s,
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      File.info(dest_dir, follow_symlinks: false).group_id.to_u32.must_equal(gid)
+      File.info(File.join(dest_dir, "sub"), follow_symlinks: false).group_id.to_u32.must_equal(gid)
+    ensure
+      FileUtils.rm_rf(src_dir) if src_dir
+      FileUtils.rm_rf(dest_dir) if dest_dir
+    end
+  end
+
+  # A gid the running user can chgrp to without root: a supplementary
+  # group when there is one, else the primary (the assertion then only
+  # pins the code path, not an observable ownership change).
+  private def chgrp_target_group : UInt32
+    output = IO::Memory.new
+    Process.run("id", ["-G"], output: output)
+    ids = output.to_s.split.map(&.to_u32)
+    output.clear
+    Process.run("id", ["-g"], output: output)
+    primary = output.to_s.strip.to_u32
+    ids.find { |id| id != primary } || primary
   end
 
   describe "directory_mode: (mode for directories the copy creates)" do

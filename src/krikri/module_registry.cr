@@ -296,6 +296,22 @@ module Krikri
       # path skipped the task and exited 4, so the role's kubectl task
       # never ran on a target this engine supports. See plugins/snap.cr.
       "community.general.snap",
+      # composer (issue #1797, marsante.ansible_role_medshakeehr on
+      # ubuntu): composer.py declares check_mode support (it appends
+      # --dry-run when the composer command advertises one), so real RUNS
+      # the role's "Composer update"/"Composer upgrade" tasks under
+      # --check - answering ok on a converged project - where the
+      # unavailable-module path skipped them and exited 4. That skip also
+      # left the role's vendor/ uninstalled on the krikri host, so the
+      # role's own install.php task failed and every task after it
+      # diverged too. See plugins/composer.cr.
+      "community.general.composer",
+      # ansible.builtin.composer: ansible-core's own ansible_builtin_runtime
+      # redirects the builtin spelling to community.general.composer and
+      # runs it (live-verified: a task spelling `ansible.builtin.composer:`
+      # answers ok), so leaving it unregistered drops a task real executes.
+      # Same shape as the ansible.builtin.timezone/homebrew entries above.
+      "ansible.builtin.composer",
       # dpkg_divert (0.9.929): Debian file-diversion management
       # (ansible-lockdown ubuntu24 CIS and MindPointGroup debian11 CIS
       # rounds both hard-stopped on it). Debian-family only by nature -

@@ -1,0 +1,17 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Composer update on /var/www/ehr] *****************************************
+[ERROR]: Task failed: Module failed: Failed to find required executable "php" in paths: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Origin: <WORK>/playbook.yml:10:7
+
+ 8   gather_facts: false
+ 9   tasks:
+10     - name: "Composer update on /var/www/ehr"
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Failed to find required executable \"php\" in paths: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

@@ -2154,8 +2154,11 @@ module Krikri
     # #check_mode_attrs_result, in basic.py's own setter order
     # (secontext, owner, group, mode, attributes). The lookups raise
     # OwnerLookupFailure for an unresolvable name, exactly as the real
-    # apply does.
-    private def check_mode_attrs_differ?(path : String, info : File::Info) : Bool
+    # apply does. *mode_override* replaces the task's own mode: for the
+    # callers that reconcile a path with a different mode than the one
+    # the task stated (copy's directory_mode, which copy.py substitutes
+    # into file_args for the directory branch).
+    private def check_mode_attrs_differ?(path : String, info : File::Info, mode_override : String? = nil) : Bool
       changed = false
 
       if owner = file_attr_param("owner")
@@ -2166,7 +2169,7 @@ module Krikri
         changed = true if info.group_id.to_i != resolve_group_gid(group)
       end
 
-      if mode = file_attr_param("mode")
+      if mode = (mode_override || file_attr_param("mode"))
         current_bits = info.permissions.value.to_i & 0o7777
         target_bits = mode =~ /\A0?[0-7]{1,4}\z/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)
         changed = true if current_bits != target_bits

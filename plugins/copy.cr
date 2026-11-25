@@ -1037,6 +1037,29 @@ module Krikri
             end
             changed = true
           end
+          # Owner/group apply to EVERY directory in the tree, created or
+          # pre-existing: remote_src has copy_directory's own
+          # chown_recursive, a local copy has the ACTION plugin's
+          # file-module call per directory (both live-verified: a tree
+          # copied with owner: www-data ends up with www-data on the
+          # subdirectories too). Only the MODES differ between the two
+          # paths (source modes for remote_src, directory_mode for the
+          # local one). Leaving subdirectories at the creating user's
+          # ownership made the role's own composer run as www-data fail
+          # to write composer.lock inside /var/www/ehr/public_html
+          # (issue #1797).
+          begin
+            changed = true if apply_owner_group(dest_path, check_only: @check_mode)
+          rescue ex : OwnerLookupFailure
+            # basic.py's set_owner_if_different fail_json(path=...,
+            # msg=...), with the path's stat block grafted on by
+            # add_path_info (no checksum: a directory source has none).
+            failure = PluginResult.new(changed: false, failed: true,
+              msg: ex.message || "owner lookup failed")
+            failure.extra["path"] = JSON::Any.new(dest_path)
+            add_path_info(failure, dest_path)
+            return failure
+          end
           next
         end
 
@@ -1062,6 +1085,25 @@ module Krikri
       end
 
       if remote_src_directory
+        # copy.py's exit-time set_fs_attributes_if_different over the
+        # task's dest: for a remote_src directory copy the module's own
+        # file_args path is `dest` itself (not the dest/<basename> subdir
+        # the tree was copied into), with directory_mode replacing mode:
+        # when given. A LOCAL directory copy never reaches that code (the
+        # ACTION plugin walks the tree file by file and only applies
+        # directory_mode to the directories it creates), so this is
+        # remote_src-only. Live-verified against ansible-core 2.21.6: a
+        # remote_src tree copy with mode: 0700 leaves the destination
+        # directory 0700, the same copy from a local src leaves it at the
+        # umask default. Without it, a role copying a tree with owner:
+        # www-data left the directory root-owned and the next task
+        # running as that owner (community.general.composer writing
+        # composer.lock in /var/www/ehr, issue #1797) failed with
+        # "Failed to open stream: Permission denied".
+        attrs_changed, failure = apply_directory_exit_attributes(dest)
+        return failure if failure
+        changed = true if attrs_changed
+
         # The module's own res_args for a directory source: the user's
         # src echoed back, nil checksums (a directory has no file
         # checksum) and - via add_path_info below - the top-level dest's
@@ -1076,6 +1118,21 @@ module Krikri
           key_order: REMOTE_SRC_DIR_KEY_ORDER
         )
       else
+        # A local tree copy's root directory is created by the ACTION
+        # plugin's file-module call, which carries owner:/group: but sets
+        # mode: to directory_mode (not the task's mode:), so the dest
+        # keeps the umask default mode while its ownership is
+        # reconciled. Live-verified against ansible-core 2.21.6.
+        begin
+          changed = true if apply_owner_group(dest_root, check_only: @check_mode)
+        rescue ex : OwnerLookupFailure
+          failure = PluginResult.new(changed: false, failed: true,
+            msg: ex.message || "owner lookup failed")
+          failure.extra["path"] = JSON::Any.new(dest_root)
+          add_path_info(failure, dest_root)
+          return failure
+        end
+
         result = PluginResult.new(
           changed: changed,
           failed: false,
@@ -1267,11 +1324,11 @@ module Krikri
     # actually changed on disk (so the identical-content callers can report
     # `changed` like Ansible when they reconcile an attribute), false
     # otherwise - including when nothing was stale or an apply failed.
-    private def apply_file_attributes(path : String, recursive : Bool = false) : Bool
+    private def apply_file_attributes(path : String, recursive : Bool = false, mode_override : String? = nil) : Bool
       before = File.info?(path, follow_symlinks: false)
 
       # Set mode (permissions)
-      if mode = @params["mode"]?
+      if mode = (mode_override || @params["mode"]?)
         begin
           # Ansible parses ANY all-digit mode string as octal,
           # leading zero or not (`mode: "640"` and `mode: "0640"` are
@@ -1310,23 +1367,7 @@ module Krikri
       # service user couldn't read its own dashboard provisioning
       # config, "Failed to create provisioner: ... permission denied" -
       # the whole service refused to start.
-      uid = -1
-      gid = -1
-
-      # A present owner:/group: value (explicit empty string included)
-      # is always resolved - and an unresolvable name fails the task
-      # like Ansible's basic.py (round900811 kilip.chezmoi) -
-      # instead of the old `&&`-short-circuit that silently skipped the
-      # chown whenever the lookup came back empty.
-      if owner = @params["owner"]?
-        uid = resolve_owner_uid(owner)
-      end
-
-      if group = @params["group"]?
-        gid = resolve_group_gid(group)
-      end
-
-      File.chown(path, uid: uid, gid: gid) if uid != -1 || gid != -1
+      apply_owner_group(path)
 
       after = File.info?(path, follow_symlinks: false)
       return false unless before && after
@@ -1336,6 +1377,45 @@ module Krikri
     rescue File::Error
       # A chown/chmod failure (e.g. not running as root/owner) shouldn't
       # fail the whole task - matches file.cr's own identical rescue.
+      false
+    end
+
+    # set_owner_if_different/set_group_if_different for one path: resolve
+    # the task's own owner:/group: (an explicit empty or unresolvable
+    # value raises OwnerLookupFailure, exactly like basic.py's fail_json -
+    # the callers rescue it into the module's failure shape) and chown
+    # when either was given. Returns whether the ownership actually
+    # changed, which is what copy.py's chown_path/chown_recursive OR into
+    # the result's changed. *check_only* is basic.py's own --check
+    # behaviour: compare, report, and skip the chown.
+    private def apply_owner_group(path : String, check_only : Bool = false) : Bool
+      before = File.info?(path, follow_symlinks: false)
+      uid = -1
+      gid = -1
+
+      if owner = @params["owner"]?
+        uid = resolve_owner_uid(owner)
+      end
+
+      if group = @params["group"]?
+        gid = resolve_group_gid(group)
+      end
+
+      return false if uid == -1 && gid == -1
+      if check_only
+        return false unless before
+        return (uid != -1 && before.owner_id.to_s != uid.to_s) ||
+          (gid != -1 && before.group_id.to_s != gid.to_s)
+      end
+
+      File.chown(path, uid: uid, gid: gid)
+
+      after = File.info?(path, follow_symlinks: false)
+      return false unless before && after
+      before.owner_id != after.owner_id || before.group_id != after.group_id
+    rescue File::Error
+      # A chown failure (not running as root/owner) is swallowed, like
+      # basic.py's setters' own EPERM handling in this engine.
       false
     end
 
@@ -1640,7 +1720,7 @@ module Krikri
     # name or the chattr/chcon call itself errored (all fail the task
     # like Ansible - none is silently swallowed the way a chmod/chown
     # EPERM is).
-    private def apply_extended_attributes(path : String, checksum : String? = nil) : {Bool, PluginResult?}
+    private def apply_extended_attributes(path : String, checksum : String? = nil, mode_override : String? = nil) : {Bool, PluginResult?}
       # set_context_if_different is basic.py's FIRST setter - it runs
       # before owner/group/mode/attributes, so its failure (and its diff
       # entry) precedes theirs.
@@ -1648,7 +1728,7 @@ module Krikri
       return {false, failure} if failure
 
       changed = begin
-        apply_file_attributes(path)
+        apply_file_attributes(path, mode_override: mode_override)
       rescue ex : OwnerLookupFailure
         # Ansible's set_owner_if_different fails with fail_json(path=path,
         # ...), and _return_formatted's add_path_info grafts the dest's stat
@@ -1671,6 +1751,33 @@ module Krikri
       changed = true if secontext_changed
 
       {changed, nil}
+    end
+
+    # The exit-time attribute reconciliation a remote_src directory copy
+    # runs on the task's dest (see its call site in
+    # #handle_directory_copy): copy.py substitutes directory_mode for the
+    # task's mode: when the copied destination is a directory, applies
+    # the whole file_args set in basic.py's order, and under --check only
+    # compares (each setter returns "changed" and skips the write).
+    private def apply_directory_exit_attributes(dest : String) : {Bool, PluginResult?}
+      mode_override = @params["directory_mode"]?.presence
+      unless @check_mode
+        return apply_extended_attributes(dest, nil, mode_override)
+      end
+
+      info = File.info?(dest, follow_symlinks: false)
+      return {false, nil} unless info
+
+      begin
+        {check_mode_attrs_differ?(dest, info, mode_override), nil}
+      rescue ex : OwnerLookupFailure
+        # basic.py's set_owner_if_different fail_json(path=..., msg=...),
+        # with the dest's stat block grafted on by add_path_info.
+        failure = PluginResult.new(changed: false, failed: true,
+          msg: ex.message || "owner lookup failed", path: dest)
+        add_path_info(failure, dest)
+        {false, failure}
+      end
     end
 
     # directory_mode: - the mode given to directories copy CREATES
