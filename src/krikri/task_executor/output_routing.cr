@@ -1,3 +1,6 @@
+require "colorize"
+require "../surrogate_escape"
+
 module Krikri
   # Per-fiber stdout/print redirection, used only by TaskExecutor's
   # --forks fan-out (run_task_for_hosts_in_parallel) to buffer each
@@ -14,6 +17,15 @@ module Krikri
   # fiber outside of a --forks fan-out (and the main fiber itself) takes.
   module OutputRouting
     @@buffers = Hash(Fiber, IO).new
+
+    # Real's Display.warning keeps this exact line in its run-wide `_warns`
+    # set, so a run that hits many undecodable bytes still warns once (see
+    # #report_non_utf8).
+    NON_UTF8_WARNING = "[WARNING]: Non UTF-8 encoded data replaced with \"?\" while displaying text to stdout/stderr."
+    @@non_utf8_reported = false
+
+    # The private-use twin SurrogateEscape maps an undecodable byte to.
+    TWIN_RANGE = /[\x{F780}-\x{F7FF}]/
 
     def self.redirect_current_fiber_to(io : IO) : Nil
       @@buffers[Fiber.current] = io
@@ -76,7 +88,87 @@ module Krikri
     # password).`) rendered as `\r\r\n` on a tty against real's `\r\n`
     # (issue #975, live-verified vs ansible-core 2.21.6).
     def self.normalize_for_display(text : String) : String
-      text.includes?("\r\n") ? text.gsub("\r\n", '\n') : text
+      text = text.gsub("\r\n", '\n') if text.includes?("\r\n")
+      scrub_undecodable(text)
+    end
+
+    # Most result and banner lines arrive colorized (`puts "fatal: ...".
+    # colorize(:red)`), and IO#puts only ever calls #to_s on that wrapper -
+    # so its payload never reached the String overload above and kept every
+    # byte it carried. Real normalizes the whole message at display time,
+    # color codes and all (issue #1811).
+    def self.normalize_for_display(object : Colorize::Object(T)) : String forall T
+      normalize_for_display(object.to_s)
+    end
+
+    # Real's stdout/stderr are TextIOWrappers reconfigured with
+    # `_replacing_warning_handler` (utils/display.py), so ANY write that
+    # carries a character the stream cannot encode - the lone surrogate a
+    # surrogateescape decode made of a raw non-UTF-8 byte in a remote
+    # command's output - puts "?" in its place and warns once per run:
+    # `Non UTF-8 encoded data replaced with "?" while displaying text to
+    # stdout/stderr.` A script whose stderr held a 0xFF byte printed it
+    # where real printed "?" and printed no warning (issue #1811,
+    # live-verified vs ansible-core 2.21.6).
+    #
+    # Both shapes reach this point: a raw invalid byte (a controller string
+    # krikri built from bytes) and SurrogateEscape's twin for one (the wire
+    # form plugin results and template content use). One "?" per byte,
+    # because CPython's surrogateescape resyncs one byte at a time and each
+    # surrogate is its own encoding error.
+    def self.scrub_undecodable(text : String) : String
+      text = scrub_invalid_utf8(text)
+      return text unless text.matches?(TWIN_RANGE)
+      report_non_utf8
+      text.gsub(TWIN_RANGE, '?')
+    end
+
+    def self.scrub_invalid_utf8(text : String) : String
+      return text if text.valid_encoding?
+      report_non_utf8
+
+      bytes = text.to_slice
+      String.build(bytes.size) do |io|
+        index = 0
+        while index < bytes.size
+          if length = SurrogateEscape.valid_sequence_length(bytes, index)
+            io.write(bytes[index, length])
+            index += length
+          else
+            io << '?'
+            index += 1
+          end
+        end
+      end
+    end
+
+    # Real's encoding error handler sits under every console write, not
+    # only the ones display() passes through, so the `print` path (which
+    # never rewrote CRLF and must not start now) scrubs too.
+    def self.scrub_for_print(text : String) : String
+      scrub_undecodable(text)
+    end
+
+    def self.scrub_for_print(object : T) : T forall T
+      object
+    end
+
+    def self.scrub_for_print(object : Colorize::Object(T)) : String forall T
+      scrub_for_print(object.to_s)
+    end
+
+    private def self.report_non_utf8 : Nil
+      return if @@non_utf8_reported
+      @@non_utf8_reported = true
+      STDERR.puts NON_UTF8_WARNING.colorize(:light_magenta)
+    end
+
+    def self.non_utf8_reported? : Bool
+      @@non_utf8_reported
+    end
+
+    def self.reset_non_utf8_report : Nil
+      @@non_utf8_reported = false
     end
 
     def self.normalize_for_display(object : T) : T forall T
@@ -115,7 +207,7 @@ end
 # `*objects` makes this a separate overload, so stdlib print (writing
 # straight to STDOUT) wins resolution and the redirect silently misses.
 def print(*objects : _) : Nil
-  Krikri::OutputRouting.current_io.print(*objects)
+  Krikri::OutputRouting.current_io.print(*objects.map { |object| Krikri::OutputRouting.scrub_for_print(object) })
 rescue ex : IO::Error
   Krikri::OutputRouting.exit_quietly_if_broken_pipe(ex)
 end

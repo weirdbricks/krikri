@@ -10,6 +10,7 @@ require "./shell"
 require "./ssh_manager"
 require "./connection_settings"
 require "./local_executor"
+require "./surrogate_escape"
 require "./param_sentinels"
 require "./collection_index"
 require "./module_utils_deprecations"
@@ -145,8 +146,22 @@ module Krikri
         # A JSON::Any the plugin built itself is kept as-is: round-tripping
         # it through to_json/JSON.parse re-parses every number as Int64 and
         # raised "Arithmetic overflow" on a legitimate unsigned value (a
-        # MySQL global variable of 18446744073709551615).
-        @extra[key.to_s] = value.is_a?(JSON::Any) ? value : JSON.parse(value.to_json)
+        # MySQL global variable of 18446744073709551615). A String (or a
+        # list of them) taken from a raw command capture can hold bytes
+        # that are not UTF-8, which that same round trip would silently
+        # turn into U+FFFD (the parser's slow path decodes through a
+        # Char::Reader); twin-encoding them first keeps each byte one
+        # character the JSON wire can carry, and the display layer renders
+        # it as ansible's "?" (issue #1811).
+        @extra[key.to_s] = if value.is_a?(JSON::Any)
+                             value
+                           else
+                             json = value.to_json
+                             unless json.valid_encoding?
+                               json = Krikri::SurrogateEscape.decode(json.to_slice)
+                             end
+                             JSON.parse(json)
+                           end
       end
     end
 
@@ -761,7 +776,14 @@ module Krikri
       # private-use control character keeps a real string holding this
       # text effectively impossible, so the rewrite cannot touch
       # anything but the marked values.
-      Krikri.unquote_bigint_json(run_and_capture_result)
+      #
+      # A `msg`/`native_msg`/diff string can carry the same non-UTF-8 bytes
+      # the kwargs branch twin-encodes and never passes through that JSON
+      # round trip; the controller's parse would mangle them into U+FFFD
+      # instead, so twin-encode the finished wire text itself too (valid
+      # text is untouched - issue #1811).
+      json = Krikri.unquote_bigint_json(run_and_capture_result)
+      json.valid_encoding? ? json : Krikri::SurrogateEscape.decode(json.to_slice)
     end
 
     # Every failure exit below still runs through #finalize_result: real

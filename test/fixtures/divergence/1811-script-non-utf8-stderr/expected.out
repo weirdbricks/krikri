@@ -1,0 +1,35 @@
+
+PLAY [Krikri-playbook-generator: multi-task #28.0] *****************************
+
+TASK [Script #28.0] ************************************************************
+[ERROR]: Task failed: Action failed: non-zero return code
+Origin: <WORK>/playbook.yml:17:7
+
+15     kpg_expr_value: "{{ 'x' | kpg_multi(*['a', 'b']) }}"
+16   tasks:
+17     - name: 'Script #28.0'
+         ^ column 7
+
+failed: [target -> target2] (item=<WORK>/binary-script.sh) => {"ansible_loop_var": "item", "changed": true, "item": "<WORK>/binary-script.sh", "msg": "non-zero return code", "rc": 127, "stderr": "\u0001kpgbinary?: not found\n", "stderr_lines": ["\u0001kpgbinary?: not found"], "stdout": "", "stdout_lines": []}
+...ignoring
+
+TASK [Kpg notifier] ************************************************************
+changed: [target]
+
+TASK [Kpg flush handlers] ******************************************************
+
+RUNNING HANDLER [Kpg handler] **************************************************
+[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.
+Origin: <WORK>/playbook.yml:36:7
+
+34       ansible.builtin.meta: flush_handlers
+35   handlers:
+36     - name: Kpg handler
+         ^ column 7
+
+fatal: [target]: FAILED! => {"changed": false, "changed_when_result": false, "cmd": ["/bin/false"], "delta": "<TIME>", "end": "<TIME>", "msg": "The command exited with a non-zero return code.", "rc": 1, "start": "<TIME>", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+PLAY RECAP *********************************************************************
+target                     : ok=2    changed=2    unreachable=0    failed=1    skipped=0    rescued=0    ignored=1   
+
+[WARNING]: Non UTF-8 encoded data replaced with "?" while displaying text to stdout/stderr.

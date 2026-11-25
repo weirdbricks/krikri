@@ -92,4 +92,14 @@ describe "AnsibleSplitlines" do
   it "returns [] for empty input, not [\"\"]" do
     Krikri::PluginHelpers::AnsibleSplitlines.split("").must_equal([] of String)
   end
+
+  # Issue #1811: a script's stderr carried a raw 0xFF byte; real ansible's
+  # stderr_lines kept the surrogateescape character for it (displayed as
+  # "?") while krikri's each_char decode turned it into U+FFFD and showed
+  # that. The engine's own representation of the byte is the private-use
+  # twin, one character for one byte.
+  it "keeps a non-UTF-8 byte as one undecodable character, not U+FFFD" do
+    stderr = String.new(Bytes[0x01, 0x6b, 0x70, 0x67, 0xff, 0x3a, 0x20, 0x78, 0x0a])
+    Krikri::PluginHelpers::AnsibleSplitlines.split(stderr).must_equal(["\u0001kpg\u{F7FF}: x"])
+  end
 end

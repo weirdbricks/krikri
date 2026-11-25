@@ -1,4 +1,5 @@
 require "json"
+require "../surrogate_escape"
 
 module Krikri
   module PluginHelpers
@@ -43,6 +44,13 @@ module Krikri
 
       def self.split(text : String) : Array(String)
         return [] of String if text.empty?
+
+        # A raw non-UTF-8 byte decodes as U+FFFD through the each_char below,
+        # which silently rewrote a command's stderr_lines where real keeps
+        # the surrogateescape character (rendered as "?" at display time).
+        # Twin-encoding first keeps each undecodable byte one character and
+        # in the engine's own surrogateescape representation (issue #1811).
+        text = Krikri::SurrogateEscape.decode(text.to_slice) unless text.valid_encoding?
 
         # "\r\n" is one break in Python, so collapse it before splitting on "\r".
         # Indexing a String by character is O(n) on non-ASCII text, hence the
