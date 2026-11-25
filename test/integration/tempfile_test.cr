@@ -70,6 +70,23 @@ describe "tempfile plugin" do
     File.delete(path)
   end
 
+  # The kpg state oracle (issue #1803) compares the created file's own line in
+  # its file-tree snapshot - `f <uid> <gid> 600 0` plus an empty-content hash -
+  # so what both engines must leave on disk is pinned here: only mkstemp's
+  # random name between the requested prefix and suffix may differ per run.
+  it "leaves the created file empty with mkstemp's 0600 mode" do
+    dir = PluginSpecHelper.tmp_path("tempfile-state-shape")
+    Dir.mkdir_p(dir)
+
+    result = PluginSpecHelper.run("tempfile", {"path" => dir, "prefix" => "kpg.", "suffix" => ".tmp"})
+
+    path = result["path"].as_s
+    File.basename(path).must_match(/\Akpg\.[a-z0-9_]{8}\.tmp\z/)
+    File.size(path).must_equal(0)
+    File.info(path).permissions.value.must_equal(0o600)
+    File.delete(path)
+  end
+
   it "fails for an invalid state" do
     result = PluginSpecHelper.run("tempfile", {"state" => "bogus"})
 
