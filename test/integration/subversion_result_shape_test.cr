@@ -33,9 +33,6 @@ private def write_svn_shim(dir : String, log : String) : String
     #!/bin/sh
     echo "$@" >> "$KRIKRI_SVN_CALLS"
     case "$1" in
-      update|switch|checkout|export) touch "$KRIKRI_SVN_STATE" ;;
-    esac
-    case "$1" in
       info)
         case "$*" in
           *' -r HEAD'*) echo "Revision: 99" ;;
@@ -49,8 +46,18 @@ private def write_svn_shim(dir : String, log : String) : String
         esac
         echo "URL: svn+ssh://example.com/repo"
         ;;
+      status)
+        [ -f "$KRIKRI_SVN_STATE.status" ] && cat "$KRIKRI_SVN_STATE.status"
+        ;;
       checkout|export|switch|update)
-        echo "U    file.txt"
+        # A status line only when svn really changes a file - that output is
+        # exactly what real ansible's `changed` is derived from.
+        if [ -f "$KRIKRI_SVN_STATE" ]; then
+          :
+        else
+          touch "$KRIKRI_SVN_STATE"
+          echo "U    file.txt"
+        fi
         ;;
     esac
     exit 0

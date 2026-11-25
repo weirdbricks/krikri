@@ -22,9 +22,6 @@ private def write_svn_shim(dir : String, log : String) : String
     #!/bin/sh
     echo "$@" >> "$KRIKRI_SVN_CALLS"
     case "$1" in
-      update|switch|checkout|export) touch "$KRIKRI_SVN_STATE" ;;
-    esac
-    case "$1" in
       info)
         case "$*" in
           *' -r HEAD'*) echo "Revision: 99" ;;
@@ -38,8 +35,18 @@ private def write_svn_shim(dir : String, log : String) : String
         esac
         echo "URL: svn+ssh://example.com/repo"
         ;;
+      status)
+        [ -f "$KRIKRI_SVN_STATE.status" ] && cat "$KRIKRI_SVN_STATE.status"
+        ;;
       checkout|export|switch|update)
-        echo "U    file.txt"
+        # A status line only when svn really changes a file - that output is
+        # exactly what real ansible's `changed` is derived from.
+        if [ -f "$KRIKRI_SVN_STATE" ]; then
+          :
+        else
+          touch "$KRIKRI_SVN_STATE"
+          echo "U    file.txt"
+        fi
         ;;
     esac
     exit 0
@@ -179,7 +186,69 @@ describe "subversion plugin - parameter coverage" do
 
     truthy?(result["changed"].as_bool).must_equal(true)
     truthy?(calls(log).any?(&.starts_with?("update"))).must_equal(true)
-    falsey?(calls(log).any?(&.starts_with?("switch"))).must_equal(true)
+    truthy?(calls(log).any?(&.starts_with?("switch"))).must_equal(true)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "an existing working copy runs real's status, switch and update even when already at HEAD" do
+    dir = shim_dir("rerun-sequence")
+    log = File.join(dir, "calls.log")
+    write_svn_shim(dir, log)
+    wc = File.join(dir, "wc")
+    FileUtils.mkdir_p(File.join(wc, ".svn"))
+    FileUtils.touch(File.join(dir, "state"))
+
+    result = run_subversion(dir, log, {
+      "repo" => "svn+ssh://example.com/repo",
+      "dest" => wc,
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    falsey?(result["changed"].as_bool).must_equal(true)
+    # Real's order on a re-run: get_revision, has_local_mods, switch,
+    # update, get_revision. None of them is skipped just because the
+    # working copy is already at the target revision - svn refreshes
+    # .svn/wc.db for each one, which is visible host state.
+    calls(log).map(&.split(' ').first).must_equal(%w[info status switch update info])
+    calls(log).find!(&.starts_with?("status")).must_include("--quiet --ignore-externals")
+    calls(log).find!(&.starts_with?("switch")).must_include("--revision HEAD")
+    calls(log).find!(&.starts_with?("update")).must_include("-r HEAD")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "refuses a working copy with local modifications unless force reverts it" do
+    dir = shim_dir("local-mods")
+    log = File.join(dir, "calls.log")
+    write_svn_shim(dir, log)
+    wc = File.join(dir, "wc")
+    FileUtils.mkdir_p(File.join(wc, ".svn"))
+    FileUtils.touch(File.join(dir, "state"))
+    File.write(File.join(dir, "state.status"), "M       wc/file.txt\n")
+
+    result = run_subversion(dir, log, {
+      "repo" => "svn+ssh://example.com/repo",
+      "dest" => wc,
+    })
+
+    truthy?(result["failed"].as_bool).must_equal(true)
+    result["msg"].as_s.must_equal("ERROR: modified files exist in the repository.")
+    # Real refuses only AFTER the switch, and never reaches update.
+    calls(log).map(&.split(' ').first).must_equal(%w[info status switch])
+
+    File.delete(log)
+    File.touch(log)
+
+    forced = run_subversion(dir, log, {
+      "repo"  => "svn+ssh://example.com/repo",
+      "dest"  => wc,
+      "force" => "yes",
+    })
+
+    falsey?(forced["failed"]?.try(&.as_bool)).must_equal(true)
+    truthy?(forced["changed"].as_bool).must_equal(true)
+    calls(log).map(&.split(' ').first).must_equal(%w[info status switch revert update info])
   ensure
     FileUtils.rm_rf(dir) if dir
   end

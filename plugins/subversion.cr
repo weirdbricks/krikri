@@ -149,7 +149,21 @@ module Krikri
         update(svn, repo, dest, revision, force, auth, check_mode, do_switch)
       elsif in_place
         result = checkout(svn, repo, dest, revision, auth, force: true)
-        svn_exec("#{svn} revert -R #{auth} #{shell_quote(dest)}") if force && !result.failed?
+        return result if result.failed?
+
+        # Real checks the fresh checkout for local modifications and only
+        # reverts when it finds any - a clean in-place checkout issues no
+        # `svn revert` at all.
+        mods = has_local_mods(svn, dest, auth)
+        if failure = mods[:failure]
+          return failure
+        end
+        if mods[:mods] && force
+          revert_result = revert_working_copy(svn, dest, auth)
+          if failure = revert_result[:failure]
+            return failure
+          end
+        end
         result
       else
         PluginResult.new(changed: false, failed: true, msg: "ERROR: #{dest} folder already exists, but its not a subversion repository.")
@@ -386,7 +400,7 @@ module Krikri
       parent = File.dirname(dest)
       remote_exec("mkdir -p #{shell_quote(parent)}")
 
-      rev_flag = revision == "HEAD" ? "" : "-r #{shell_quote(revision)} "
+      rev_flag = "-r #{shell_quote(revision)} "
       force_flag = force ? "--force " : ""
       result = svn_exec("#{svn} checkout #{force_flag}#{rev_flag}#{auth} #{shell_quote(repo)} #{shell_quote(dest)}")
       return check_rc_result([svn] + auth_display_args + op, result[:exit_code], result[:stdout], result[:stderr]) unless result[:exit_code] == 0
@@ -408,7 +422,7 @@ module Krikri
       parent = File.dirname(dest)
       remote_exec("mkdir -p #{shell_quote(parent)}")
 
-      rev_flag = revision == "HEAD" ? "" : "-r #{shell_quote(revision)} "
+      rev_flag = "-r #{shell_quote(revision)} "
       force_flag = force ? "--force " : ""
       result = svn_exec("#{svn} export #{force_flag}#{rev_flag}#{auth} #{shell_quote(repo)} #{shell_quote(dest)}")
       return check_rc_result([svn] + auth_display_args + op, result[:exit_code], result[:stdout], result[:stderr]) unless result[:exit_code] == 0
@@ -416,20 +430,30 @@ module Krikri
       PluginResult.new(changed: true, failed: false)
     end
 
+    # Real main()'s existing-working-copy path, in its own order: a
+    # `svn status --quiet --ignore-externals` answer taken BEFORE the
+    # switch (a switch's own edits would otherwise read as local mods),
+    # then `svn switch`, then a refusal (or, with force, a revert), then
+    # `svn update`, then the after `svn info`. Every one of those runs on
+    # every re-run, HEAD included - skips are visible on the host, because
+    # svn rewrites .svn/wc.db's stat cache for each of them.
     private def update(svn : String, repo : String, dest : String, revision : String, force : Bool, auth : String, check_mode : Bool, switch : Bool) : PluginResult
-      # Real reaches is_svn_repo()'s `svn info` first, then switch and
-      # update; one spawn failure names whichever of those comes first.
+      # Real reaches is_svn_repo()'s `svn info` first, then the rest; one
+      # spawn failure names whichever of those comes first.
       if failure = spawn_failure(["info", dest])
         return failure
       end
 
-      before_info = svn_info(svn, dest, auth)
-      before = before_info[:revision]
-      before_lines = [before_info[:rev_line], before_info[:url_line]]
-
-      target_rev = revision == "HEAD" ? head_revision(svn, dest, auth) : revision
-
       if check_mode
+        mods = has_local_mods(svn, dest, auth)
+        if failure = mods[:failure]
+          return failure
+        end
+        return modified_files_result if mods[:mods] && !force
+
+        before_info = svn_info(svn, dest, auth)
+        before = before_info[:revision]
+        target_rev = revision == "HEAD" ? head_revision(svn, dest, auth) : revision
         # Ansible module's check-mode path (needs_update) compares parsed
         # revision numbers and reports before/after as bare "Revision: N"
         # strings, not the [revision, URL] pair.
@@ -441,42 +465,94 @@ module Krikri
         return PluginResult.new(changed: update_needed, failed: false, before: before_info[:rev_line], after: "Revision: #{target_rev}")
       end
 
-      switch_changed = false
+      before_info = svn_info(svn, dest, auth)
+      before_lines = [before_info[:rev_line], before_info[:url_line]]
+
+      mods = has_local_mods(svn, dest, auth)
+      if failure = mods[:failure]
+        return failure
+      end
+      local_mods = mods[:mods]
+
+      files_changed = false
       if switch
         switch_result = switch_to_repo(svn, repo, dest, revision, auth)
         if failure = switch_result[:failure]
           return failure
         end
-        switch_changed = switch_result[:changed]
+        files_changed = switch_result[:changed]
       end
 
-      if force
-        svn_exec("#{svn} revert -R #{auth} #{shell_quote(dest)}")
+      if local_mods
+        return modified_files_result unless force
+
+        revert_result = revert_working_copy(svn, dest, auth)
+        if failure = revert_result[:failure]
+          return failure
+        end
+        files_changed = revert_result[:changed] || files_changed
       end
 
-      if before == target_rev
-        after_info = switch_changed ? svn_info(svn, dest, auth) : before_info
-        return PluginResult.new(changed: switch_changed, failed: false, before: before_lines, after: [after_info[:rev_line], after_info[:url_line]])
+      update_result = svn_update(svn, dest, revision, auth)
+      if failure = update_result[:failure]
+        return failure
       end
-
-      rev_flag = revision == "HEAD" ? "" : "-r #{shell_quote(revision)} "
-      force_flag = force ? "--force " : ""
-      result = svn_exec("#{svn} update #{force_flag}#{rev_flag}#{auth} #{shell_quote(dest)}")
-      update_op = ["update"]
-      update_op += ["-r", revision, dest]
-      return check_rc_result([svn] + auth_display_args + update_op, result[:exit_code], result[:stdout], result[:stderr]) unless result[:exit_code] == 0
+      files_changed = update_result[:changed] || files_changed
 
       after_info = svn_info(svn, dest, auth)
-      PluginResult.new(changed: switch_changed || before != after_info[:revision], failed: false, before: before_lines, after: [after_info[:rev_line], after_info[:url_line]])
+      PluginResult.new(changed: files_changed || local_mods, failed: false,
+        before: before_lines, after: [after_info[:rev_line], after_info[:url_line]])
     end
 
+    # Real main()'s local-modifications refusal (fail_json, so only
+    # failed+msg - no before/after, no stdout/stderr).
+    private def modified_files_result : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "ERROR: modified files exist in the repository.")
+    end
+
+    # Ansible's has_local_mods(): `svn status --quiet --ignore-externals`
+    # lists only revisioned entries with local edits, and a leading '?' or
+    # 'X' is still dropped so unversioned files and externals never count.
+    private def has_local_mods(svn : String, dest : String, auth : String) : {mods: Bool, failure: PluginResult?}
+      argv = ["status", "--quiet", "--ignore-externals", dest]
+      result = svn_exec("#{svn} status --quiet --ignore-externals #{auth} #{shell_quote(dest)}")
+      if result[:exit_code] != 0
+        return {mods: false, failure: check_rc_result([svn] + auth_display_args + argv, result[:exit_code], result[:stdout], result[:stderr])}
+      end
+      {mods: result[:stdout].each_line.any? { |line| line =~ /^[^?X]/ }, failure: nil}
+    end
+
+    # Ansible's revert(): `svn revert -R <dest>`, reporting changed unless
+    # every line is one of svn's own "Reverted ..." lines.
+    private def revert_working_copy(svn : String, dest : String, auth : String) : {changed: Bool, failure: PluginResult?}
+      argv = ["revert", "-R", dest]
+      result = svn_exec("#{svn} revert -R #{auth} #{shell_quote(dest)}")
+      if result[:exit_code] != 0
+        return {changed: false, failure: check_rc_result([svn] + auth_display_args + argv, result[:exit_code], result[:stdout], result[:stderr])}
+      end
+      {changed: result[:stdout].each_line.any? { |line| line !~ /Reverted / }, failure: nil}
+    end
+
+    # Ansible's update(): always `svn update -r <revision> <dest>` (the
+    # module passes the flag even for HEAD and never passes --force -
+    # force reverts first instead), changed when svn prints an [ABDUCGE]
+    # status line.
+    private def svn_update(svn : String, dest : String, revision : String, auth : String) : {changed: Bool, failure: PluginResult?}
+      argv = ["update", "-r", revision, dest]
+      result = svn_exec("#{svn} update -r #{shell_quote(revision)} #{auth} #{shell_quote(dest)}")
+      if result[:exit_code] != 0
+        return {changed: false, failure: check_rc_result([svn] + auth_display_args + argv, result[:exit_code], result[:stdout], result[:stderr])}
+      end
+      {changed: result[:stdout].each_line.any? { |line| line =~ /^[ABDUCGE]\s/ }, failure: nil}
+    end
+
+    # Real always runs `svn switch --revision <revision> <repo> <dest>`
+    # when switch=yes - even when the working copy already points at
+    # repo, where it still refreshes the working copy's metadata.
     private def switch_to_repo(svn : String, repo : String, dest : String, revision : String, auth : String) : {changed: Bool, failure: PluginResult?}
       if failure = spawn_failure(["switch", "--revision", revision, repo, dest])
         return {changed: false, failure: failure}
       end
-
-      current_url = working_copy_url(svn, dest, auth)
-      return {changed: false, failure: nil} if current_url.empty? || current_url == repo
 
       result = svn_exec("#{svn} switch --revision #{shell_quote(revision)} #{auth} #{shell_quote(repo)} #{shell_quote(dest)}")
       if result[:exit_code] != 0
@@ -484,7 +560,7 @@ module Krikri
         return {changed: false, failure: check_rc_result([svn] + auth_display_args + switch_op, result[:exit_code], result[:stdout], result[:stderr])}
       end
 
-      changed = result[:stdout].each_line.any? { |line| line =~ /^[ABDUCGE] / }
+      changed = result[:stdout].each_line.any? { |line| line =~ /^[ABDUCGE]\s/ }
       {changed: changed, failure: nil}
     end
 
@@ -517,11 +593,6 @@ module Krikri
     private def head_revision(svn : String, dest : String, auth : String) : String
       head = svn_info(svn, dest, auth, rev: "HEAD")
       head[:revision].empty? ? current_revision(svn, dest, auth) : head[:revision]
-    end
-
-    private def working_copy_url(svn : String, dest : String, auth : String) : String
-      result = svn_exec("#{svn} info #{auth} #{shell_quote(dest)} 2>/dev/null | grep '^URL:' | awk '{print $2}'")
-      result[:stdout].strip
     end
 
     private def remote_revision(svn : String, repo : String, auth : String) : String
