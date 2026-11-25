@@ -1067,27 +1067,27 @@ because anyone intends to fix them.
   job file even when `_ansible_check_mode` is set, returning ansible's ok/`erased` shape - is pinned
   in-process by `test/unit/async_status_plugin_test.cr`.
 
-- **Real ansible's own `gather_facts: parallel: true` runs the fact module under `async_wrapper`, so
-  its `--check` pass leaves an `~/.ansible_async/<jid>.<pid>` job file, and the kpg check-mode
-  oracle counts that engine bookkeeping as a krikri finding (kpg multi-gather_facts case, issue
-  #1809, `check-mode:d1557ebab536`).** The playbook's first play delegates
-  `ansible.builtin.gather_facts` with `parallel: true`. With `parallel` truthy the action runs each
-  fact module through `wrap_async=True`: `async_wrapper.py` writes `<jid>.<pid>` (0644, the whole
-  facts payload) under the shell plugin's async dir and leaves it there, even under `--check`
-  (live-verified on ansible-core 2.21.6 with a minimal `connection: local` playbook: a `parallel:
-  true` gather adds the file, `parallel: false` adds none). krikri gathers the facts in-process (it
-  emulates only the async form's failed-result shape), so that file is the issue's entire delta:
-  ansible's `file added`/`hash added` lines with an empty krikri delta. No krikri change can silence
-  it. The jid, pid and contents are drawn afresh each run, so writing an equivalent job file would
-  leave two differently named, differently hashed entries - which is what the oracle's own
-  `--control` noise check reports with real `ansible-playbook` on both hosts (`raw_identical: true`,
-  still `check_mode_mutated: true`, the same `state:9b6901ec1080` two-block diff, with the two runs'
-  files 9203 vs 9202 bytes and different sha256s). The oracle needs to prune each home's async dir
-  (`~/.ansible_async`, engine control-side state like the `~/.ansible` staging root already pruned -
-  the same gap the issue #1804 entry records) before judging a check-mode delta. What krikri owns -
-  `parallel: true` returning the same gathered fact payload as serial (`gather_subset` plus
-  `module_setup`) while writing no async job file, under `--check` too - is pinned in-process by
-  `test/integration/gather_facts_parallel_validation_test.cr`.
+- **A parallel `gather_facts:` leaves an async job file, in check mode too, whose name and bytes two
+  hosts can never share (kpg gather_facts cases, issues #1808 and #1809,
+  `state:9b6901ec1080`/`check-mode:d1557ebab536`).** Ansible's gather_facts action runs its fact
+  module under `async_wrapper` whenever `parallel:` (or the `ansible_facts_parallel` var) is truthy,
+  and the wrapper's finished job file under `~/.ansible_async` is never removed - the action polls
+  it with `async_status` *status* mode, and only `mode: cleanup` unlinks. The wrapper writes it
+  under `--check` as well (live-verified on ansible-core 2.21.6 with a minimal `connection: local`
+  playbook and an `ANSIBLE_ASYNC_DIR` of its own: a `parallel: true` gather adds one 0644
+  `<jid>.<pid>` file with and without `--check`, `parallel: false` adds none). krikri leaves the same
+  artifact (0644, named by the jid the rejected-argument form reports; pinned in-process by
+  `test/unit/gather_facts_async_job_file_test.cr` and
+  `test/integration/gather_facts_parallel_validation_test.cr`, replayed end to end by the
+  `1808-gather-facts-parallel-job-file` corpus case), so neither mode's delta is one-sided any more,
+  but the state line itself can never match: the name is `j<random>.<pid>` (async_wrapper appends
+  the pid of the process it forked) and the payload is the host's own fact dict, which the two
+  separately provisioned reference hosts never share. The generator's `--control` run of real
+  `ansible-playbook` on both hosts leaves two such files itself (different names, 9195 and 9198
+  bytes, different hashes) and reports the same `state:9b6901ec1080` signature, in check and real
+  mode alike. The oracle needs to prune each home's async dir (`~/.ansible_async`, engine
+  control-side state like the `~/.ansible` staging root already pruned - the same gap the issue
+  #1804 entry records) before judging a state or check-mode delta.
 
 - **A Subversion working copy's `.svn/wc.db` records the fixture repository's random UUID, so its
   hash can never match across the kpg reference images (kpg subversion case, issue #1802).** The

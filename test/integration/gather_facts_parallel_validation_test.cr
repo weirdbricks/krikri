@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "file_utils"
 
 # ansible-core 2.19.11's gather_facts ACTION plugin (live-verified in this
 # repo's output-parity sweep, issue #760):
@@ -29,12 +30,18 @@ private def run_playbook(yaml : String, args : Array(String) = [] of String,
                          env : Hash(String, String)? = nil)
   playbook = File.tempname("gather-facts-parallel", ".yml")
   File.write(playbook, yaml)
+  # A truthy `parallel:` leaves the gather's async job file in
+  # ~/.ansible_async, which must never be the developer's real one - point
+  # the child at a per-run directory instead.
+  async_dir = File.join(Dir.tempdir, "krikri-gather-parallel-async-#{Random::Secure.hex(4)}")
   output = IO::Memory.new
+  child_env = {"ANSIBLE_ASYNC_DIR" => async_dir}.merge(env || {} of String => String)
   status = Process.run(BINARY, ["-i", INVENTORY, *args, playbook],
-    output: output, error: output, env: env)
+    output: output, error: output, env: child_env)
   {status, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
+  FileUtils.rm_rf(async_dir) if async_dir
 end
 
 describe "gather_facts parallel matches Ansible 2.19.11 strict boolean conversion" do
@@ -149,15 +156,14 @@ describe "gather_facts parallel matches Ansible 2.19.11 strict boolean conversio
     output.wont_include("is not a valid boolean")
   end
 
-  # Regression for issue #1809: real ansible's gather_facts ACTION runs the
-  # fact module under async_wrapper when `parallel:` is truthy, so its
-  # --check pass leaves ~/.ansible_async/<jid>.<pid> (0644, the whole facts
-  # payload) on the target - the kpg check-mode oracle's entire diff. krikri
-  # gathers in-process and leaves the async dir untouched, which is what
-  # this pins; no krikri change can silence the oracle, because the jid and
-  # the file's contents are drawn afresh each run and the oracle flags
-  # either engine's mutation (KNOWN_MISSING's issue #1809 entry).
-  it "gathers in-process without an async job file, even under --check" do
+  # Regression for issues #1809 and #1808: real ansible's gather_facts
+  # ACTION runs the fact module under async_wrapper when `parallel:` is
+  # truthy, and under --check too the wrapper's finished job file
+  # (~/.ansible_async/<jid>.<pid>, 0644, the whole facts payload) is left
+  # behind - the kpg check-mode oracle's entire diff. krikri must leave the
+  # same artifact; the random name and per-host payload are what
+  # KNOWN_MISSING records, not something either engine can match.
+  it "leaves the parallel gather's async job file, even under --check" do
     async_dir = PluginSpecHelper.tmp_path("async-dir")
     Dir.mkdir_p(async_dir)
 
@@ -178,6 +184,15 @@ describe "gather_facts parallel matches Ansible 2.19.11 strict boolean conversio
     status.success?.must_equal(true)
     output.must_include("msg\": \"['all'] True")
     output.must_include("ok=2")
-    Dir.children(async_dir).must_be_empty
+    jobs = Dir.children(async_dir)
+    jobs.size.must_equal(1, "one fact module, one job file - check mode does not suppress async_wrapper")
+    path = File.join(async_dir, jobs.first)
+    # async_wrapper's own name: the action's "j<digits>" jid plus the pid
+    # of the process it forked.
+    jobs.first.must_match(/\Aj\d+\.\d+\z/)
+    (File.info(path).permissions.value & 0o777).must_equal(0o644)
+    # The module's own result - the action's failed/changed backfill and
+    # the discovery stamp are controller-side.
+    File.read(path).must_include("\"gather_subset\"")
   end
 end

@@ -1,0 +1,20 @@
+
+PLAY [Krikri-playbook-generator: multi-task #1.0] ******************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Gather_facts #1.0] *******************************************************
+ok: [localhost]
+
+TASK [count the job files the parallel gather left behind] *********************
+ok: [localhost]
+
+TASK [report the job file the action left behind] ******************************
+ok: [localhost] => {
+    "msg": "jobs=1 modes=0644"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

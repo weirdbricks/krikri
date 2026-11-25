@@ -1,0 +1,18 @@
+---
+- name: 'Krikri-playbook-generator: multi-task #1.0'
+  hosts: localhost
+  gather_facts: true
+  tasks:
+    - name: 'Gather_facts #1.0'
+      ansible.builtin.gather_facts:
+        parallel: true
+      register: kpg_task_0
+      ignore_errors: true
+    - name: count the job files the parallel gather left behind
+      ansible.builtin.find:
+        paths: "{{ lookup('env', 'HOME') }}/.ansible_async"
+        file_type: file
+      register: kpg_jobs
+    - name: report the job file the action left behind
+      ansible.builtin.debug:
+        msg: "jobs={{ kpg_jobs.matched }} modes={{ kpg_jobs.files | map(attribute='mode') | sort | join(',') }}"
