@@ -156,7 +156,7 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
     notes["krikri-aws-signer"].must_equal(" (weirdbricks/krikri-aws-signer, tag v1.0.0)")
     notes["mysql"].must_equal(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.342)")
     notes["krikri-docker"].must_equal(" (weirdbricks/krikri-docker fork, tag v1.0.0)")
-    notes["bz2"].must_equal(" (weirdbricks/bz2.cr fork)")
+    notes["bz2"].must_equal(" (weirdbricks/bz2.cr)")
 
     notes.has_key?("awscr-signer").must_equal(false)
     notes.has_key?("pg").must_equal(false)

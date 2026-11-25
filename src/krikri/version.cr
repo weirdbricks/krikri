@@ -1,7 +1,7 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.3090"
+  VERSION = "0.9.3091"
 
   # The ansible-core release krikri's output is verified against, byte for
   # byte (see README "Compatibility target"). Also the value of the
@@ -114,8 +114,10 @@ module Krikri
   # deployed binary should say which repo it was actually built from.
   # krikri-jinja, krikri-xml, krikri-aws-signer and krikri-aws-ssm are
   # krikri's own libraries, not forks, so they are annotated with their
-  # repo and pin but not labeled "fork".
-  OWN_SHARDS = %w[krikri-jinja krikri-xml krikri-aws-signer krikri-aws-ssm]
+  # repo and pin but not labeled "fork". `bz2` belongs here too: it is
+  # krikri's own original libbz2 binding (modeled on naqvis/xz.cr), not
+  # derived from an existing bz2 shard (issue #1754).
+  OWN_SHARDS = %w[krikri-jinja krikri-xml krikri-aws-signer krikri-aws-ssm bz2]
 
   RUNTIME_DEPENDENCY_FORK_NOTES = begin
     notes = {} of String => String
