@@ -4610,7 +4610,14 @@ module Krikri
       lines = File.read_lines(path)
       msg = ex.message || ""
       free_form = free_form_raw_command?(task)
-      free_form_directive = free_form && free_form_directive_call?(task)
+      # A directive call's chain shape does NOT depend on the module being a
+      # raw-command one: any `local_action: <module> <args>` whose args fail
+      # finalization gets the whole directive value templated as one string,
+      # so real prints the full message on the middle stanza and ends the
+      # chain there (issue #1792, mm0.clone-and-upload-git-repository's
+      # `local_action: git ... dest={{ temp_directory_local.path }}/{{ repo }}`
+      # with repo undefined, live-verified vs 2.21.6).
+      free_form_directive = free_form_directive_call?(task)
       free_form_include_vars = free_form_include_vars?(task)
       msg = msg.sub("Error while resolving value for 'cmd':", "Error while resolving value for '_raw_params':") if free_form
       msg = msg.sub("Error while resolving value for 'file':", "Error while resolving value for '_raw_params':") if free_form_include_vars
@@ -4718,6 +4725,21 @@ module Krikri
         module_col = task.source_col > 0 ? task.source_col : (lines[module_idx].size - lines[module_idx].lstrip.size + 1)
         name_idx, name_col = module_idx, module_col
         two_level = true
+        # A nameless free-form directive still separates its task level (the
+        # `- local_action:` line itself) from the module token opening the
+        # value, so real prints the ordinary two-stanza chain there - "Task
+        # failed." at the directive line, then the full middle message at the
+        # module token - not the collapsed single-segment shape a `- git:`
+        # key gets (live-verified vs 2.21.6, issue #1792).
+        if free_form_directive
+          short = task.module_name.split(".").last
+          pos = directive_module_token_position(lines[module_idx], module_idx, short) ||
+                directive_free_form_module_position(lines, module_idx, short)
+          if pos
+            module_idx, module_col = pos
+            two_level = false
+          end
+        end
       end
 
       # Free-form include_tasks: has no locatable `_raw_params:` key in the
@@ -4771,6 +4793,14 @@ module Krikri
       chain_stanza = ex.template_origin ? nil : chain_value_failure_stanza(task, msg, host, vars_context)
       if chain_stanza && (cm = msg.match(/\A(Error while resolving value for '[^']+'): /))
         l3 = cm[1] + "."
+        # A free-form directive's middle stanza carries the whole message
+        # only when the chain ENDS there; a failure that chains one level
+        # deeper (into a variable's own definition) shortens it to the same
+        # param-level prefix, its inner message living in the last stanza
+        # like any other shape (live-verified vs 2.21.6, issue #1792).
+        if free_form_directive
+          l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed: #{l3}"
+        end
       end
 
       # A block-style MAPPING or LIST param chains one level DEEPER still
@@ -6228,21 +6258,32 @@ module Krikri
     # value. Ansible's chain still prints for this shape and points BOTH
     # the middle and the innermost Origin at that module token (deveth0.pct's
     # `local_action: shell ssh ...`, tasks/main.yml:4:17, live-captured
-    # 2.19.11, issue #814).
+    # 2.19.11, issue #814). A nameless task carries its `- ` sequence marker
+    # on the same line (`- local_action: git ...`), which the value position
+    # starts past (issue #1792, live-verified vs 2.21.6).
     private def directive_free_form_module_position(lines : Array(String), from_idx : Int32, short : String) : {Int32, Int32}?
-      directive_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?(?:action|local_action)[ \t]*:[ \t]*/
-      module_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?#{Regex.escape(short)}(?:\s|\z)/
       ((from_idx + 1)...lines.size).each do |idx|
         line = lines[idx]
-        stripped = line.strip
         break if next_task_marker?(lines, from_idx, line)
-        next unless (dm = directive_needle.match(stripped))
-        value = stripped[dm.end(0)..]
-        next unless (mm = module_needle.match(value))
-        col = (line.size - line.lstrip.size) + dm.end(0) + mm.begin(0) + 1
-        return {idx, col}
+        if pos = directive_module_token_position(line, idx, short)
+          return pos
+        end
       end
       nil
+    end
+
+    # The module token opening a free-form directive value on ONE line, e.g.
+    # `  local_action: git accept_hostkey=yes ...` -> the `git` column. The
+    # nameless shape carries its `- ` sequence marker on the same line.
+    private def directive_module_token_position(line : String, idx : Int32, short : String) : {Int32, Int32}?
+      directive_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?(?:action|local_action)[ \t]*:[ \t]*/
+      module_needle = /\A(?:ansible\.(?:builtin|legacy)\.)?#{Regex.escape(short)}(?:\s|\z)/
+      stripped = line.lstrip
+      stripped = stripped.lchop("- ")
+      return nil unless (dm = directive_needle.match(stripped))
+      value = stripped[dm.end(0)..]
+      return nil unless (mm = module_needle.match(value))
+      {idx, (line.size - stripped.size) + dm.end(0) + mm.begin(0) + 1}
     end
 
     # The failing param's line - located by parsing the wrapped message's

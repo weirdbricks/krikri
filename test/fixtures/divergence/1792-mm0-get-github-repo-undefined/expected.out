@@ -1,0 +1,38 @@
+
+PLAY [mm0.clone-and-upload-git-repository] *************************************
+
+TASK [Get github repo: << error 1 - 'repo' is undefined >>] ********************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.git' failed: Error while resolving value for 'dest': 'repo' is undefined
+
+Task failed.
+Origin: <WORK>/playbook.yml:16:7
+
+14     git_method: SSH
+15   tasks:
+16     - name: "Get github repo: {{ repo }}"
+         ^ column 7
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.git' failed: Error while resolving value for 'dest': 'repo' is undefined
+Origin: <WORK>/playbook.yml:19:21
+
+17       #disable become to use local user's git key
+18       become: no
+19       local_action: git accept_hostkey=yes dest={{ temp_directory_local.path}}/{{ repo }} repo=ssh://git@{{git_sit...
+                       ^ column 21
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.git' failed: Error while resolving value for 'dest': 'repo' is undefined"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Encountered 1 template error.
+error 1 - 'repo' is undefined
+Origin: <WORK>/playbook.yml:16:13
+
+14     git_method: SSH
+15   tasks:
+16     - name: "Get github repo: {{ repo }}"
+               ^ column 13
+

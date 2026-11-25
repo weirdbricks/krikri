@@ -1,0 +1,20 @@
+---
+# mm0.clone-and-upload-git-repository's tasks/main.yml: the "Get github repo"
+# task verbatim (the role's tempfile/package/chmod preamble is only there to
+# produce temp_directory_local, which this play supplies as a var so nothing
+# outside the case's scratch directory is touched).
+- name: mm0.clone-and-upload-git-repository
+  hosts: all
+  gather_facts: false
+  vars:
+    temp_directory_local:
+      path: /tmp/krikri-1792-local
+    git_site: github.com
+    organization: ''
+    git_method: SSH
+  tasks:
+    - name: "Get github repo: {{ repo }}"
+      #disable become to use local user's git key
+      become: no
+      local_action: git accept_hostkey=yes dest={{ temp_directory_local.path}}/{{ repo }} repo=ssh://git@{{git_site }}/{{ organization }}/{{ repo }}.git version="{{ version | default('HEAD') }}" depth=1
+      when: git_method == "SSH"
