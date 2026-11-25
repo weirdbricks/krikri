@@ -1,0 +1,22 @@
+---
+# milad.ansible_role_create_dot_env_file's tasks/main.yml first task
+# verbatim, with the role's defaults as play vars. Only `become: yes` is
+# dropped: the case runs on localhost as the invoking user.
+- name: milad.ansible_role_create_dot_env_file
+  hosts: all
+  gather_facts: false
+  vars:
+    dot_env_directory: ""
+    dot_env_directory_group: "www-data"
+    dot_env_directory_owner: "www-data"
+    dot_env_directory_mode: "0755"
+    dot_env_confirm_directory_exists: yes
+  tasks:
+    - name: Confirm .env containing directory exists
+      file:
+        path: "{{ dot_env_directory }}"
+        state: directory
+        group: "{{ dot_env_directory_group }}"
+        owner: "{{ dot_env_directory_owner }}"
+        mode: "{{ dot_env_directory_mode }}"
+      when: dot_env_confirm_directory_exists|bool

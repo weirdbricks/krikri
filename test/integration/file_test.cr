@@ -194,6 +194,44 @@ describe "file plugin" do
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("There was an issue creating  as requested: [Errno 2] No such file or directory: b''")
     end
+
+    # Ansible's ensure_directory answers an absent path with changed:true
+    # BEFORE it splits the path and mkdirs each component, so --check
+    # never reaches the empty-path os.mkdir abort (issue #1798:
+    # milad.ansible_role_create_dot_env_file leaves its directory ""
+    # and real ansible's check run reports changed, not a failure).
+    it "reports changed instead of failing for state=directory in check mode (issue #1798)" do
+      result = PluginSpecHelper.run("file", {"path" => "", "state" => "directory", "mode" => "0755", "_ansible_check_mode" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["path"].as_s.must_equal("")
+      result["msg"]?.must_be_nil
+      result["state"]?.must_be_nil
+    end
+
+    # initial_diff() runs before ensure_directory's check-mode return, so
+    # the empty path still diffs its absent -> directory transition.
+    it "diffs the empty path's absent -> directory transition in check mode (issue #1798)" do
+      result = PluginSpecHelper.run("file", {"path" => "", "state" => "directory", "_ansible_check_mode" => "true", "_ansible_diff" => "true"})
+
+      result["diff"]["before"]["path"].as_s.must_equal("")
+      result["diff"]["before"]["state"].as_s.must_equal("absent")
+      result["diff"]["after"]["path"].as_s.must_equal("")
+      result["diff"]["after"]["state"].as_s.must_equal("directory")
+    end
+
+    # execute_touch likewise returns changed:true for an absent path in
+    # check mode before its open(), so the empty path reports under dest
+    # (touch's result key) instead of failing.
+    it "reports changed instead of failing for state=touch in check mode" do
+      result = PluginSpecHelper.run("file", {"path" => "", "state" => "touch", "_ansible_check_mode" => "true"})
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["dest"].as_s.must_equal("")
+      result["msg"]?.must_be_nil
+    end
   end
 
   describe "state=touch" do
