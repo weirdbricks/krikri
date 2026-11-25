@@ -1,0 +1,45 @@
+---
+# The failing task is mrlesmithjr.netdata's tasks/install.yml:6-12, verbatim
+# (name, module params and the `depth:`/`version:` pair as the Galaxy role
+# ships them, tag v1.25.0), run twice: the first run clones, the second is
+# the round's warm re-run that real ansible dies on. `become: true` is
+# dropped - the case runs on localhost as an ordinary user and the failure
+# happens before anything privileged. The role clones netdata's real
+# repository; a local stand-in with the same shape (a tag off the branch
+# tip) keeps the case off the network.
+- name: "1828: warm re-run of the netdata clone task"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    netdata_git_repo: "{{ playbook_dir }}/netdata.git"
+    netdata_source_dir: "{{ playbook_dir }}/src/netdata"
+    netdata_git_version_tag: v1.25.0
+  tasks:
+    - name: create the repository the role clones
+      ansible.builtin.shell: |
+        set -e
+        git init -q "{{ netdata_git_repo }}"
+        cd "{{ netdata_git_repo }}"
+        git config user.email case@example.com
+        git config user.name case
+        echo one > file.txt
+        git add file.txt
+        git commit -qm one
+        git tag "{{ netdata_git_version_tag }}"
+        echo two > file.txt
+        git commit -qam two
+
+    - name: install | Cloning {{ netdata_git_repo }} to {{ netdata_source_dir }}
+      ansible.builtin.git:
+        repo: "{{ netdata_git_repo }}"
+        dest: "{{ netdata_source_dir }}"
+        depth: 1
+        version: "{{ netdata_git_version_tag }}"
+
+    - name: install | Cloning {{ netdata_git_repo }} to {{ netdata_source_dir }}
+      ansible.builtin.git:
+        repo: "{{ netdata_git_repo }}"
+        dest: "{{ netdata_source_dir }}"
+        depth: 1
+        version: "{{ netdata_git_version_tag }}"

@@ -314,6 +314,28 @@ describe "git plugin" do
     second["warnings"]?.must_be_nil
   end
 
+  it "fails the warm run over a shallow tag clone like ansible's unreadable head ref (issue #1828)" do
+    # A tag clone lands with a detached HEAD and no
+    # refs/remotes/origin/HEAD. Real's get_head_branch() reads that file
+    # and crashes on head_splitter()'s None, so the module dies before the
+    # fetch; krikri skipped the refspec and reported "Already up to date".
+    repo = tmp_path("git-fixture-tag-depth-warm")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-clone-tag-depth-warm-dest")
+    `rm -rf #{dest}`
+
+    first = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "v1", "depth" => "1"})
+    first["changed"].as_bool.must_equal(true)
+    falsey?(first["failed"]?.try(&.as_bool)).must_equal(true)
+
+    second = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "v1", "depth" => "1"})
+
+    second["failed"].as_bool.must_equal(true)
+    second["changed"].as_bool.must_equal(false)
+    second["msg"].as_s.must_equal("Task failed: Module failed: 'NoneType' object has no attribute 'startswith'")
+    second["_ansible_module_exception"].as_bool.must_equal(true)
+  end
+
   it "fails with a clear message for an unresolvable version" do
     repo = tmp_path("git-fixture-badversion")
     build_fixture_repo(repo)
