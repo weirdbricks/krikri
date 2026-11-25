@@ -1,0 +1,47 @@
+# bbaassssiiee.wso2db tasks/main.yml's "Unzip WSO2 API Manager Package"
+# verbatim, except for what cannot run in the corpus:
+# - `delegate_to: localhost` / `connection: local` / `run_once: true` /
+#   `become: false` are dropped (the replay is already a local run).
+# - the role's get_url download of the 600MB GitHub pack is replaced by a
+#   seed task that base64-decodes the archive checked in beside this
+#   playbook.
+# - the three setup tasks carry `check_mode: false` because this case is
+#   replayed with `--check` (flags.txt): without it the directory, the
+#   archive and the extracted tree would not exist, so the failing task
+#   would stop at "dest ... must be an existing dir" instead. Together
+#   they leave the controller in exactly the state the role's own
+#   earlier, non-check run left it in: the pack extracted, with
+#   `mode: u=rw,g=r,o=r` applied to every member, which strips the
+#   search bit from the extracted directories.
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure directory files/packs
+      ansible.builtin.file:
+        path: "files/packs/"
+        state: directory
+        mode: '0750'
+      check_mode: false
+
+    - name: Seed the WSO2 API Manager package
+      ansible.builtin.shell:
+        cmd: base64 -d {{ playbook_dir }}/archive.b64 > {{ playbook_dir }}/files/packs/wso2am-3.2.0.zip
+      changed_when: false
+      check_mode: false
+
+    - name: Leave the package extracted the way the role's own earlier run did
+      ansible.builtin.shell:
+        cmd: |
+          unzip -qo {{ playbook_dir }}/files/packs/wso2am-3.2.0.zip -d {{ playbook_dir }}/files/packs/
+          find {{ playbook_dir }}/files/packs/wso2am-3.2.0 -depth -exec chmod u=rw,g=r,o=r {} +
+      changed_when: false
+      check_mode: false
+
+    - name: Unzip WSO2 API Manager Package
+      ansible.builtin.unarchive:
+        src: "files/packs/wso2am-3.2.0.zip"
+        dest: "files/packs/"
+        creates: "files/packs/wso2am-3.2.0/LICENSE.txt"
+        mode: u=rw,g=r,o=r
+        remote_src: false
+      no_log: false

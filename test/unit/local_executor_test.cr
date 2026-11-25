@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "file_utils"
 require "../../src/krikri/local_executor"
 
 describe Krikri::LocalExecutor do
@@ -176,6 +177,33 @@ describe Krikri::LocalExecutor do
       # pattern would kill any matching process on the machine.
       `pkill -f #{Process.quote("tail -f /dev/null #{marker}")} 2>/dev/null` if marker
       File.delete(marker) if marker && File.exists?(marker)
+    end
+  end
+
+  describe ".dir_exists?" do
+    # Regression test for issue #1830: the local dir probe backs
+    # BasePlugin#remote_dir_exists?, which is how unarchive's `creates:`
+    # check asks whether a path exists on the controller (real ansible
+    # shells out to `test -d`, whose answer is "no" for ANY error). A
+    # directory whose search bit is gone - exactly what the wso2db pack's
+    # `mode: u=rw,g=r,o=r` leaves behind for every directory it extracts -
+    # made Dir.exists? raise File::Error, which escaped the plugin as
+    # "Plugin execution failed: Unable to get file info: ... Permission
+    # denied" instead of real's plain "does not exist".
+    it "answers false for a path it cannot stat instead of raising" do
+      skip("root ignores the search bit") if PluginSpecHelper.running_as_root?
+      dir = PluginSpecHelper.tmp_path("local-executor-dir-exists-#{Random::Secure.hex(4)}")
+      locked = File.join(dir, "locked")
+      FileUtils.mkdir_p(File.join(locked, "child"))
+      File.chmod(locked, 0o644)
+      begin
+        # The locked directory itself is statable (only its parent's search
+        # bit is needed), so this still has to answer true.
+        Krikri::LocalExecutor.dir_exists?(locked).must_equal(true)
+        Krikri::LocalExecutor.dir_exists?(File.join(locked, "child")).must_equal(false)
+      ensure
+        File.chmod(locked, 0o755)
+      end
     end
   end
 end

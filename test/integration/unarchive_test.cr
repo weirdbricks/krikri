@@ -1301,6 +1301,23 @@ describe "unarchive plugin" do
     result["failed"].as_bool.must_equal(true)
     result["warnings"]?.must_be_nil
   end
+
+  it "reports the resolved path without a trailing slash, like os.path.abspath" do
+    # Real's warning interpolates b_dest = os.path.abspath(dest), and
+    # abspath normalizes away a trailing slash. Found via issue #1830's
+    # `dest: files/packs/`, where this engine printed ".../files/packs/"
+    # while ansible printed ".../files/packs".
+    dir = PluginSpecHelper.tmp_path("unarchive-relative-dest-slash")
+    FileUtils.mkdir_p(File.join(dir, "sub"))
+    not_archive = File.join(TMP_DIR, "not-an-archive.txt")
+    File.write(not_archive, "this is not an archive")
+
+    result = PluginSpecHelper.run("unarchive", {"src" => not_archive, "dest" => "sub/"}, chdir: dir)
+
+    result["failed"].as_bool.must_equal(true)
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      ["Relative destination path 'sub/' was resolved to absolute path '#{File.join(dir, "sub")}'."])
+  end
 end
 
 # Ansible's unarchive action plugin raises its missing-dest AnsibleActionFail
