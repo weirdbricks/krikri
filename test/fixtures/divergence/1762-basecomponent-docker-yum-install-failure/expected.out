@@ -1,0 +1,17 @@
+
+PLAY [install docker packages] *************************************************
+
+TASK [install docker packages] *************************************************
+[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.
+Origin: <WORK>/playbook.yml:15:7
+
+13     docker_version: 17.03.*
+14   tasks:
+15     - name: install docker packages
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": true, "cmd": "yum  install -y --setopt=obsoletes=0 docker-ce-17.03.* docker-ce-selinux-17.03.*", "delta": "<TIME>", "end": "<TIME>", "msg": "The command exited with a non-zero return code.", "rc": 1, "start": "<TIME>", "stderr": "Error: Unable to find a match: docker-ce-17.03.* docker-ce-selinux-17.03.*", "stderr_lines": ["Error: Unable to find a match: docker-ce-17.03.* docker-ce-selinux-17.03.*"], "stdout": "Docker Repository                                41 kB/s |  15 kB     00:00    \nNo match for argument: docker-ce-17.03.*\nNo match for argument: docker-ce-selinux-17.03.*", "stdout_lines": ["Docker Repository                                41 kB/s |  15 kB     00:00    ", "No match for argument: docker-ce-17.03.*", "No match for argument: docker-ce-selinux-17.03.*"]}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

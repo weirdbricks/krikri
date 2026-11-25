@@ -55,6 +55,23 @@ describe "divergence transcript" do
       .must_equal(%(fatal: [localhost]: FAILED! => {"msg": "Valid booleans include: 'y', 0, 1"}\n))
   end
 
+  it "masks a command result's start/end/delta values, which follow each run's clock" do
+    # command/shell set these three from the module process's own clock, so two
+    # runs of real ansible disagree on the values exactly like the two engines
+    # do; the keys, the quoting and the surrounding JSON stay in the transcript.
+    line = %(fatal: [localhost]: FAILED! => {"delta": "0:00:00.003192", "end": "2026-11-24 20:17:42.853082", "start": "2026-11-24 20:17:42.849890"}\n)
+    Krikri::DivergenceTranscript.normalize(line, "").must_equal(
+      %(fatal: [localhost]: FAILED! => {"delta": "<TIME>", "end": "<TIME>", "start": "<TIME>"}\n))
+  end
+
+  it "masks only those three keys, in either quoting, and keeps every other value" do
+    text = "'delta': '1 day, 0:00:01.500000', 'start': '2026-11-24 20:17:42'\n" \
+           "\"atime\": \"2026-11-24 20:17:42.849890\", \"finished_at\": \"2026-11-24 20:17:42.849890\"\n"
+    Krikri::DivergenceTranscript.normalize(text, "").must_equal(
+      "'delta': '<TIME>', 'start': '<TIME>'\n" \
+      "\"atime\": \"2026-11-24 20:17:42.849890\", \"finished_at\": \"2026-11-24 20:17:42.849890\"\n")
+  end
+
   it "concatenates stdout then stderr and normalizes both" do
     stdout = "PLAY [/tmp/case/play.yml] ***\nok: [localhost]\n"
     stderr = "[WARNING]: /tmp/case/roles/r/defaults/main.yml:2:22\n"

@@ -1,0 +1,18 @@
+---
+# basecomponent.docker's tasks/main.yml -> tasks/install/redhat.yml task 11,
+# verbatim apart from the role's own defaults inlined as vars: the role pins
+# docker-ce-17.03.*, which no longer exists in the Docker repo, so yum exits 1
+# and the task fails. `bin/yum` stands in for dnf so the transcript is the same
+# on every host - the real first stdout line reports dnf's own transfer rate
+# (or metadata age), which differs between any two runs (NOTES.md).
+- name: install docker packages
+  hosts: all
+  gather_facts: false
+  vars:
+    docker_package: docker-ce
+    docker_version: 17.03.*
+  tasks:
+    - name: install docker packages
+      shell: "yum  install -y --setopt=obsoletes=0 {{ docker_package }}-{{ docker_version }} {{ docker_package }}-selinux-{{ docker_version }}"
+      environment:
+        PATH: "{{ playbook_dir }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

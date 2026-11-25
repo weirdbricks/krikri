@@ -1,0 +1,9 @@
+#!/bin/sh
+# DNF on a Rocky host: the pinned 17.03 packages are gone. The real first
+# stdout line reports the repo metadata's transfer rate (cold run) or how long
+# ago it was fetched (warm run) - host timing, so it is fixed here.
+printf 'Docker Repository                                41 kB/s |  15 kB     00:00    \n'
+echo "No match for argument: docker-ce-17.03.*"
+echo "No match for argument: docker-ce-selinux-17.03.*"
+echo "Error: Unable to find a match: docker-ce-17.03.* docker-ce-selinux-17.03.*" >&2
+exit 1
