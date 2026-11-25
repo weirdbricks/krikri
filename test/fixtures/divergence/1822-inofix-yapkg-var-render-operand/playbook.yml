@@ -1,0 +1,10 @@
+---
+# The round's cold-phase play: inofix.yapkg as the only role. The play-level
+# `become: true` the round used is not needed here (the failing when: is
+# evaluated before any privilege escalation), so the case can run without
+# root.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - inofix.yapkg

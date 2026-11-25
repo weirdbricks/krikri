@@ -1,0 +1,32 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [inofix.yapkg : install packages] *****************************************
+[ERROR]: Task failed: A 'when' expression failed: Error rendering template: can only concatenate list (not "UndefinedMarker") to list
+
+Task failed.
+Origin: <WORK>/roles/inofix.yapkg/tasks/main.yml:3:3
+
+1 ---
+2 # tasks file for ansible-yapkg
+3 - name: 'install {{ yapkg_task_group_name }}'
+    ^ column 3
+
+<<< caused by >>>
+
+A 'when' expression failed: Error rendering template: can only concatenate list (not "UndefinedMarker") to list
+Origin: <WORK>/roles/inofix.yapkg/vars/main.yml:12:14
+
+10
+11 # ... (2) a list directly containing the package names to be installed
+12 yapkg_names: '{{ yapkg__names | list + yapkg_list.rstrip(";").split(";") }}'
+                ^ column 14
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Error rendering template: can only concatenate list (not \"UndefinedMarker\") to list"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

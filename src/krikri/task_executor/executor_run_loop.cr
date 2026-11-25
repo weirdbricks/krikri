@@ -1717,6 +1717,23 @@ module Krikri
           # form's gate produces. Unrescued, the raise escaped substitute
           # itself and crashed the whole run instead of failing one task.
           raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in template: #{ex.message}")
+        rescue ex : PlusMinusOperandError
+          # The `{{ }}`-wrapped form is a TEMPLATE render, and real words an
+          # operand TypeError that kills one "Error rendering template:
+          # <msg>" - not the unbraced form's "Error rendering expression:"
+          # (live-verified vs 2.21.6: `when: "{{ [1] + 'x' }}"` reports
+          # template, `when: "[1] + 'x'"` expression). A genuinely undefined
+          # NAME inside the braces stays the conditional wording
+          # (`when: "{{ missing + 1 }}"` -> "Error while evaluating
+          # conditional: 'missing' is undefined"). Unrescued, the raise
+          # escaped substitute itself and crashed the whole run instead of
+          # failing one task.
+          detail = if ex.operand_type_failure?
+                     "Error rendering template: #{ex.message}"
+                   else
+                     "Error while evaluating conditional: #{ex.message}"
+                   end
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{detail}")
         end
 
         # ansible resolves every name the clause's Jinja expression mentions
@@ -1801,6 +1818,27 @@ module Krikri
           # adarnimrod.apache's assert: version_compare preflight).
           raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in expression: #{ex.message}")
         rescue ex
+          # An operand TypeError that killed a VARIABLE's own value - reached
+          # because the clause read it - is a failed TEMPLATE render in real,
+          # not a conditional-evaluation failure: ansible-core 2.21.6 words
+          # the task "A 'when' expression failed: Error rendering template:
+          # can only concatenate list (not "UndefinedMarker") to list" and
+          # points the caused-by Origin at the FAILING VALUE's declaration
+          # (issue #1822, inofix.yapkg's `when: yapkg_names is iterable` over
+          # `yapkg_names: '{{ yapkg__names | list + yapkg_list... }}'` ->
+          # vars/main.yml:12:14, not the when: token). The same TypeError in
+          # the clause's OWN expression has no failing value to blame and
+          # keeps the expression wording real prints for the unbraced form
+          # (`when: "[1] + 'x'"` -> "Error rendering expression: ...",
+          # live-verified same session). The scan only runs on this error
+          # path, and only for the operand-type message shape.
+          detail = ex.message.to_s
+          if PlusMinusOperandError.operand_type_message?(detail)
+            if task && host && value_failure_var_origin(task, detail, reachable_from: when_condition, host: host)
+              raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error rendering template: #{detail}")
+            end
+            raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error rendering expression: #{detail}")
+          end
           raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Error while evaluating conditional: #{ex.message}")
         ensure
           VarSubstitutor.pop_current_when_site if task

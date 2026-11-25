@@ -3470,6 +3470,19 @@ module Krikri
                  message
                elsif ex.is_a?(ConditionalEvaluator::OrderingTypeError) || ex.is_a?(RenderExpressionError)
                  "Error rendering expression: #{ex.message}"
+               elsif (message = ex.message.to_s) && PlusMinusOperandError.operand_type_message?(message)
+                 # An operand TypeError that killed a VARIABLE's own value is
+                 # a failed template render in real - "Error rendering
+                 # template: <msg>" with the chain pinned at that value's
+                 # declaration - while the clause's OWN expression keeps the
+                 # expression wording (live-verified vs 2.21.6 for both until:
+                 # forms, issue #1822; the when: path draws the same line).
+                 if task && host && (condition = until_condition) &&
+                    value_failure_var_origin(task, message, reachable_from: condition, host: host)
+                   "Error rendering template: #{message}"
+                 else
+                   "Error rendering expression: #{message}"
+                 end
                else
                  "Error while evaluating conditional: #{ex.message}"
                end
