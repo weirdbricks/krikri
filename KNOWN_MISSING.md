@@ -1043,6 +1043,27 @@ because anyone intends to fix them.
   `test/integration/tempfile_test.cr` (the name's shape and the on-disk 0600 mode and empty size
   that the oracle's `f ... 0 0 600 0` and `e3b0c442...` lines report).
 
+- **A Subversion working copy's `.svn/wc.db` records the fixture repository's random UUID, so its
+  hash can never match across the kpg reference images (kpg subversion case, issue #1802).** The
+  fixtures run `svnadmin create /opt/kpg-fixtures/svnrepo` during seeding, in EACH reference image
+  separately, and every `svnadmin create` draws a fresh random UUID; the client writes that UUID
+  into the working copy's sqlite database (`REPOSITORY.uuid`), so the same checkout leaves
+  different bytes on the two hosts. Everything else in the issue's state delta already matches:
+  the `file added` lines for `.svn/`, `/root/.subversion` and its `auth/` dirs, their modes and
+  sizes, and the `entries`/`format`/`wc.db-journal` hashes. Verified on the cached reference
+  images: krikri reproduces real ansible's wc.db hash in either image - `263172e2...` checking out
+  the real image's repository, `0d45ed5e...` the krikri image's, which are exactly the issue's two
+  hashes - and those two databases differ in nothing but the UUID string (a second checkout of one
+  repository, seconds later, is byte-identical again). So no krikri change can match it: the oracle
+  needs to mask the 64-hex digest of a hash line whose path ends in `/.svn/wc.db`, keeping the path
+  and the `file` line (type/uid/gid/mode/size) so a wrong mode or size still shows; a divergence in
+  what the checkout wrote inside wc.db itself stays invisible to the oracle and needs the task's
+  output or a hand check. What krikri owns - the command sequence that decides those bytes - is
+  pinned in-process by `test/integration/subversion_param_coverage_test.cr`: a fresh dest gets
+  real's single `svn checkout` plus the reporting `svn info` and no state-rewriting
+  `status`/`switch`/`update`, and an existing working copy gets real's status/switch/update
+  sequence even when it is already at the target revision.
+
 - **apt's live progress meter differs between any two runs (`ddilts.change_password` issue #1728,
   `crivetimihai.bootstrap` issue #1789).** In the ddilts round the role's first task is
   `raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)`.
