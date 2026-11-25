@@ -1,0 +1,23 @@
+
+PLAY [1828: warm re-run of the netdata clone task] *****************************
+
+TASK [create the repository the role clones] ***********************************
+changed: [localhost]
+
+TASK [install | Cloning <WORK>/netdata.git to <WORK>/src/netdata] ***
+changed: [localhost]
+
+TASK [install | Cloning <WORK>/netdata.git to <WORK>/src/netdata] ***
+[ERROR]: Task failed: Module failed: 'NoneType' object has no attribute 'startswith'
+Origin: <WORK>/playbook.yml:40:7
+
+38         version: "{{ netdata_git_version_tag }}"
+39
+40     - name: install | Cloning {{ netdata_git_repo }} to {{ netdata_source_dir }}
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Module failed: 'NoneType' object has no attribute 'startswith'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=2    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

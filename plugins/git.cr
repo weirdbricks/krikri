@@ -84,10 +84,36 @@ module Krikri
       end
     end
 
+    # git.py's get_head_branch() ends with `branch.startswith('-')` on
+    # head_splitter()'s return, which is None whenever the head ref file
+    # is missing or empty. A `git clone --depth 1 --branch <tag>` leaves
+    # a detached HEAD and no refs/remotes/<remote>/HEAD, so the module's
+    # next run over that checkout dies inside the uncaught AttributeError
+    # - before the fetch/checkout it was computing the refspec for.
+    # Issue #1828 (tobias_richter.netdata, mrlesmithjr.netdata
+    # install.yml's clone task on the warm re-run) had krikri skip the
+    # refspec and report "Already up to date" where ansible failed.
+    class HeadBranchUnreadable < Exception
+    end
+
     def execute : PluginResult
       execute_checked
     rescue ex : CheckRcFailure
       ex.result
+    rescue HeadBranchUnreadable
+      head_branch_crash
+    end
+
+    # Ansible's module loader catches the AttributeError and hands the
+    # controller ansible-core 2.21's module-crash result: the fatal dump
+    # repeats the "Task failed: Module failed: ..." brief py_module's
+    # recovered uncaught exceptions use.
+    private def head_branch_crash : PluginResult
+      detail = "'NoneType' object has no attribute 'startswith'"
+      result = PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+      result.extra["_ansible_module_exception"] = JSON::Any.new(true)
+      result
     end
 
     private def raise_check_rc(command : String, r) : NoReturn
@@ -1063,14 +1089,17 @@ module Krikri
     end
 
     # Ansible's get_head_branch: HEAD's branch, falling back to
-    # refs/remotes/<remote>/HEAD while in a detached-HEAD state.
+    # refs/remotes/<remote>/HEAD while in a detached-HEAD state. A head
+    # ref that head_splitter() cannot read is real's crash point, not a
+    # nil to fall back from - see HeadBranchUnreadable.
     private def get_head_branch(d : String) : String?
       rp = repo_path_of(d) || return nil
       head_file = File.join(rp, "HEAD")
       head_file = File.join(rp, "refs", "remotes", @remote, "HEAD") if detached_head?(d)
-      return nil unless File.exists?(head_file)
+      raise HeadBranchUnreadable.new unless File.exists?(head_file)
 
       raw = File.read(head_file).lines.first? || ""
+      raise HeadBranchUnreadable.new if raw.empty?
       raw = raw.sub("refs/remotes/#{@remote}", "")
       newref = raw.split(" ").last? || ""
       newref.split("/").last?
