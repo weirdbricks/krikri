@@ -1,0 +1,3 @@
+---
+# consul configuration which is written in {{consul_config_file}}.
+consul_merged_config: "{{consul_default_config|combine(consul_config)}}"

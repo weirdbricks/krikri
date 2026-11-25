@@ -1,0 +1,33 @@
+---
+consul_data_dir: /tmp/consul
+consul_config_file: /etc/consul/consul.json
+consul_path: consul
+# default consul configuration.
+# the configuration is written in {{consul_config_file}}.
+consul_default_config:
+  node_name: "{{ansible_hostname}}"
+  bind_addr: "{{(ansible_default_ipv4|default({})).address|default('0.0.0.0')}}"
+  data_dir: /var/consul
+  server: false
+# consul configuration. this configuration is merged with {{consul_default_config}}.
+consul_config: {}
+# consul configurations.
+# Ex. {{consul_configd_path}}/web.json
+#   web:
+#     service:
+#       name: web
+#       tags:
+#       - rails
+#       port: 80
+consul_config_files: {}
+# whether consul service is enabled
+consul_enabled: yes
+# consul zip's download timeout (sec)
+consul_service_unit_file: /etc/systemd/system/consul.service
+# user and group which run consul agent
+consul_user: consul
+consul_group: consul
+consul_pid_file: /var/run/consul/consul.pid
+# consul unit file's environment variables
+consul_env_vars: {}
+consul_use_systemd: true

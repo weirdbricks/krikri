@@ -2395,3 +2395,53 @@ describe "INJECT_FACTS_AS_VARS deprecation from a check-mode-skipped loop item" 
     stderr.must_include("Origin: <unknown>\n\nitem\n")
   end
 end
+
+# A role's defaults can hold a dict whose leaves each read a different
+# top-level fact, and its vars/main.yml can consume that dict through
+# combine(). Real evaluates assert:'s `that:` in one templating operation,
+# whose audit context keeps only the FIRST fact access - so the whole dict
+# prints ONE block, at the earliest fact-naming leaf (suzuki-shunsuke
+# .consul_config's `consul_default_config`, issue #1827, live-verified
+# against 2.21.6).
+describe "INJECT_FACTS_AS_VARS deprecation from a container value read in assert's that:" do
+  it "prints one block at the first fact-naming leaf of the container" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-dict-assert-#{Random::Secure.hex(4)}")
+    role = File.join(dir, "roles", "dictfacts")
+    FileUtils.mkdir_p(File.join(role, "defaults"))
+    FileUtils.mkdir_p(File.join(role, "vars"))
+    FileUtils.mkdir_p(File.join(role, "tasks"))
+    File.write(File.join(role, "defaults", "main.yml"), <<-DEFAULTS)
+      consul_default_config:
+        node_name: "{{ansible_hostname}}"
+        bind_addr: "{{(ansible_default_ipv4|default({})).address|default('0.0.0.0')}}"
+        data_dir: /var/consul
+      consul_config: {}
+      DEFAULTS
+    File.write(File.join(role, "vars", "main.yml"),
+      "---\nconsul_merged_config: \"{{consul_default_config|combine(consul_config)}}\"\n")
+    File.write(File.join(role, "tasks", "main.yml"), <<-TASKS)
+      ---
+      - name: check config is defined
+        assert:
+          that:
+            - consul_merged_config is defined
+            - consul_merged_config.data_dir is defined
+      TASKS
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - dictfacts
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(role, "defaults", "main.yml")}:2:14")
+    stderr.includes?(":3:14").must_equal(false)
+  end
+end
