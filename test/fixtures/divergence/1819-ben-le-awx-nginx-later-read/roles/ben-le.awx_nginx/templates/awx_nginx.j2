@@ -1,0 +1,27 @@
+# AWX server configuration
+#
+server {
+    listen 80;
+    access_log /var/log/nginx/sites/{{ awx_config.ALLOWED_HOSTS[0] }}.http.log;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    access_log /var/log/nginx/sites/{{ awx_config.ALLOWED_HOSTS[0] }}.https.log;
+
+    ssl_certificate {{ awx_nginx_ssl_cert_path }};
+    ssl_certificate_key {{ awx_nginx_ssl_key_path }};
+
+    client_max_body_size 5m;
+
+    server_name {{ awx_config.ALLOWED_HOSTS | join(" ") }};
+
+    location / {
+     	proxy_pass http://{{ host_port }};
+	include proxy_params;
+        proxy_set_header   Upgrade            $http_upgrade;
+        proxy_set_header   Connection         "upgrade";   
+    }
+}
+
