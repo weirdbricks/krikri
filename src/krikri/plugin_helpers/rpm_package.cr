@@ -1603,8 +1603,43 @@ module Krikri
         # batched lookup for the whole removal list (issue #904).
         nevras = rpm_nevras(to_remove)
 
+        # A removal can break a requirement of an installed package. ansible's
+        # absent goal fills the sack with the available repos and resolves
+        # with allow_erasing forced on, so its solver keeps that package and
+        # adds an alternative provider from the repos: shomatan.cron's
+        # `yum: name=cronie-anacron state=absent` installs cronie-noanacron to
+        # satisfy cronie's `dailyjobs`, leaving cronie (and crond) running
+        # (issue #1794). The `dnf remove` CLI deliberately drops the
+        # available repos there ("disable all available repos to delete whole
+        # dependency tree instead of replacing removable package with
+        # available packages", dnf/cli/commands/remove.py), erasing the
+        # dependent cronie and stopping crond - which made the role's next
+        # two tasks report changed where real said ok. `rpm -e --test` asks
+        # rpm's own database the same question without loading any repo, so
+        # the target's python-dnf replay (DnfTransactionProbe) only runs for
+        # removals that can actually strand something.
+        plan = removal_strands_dependents?(to_remove) ? dnf_removal_transaction(to_remove) : nil
+
         if check_mode?
-          return check_mode_transaction_result(true, to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" })
+          results = plan || to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" }
+          return check_mode_transaction_result(true, results)
+        end
+
+        # The CLI cannot run ansible's single install+remove transaction, so
+        # install the replacement providers the probe resolved FIRST: cronie
+        # is then never erased, so crond is never stopped, and the removal
+        # below erases only the packages ansible's own remove_set names.
+        if plan
+          replacements = plan.select(&.starts_with?("Installed: ")).map { |entry| entry.lchop("Installed: ") }
+          unless replacements.empty?
+            install_result = remote_exec_tolerating_unknown_repo(
+              "#{pkg_manager_binary} install #{options} --allowerasing #{replacements.map { |pkg| quote_package(pkg) }.join(" ")}"
+            )
+            # A two-step replay that cannot install the replacement (a
+            # genuine conflict, say) keeps the old bare-removal behavior
+            # instead of failing a task ansible would have completed.
+            plan = nil if install_result[:exit_code] != 0
+          end
         end
 
         # Build remove command
@@ -1622,7 +1657,7 @@ module Krikri
             failed: false,
             msg: "",
             include_empty_msg: true,
-            results: to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" },
+            results: plan || to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" },
             rc: 0,
             key_order: transaction_key_order
           )
@@ -1633,6 +1668,15 @@ module Krikri
             result[:exit_code] == 0 ? 1 : result[:exit_code]
           )
         end
+      end
+
+      # Whether removing *names* would break an installed package's
+      # requirement - `rpm -e --test`'s repo-free verdict, the cheap gate
+      # that keeps the python-dnf replay off removals with no dependents.
+      private def removal_strands_dependents?(names : Array(String)) : Bool
+        result = remote_exec("rpm -e --test #{names.map { |pkg| shell_single_quote(pkg) }.join(" ")}")
+        return false if result[:exit_code] == 0
+        (result[:stdout] + result[:stderr]).includes?("Failed dependencies")
       end
 
       # Ansible's dnf/yum module `state: latest` installs a not-yet-
