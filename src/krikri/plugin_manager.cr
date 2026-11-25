@@ -2815,8 +2815,18 @@ module Krikri
     # PWD untouched; juju4.lxdconfigure's env-fact dump printed the
     # controller's directory where real ansible printed the module's,
     # issue #1584).
-    def self.local_plugin_env : Hash(String, String)
-      ENV.to_h.merge({"PWD" => Dir.current})
+    #
+    # That same `sh -c` launch is what keeps PS1 out of ansible's module
+    # process: a non-interactive bash removes PS1 from the environment it
+    # hands on, and on macOS - where the issue was reported - /bin/sh IS
+    # bash. krikri execs the plugin binary directly, so a `PS1=x> `
+    # exported into the controller reached every local `command:` task's
+    # environment and showed up in its `env` output, which is the same
+    # leak #1747 closed for the ssh daemon (issue #1834). Crystal merges this
+    # hash over the parent's environment, so only a nil value UNSETS a name -
+    # deleting the key here would leave the inherited PS1 in place.
+    def self.local_plugin_env : Hash(String, String?)
+      ENV.to_h.merge({"PWD" => Dir.current, "PS1" => nil})
     end
 
     # Single-quotes *str* for shell embedding - shared implementation in
