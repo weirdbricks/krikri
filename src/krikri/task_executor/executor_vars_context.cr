@@ -7699,7 +7699,14 @@ module Krikri
         # unrecognized, the failure fell through to the generic
         # module-failure chain: a bogus "Module failed:"/"Action failed:"
         # middle segment and no caused-by block.
-        inner.starts_with?("Syntax error in template:")
+        inner.starts_with?("Syntax error in template:") ||
+        # An operand TypeError that killed a variable's own value is a failed
+        # TEMPLATE render in real: the same two-level chain as the classes
+        # above, with the caused-by Origin at that value's declaration
+        # (live-verified vs 2.21.6, issue #1822). The clause's own
+        # unbraced-expression failure keeps its separate "Error rendering
+        # expression:" class above.
+        inner.starts_with?("Error rendering template:")
     end
 
     # Real prints the ALLOW_BROKEN_CONDITIONALS hint after a conditional
@@ -7720,7 +7727,11 @@ module Krikri
         # Same for the braced when:'s rendered-template wording class
         # (live-verified vs 2.19.11, issue #827: the block ends at the
         # when: token's Origin, no hint).
-        inner.starts_with?("Syntax error in template:")
+        inner.starts_with?("Syntax error in template:") ||
+        # A failed variable render ends the block at its Origin too
+        # (live-verified vs 2.21.6, issue #1822: no hint after the
+        # caused-by chain for the operand TypeError).
+        inner.starts_with?("Error rendering template:")
     end
 
     # A source position in a playbook file: the path, its lines (already
@@ -7867,6 +7878,21 @@ module Krikri
       cause_lines = cause[:lines]
       key_idx = cause[:idx]
       key_col = cause[:col]
+
+      # A failed variable RENDER pins this record at the failing value's own
+      # declaration instead of the when: token: real reports the template
+      # that died (`yapkg_names:` in vars/main.yml, issue #1822,
+      # live-verified vs 2.21.6). The scan's exactly-one-match rule keeps the
+      # clause token in charge whenever no single value explains the message.
+      if inner.starts_with?("Error rendering template: ") &&
+         (origin = value_failure_var_origin(task, inner["Error rendering template: ".size..],
+           reachable_from: raw, host: host)).is_a?(FileVarOrigin) &&
+         File.file?(origin.path)
+        cause_path = origin.path
+        cause_lines = File.read_lines(origin.path)
+        key_idx = origin.line - 1
+        key_col = origin.column
+      end
 
       # The THIRD chain record real 2.19.11 adds when the conditional's
       # missing reference was reached through a failing VAR VALUE (a

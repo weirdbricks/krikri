@@ -1,0 +1,15 @@
+---
+# defaults file for ansible-yapkg
+default__yapkg__update_cache: yes
+default__yapkg__target_release: ''
+default__yapkg__cache_valid_time: 3600
+default__yapkg__task_group_name: 'packages'
+
+# the list of names to be resolved against os__pkg_name
+yapkg__list: []
+
+# a dict of package names per distro
+os__pkg_name: {}
+
+# a package "shortcut" list of os internal names (no need to resolve against os__pkg_name)
+yapkg__names: []

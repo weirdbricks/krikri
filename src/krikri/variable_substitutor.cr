@@ -204,7 +204,17 @@ module Krikri
     # carries both shapes, so the display sites ask this instead of
     # guessing from the call path.
     def operand_type_failure? : Bool
-      message.to_s.matches?(/\A(unsupported operand type\(s\) for |can only concatenate |bad operand type for unary )/)
+      self.class.operand_type_message?(message.to_s)
+    end
+
+    # The message-shape twin of #operand_type_failure? for call sites that
+    # hold only the TEXT of a failure: a conditional's strict probe converts
+    # the engine's error into its message, so a template render that died on
+    # an operand TypeError arrives as a plain string (issue #1822,
+    # inofix.yapkg's `yapkg_names` value under `when: yapkg_names is
+    # iterable`).
+    def self.operand_type_message?(message : String) : Bool
+      message.matches?(/\A(unsupported operand type\(s\) for |can only concatenate |bad operand type for unary )/)
     end
 
     def template_text : String

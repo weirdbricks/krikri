@@ -1,0 +1,24 @@
+---
+# vars file for ansible-yapkg
+
+yapkg_d: '{{ ansible_distribution | lower() }}'
+yapkg_r: '{{ ansible_distribution | lower() }}_{{ ansible_distribution_release | lower() }}'
+
+# accept (1) either a list of package names to be dispached from a dict containing complex package information or ...
+yapkg_list: '{% for p in yapkg__list %}{% if p in os__pkg_name %}{{ os__pkg_name[p][yapkg_r] | d(os__pkg_name[p][yapkg_d]) | join(";") }};{% endif %}{% endfor %}'
+### in jinja2.10 we will be able to do something like "{{ os__pkg_name | select('in', yapkg__list) |.. }}"
+
+# ... (2) a list directly containing the package names to be installed
+yapkg_names: '{{ yapkg__names | list + yapkg_list.rstrip(";").split(";") }}'
+
+# the name used for user feedback
+yapkg_task_group_name: '{{ yapkg__task_group_name | d(default__yapkg__task_group_name) }}'
+
+# whether to try to download the latest archives
+yapkg_update_cache: '{{ yapkg__update_cache | d(default__yapkg__update_cache) }}'
+# how long the cache is considered valid before downloading the archives again
+yapkg_cache_valid_time: '{{ yapkg__cache_valid_time | d(default__yapkg__cache_valid_time) }}'
+
+# distro release to use
+yapkg_target_release: '{{ yapkg__target_release | d(default__yapkg__target_release) }}'
+

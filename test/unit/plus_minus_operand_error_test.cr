@@ -33,4 +33,15 @@ describe "PlusMinusOperandError#template_text" do
     err.template_text.must_equal("'undef_v' is undefined")
     err.operand_type_failure?.must_equal(false)
   end
+
+  # A conditional's strict probe hands a failed variable render on as its
+  # MESSAGE text, so the when: path asks the same question of a plain string
+  # (issue #1822).
+  it "reports operand_type_message? true only for operand-type messages" do
+    OPERAND_TYPE_MESSAGES.each do |msg|
+      Krikri::PlusMinusOperandError.operand_type_message?(msg).must_equal(true)
+    end
+    Krikri::PlusMinusOperandError.operand_type_message?("'undef_v' is undefined").must_equal(false)
+    Krikri::PlusMinusOperandError.operand_type_message?("No first item, sequence was empty.").must_equal(false)
+  end
 end
