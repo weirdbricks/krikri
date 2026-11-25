@@ -82,6 +82,34 @@ describe "async_status plugin result shapes" do
     end
   end
 
+  # Regression for issue #1804: async_status.py declares
+  # supports_check_mode=True yet unlinks the job file for mode=cleanup with
+  # no module.check_mode gate, so real ansible's --check pass really does
+  # delete ~/.ansible_async/<jid> (live-verified against ansible-core
+  # 2.21.6). krikri must keep deleting it: the kpg check-mode oracle flags
+  # the shared mutation, but a check-mode skip here would break parity and
+  # leave the ansible-side delta alone in that oracle anyway.
+  it "deletes a cleanup job's file even under --check, as ansible's module does" do
+    jid = "#{Time.utc.to_unix}.#{Random::Secure.hex(6)}"
+    home = File.join(Dir.tempdir, "krikri-async-status-spec-#{Random::Secure.hex(4)}")
+    Dir.mkdir_p(async_dir(home))
+    begin
+      File.write(status_path(home, jid), {"ansible_job_id" => jid, "started" => 1, "finished" => 1}.to_json)
+
+      result = PluginSpecHelper.run("async_status",
+        {"jid" => jid, "mode" => "cleanup", "_ansible_check_mode" => "true"},
+        env: {"HOME" => home})
+
+      result["failed"]?.must_be_nil
+      result["changed"].as_bool.must_equal(false)
+      result["ansible_job_id"].as_s.must_equal(jid)
+      result["erased"].as_s.must_equal(status_path(home, jid))
+      File.exists?(status_path(home, jid)).must_equal(false)
+    ensure
+      FileUtils.rm_r(home)
+    end
+  end
+
   # Regression: a traversal jid must be rejected before AsyncJobs joins it
   # into the async-dir path - status mode would otherwise read an arbitrary
   # controller-local file and mode: cleanup would delete one.
