@@ -1,0 +1,25 @@
+# YasuhiroABE.homegw-network's tasks/main.yml:15-24, verbatim except for two
+# localhost adaptations: the role's /etc/network/interfaces is the target's own
+# file (the case's relative `interfaces` never exists, so the role's
+# `state: absent` stays the no-op it was on the round's host) and the loop
+# source. The role loops over `ansible_interfaces`, whose length is the
+# target's own interface list - two hosts disagree on the transcript's per-item
+# lines - so the case seeds the same one-element list as a top-level fact
+# through a case-local module instead. Both engines inject a module's
+# `ansible_facts` entry as a top-level fact, so the deprecation this case pins
+# is the same one the role hit.
+- name: custom fact loop
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: seed a deterministic list fact
+      iface_facts:
+
+    - name: delete all setting from interfaces
+      ansible.builtin.lineinfile:
+        path: interfaces
+        state: absent
+        regexp: "^auto *{{ item }}|^iface *{{ item }}|^allow-hotplug *{{ item }}"
+      with_items:
+        - "{{ ifaces }}"
