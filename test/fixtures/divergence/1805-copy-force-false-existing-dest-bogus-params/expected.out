@@ -1,0 +1,17 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Seed the existing destination] *******************************************
+changed: [localhost]
+
+TASK [Copy #16.0] **************************************************************
+ok: [localhost]
+
+TASK [Kpg successor] ***********************************************************
+ok: [localhost] => {
+    "msg": "kpg-successor"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
