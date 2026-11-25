@@ -427,6 +427,61 @@ module Krikri
       names
     end
 
+    # Whether an expression uses any variable as a WHOLE VALUE - a bare
+    # name (a truthiness/comparison operand, a filter or test target)
+    # rather than the receiver of a `.attr`/`[key]` subscript. ansible-core
+    # finalizes every leaf of the container such a name resolves to inside
+    # ONE templating operation, whose audit context keeps only the first
+    # fact access, while a subscript resolves just that one leaf (see
+    # VarSubstitutor.@@expression_op_scopes, issue #1827).
+    def self.whole_value_use?(expr : KrikriJinja::Nodes::ExprNode) : Bool
+      whole_value_use?(expr, false)
+    end
+
+    private def self.whole_value_use?(expr : KrikriJinja::Nodes::ExprNode, subscripted : Bool) : Bool
+      case expr
+      when KrikriJinja::Nodes::NameNode
+        !subscripted && !expr.name.empty?
+      when KrikriJinja::Nodes::ListExprNode, KrikriJinja::Nodes::TupleExprNode
+        expr.items.any? { |item| whole_value_use?(item, false) }
+      when KrikriJinja::Nodes::DictExprNode
+        expr.keys.any? { |key| whole_value_use?(key, false) } ||
+          expr.values.any? { |value| whole_value_use?(value, false) }
+      when KrikriJinja::Nodes::BinOpNode
+        whole_value_use?(expr.left, false) || whole_value_use?(expr.right, false)
+      when KrikriJinja::Nodes::UnaryOpNode
+        whole_value_use?(expr.operand, false)
+      when KrikriJinja::Nodes::CompareNode
+        whole_value_use?(expr.left, false) ||
+          expr.comparators.any? { |comparator| whole_value_use?(comparator, false) }
+      when KrikriJinja::Nodes::CondExprNode
+        whole_value_use?(expr.test, false) ||
+          whole_value_use?(expr.truthy, false) ||
+          expr.falsy.try { |falsy| whole_value_use?(falsy, false) } || false
+      when KrikriJinja::Nodes::FilterNode, KrikriJinja::Nodes::TestNode
+        whole_value_use?(expr.target, false) ||
+          expr.args.any? { |arg| whole_value_use?(arg, false) } ||
+          expr.kwargs.any? { |kwarg| whole_value_use?(kwarg[1], false) }
+      when KrikriJinja::Nodes::GetattrNode
+        whole_value_use?(expr.obj, true)
+      when KrikriJinja::Nodes::GetitemNode
+        whole_value_use?(expr.obj, true) || whole_value_use?(expr.key, false)
+      when KrikriJinja::Nodes::SliceNode
+        whole_value_use?(expr.obj, true) ||
+          expr.start.try { |start| whole_value_use?(start, false) } ||
+          expr.stop.try { |stop| whole_value_use?(stop, false) } ||
+          expr.step.try { |step| whole_value_use?(step, false) } || false
+      when KrikriJinja::Nodes::CallExprNode
+        whole_value_use?(expr.func, true) ||
+          expr.args.any? { |arg| whole_value_use?(arg, false) } ||
+          expr.kwargs.any? { |kwarg| whole_value_use?(kwarg[1], false) }
+      when KrikriJinja::Nodes::ConcatNode
+        expr.parts.any? { |part| whole_value_use?(part, false) }
+      else
+        false
+      end
+    end
+
     # The top-level fact reads an expression makes by fetching one back
     # out of a `hostvars[...]` entry. ansible-core tags every injected
     # fact VALUE, and a hostvars entry hands that tagged value back, so

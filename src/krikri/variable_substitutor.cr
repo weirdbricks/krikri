@@ -2788,6 +2788,62 @@ module Krikri
     # so the fiber's rendering site IS the operation identity (issue #964).
     @@tripped_fact_deprecation_ops = Set(String).new
 
+    # The operation identity of an in-process EXPRESSION evaluation that no
+    # render site names. Real evaluates an expression inside one templating
+    # operation, and using a variable as a WHOLE VALUE there finalizes the
+    # container it holds, rendering every leaf in that same audit context -
+    # which keeps only the first fact access. A role default's dict whose
+    # leaves each read a fact therefore prints one block, at the earliest
+    # fact-naming leaf (live-verified against 2.21.6: suzuki-shunsuke
+    # .consul_config's `consul_default_config` read through assert's
+    # `consul_merged_config is defined`, issue #1827). A SUBSCRIPTED use
+    # (`.attr`/`[key]`) resolves only that leaf, its own operation, so it
+    # mints nothing and keeps the per-Origin emission - one `that:` item per
+    # leaf prints one block each, as real does.
+    #
+    # Only the OUTERMOST evaluation mints: the leaves an expression
+    # resolves render inside it, and real's nested renders share the
+    # enclosing audit context (see JinjaRenderer#evaluate_value_once!).
+    @@expression_op_scopes = {} of Fiber => Array(String)
+    @@expression_op_seq = 0_i64
+    @@expression_eval_depth = {} of Fiber => Int32
+
+    def self.enter_expression_eval : Nil
+      fiber = Fiber.current
+      @@expression_eval_depth[fiber] = (@@expression_eval_depth[fiber]? || 0) + 1
+    end
+
+    def self.exit_expression_eval : Nil
+      fiber = Fiber.current
+      depth = (@@expression_eval_depth[fiber]? || 1) - 1
+      if depth <= 0
+        @@expression_eval_depth.delete(fiber)
+      else
+        @@expression_eval_depth[fiber] = depth
+      end
+    end
+
+    def self.expression_eval_depth : Int32
+      @@expression_eval_depth[Fiber.current]? || 0
+    end
+
+    def self.push_expression_op_scope : Nil
+      fiber = Fiber.current
+      @@expression_op_seq += 1
+      (@@expression_op_scopes[fiber] ||= Array(String).new) << "expr:#{@@expression_op_seq}"
+    end
+
+    def self.pop_expression_op_scope : Nil
+      fiber = Fiber.current
+      return unless stack = @@expression_op_scopes[fiber]?
+      stack.pop
+      @@expression_op_scopes.delete(fiber) if stack.empty?
+    end
+
+    def self.current_expression_op_scope : String?
+      @@expression_op_scopes[Fiber.current]?.try(&.last?)
+    end
+
     # Real runs each LOOP ITEM in its own templating context, so the same
     # args text templated for item N+1 raises a FRESH deprecation the item's
     # own result carries (build_loop_result extends the aggregate from every
@@ -2845,7 +2901,12 @@ module Krikri
       # list through one templar call, whose shared deprecate tag keeps
       # only the first fact access, so the pass keeps that identity (see
       # #with_loop_item_render_op).
-      return current_loop_item_render_op
+      if op = current_loop_item_render_op
+        return op
+      end
+      # The enclosing in-process expression evaluation is the operation
+      # when no render site names one (see @@expression_op_scopes).
+      current_expression_op_scope
     end
 
     # Templating-operation identity for a loop's ITEM RENDER pass, used when

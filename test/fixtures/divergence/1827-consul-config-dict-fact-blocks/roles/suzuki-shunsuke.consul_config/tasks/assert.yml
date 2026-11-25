@@ -1,0 +1,12 @@
+---
+- assert:
+    that:
+    - consul_path is defined
+    - consul_default_config is defined
+    - consul_config is defined
+    - consul_merged_config is defined
+    - consul_merged_config.data_dir is defined
+    - consul_config_file is defined
+    - consul_config_files is defined
+    - consul_enabled is defined
+    - consul_env_vars is defined

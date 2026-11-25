@@ -1,0 +1,8 @@
+# The round's cold-phase play: suzuki-shunsuke.consul_config as the only
+# role. Its tasks after the assertion need a real host, so only the
+# diverging assertion is kept.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - suzuki-shunsuke.consul_config

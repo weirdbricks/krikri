@@ -449,35 +449,53 @@ module Krikri
       end
 
       private def evaluate_value_once!(expr : String) : JSON::Any?
-        JinjaRenderer.force_whole_structure_leaves!(expr, @vars)
         cache = @decode ? @@jinja_decode_expression_cache : @@jinja_expression_cache
         node = cache[expr] ||= KrikriJinja.parse_expression(
           expr, KrikriJinja::LexerOptions.new(verbatim_expression_strings: !@decode)
         )
-        # jinja2 reads every name the expression loads as the frame opens,
-        # before this engine's lazy resolution would - see
-        # VarSubstitutor.emit_expression_fact_deprecations.
-        VarSubstitutor.emit_expression_fact_deprecations(node, @vars, jinja_resolver)
-        # Same deferred filter_plugins trigger as #render! (a structured
-        # expression's own AST decides, so `{{ 1 + 1 }}` stays silent
-        # where `{{ x | first }}` triggers, exactly like real ansible);
-        # every structured-eval path (whole-span native typing, msg
-        # leaves, conditional structured probes) funnels through here.
-        Krikri::PythonFilterRunner.scan_for_filter_use(node, @vars["playbook_dir"]?.try(&.as_s?))
-        value = KrikriJinja.default_engine.evaluate_parsed(
-          node, resolver: jinja_resolver,
-          undefined: KrikriJinja::Undefined.new(nil, chainable: true), host_context: jinja_host_context
-        )
-        return nil if value.raw.is_a?(KrikriJinja::Undefined)
+        # Real evaluates an expression inside ONE templating operation, and
+        # using a variable as a whole value there finalizes every leaf of
+        # the container it holds under that operation's audit context -
+        # which keeps only the first fact access. When no render site names
+        # the operation (assert:'s `that:`), that identity is what the
+        # deprecation record needs (issue #1827). Only the OUTERMOST
+        # evaluation mints it: the leaves it resolves render inside it and
+        # share that context, while a SUBSCRIPTED use resolves one leaf per
+        # access, its own operation (see VarSubstitutor.@@expression_op_scopes).
+        scoped = VarSubstitutor.expression_eval_depth == 0 &&
+                 ConditionalEvaluator.whole_value_use?(node)
+        VarSubstitutor.enter_expression_eval
+        VarSubstitutor.push_expression_op_scope if scoped
+        begin
+          JinjaRenderer.force_whole_structure_leaves!(expr, @vars)
+          # jinja2 reads every name the expression loads as the frame opens,
+          # before this engine's lazy resolution would - see
+          # VarSubstitutor.emit_expression_fact_deprecations.
+          VarSubstitutor.emit_expression_fact_deprecations(node, @vars, jinja_resolver)
+          # Same deferred filter_plugins trigger as #render! (a structured
+          # expression's own AST decides, so `{{ 1 + 1 }}` stays silent
+          # where `{{ x | first }}` triggers, exactly like real ansible);
+          # every structured-eval path (whole-span native typing, msg
+          # leaves, conditional structured probes) funnels through here.
+          Krikri::PythonFilterRunner.scan_for_filter_use(node, @vars["playbook_dir"]?.try(&.as_s?))
+          value = KrikriJinja.default_engine.evaluate_parsed(
+            node, resolver: jinja_resolver,
+            undefined: KrikriJinja::Undefined.new(nil, chainable: true), host_context: jinja_host_context
+          )
+          return nil if value.raw.is_a?(KrikriJinja::Undefined)
 
-        result = JinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
-        # A structured result that IS a result carrying the deprecated
-        # `skipped_reason` leaf is the whole-value read real warns for -
-        # see ResultDisplay.emit_skipped_reason_deprecation.
-        if Krikri::ResultDisplay.deprecated_skipped_reason_read?(result)
-          Krikri::ResultDisplay.emit_skipped_reason_deprecation(VarSubstitutor.current_deprecation_origin("skipped_reason"))
+          result = JinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
+          # A structured result that IS a result carrying the deprecated
+          # `skipped_reason` leaf is the whole-value read real warns for -
+          # see ResultDisplay.emit_skipped_reason_deprecation.
+          if Krikri::ResultDisplay.deprecated_skipped_reason_read?(result)
+            Krikri::ResultDisplay.emit_skipped_reason_deprecation(VarSubstitutor.current_deprecation_origin("skipped_reason"))
+          end
+          result
+        ensure
+          VarSubstitutor.pop_expression_op_scope if scoped
+          VarSubstitutor.exit_expression_eval
         end
-        result
       end
 
       # Ansible's `omit` inside a CONTAINER removes that entry
