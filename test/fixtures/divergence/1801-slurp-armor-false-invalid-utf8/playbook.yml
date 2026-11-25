@@ -1,0 +1,18 @@
+# krikri-playbook-generator playbook 000029-multi-subversion-happy.yml's
+# "Slurp #29.1" task verbatim, except for what cannot run in the corpus:
+# the loop keeps only the /opt/kpg-fixtures entry that diverges (the other
+# seven are valid UTF-8 and report ok), and delegate_to: target2 plus the
+# `when: kpg_task_0 is not skipped` gate are dropped because the case runs
+# on localhost (kpg_task_0 is a subversion checkout of a fixture repo).
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: 'Slurp #29.1'
+      ansible.builtin.slurp:
+        armor: false
+        src: '{{ item }}'
+      register: kpg_task_1
+      ignore_errors: true
+      loop:
+        - '{{ playbook_dir }}/binary.bin'

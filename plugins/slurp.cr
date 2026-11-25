@@ -81,17 +81,9 @@ module Krikri
       # changed, Ansible's exact opposite.
       # armor=false hands the raw bytes to the controller's JSON
       # deserialization, which refuses invalid UTF-8 (live-verified vs
-      # real 2.21.6 on a non-UTF-8 file). CPython's codec error reports
-      # the byte range of the first ill-formed sequence as "position
-      # S-E"; krikri derives the same pair from the first invalid byte.
+      # real 2.21.6 on a non-UTF-8 file).
       raw_content = String.new(bytes)
-      if !armor && !raw_content.valid_encoding?
-        start = invalid_utf8_start(bytes)
-        return PluginResult.new(
-          changed: false, failed: true,
-          msg: "Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position #{start}-#{start + 1}: surrogates not allowed"
-        )
-      end
+      return utf8_refusal_result(bytes) if !armor && !raw_content.valid_encoding?
 
       PluginResult.new(
         changed: false, failed: false, msg: "",
@@ -101,27 +93,78 @@ module Krikri
       )
     end
 
-    # Index of the first byte that starts an ill-formed UTF-8 sequence,
-    # mirroring what CPython's utf-8 codec reports as the error position.
-    private def invalid_utf8_start(bytes : Bytes) : Int32 # ameba:disable Metrics/CyclomaticComplexity
-      bytes.size.times do |i|
-        b = bytes[i]
-        if b < 0x80
+    # Real raises the refusal while deserializing the MODULE's result, so
+    # the task executor wraps it in an AnsibleTaskError: the registered/fatal
+    # msg carries the "Task failed: " brief while the [ERROR] block's own
+    # text does not (live-verified vs 2.21.6, issue #1801).
+    private def utf8_refusal_result(bytes : Bytes) : PluginResult
+      start, run, first = utf8_encode_error(bytes)
+      detail = if run > 1
+                 "Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position #{start}-#{start + run - 1}: surrogates not allowed"
+               else
+                 "Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode character '\\u#{(0xDC00 | first).to_s(16)}' in position #{start}: surrogates not allowed"
+               end
+      PluginResult.new(changed: false, failed: true, msg: "Task failed: #{detail}", _ansible_error_detail: detail)
+    end
+
+    # CPython decodes the module's `content` string with surrogateescape, so
+    # every byte the utf-8 codec cannot fold into a valid sequence becomes
+    # one lone surrogate character. Its re-encode failure reports the FIRST
+    # such run, with positions counted in CHARACTERS (each valid multi-byte
+    # sequence before the run counts once), and prints the lone surrogate's
+    # own escape when the run is a single character but the plain range when
+    # it is longer - "'\udcff' in position 12" vs "in position 12-13"
+    # (live-verified vs ansible-core 2.21.6, issue #1801).
+    private def utf8_encode_error(bytes : Bytes) : {Int32, Int32, UInt8}
+      char_index = 0
+      index = 0
+      while index < bytes.size
+        if length = valid_utf8_length(bytes, index)
+          index += length
+          char_index += 1
           next
-        elsif b < 0xC2 || b > 0xF4
-          return i
-        elsif b < 0xE0
-          return i unless bytes[i + 1]?.try &.in?(0x80..0xBF)
-        elsif b < 0xF0
-          return i unless bytes[i + 1]?.try(&.in?(0x80..0xBF)) && bytes[i + 2]?.try(&.in?(0x80..0xBF))
-          return i if b == 0xE0 && (bytes[i + 1] || 0) < 0xA0
-        else
-          return i unless bytes[i + 1]?.try(&.in?(0x80..0xBF)) && bytes[i + 2]?.try(&.in?(0x80..0xBF)) && bytes[i + 3]?.try(&.in?(0x80..0xBF))
-          return i if b == 0xF0 && (bytes[i + 1] || 0) < 0x90
-          return i if b == 0xF4 && (bytes[i + 1] || 0) > 0x8F
+        end
+
+        start = char_index
+        first = bytes[index]
+        while index < bytes.size && valid_utf8_length(bytes, index).nil?
+          index += 1
+          char_index += 1
+        end
+        return {start, char_index - start, first}
+      end
+      {0, 0, 0_u8}
+    end
+
+    # Length of the well-formed UTF-8 sequence starting at `index`, or nil.
+    # Stricter than a continuation-byte check alone: CPython also rejects
+    # overlong forms and the encoded-surrogate range (0xED 0xA0..0xBF), so a
+    # "\xed\xb3\xbf" run is reported as three surrogates, not skipped.
+    private def valid_utf8_length(bytes : Bytes, index : Int32) : Int32? # ameba:disable Metrics/CyclomaticComplexity
+      byte = bytes[index]
+      return 1 if byte < 0x80
+
+      if byte.in?(0xC2..0xDF)
+        return 2 if utf8_continuation?(bytes, index + 1)
+      elsif byte.in?(0xE0..0xEF)
+        second_low = byte == 0xE0 ? 0xA0 : 0x80
+        second_high = byte == 0xED ? 0x9F : 0xBF
+        if (second = bytes[index + 1]?) && second.in?(second_low..second_high) && utf8_continuation?(bytes, index + 2)
+          return 3
+        end
+      elsif byte.in?(0xF0..0xF4)
+        second_low = byte == 0xF0 ? 0x90 : 0x80
+        second_high = byte == 0xF4 ? 0x8F : 0xBF
+        if (second = bytes[index + 1]?) && second.in?(second_low..second_high) &&
+           utf8_continuation?(bytes, index + 2) && utf8_continuation?(bytes, index + 3)
+          return 4
         end
       end
-      0
+      nil
+    end
+
+    private def utf8_continuation?(bytes : Bytes, index : Int32) : Bool
+      (byte = bytes[index]?) ? byte.in?(0x80..0xBF) : false
     end
 
     private SUCCESS_KEY_ORDER = %w[content source encoding failed changed]

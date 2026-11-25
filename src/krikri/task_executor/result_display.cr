@@ -2839,6 +2839,13 @@ module Krikri
       ErrorBlock.origin_context(path, task.source_line, task.source_col > 0 ? task.source_col : nil)
     end
 
+    # The controller's invalid-UTF8 refusal text (ansible-core 2.21's
+    # profile JSON deserializer) and the help paragraph its
+    # AnsibleRuntimeError carries; slurp's armor=false reports the former as
+    # the block text through _ansible_error_detail.
+    UTF8_REFUSAL_PREFIX = "Refusing to deserialize an invalid UTF8 string value: "
+    UTF8_REFUSAL_HELP   = "This check can be disabled with the `MODULE_STRICT_UTF8_RESPONSE` setting."
+
     # The cause chain ansible-core 2.19 builds for each failure
     # class, as an ErrorBlock event tree rooted at the task-level
     # AnsibleTaskError ("Task failed."):
@@ -2858,6 +2865,18 @@ module Krikri
     # chain shape directly, the way the other display helpers here are.
     def self.task_error_chain(module_name : String?, msg : String, origin : String, crash_context : Bool = false) : ErrorBlock::Node
       root = ErrorBlock::Node.new("Task failed.", source_context: origin)
+
+      # The controller's refusal of a module result string that cannot be
+      # encoded as UTF-8 (slurp's armor=false on a binary file) is raised
+      # while DESERIALIZING the result, not by the module: real's
+      # AnsibleRuntimeError carries the MODULE_STRICT_UTF8_RESPONSE
+      # help_text, which differs from the wrapping AnsibleTaskError's (none),
+      # so the two segments never collapse and the block prints the help
+      # text inline after the cause (live-verified vs 2.21.6, issue #1801).
+      if msg.starts_with?(UTF8_REFUSAL_PREFIX)
+        return root.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+          ErrorBlock::Node.new(msg, help_text: UTF8_REFUSAL_HELP))
+      end
 
       # An uncaught module exception raised inside an `except` block carries
       # Python's implicit __context__, which the module API serializes as a

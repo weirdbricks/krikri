@@ -40,7 +40,36 @@ describe "slurp plugin" do
     result = PluginSpecHelper.run("slurp", {"src" => path, "armor" => "false"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position 0-1: surrogates not allowed")
+    # Real raises the refusal while deserializing the module result, so the
+    # executor wraps it in an AnsibleTaskError: the registered msg carries
+    # the "Task failed: " brief, the [ERROR] block text does not.
+    result["msg"].as_s.must_equal("Task failed: Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position 0-1: surrogates not allowed")
+    result["_ansible_error_detail"].as_s.must_equal("Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position 0-1: surrogates not allowed")
+  end
+
+  # CPython's codec error counts positions in CHARACTERS of the
+  # surrogateescape-decoded string and quotes a single lone surrogate's own
+  # escape instead of a range (live-verified vs ansible-core 2.21.6, issue
+  # #1801: a binary fixture whose 0xff follows 12 ASCII bytes is reported as
+  # position 12, not the byte range krikri used to derive).
+  it "reports a single lone surrogate with CPython's character form" do
+    path = tmp_path("slurp_single_surrogate.bin")
+    File.write(path, "a\u00E9\xFFb")
+
+    result = PluginSpecHelper.run("slurp", {"src" => path, "armor" => "false"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["_ansible_error_detail"].as_s.must_equal("Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode character '\\udcff' in position 2: surrogates not allowed")
+  end
+
+  it "counts an encoded-surrogate byte run as one surrogate per byte" do
+    path = tmp_path("slurp_cesu8.bin")
+    File.write(path, "a\xED\xB3\xBFb")
+
+    result = PluginSpecHelper.run("slurp", {"src" => path, "armor" => "false"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["_ansible_error_detail"].as_s.must_equal("Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode characters in position 1-3: surrogates not allowed")
   end
 
   it "accepts the path alias for src" do
