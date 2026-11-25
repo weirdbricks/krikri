@@ -1,0 +1,13 @@
+#!/bin/sh
+# Stand-in for "php <composer-phar>": the case has no php, so the two
+# composer tasks hand their php binary to composer's own `executable:` param.
+# Answers the module's `help <command> --format=json` probe the way composer
+# 2.x does, and reports real work for the update itself (the round's cold run
+# saw `changed`).
+case " $* " in
+  *" help "*)
+    printf '%s\n' '{"definition":{"options":{"no-ansi":{},"no-interaction":{},"no-progress":{},"no-dev":{},"optimize-autoloader":{},"dry-run":{}}}}'
+    exit 0
+    ;;
+esac
+printf 'Installing dependencies from lock file\n'

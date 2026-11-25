@@ -1,0 +1,12 @@
+
+PLAY [local] *******************************************************************
+
+TASK [Composer update on <WORK>/msehr] ***
+changed: [localhost]
+
+TASK [Composer upgrade on <WORK>/msehr/public_html] ***
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

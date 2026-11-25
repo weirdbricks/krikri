@@ -1,0 +1,5 @@
+#!/bin/sh
+# Never exec'd: composer.py always runs "<php> <composer_path> ...", so the
+# sibling php fake is what answers. The file only has to exist for the story
+# to read correctly.
+exit 0
