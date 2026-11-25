@@ -320,4 +320,105 @@ describe "internal vars dictionary deprecation" do
     vars_at = stderr.index!("[DEPRECATION WARNING]: #{VARS_DICT_DEPRECATION_TEXT}")
     (fact_at < vars_at).must_equal(true)
   end
+
+  it "warns at a quoted mapping key's own value token" do
+    # ansible's set_fact accepts dynamically NAMED facts (`"{{ item }}":`
+    # as the args KEY, which set_fact itself templates); the value read
+    # belongs to its own templating operation, Origin'd at the value's
+    # opening quote, exactly like an unquoted key's value (live-verified
+    # against 2.21.6, issue #1825: kaos2oak.oracle_java's
+    # `"{{ item[8:] }}": "{{ vars[item[8:]] | default(vars[item]) }}"`).
+    _stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          foo: bar
+        tasks:
+          - name: keyed fact
+            set_fact:
+              "{{ item }}": "{{ vars.foo | default(vars[item]) }}"
+            loop: [foo]
+      PLAYBOOK
+
+    stderr.must_include("[DEPRECATION WARNING]: #{VARS_DICT_DEPRECATION_TEXT}\n")
+    stderr.must_include(":9:23\n")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(VARS_DICT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
+  it "prints one block for the value and another for the loop source" do
+    # A set_fact loop is two templating operations per item in real: the
+    # loop source renders once, then the args. Both name the dict, so
+    # both print - each at its own token (live-verified against 2.21.6,
+    # the round's own shape; issue #1825).
+    _stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          default_foo: bar
+        tasks:
+          - name: keyed fact looped over the dict
+            set_fact:
+              "{{ item[8:] }}": "{{ vars[item[8:]] | default(vars[item]) }}"
+            loop: "{{ vars | flatten(levels=1) | select('match', '^default_') | list }}"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(VARS_DICT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include(":10:13\n")
+    stderr.must_include(":9:27\n")
+  end
+
+  it "keeps the tag on a fact copied straight out of the dict" do
+    # The tag lives on the object a `vars` read hands back, so a set_fact
+    # pass-through stores a tagged value: reading the fact later trips
+    # the deprecation again at the READING template (live-verified
+    # against 2.21.6, issue #1825's env_vars.yml block).
+    _stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          src: ['a']
+        tasks:
+          - name: copy out of the dict
+            set_fact:
+              "{{ item }}": "{{ vars[item] }}"
+            loop: [src]
+          - name: read the copy
+            debug:
+              msg: "{{ src }}"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(VARS_DICT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    stderr.must_include(":9:23\n")
+    stderr.must_include(":13:14\n")
+  end
+
+  it "drops the tag for a fact built by a filter or an operator" do
+    # Only a straight pass-through keeps the tag: a filter result is a
+    # NEW object, so reading that fact stays silent (live-verified
+    # against 2.21.6 for both `+` and `| length`).
+    _stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          src: ['a']
+        tasks:
+          - name: copy out of the dict
+            set_fact:
+              "{{ item }}": "{{ vars[item] }}"
+            loop: [src]
+          - name: derive with an operator
+            set_fact:
+              joined: "{{ src }} + ['x']"
+          - name: read the derived value
+            debug:
+              msg: "{{ joined }}"
+      PLAYBOOK
+
+    stderr.wont_include(":16:14\n")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(VARS_DICT_DEPRECATION_TEXT)}/).size.must_equal(2)
+  end
 end

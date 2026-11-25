@@ -3985,7 +3985,17 @@ module Krikri
           substituted_value = substituted_value.gsub(OMIT_SENTINEL, "")
         end
 
-        result[substitutor.substitute(key)] = substituted_value
+        rendered_key = substitutor.substitute(key)
+        # set_fact stores the VALUE a `vars`-dict read produced, and that
+        # object still carries ansible-core's _DEPRECATE_VARS tag - so a
+        # later template read of the stored fact warns again. Record (or
+        # clear) it on the name this param names (see
+        # VarSubstitutor#set_vars_dict_tagged_name).
+        if native_containers
+          VarSubstitutor.set_vars_dict_tagged_name(substitutor.host_name, rendered_key,
+            VarSubstitutor.vars_dict_tagged_value?(value, substitutor))
+        end
+        result[rendered_key] = substituted_value
       end
 
       # Ansible parses a command:/shell:'s trailing `creates=`/

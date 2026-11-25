@@ -1,0 +1,44 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Set facts using any 'default_java_' vars] ********************************
+ok: [localhost] => (item=default_java_local_installer_path_env_vars)
+
+TASK [Add Linux environment variables to java_local_installer_path_env_vars] ***
+ok: [localhost] => (item=LINUX_LOCAL_INSTALLERS_PATH)
+ok: [localhost] => (item=JAVA_LINUX_LOCAL_INSTALLERS_PATH)
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: The internal "vars" dictionary is deprecated. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/playbook.yml:19:13
+
+17       set_fact:
+18         "{{ item[8:] }}": "{{  vars[item[8:]] | default(vars[item]) }}"
+19       loop: "{{ vars | flatten(levels=1) | select('match', '^default_java_') | list }}"
+               ^ column 13
+
+Use the `vars` and `varnames` lookups instead.
+
+[DEPRECATION WARNING]: The internal "vars" dictionary is deprecated. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/playbook.yml:18:27
+
+16     - name: Set facts using any 'default_java_' vars
+17       set_fact:
+18         "{{ item[8:] }}": "{{  vars[item[8:]] | default(vars[item]) }}"
+                             ^ column 27
+
+Use the `vars` and `varnames` lookups instead.
+
+[DEPRECATION WARNING]: The internal "vars" dictionary is deprecated. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/playbook.yml:23:45
+
+21     - name: Add Linux environment variables to java_local_installer_path_env_vars
+22       set_fact:
+23         java_local_installer_path_env_vars: "{{ java_local_installer_path_env_vars }} + [ '{{ item }}' ]"
+                                               ^ column 45
+
+Use the `vars` and `varnames` lookups instead.
+

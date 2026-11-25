@@ -1,0 +1,26 @@
+# kaos2oak.oracle_java's tasks/set/default_java_vars.yml "Set facts using any
+# 'default_java_' vars" task and tasks/set/Linux/env_vars.yml entry, verbatim,
+# with the role's vars/main.yml `default_java_local_installer_path_env_vars`
+# value inline. The first task copies its defaults out of the internal `vars`
+# dict through a dynamically NAMED mapping key (`"{{ item[8:] }}":`), which
+# answers with the tagged objects; the second reads that copy, so real prints
+# three deprecation blocks where krikri printed one.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    default_java_local_installer_path_env_vars:
+      - 'LOCAL_INSTALLERS_PATH'
+      - 'JAVA_LOCAL_INSTALLERS_PATH'
+  tasks:
+    - name: Set facts using any 'default_java_' vars
+      set_fact:
+        "{{ item[8:] }}": "{{  vars[item[8:]] | default(vars[item]) }}"
+      loop: "{{ vars | flatten(levels=1) | select('match', '^default_java_') | list }}"
+
+    - name: Add Linux environment variables to java_local_installer_path_env_vars
+      set_fact:
+        java_local_installer_path_env_vars: "{{ java_local_installer_path_env_vars }} + [ '{{ item }}' ]"
+      loop:
+        - 'LINUX_LOCAL_INSTALLERS_PATH'
+        - 'JAVA_LINUX_LOCAL_INSTALLERS_PATH'

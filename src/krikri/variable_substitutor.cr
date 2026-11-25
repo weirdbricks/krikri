@@ -3481,6 +3481,57 @@ module Krikri
       @@set_fact_var_names[host_name]?.try(&.includes?(name)) || false
     end
 
+    # Names whose STORED VALUE still carries ansible-core's
+    # _DEPRECATE_VARS tag, per host. The tag lives on the object a
+    # `vars` dict read hands back, so a set_fact that stores that object
+    # straight through keeps it: every later template READ of the name
+    # trips the same deprecation, Origin'd at the reading template
+    # (live-verified against 2.21.6 - a filter/operator result is a NEW
+    # object and drops the tag, so `{{ x }} + []` stores an untagged
+    # list while a plain `{{ x }}` copy keeps it). Issue #1825:
+    # kaos2oak.oracle_java's `default_java_*` copy feeds its own later
+    # `{{ java_local_installer_path_env_vars }}` render.
+    @@vars_dict_tagged_names = Hash(String, Set(String)).new
+
+    def self.set_vars_dict_tagged_name(host_name : String, name : String, tagged : Bool) : Nil
+      set = @@vars_dict_tagged_names[host_name] ||= Set(String).new
+      tagged ? set.add(name) : set.delete(name)
+    end
+
+    def self.vars_dict_tagged_name?(host_name : String?, name : String) : Bool
+      return false unless host_name
+      @@vars_dict_tagged_names[host_name]?.try(&.includes?(name)) || false
+    end
+
+    # Whether a set_fact value's whole-span expression hands back a
+    # _DEPRECATE_VARS-tagged object unchanged: a direct dict read, or a
+    # bare read of an already-tagged name, with only the filters that
+    # return their input as-is after it.
+    def self.vars_dict_tagged_value?(text : String, substitutor : VarSubstitutor) : Bool
+      stripped = text.strip
+      return false unless single_top_level_span?(stripped)
+      chain = VariableSubstitutor::FilterEngine.split_chain(stripped[2..-3].strip)
+      return false if chain.empty?
+      base = chain[0]
+      return false unless chain[1..].all? { |segment| identity_preserving_filter?(segment) }
+      return true if base.matches?(/\Avars(?:\.[A-Za-z_][A-Za-z0-9_]*|\[.+\])?\z/m)
+      base.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/) && vars_dict_tagged_name?(substitutor.host_name, base)
+    end
+
+    # Jinja's `default`/`d`/`mandatory` return the value they were given
+    # when it is defined, so a tagged object survives them; every other
+    # filter builds a fresh value and loses the tag.
+    private def self.identity_preserving_filter?(segment : String) : Bool
+      segment == "mandatory" || segment.matches?(/\A(?:default|d)\s*\(.*\)\z/m)
+    end
+
+    # The read-time half: a template READ of a still-tagged name trips
+    # the deprecation again, at the read's own Origin.
+    def self.emit_vars_dict_tagged_value_deprecation(name : String, vars : Hash(String, JSON::Any)) : Nil
+      return unless vars_dict_tagged_name?(host_from_vars(vars), name)
+      emit_vars_dict_deprecation(vars_dict_read_origin)
+    end
+
     # The loop SOURCE this fiber is resolving right now: a top-level fact
     # read while its items render deprecates at the source ELEMENT that
     # named the fact, not at the loop keyword's own value token.
