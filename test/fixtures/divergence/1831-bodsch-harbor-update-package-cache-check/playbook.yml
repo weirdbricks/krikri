@@ -1,0 +1,10 @@
+---
+# The play krikri-role-tester ran for the role; only the inventory differs
+# (localhost instead of the round's testhost). The role is trimmed to the
+# divergent task from tasks/prepare.yaml, copied verbatim - the rest of the
+# role installs docker and harbor, which needs a real host.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - bodsch.harbor
