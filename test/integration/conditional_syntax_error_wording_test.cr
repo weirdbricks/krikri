@@ -377,4 +377,52 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     origins.map { |match| {match[1].to_i, match[2].to_i} }.must_equal([{12, 13}, {16, 13}], output)
     output.must_include("Use inline expressions, for example: `when: \"{{ a_var }}\" == 42` becomes `when: a_var == 42`")
   end
+
+  # Real TEMPLATES a whole-template conditional first, so the fact read
+  # inside it deprecates during that render and only the non-string result
+  # trips the delimiters deprecation afterwards - both Origin'd at the
+  # clause's value token. krikri decided the delimiters block before it
+  # rendered, so the two came out the other way round (issue #1800:
+  # rgroten.docker's `when: "{{ ansible_distribution == 'RedHat' }}"`).
+  it "emits a whole-template when:'s fact deprecation before the delimiters one" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: A RedHat only task
+            ansible.builtin.debug:
+              msg: redhat
+            when: "{{ ansible_distribution == 'RedHat' }}"
+      YAML
+    status.exit_code.must_equal(0)
+    facts_at = output.index("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS") || -1
+    delimiters_at = output.index("[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters") || -1
+    (facts_at >= 0 && facts_at < delimiters_at).must_equal(true, output)
+    output.scan("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS").size.must_equal(1, output)
+    output.scan("[DEPRECATION WARNING]: Conditionals should not be surrounded").size.must_equal(1, output)
+  end
+
+  # The same order for an assert `that:` item - its fact read renders in
+  # the action plugin's conditional evaluation, ahead of the delimiters
+  # block (live-verified vs 2.21.6).
+  it "emits a whole-template that: item's fact deprecation before the delimiters one" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: RedHat only assertion
+            ansible.builtin.assert:
+              that:
+                - "{{ ansible_distribution == 'RedHat' }}"
+            ignore_errors: true
+      YAML
+    status.exit_code.must_equal(0)
+    facts_at = output.index("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS") || -1
+    delimiters_at = output.index("[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters") || -1
+    (facts_at >= 0 && facts_at < delimiters_at).must_equal(true, output)
+    output.scan("[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS").size.must_equal(1, output)
+    output.scan("[DEPRECATION WARNING]: Conditionals should not be surrounded").size.must_equal(1, output)
+  end
 end

@@ -1,0 +1,13 @@
+# rgroten.docker's tasks/main.yml:2-7, copied verbatim - the task the round's
+# check phase flagged: its whole-template `when:` reads a top-level fact.
+# The condition is false on the round's Ubuntu host, so nothing is replaced.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Change docker repo from RHEL to CentOS
+      replace:
+        dest: /etc/yum.repos.d/docker.repo
+        regexp: 'RedHat'
+        replace: 'centos'
+      when: "{{ ansible_distribution == 'RedHat' }}"

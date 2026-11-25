@@ -6532,7 +6532,27 @@ module Krikri
     JINJA_CONST_TEMPLATE_WARNING_HEADER = "[WARNING]: Jinja constant strings should not contain embedded templates. This feature will be disabled by default in ansible-core 2.23.\n"
     JINJA_CONST_TEMPLATE_WARNING_FOOTER = "\nUse inline expressions, for example: `when: \"{{ a_var }}\" == 42` becomes `when: a_var == 42`\n\n"
 
-    private def maybe_conditional_delimiters_deprecation(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any), that_index : Int32? = nil) : Nil
+    # Emits an already-computed whole-span block through the same funnel as
+    # the [WARNING] constant-template branch below (the ENV kill-switch and
+    # the one-time hint are the funnel's own), and holds it wherever the
+    # fact/vars-dict reads around it are held so the block keeps its place
+    # right after them: an early when: evaluation - the batch build's, the
+    # pre-upload probe's - holds the whole sequence instead of printing part
+    # of it ahead of the task's banner.
+    private def emit_conditional_delimiters_deprecation(text : String?) : Nil
+      return unless text
+      lines = text.chomp.split('\n')
+      ResultDisplay.emit_or_hold_deprecation(@@conditional_deprecation_seen, text, lines)
+    end
+
+    # The whole-span block's text, or nil when the conditional is not one.
+    # Split from the emission because real TEMPLATES the conditional first
+    # (a fact read inside it deprecates at the conditional's Origin during
+    # that render) and only then deprecates its delimiters, so callers
+    # probe before the render and emit after it (live-verified vs 2.21.6,
+    # issue #1800: the INJECT_FACTS_AS_VARS block comes out first, the
+    # delimiters block second, both at the same Origin).
+    private def conditional_delimiters_deprecation_text(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any), that_index : Int32? = nil) : String?
       conditional = raw.strip
       # Real 2.19 renders a conditional as a template before compiling it
       # as an expression, and its constant detection runs on that render:
@@ -6577,13 +6597,8 @@ module Krikri
 
       text = conditional_deprecation_text(task, key, raw, that_index,
         footer: DELIMITERS_DEPRECATION_FOOTER)
-      return if text.empty?
-      # Same funnel as the [WARNING] above (the ENV kill-switch and the
-      # one-time hint are the funnel's own): an early when: evaluation -
-      # the batch build's, run_task_batch's pre-upload probe - holds the
-      # block instead of printing it ahead of the task's banner.
-      lines = text.chomp.split('\n')
-      ResultDisplay.emit_or_defer_deprecation(@@conditional_deprecation_seen, text, lines)
+      return nil if text.empty?
+      text
     end
 
     # Ansible warns for every `that:` item it EVALUATED - all of them on
@@ -6601,8 +6616,11 @@ module Krikri
       conditions = Array(String).from_json(raw) rescue return
       evaluated = action_result.final_result.try(&.as_h["_ansible_that_evaluated"]?.try(&.as_i?)) || conditions.size
       (0...Math.min(evaluated, conditions.size)).each do |idx|
-        maybe_conditional_delimiters_deprecation(task, conditions[idx], "that", vars_context, idx)
+        # Real templates the item first (its fact read deprecates there) and
+        # deprecates the delimiters only afterwards (issue #1800).
+        pending_delimiters_deprecation = conditional_delimiters_deprecation_text(task, conditions[idx], "that", vars_context, idx)
         emit_assert_that_fact_deprecation(task, conditions[idx], vars_context, idx)
+        emit_conditional_delimiters_deprecation(pending_delimiters_deprecation)
       end
     end
 

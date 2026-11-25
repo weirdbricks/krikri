@@ -3677,15 +3677,17 @@ module Krikri
         if total_runs > 1
           if condition = until_condition
             substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-            maybe_conditional_delimiters_deprecation(task, condition, "until", vars_context)
+            pending_delimiters_deprecation = conditional_delimiters_deprecation_text(task, condition, "until", vars_context)
             begin
               # The clause's value position rides the fiber as its templated
               # param site, so a top-level fact alias read while the clause
               # resolves deprecates with the until: value's own Origin
               # (live-verified vs 2.21.6) - the position the delimiters
-              # deprecation above already reports.
+              # deprecation reports too, after the render, as in real
+              # (issue #1800).
               condition_met = with_conditional_param_site(task, "until", condition) do
                 substituted_condition = substitutor.substitute(condition)
+                emit_conditional_delimiters_deprecation(pending_delimiters_deprecation)
                 # strict/raise_undefined: real evaluates an until: like a when: -
                 # an undefined name raises, and the final result must be a real
                 # boolean (live-verified vs 2.21.6: `until: r.stdout` on

@@ -1,0 +1,31 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Change docker repo from RHEL to CentOS] **********************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/playbook.yml:13:13
+
+11         regexp: 'RedHat'
+12         replace: 'centos'
+13       when: "{{ ansible_distribution == 'RedHat' }}"
+               ^ column 13
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}. This feature will be removed from ansible-core version 2.23.
+Origin: <WORK>/playbook.yml:13:13
+
+11         regexp: 'RedHat'
+12         replace: 'centos'
+13       when: "{{ ansible_distribution == 'RedHat' }}"
+               ^ column 13
+

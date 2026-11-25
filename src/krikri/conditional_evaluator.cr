@@ -267,11 +267,11 @@ module Krikri
     # Returns the composed message, or nil when the conditional is fine:
     #
     #   * whole-template conditionals (`{{ x }}` and nothing else) take
-    #     Ansible's legacy all-template path instead - deprecation
-    #     warning, then render (live-verified: `when: "{{ 1 == 1 }}"`
-    #     warns and passes), so they are excluded here exactly the way
-    #     the caller's maybe_conditional_delimiters_deprecation detects
-    #     them;
+    #     Ansible's legacy all-template path instead - render, then a
+    #     deprecation warning when the result is not a string
+    #     (live-verified: `when: "{{ 1 == 1 }}"` warns and passes), so
+    #     they are excluded here exactly the way the caller's
+    #     conditional_delimiters_deprecation_text detects them;
     #   * a `{{ }}` inside a string literal (`that: name == '{{ x }}'`)
     #     is a CONST template Jinja parses fine - quoted spans are
     #     skipped;
