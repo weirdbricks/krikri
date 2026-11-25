@@ -1710,6 +1710,32 @@ describe "INJECT_FACTS_AS_VARS deprecation from a loop item that is a fact value
     stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
     stderr.must_match(/:9:11\n/)
   end
+
+  # Issue #1788, YasuhiroABE.homegw-network: with_items: resolves its source
+  # and then flattens one level, so a one-element entry around a bare
+  # top-level LIST fact hands the list's own ELEMENTS to the loop. Ansible
+  # tags the list value itself, never what iterating it hands out, so the
+  # later `{{ item }}` read and the item label make no block - only the
+  # source's own (live-verified against 2.21.6). The array-wrapped `loop:`
+  # form keeps the container as the item, so it still warns, see above.
+  it "warns only at the source for a with_items entry holding a bare list fact" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: list fact items
+            debug:
+              msg: "{{ item }}"
+            with_items:
+              - "{{ ansible_interfaces }}"
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    # The loop source's own render: the entry's declaration.
+    stderr.must_match(/:9:11\n/)
+    stderr.includes?("While processing 'item'").must_equal(false)
+  end
 end
 
 # Issue #1417, dzangolab.gitlab_runner: ansible-playbook 2.21.6 prints two

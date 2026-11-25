@@ -423,6 +423,17 @@ module Krikri
         # splicing here would see raw `{{ ... }}` strings, not the lists
         # they resolve to.
         if list = value.as_a?
+          # The array-wrapped source's own fact tether (set above for
+          # `with_items: - "{{ ansible_<fact> }}"`) does not survive this
+          # branch: the loop items here are the resolved list's ELEMENTS,
+          # and ansible tags the list value itself, not what iterating it
+          # hands out - so real warns once at the source and never again
+          # for a read of `item` (live-verified against 2.21.6 on
+          # YasuhiroABE.homegw-network's `with_items:` entry holding
+          # `"{{ ansible_interfaces }}"`, issue #1788). A SCALAR-wrapped
+          # source still keeps it below, where the single item IS the
+          # tagged value.
+          VarSubstitutor.clear_loop_source_fact_tether
           list
         else
           [value]
