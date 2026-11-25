@@ -105,6 +105,29 @@ describe "subversion plugin - parameter coverage" do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "a fresh dest runs real's single checkout and nothing that rewrites the working copy" do
+    dir = shim_dir("checkout-sequence")
+    log = File.join(dir, "calls.log")
+    write_svn_shim(dir, log)
+
+    result = run_subversion(dir, log, {
+      "repo" => "svn+ssh://example.com/repo",
+      "dest" => File.join(dir, "wc"),
+    })
+
+    truthy?(result["changed"].as_bool).must_equal(true)
+    # Real's first-run branch is one `svn checkout -r <revision> <repo> <dest>`
+    # followed by the get_revision `svn info`; it never stats or switches a
+    # working copy it just created. An extra status/switch/update here would
+    # write working-copy metadata real's run never writes, and the kpg state
+    # oracle compares that host state (see KNOWN_MISSING's wc.db entry).
+    calls(log).map(&.split(' ').first).must_equal(%w[checkout info])
+    calls(log).first.must_include("checkout -r HEAD")
+    calls(log).first.must_include("svn+ssh://example.com/repo")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "check mode with a missing dest reports changed without running checkout" do
     dir = shim_dir("check-mode")
     log = File.join(dir, "calls.log")
