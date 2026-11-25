@@ -1,0 +1,22 @@
+# marsante.ansible_role_medshakeehr's tasks/install-msehr.yml composer
+# tasks, verbatim (names, module params and tags as the Galaxy role ships
+# them), with `become: true`/`become_user: www-data` dropped: the case runs
+# on localhost as an ordinary user, and community.general.composer's own
+# get_bin_path probe runs before anything privileged (check mode included).
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: "Composer update on /var/www/ehr"
+      community.general.composer:
+        command: update
+        arguments: --no-cache
+        working_dir: /var/www/ehr
+      tags: update
+
+    - name: "Composer upgrade on /var/www/ehr/public_html"
+      community.general.composer:
+        command: update
+        arguments: --no-cache
+        working_dir: /var/www/ehr/public_html
+      tags: update
