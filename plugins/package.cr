@@ -660,6 +660,21 @@ module Krikri
         end
       end
 
+      # Real apt.py never runs `cache.update()` under check mode (`if not
+      # module.check_mode: cache.update()`), but once the refresh was DUE
+      # it still claims it happened (`if module.check_mode or
+      # updated_cache_time != post_cache_update_time: updated_cache =
+      # True`), so a check-mode cache-only exit is always changed=true.
+      # This path ran the real `apt-get update` anyway: a persistent
+      # mutation on a run that must not touch the target (it failed
+      # outright on a non-root one), and on a host whose image already
+      # carried a current cache - an all-Hit update leaves the lists
+      # mtime untouched - it reported ok where Ansible reported changed
+      # (bodsch.harbor's "update package cache", issue #1831).
+      if package_manager == "apt" && @check_mode
+        return PluginResult.new(changed: true, failed: false, msg: "Package cache updated")
+      end
+
       pre_update_mtime = package_manager == "apt" ? apt_cache_mtime(->remote_exec(String)) : 0
       result = package_manager == "apt" ? apt_get_update_with_retry(command, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRIES, AptLockRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY, ->remote_exec(String)) : remote_exec(command)
       unless result[:exit_code] == 0

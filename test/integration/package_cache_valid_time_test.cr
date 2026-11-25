@@ -71,16 +71,19 @@ describe "package plugin cache-refresh-only cache_valid_time gate" do
     end
   end
 
+  # The refresh itself is only observable outside check mode: apt.py's
+  # `if not module.check_mode: cache.update()` guard means a check-mode
+  # run never invokes apt-get update at all (that side's changed-claim
+  # is pinned in test/unit/package_apt_update_cache_check_mode_test.cr).
   it "still refreshes when the cache_valid_time window has gone stale" do
     skip "python3-apt not available" unless python_apt_available?
 
     with_stub_path(fresh: false) do |path, marker|
       result = PluginSpecHelper.run("package", {
-        "use"                 => "apt",
-        "update_cache"        => "true",
-        "cache_valid_time"    => "600",
-        "_ansible_check_mode" => "true",
-        "_environment"        => env_param(path, marker),
+        "use"              => "apt",
+        "update_cache"     => "true",
+        "cache_valid_time" => "600",
+        "_environment"     => env_param(path, marker),
       })
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -93,10 +96,9 @@ describe "package plugin cache-refresh-only cache_valid_time gate" do
 
     with_stub_path(fresh: false) do |path, marker|
       result = PluginSpecHelper.run("package", {
-        "use"                 => "apt",
-        "update_cache"        => "true",
-        "_ansible_check_mode" => "true",
-        "_environment"        => env_param(path, marker),
+        "use"          => "apt",
+        "update_cache" => "true",
+        "_environment" => env_param(path, marker),
       })
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
