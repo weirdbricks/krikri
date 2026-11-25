@@ -10,6 +10,11 @@ module Krikri
     private def run_free_for_host(host : Host) : Nil
       @tasks.each do |task|
         break if @halted_hosts.includes?(host.name)
+        # Real aborts the whole run at the first host that dequeues a
+        # BYPASS_HOST_LOOP task (see #check_free_strategy_bypass_host_loop!),
+        # so the other hosts must not keep racing through the rest of the
+        # play while this one unwinds.
+        break if @bypass_host_loop_fatal
 
         buffer = IO::Memory.new
         OutputRouting.redirect_current_fiber_to(buffer)
@@ -62,6 +67,11 @@ module Krikri
           gate.receive
           begin
             run_free_for_host(host)
+          rescue ex : BypassHostLoopFatalError
+            # A worker fiber's uncaught exception is only reported at exit,
+            # which would leave the rest of the play running - real kills
+            # the whole run here, so hand it back to the main fiber.
+            @bypass_host_loop_fatal = ex
           ensure
             gate.send(nil)
             done.send(nil)
@@ -70,6 +80,9 @@ module Krikri
       end
 
       hosts.size.times { done.receive }
+      if fatal = @bypass_host_loop_fatal
+        raise fatal
+      end
     end
 
     # Whether *task* can safely fan out across hosts via --forks. Excluded:
@@ -194,6 +207,54 @@ module Krikri
       return unless text = task.pending_reserved_warning
       task.pending_reserved_warning = nil
       STDERR.print text
+    end
+
+    # Real's free/host_pinned strategy loop raises as it DEQUEUES a task
+    # whose action plugin declares BYPASS_HOST_LOOP (plugins/action/
+    # pause.py, add_host.py): such a task bypasses the per-host loop, so
+    # under free it would run once for every host in the inventory, which
+    # real refuses. Being a strategy-level AnsibleError, it takes the
+    # whole run down with the `[ERROR]:` line plus the task's Origin block
+    # on stderr, no TASK banner, no PLAY RECAP and rc=1 - and it fires
+    # before the task's own when:/check-mode handling, so a `when: false`
+    # does not shield it (live-verified vs ansible-core 2.21.6, issue
+    # #1810). `render` is that whole stderr block, built at the raise site
+    # where the task's source position is still at hand.
+    class BypassHostLoopFatalError < Exception
+      getter render : String
+
+      def initialize(message : String?, @render : String)
+        super(message)
+      end
+    end
+
+    # The action plugins (matched on their leaf name, like
+    # CONTROLLER_SIDE_MODULES) that set BYPASS_HOST_LOOP.
+    BYPASS_HOST_LOOP_ACTIONS = Set{"add_host", "pause"}
+
+    # Set by whichever host first dequeues a BYPASS_HOST_LOOP task under
+    # free/host_pinned, so the other hosts stop and #run_free can raise it
+    # on the main fiber (see BypassHostLoopFatalError).
+    @bypass_host_loop_fatal : BypassHostLoopFatalError? = nil
+
+    private def check_free_strategy_bypass_host_loop!(task : Task) : Nil
+      return unless free_strategy?
+      return unless BYPASS_HOST_LOOP_ACTIONS.includes?(task.module_name.split('.').last)
+      raise_bypass_host_loop_fatal(task)
+    end
+
+    private def raise_bypass_host_loop_fatal(task : Task) : NoReturn
+      action = task.action_name || task.module_name
+      message = "The '#{action}' module bypasses the host loop, which is currently not " \
+                "supported in the free strategy and would instead execute for every host " \
+                "in the inventory list."
+      render = String.build do |io|
+        io << "[ERROR]: " << message << "\n"
+        if pos = task_origin_position(task)
+          io << ErrorBlock.origin_context(pos[:path], pos[:idx] + 1, pos[:col]) << "\n\n"
+        end
+      end
+      raise BypassHostLoopFatalError.new(message, render)
     end
 
     # A `throttle:` value ansible-core's dispatch-time int() refuses. Real
@@ -6403,6 +6464,9 @@ module Krikri
         end
 
         emit_action_plugin_import_deprecations(nested_task)
+        # free/host_pinned's dequeue-time refusal of a bypass-host-loop
+        # action - before the banner, like real (issue #1810).
+        check_free_strategy_bypass_host_loop!(nested_task)
         # free/host_pinned's lazily-printed banner - this is the per-host
         # path free runs every task through, so the same meta: deferral
         # run_task_batch's banner site documents applies here (issue #1500).

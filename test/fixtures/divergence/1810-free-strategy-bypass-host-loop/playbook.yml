@@ -1,0 +1,66 @@
+---
+- name: 'Krikri-playbook-generator: multi-task #30.0'
+  hosts: kpg_targets
+  gather_facts: false
+  strategy: free
+  vars:
+    kpg_delegate: target2
+    kpg_stmt_if: '{% if true %}kpg-true{% else %}kpg-false{% endif %}'
+    kpg_stmt_for: '{% for item in [1, 2] %}{{ item }}{% endfor %}'
+  tasks:
+    - name: 'Package_facts #30.0'
+      ansible.builtin.package_facts:
+        manager: apt
+        strategy: all
+      register: kpg_task_0
+      ignore_errors: true
+      notify: Kpg handler
+      delegate_to: '{{ kpg_delegate }}'
+    - name: Kpg notifier
+      ansible.builtin.command:
+        cmd: /bin/true
+      changed_when: true
+      ignore_errors: true
+      notify: Kpg handler
+    - name: Kpg flush handlers
+      ansible.builtin.meta: flush_handlers
+  handlers:
+    - name: Kpg handler
+      ansible.builtin.debug:
+        msg: kpg-handler-a
+      notify: Kpg second handler
+    - name: Kpg second handler
+      ansible.builtin.debug:
+        msg: kpg-handler-b
+- name: 'Krikri-playbook-generator: multi-task #30.1'
+  hosts: kpg_targets
+  gather_facts: false
+  strategy: free
+  vars:
+    kpg_stmt_if: '{% if true %}kpg-true{% else %}kpg-false{% endif %}'
+    kpg_stmt_for: '{% for item in [1, 2] %}{{ item }}{% endfor %}'
+  tasks:
+    - name: 'Pause #30.1'
+      ansible.builtin.pause:
+        echo: "false"
+        prompt: kpg pause
+        seconds: "1"
+      register: kpg_task_1
+      ignore_errors: true
+      when: kpg_task_0 is not skipped
+      notify: Kpg handler
+      delegate_to: target2
+    - name: Kpg notifier
+      ansible.builtin.command:
+        cmd: /bin/true
+      changed_when: true
+      ignore_errors: true
+      notify: Kpg handler
+  handlers:
+    - name: Kpg handler
+      ansible.builtin.debug:
+        msg: kpg-handler-a
+      notify: Kpg second handler
+    - name: Kpg second handler
+      ansible.builtin.debug:
+        msg: kpg-handler-b

@@ -693,6 +693,12 @@ module Krikri
 
       # Initialize handler runner
       @handler_runner = HandlerRunner.new(@handlers, @hosts)
+      # Real's free strategy dequeues handler tasks through the same loop
+      # that refuses BYPASS_HOST_LOOP actions, so a pause:/add_host:
+      # handler aborts the run exactly like a regular task does - before
+      # its RUNNING HANDLER banner (live-verified vs ansible-core 2.21.6,
+      # issue #1810). The check itself is a no-op outside free/host_pinned.
+      @handler_runner.pre_execute_check = ->(handler : Task) { check_free_strategy_bypass_host_loop!(handler) }
     end
 
     # Main execution loop
