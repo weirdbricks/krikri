@@ -252,4 +252,21 @@ describe "Krikri::PluginManager.local_plugin_env" do
       end
     end
   end
+
+  # Issue #1834: the same `sh -c` launch drops PS1 (bash, macOS's /bin/sh,
+  # removes it from a non-interactive shell's environment), so ansible's
+  # local module process never sees the controller's prompt.
+  it "drops an inherited PS1 like ansible's shell launch does" do
+    original = ENV["PS1"]?
+    begin
+      ENV["PS1"] = "x> "
+      Krikri::PluginManager.local_plugin_env["PS1"].must_be_nil
+    ensure
+      if original
+        ENV["PS1"] = original
+      else
+        ENV.delete("PS1")
+      end
+    end
+  end
 end

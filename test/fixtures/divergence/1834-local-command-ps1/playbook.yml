@@ -1,0 +1,17 @@
+---
+# Issue #1834: `command` on an ansible_connection=local host runs with the
+# controller's exported PS1 in the module's environment. The first task is the
+# issue's failing task verbatim (`-m command -a env`); the debug task only
+# reduces that machine-dependent dump to the one fact this transcript can pin.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: command env
+      ansible.builtin.command: env
+      register: command_env
+      changed_when: false
+
+    - name: report whether the module environment carries PS1
+      ansible.builtin.debug:
+        msg: "{{ 'PS1 leaked' if 'PS1=' in command_env.stdout else 'PS1 absent' }}"

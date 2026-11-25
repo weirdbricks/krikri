@@ -1,0 +1,14 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [command env] *************************************************************
+ok: [localhost]
+
+TASK [report whether the module environment carries PS1] ***********************
+ok: [localhost] => {
+    "msg": "PS1 absent"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
