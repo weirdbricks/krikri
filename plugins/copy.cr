@@ -1248,13 +1248,13 @@ module Krikri
 
       temp_file = File.join(Dir.tempdir, ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
-        # SECURITY: the content lands at 0600 and the final mode (0666 &
-        # ~umask for a new dest, narrowed by the task's numeric mode: -
-        # this staging file is mv'd in as a new inode, it does NOT inherit
-        # an existing dest's mode, matching the old perm: 0o666 creation
-        # semantics) is applied right after, before validate: ever sees
-        # it - see BasePlugin#write_staging_temp. Read-only modes must go
-        # on after the write or the temp cannot be opened at all.
+        # SECURITY: the content lands at 0600 and the staging mode is
+        # applied immediately after the write (before validate: runs, so a
+        # read-only mode still gets a file that could be opened for the
+        # bytes) - see BasePlugin#write_staging_temp. That mode is the
+        # task's numeric mode:, else 0666 & ~umask; an existing dest's own
+        # mode only goes on after validation succeeds (see below), because
+        # that is the order real ansible's atomic_move uses.
         write_staging_temp(temp_file, content, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
@@ -1284,6 +1284,32 @@ module Krikri
           stderr_lines: stderr.empty? ? [] of String : stderr.chomp.split("\n")
         )
         return {failure: result, staged: nil}
+      end
+
+      # atomic_move's keep_dest_attrs half: copy.py hands its staged source
+      # to atomic_move, which chowns it to an existing dest's owner/group and
+      # shutil.copystat()s that dest's mode over it right before the rename -
+      # so an overwrite that carries no mode: keeps the mode of the file it
+      # replaces. kpg playbook 000012-multi-copy-chaos (issue #1806)
+      # overwrote a pre-seeded 0440 dest and real ansible left it 0440 while
+      # this staged temp's umask default landed unchanged. Applied AFTER
+      # validate:, the order real uses, so a validator still reads the task's
+      # mode (or the umask default) rather than the dest's.
+      if keep_dest_attrs
+        begin
+          if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
+            begin
+              File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+            rescue File::Error
+              # Best-effort like atomic_move's EPERM-only tolerance: non-root
+              # can't chown, and the rename still lands correct-mode content.
+            end
+            File.chmod(temp_file, info.permissions.value.to_i32)
+          end
+        rescue File::Error
+          # Stat/chmod failed (broken dest?) - proceed without preservation,
+          # matching atomic_write's own stance.
+        end
       end
 
       # atomic_move's own context capture: this staged temp is mv'd in as
