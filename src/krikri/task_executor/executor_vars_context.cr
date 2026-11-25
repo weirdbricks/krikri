@@ -8287,8 +8287,23 @@ module Krikri
         # cause stanza at the loop keyword's VALUE token like any other
         # unresolvable loop source (live-verified vs 2.19.11).
         cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
-      elsif (inner.to_s.matches?(/\Aobject of type '[^']+' has no attribute .+\z/) ||
-            inner.to_s.matches?(/\A(#{Regex.escape(Krikri::LAZY_TEMPLATE_DICT_TYPE)}|#{Regex.escape(Krikri::LAZY_TEMPLATE_LIST_TYPE)}) object has no element .+\z/)) &&
+      elsif inner.to_s.matches?(/\Aobject of type '[^']+' has no attribute .+\z/) &&
+            task_has_loop_source?(task)
+        # When the loop source reads a variable whose OWN value reproduces
+        # the miss (`ssh_known_hosts: "{{ groups['servers'] }}"` in
+        # defaults/main.yml, consumed by a `with_items: "{{ var }}"`), real
+        # pins the cause at that definition's value token - the same chain
+        # resolution the template action's attribute-miss uses (issue
+        # #1824, jedimt.ssh). The loop keyword's VALUE token stays the
+        # fallback for a source that carries the miss itself (`loop:
+        # "{{ sensu_backend.namespaces }}"` over a dict-literal var, issue
+        # #239): no definition qualifies there, so the scan yields nil.
+        if origin = value_failure_var_origin(task, inner.to_s, reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?, host: host)
+          cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        elsif pos = locate_loop_source_line(lines, task)
+          cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
+        end
+      elsif inner.to_s.matches?(/\A(#{Regex.escape(Krikri::LAZY_TEMPLATE_DICT_TYPE)}|#{Regex.escape(Krikri::LAZY_TEMPLATE_LIST_TYPE)}) object has no element .+\z/) &&
             task_has_loop_source?(task) &&
             (pos = locate_loop_source_line(lines, task))
         # A loop source that IS defined but has the wrong shape (`loop:

@@ -75,4 +75,45 @@ describe "loop type-error cause stanza origin" do
     text.must_include("'nope' is undefined\nOrigin: #{pb}:11:13")
     text.must_include(" 9           - \"true\"\n10           - \"{{ item }}\"\n11       loop: \"{{ nope }}\"\n               ^ column 13")
   end
+
+  # Issue #1824 (jedimt.ssh) - the loop source READS a role default whose own
+  # value carries the miss (`ssh_known_hosts: "{{ groups['servers'] }}"` over
+  # an inventory with no `servers` group). Real templates that default lazily
+  # and points the cause stanza at its value token, not at the `with_items:`
+  # that read it (live-verified vs 2.21.6).
+  it "pins the cause Origin at the loop source variable's own definition" do
+    dir = PluginSpecHelper.tmp_path("loop-attr-def-origin")
+    FileUtils.mkdir_p(File.join(dir, "roles", "ssh", "defaults"))
+    FileUtils.mkdir_p(File.join(dir, "roles", "ssh", "tasks"))
+    pb = File.join(dir, "pb.yml")
+    File.write(pb, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - ssh
+      YAML
+    tasks = File.join(dir, "roles", "ssh", "tasks", "main.yml")
+    File.write(tasks, <<-YAML)
+      ---
+      - name: For each host, scan for its ssh public key
+        ansible.builtin.shell: "ssh-keyscan {{ item }}"
+        with_items: "{{ ssh_known_hosts }}"
+        changed_when: false
+      YAML
+    defaults = File.join(dir, "roles", "ssh", "defaults", "main.yml")
+    File.write(defaults, <<-YAML)
+      ---
+      ssh_known_hosts: "{{ groups['servers'] }}"
+      YAML
+
+    stdout = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, pb], output: stdout, error: Process::Redirect::Inherit)
+    text = stdout.to_s
+
+    text.must_include("[ERROR]: Task failed: object of type 'dict' has no attribute 'servers'")
+    text.must_include("object of type 'dict' has no attribute 'servers'\nOrigin: #{defaults}:2:18")
+    text.wont_include("Origin: #{tasks}:5:13")
+  end
 end

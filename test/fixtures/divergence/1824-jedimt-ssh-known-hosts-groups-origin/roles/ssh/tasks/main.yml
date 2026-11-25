@@ -1,0 +1,33 @@
+---
+
+# tasks file for jedimt.ssh
+
+- name: For each host, scan for its ssh public key
+  ansible.builtin.shell: "ssh-keyscan {{ item }},`dig +short {{ item }}`"
+  with_items: "{{ ssh_known_hosts }}"
+  register: ssh_known_host_results
+  changed_when: false
+
+- name: Create .ssh if it does not exist
+  ansible.builtin.file:
+    path: ~/.ssh
+    state: directory
+    mode: '0700'
+
+- name: Create known_hosts file if not existing
+  ansible.builtin.file:
+    path: "{{ ssh_known_hosts_file }}"
+    state: touch
+    mode: '644'
+    modification_time: preserve
+    access_time: preserve
+  register: file_results
+
+- name: Add/update the public key in the '{{ ssh_known_hosts_file }}'
+  ansible.builtin.known_hosts:
+    name: "{{ item.item }}"
+    key: "{{ item.stdout }}"
+    path: "{{ ssh_known_hosts_file }}"
+  no_log: true
+  with_items: "{{ ssh_known_host_results.results }}"
+  register: key_results
