@@ -34,6 +34,16 @@ private TMP_DIR = begin
   File.write(File.join(dir, "nested_zip_src", "rclone-v1.76.0-linux-amd64", "rclone"), "binary")
   `cd #{File.join(dir, "nested_zip_src")} && zip -qr #{File.join(dir, "nested.zip")} rclone-v1.76.0-linux-amd64`
 
+  # A zip whose listing starts with the top directory and then its nested
+  # directories - bbaassssiiee.wso2db's wso2am pack shape (issue #1818).
+  # With a directory member listed before its children, real's per-member
+  # attribute pass removes that directory's search bit before reaching the
+  # child, and its lstat on the child is what fails.
+  Dir.mkdir_p(File.join(dir, "searchless_zip_src", "pack-1.0", "repository", "conf"))
+  File.write(File.join(dir, "searchless_zip_src", "pack-1.0", "LICENSE.txt"), "license")
+  File.write(File.join(dir, "searchless_zip_src", "pack-1.0", "repository", "conf", "carbon.xml"), "conf")
+  `cd #{File.join(dir, "searchless_zip_src")} && zip -qr #{File.join(dir, "searchless.zip")} pack-1.0`
+
   # A GitHub-release-shaped archive: everything nested one level down
   # inside a single top-level directory (`myproject-1.0/...`), the shape
   # extra_opts: ['--strip-components=1'] exists to flatten.
@@ -337,6 +347,47 @@ describe "unarchive plugin" do
     result.as_h.keys.must_equal(%w[changed dest extract_results gid group handler mode msg owner size src state uid exception failed])
   end
 
+  it "fails like real when the requested mode makes a directory member unsearchable for its own children" do
+    # bbaassssiiee.wso2db's "Unzip WSO2 API Manager Package" (issue #1818):
+    # real applies owner/group/mode per member in listing order, so
+    # `mode: u=rw,g=r,o=r` turns the top directory into 0644 and the very
+    # next member (its own child) can no longer be lstat()ed - main()'s
+    # attribute pass raises OSError into
+    # "Unexpected error when accessing exploded file." with the failing
+    # member's path and errno. This engine's batched find/chmod hit the
+    # same members but reported every chmod stderr line instead.
+    #
+    # Root bypasses the missing search bit, so this only reproduces
+    # unprivileged (same condition as the corpus case).
+    skip("needs an unprivileged run: root ignores the search bit") if PluginSpecHelper.running_as_root?
+    dest = fresh_dest("zip-searchless-mode-failure")
+    src = File.join(TMP_DIR, "searchless.zip")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"  => src,
+      "dest" => dest,
+      "mode" => "u=rw,g=r,o=r",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Unexpected error when accessing exploded file.")
+    result["exception"].as_s.must_match(/\A\[Errno 13\] Permission denied: b'#{Regex.escape(dest)}\/pack-1\.0\/repository\/?'/)
+    # The completed extraction's own result rides the fail_json too, and
+    # its cmd is real's argv list with the RESOLVED unzip binary.
+    result["handler"].as_s.must_equal("ZipArchive")
+    result["dest"].as_s.must_equal(dest)
+    result["src"].as_s.must_equal(src)
+    extract_results = result["extract_results"]
+    extract_results["rc"].as_i.must_equal(0)
+    cmd = extract_results["cmd"].as_a.map(&.as_s)
+    cmd.first.must_match(/\/unzip\z/)
+    cmd[1].must_equal("-o")
+    cmd.must_include(src)
+    cmd.must_include(Path[dest].normalize.to_s)
+    # Real's fail_json shape for this site, as the sibling extraction
+    # failure above pins it.
+    result.as_h.keys.must_equal(%w[changed dest extract_results gid group handler mode msg owner size src state uid exception failed])
+  end
+
   it "reports changed: false on an idempotent rerun (tar --compare based)" do
     dest = fresh_dest("tar-idempotent")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})
@@ -368,8 +419,10 @@ describe "unarchive plugin" do
 
     result["changed"].as_bool.must_equal(true)
     result["dest"].as_s.must_equal(dest)
-    result["extract_results"]["cmd"].as_s.must_include("-d '#{dest.chomp("/")}'")
-    result["extract_results"]["cmd"].as_s.wont_include("-d '#{dest}'")
+    # extract_results.cmd is real's own argv list (ZipArchive#unarchive),
+    # so the -d operand sits where real puts it: last, abspath'd.
+    cmd = result["extract_results"]["cmd"].as_a.map(&.as_s)
+    cmd[cmd.index!("-d") + 1].must_equal(dest.chomp("/"))
   end
 
   it "honors extra_opts: ['--strip-components=1'] to flatten a wrapped archive" do

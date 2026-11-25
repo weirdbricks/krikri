@@ -628,6 +628,9 @@ module Krikri
       # paths nor ORs its fixups into `changed`.
       unless check_mode?
         if attr = apply_dest_attributes(dest, handler, src)
+          if exploded = attr[:exploded]
+            return exploded_file_failure(dest, src, handler, extract_results, changed || attr[:changed], exploded)
+          end
           if error = attr[:error]
             return error
           end
@@ -948,13 +951,6 @@ module Krikri
       {cmd: argv, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
     end
 
-    private def zip_flags(exclude : Array(String), include_files : Array(String)) : String
-      String.build do |str|
-        str << " " << include_files.map { |path| shell_single_quote(path) }.join(" ") unless include_files.empty?
-        str << " -x " << exclude.map { |pattern| shell_single_quote(pattern) }.join(" ") unless exclude.empty?
-      end
-    end
-
     # What Ansible's ZipArchive#is_unarchived reads from one parsed
     # `zipinfo -T -s` line: field 0's permission string, field 3's
     # uncompressed size and field 6's timestamp.
@@ -1271,7 +1267,22 @@ module Krikri
       LibC.mktime(pointerof(tm))
     end
 
-    private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : NamedTuple(cmd: String, exit_code: Int32, stdout: String, stderr: String)
+    # Real's ZipArchive resolves `unzip` through get_bin_path and runs it
+    # with that ABSOLUTE path as argv[0], so every reported
+    # extract_results.cmd carries "/usr/bin/unzip" and never a bare
+    # "unzip" - the same shape tar_bin reproduces for the tar handlers.
+    @unzip_bin_cache : String?
+
+    private def unzip_bin : String
+      if cached = @unzip_bin_cache
+        return cached
+      end
+      out = remote_exec("command -v unzip 2>/dev/null")
+      path = out[:stdout].strip
+      @unzip_bin_cache = out[:exit_code] == 0 && !path.empty? ? path : "unzip"
+    end
+
+    private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : NamedTuple(cmd: Array(String), exit_code: Int32, stdout: String, stderr: String)
       overwrite_flag = keep_newer ? "-n" : "-o"
       # No -q: Ansible invokes plain `unzip -o src -d dest`, and
       # Info-ZIP unzip exits 1 (warning) when it has to sanitize a
@@ -1282,14 +1293,25 @@ module Krikri
       # over the raw (unsanitized) member names. Matching Ansible's
       # exact invocation means matching its exact failure.
       #
-      # extra_opts sit right after the overwrite flag, the same slot
-      # real's ZipArchive#unarchive gives them (`unzip -o <extra_opts>
-      # <src> ...`). unzip applies these to its own extraction, so `-j`
-      # really does junk member paths down to basenames here.
-      opts = extra_opts.map { |opt| " #{shell_single_quote(opt)}" }.join
-      cmd = "unzip #{overwrite_flag}#{opts} -d #{shell_single_quote(command_dest(dest))} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
-      result = remote_exec(cmd)
-      {cmd: cmd, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
+      # The argv is real's own, in its own order (ZipArchive#unarchive):
+      # the resolved binary, the overwrite flag, extra_opts, the archive,
+      # the -x exclude list, the include operands, then -d <b_dest>.
+      # extra_opts sit right after the overwrite flag, so `-j` really
+      # does junk member paths down to basenames here. Reported verbatim
+      # as extract_results.cmd, which is why it must be this list and not
+      # a shell string.
+      argv = [unzip_bin, overwrite_flag]
+      argv.concat(extra_opts)
+      argv << src
+      unless exclude.empty?
+        argv << "-x"
+        argv.concat(exclude)
+      end
+      argv.concat(include_files)
+      argv << "-d"
+      argv << command_dest(dest)
+      result = remote_exec(argv.map { |part| shell_single_quote(part) }.join(" "))
+      {cmd: argv, exit_code: result[:exit_code], stdout: result[:stdout], stderr: result[:stderr]}
     end
 
     # Returns a failed PluginResult if any of owner:/group:/mode: fails
@@ -1559,21 +1581,42 @@ module Krikri
       end
     end
 
+    # One path real's attribute pass visits, with both spellings this
+    # engine needs: `raw` is the on-disk path (find's start argument, and
+    # what find echoes back for every start point it could stat), `quoted`
+    # is that same path shell-quoted for the command line, and `real` is
+    # the path real's own file_args carried - the one its OSError reports
+    # (see exploded_member_path/exploded_top_folder_path).
+    alias AttributePath = NamedTuple(raw: String, quoted: String, real: String)
+
     # Shell-quoted on-disk paths for every archive member, after
     # --strip-components stripping - split out of #apply_dest_attributes
     # purely to keep that method's own branching (owner:/group:/mode:
     # each independently optional) readable rather than tangled with
     # this stripping logic's own branches.
-    private def stripped_member_paths(dest : String, handler : Symbol, src : String) : Array(String)
+    private def stripped_member_paths(dest : String, handler : Symbol, src : String) : Array(AttributePath)
       attribute_member_names(handler, src).compact_map do |name|
-        next shell_single_quote(dest) if name.empty?
         # Containment FIRST: a member like `../../etc` (or an absolute
         # one) normalizes outside dest and must never reach find/chown/
         # chmod as a start argument - see contained_member_path.
-        path = contained_member_path(dest, name)
-        next nil if path.nil?
-        shell_single_quote(path)
+        raw = name.empty? ? dest : contained_member_path(dest, name)
+        next nil if raw.nil?
+        {raw: raw, quoted: shell_single_quote(raw), real: exploded_member_path(dest, name)}
       end
+    end
+
+    # Real's file_args['path'] for one archive member
+    # (unarchive.py's main(): `os.path.join(b_dest, filename)`), where
+    # b_dest is the ABSOLUTE dest and filename keeps its archive spelling -
+    # a zip directory entry's trailing slash included. That spelling is
+    # what the "Unexpected error when accessing exploded file." failure
+    # quotes, so it must not go through the stripping/containment
+    # normalization the find start argument does.
+    private def exploded_member_path(dest : String, name : String) : String
+      # posixpath.join returns the second argument unchanged when it is
+      # absolute, which is why that arm comes first.
+      return name if name.starts_with?("/")
+      "#{command_dest(dest)}/#{name}"
     end
 
     # The extracted TOP-LEVEL folders real's attribute pass applies
@@ -1594,13 +1637,18 @@ module Krikri
     # from the per-member pass for exactly that reason) must not
     # resurrect its first component as a find start argument here
     # either.
-    private def top_folder_paths(dest : String, handler : Symbol, src : String) : Array(String)
+    private def top_folder_paths(dest : String, handler : Symbol, src : String) : Array(AttributePath)
       attribute_member_names(handler, src).compact_map do |name|
         next nil unless name.includes?("/")
         first_component = name.split("/").first? || ""
         next nil if first_component.empty?
-        contained_member_path(dest, first_component)
-      end.uniq!
+        raw = contained_member_path(dest, first_component)
+        next nil if raw.nil?
+        # Real's top-folder loop joins onto the dest PARAM as given -
+        # `"%s/%s" % (dest, f)` - so a relative dest keeps a relative
+        # path here (double slash included), unlike the member arm.
+        {raw: raw, quoted: shell_single_quote(raw), real: "#{dest}/#{first_component}"}
+      end.uniq! { |path| path[:raw] }
     end
 
     # Real's attribute pass (unarchive.py's main(): set_fs_attributes_
@@ -1619,8 +1667,8 @@ module Krikri
     # is_unarchived reported False. This engine used to apply the same
     # chowns/chmods blindly and always return nil, reporting ok where
     # real reported changed.
-    private def apply_dest_attributes(dest : String, handler : Symbol, src : String) : NamedTuple(error: PluginResult?, changed: Bool)
-      return {error: nil, changed: false} unless @params["owner"]? || @params["group"]? || @params["mode"]?
+    private def apply_dest_attributes(dest : String, handler : Symbol, src : String) : NamedTuple(error: PluginResult?, changed: Bool, exploded: {String, Int32}?)
+      return {error: nil, changed: false, exploded: nil} unless @params["owner"]? || @params["group"]? || @params["mode"]?
 
       # A tar built via `tar czf archive.tar.gz -C src .` (archiving the
       # CURRENT directory) lists a leading self-referential "./" member
@@ -1654,9 +1702,9 @@ module Krikri
       # one chunked find walk here; the operations are idempotent, so a
       # top folder that is also an explicitly listed dir member is
       # simply visited twice, exactly like real does.
-      paths = member_paths + top_folder_paths(dest, handler, src).map { |path| shell_single_quote(path) }
-      paths = paths.uniq
-      return {error: nil, changed: false} if paths.empty?
+      paths = member_paths + top_folder_paths(dest, handler, src)
+      paths = paths.uniq { |path| path[:raw] }
+      return {error: nil, changed: false, exploded: nil} if paths.empty?
 
       attrs_changed = false
 
@@ -1675,26 +1723,109 @@ module Krikri
         # argument must be examined AS a symlink, never followed -
         # -maxdepth 0 means find never descends past the start points
         # anyway, but -P also pins down the start-point lstat itself.
-        member_args = "-P #{chunk.join(" ")} -maxdepth 0"
-        owner = apply_identity_on_chunk(member_args, find_prefix, dest, "owner", "chown", "! -user")
+        member_args = "-P #{chunk.map(&.[:quoted]).join(" ")} -maxdepth 0"
+        owner = apply_identity_on_chunk(member_args, find_prefix, dest, "owner", "chown", "! -user", chunk)
         attrs_changed ||= owner[:changed]
-        return {error: owner[:error], changed: attrs_changed} if owner[:error]
-        group = apply_identity_on_chunk(member_args, find_prefix, dest, "group", "chgrp", "! -group")
+        return {error: owner[:error], changed: attrs_changed, exploded: owner[:exploded]} if owner[:error]
+        return {error: nil, changed: attrs_changed, exploded: owner[:exploded]} if owner[:exploded]
+        group = apply_identity_on_chunk(member_args, find_prefix, dest, "group", "chgrp", "! -group", chunk)
         attrs_changed ||= group[:changed]
-        return {error: group[:error], changed: attrs_changed} if group[:error]
-        mode = apply_mode_on_chunk(member_args, find_prefix, dest)
+        return {error: group[:error], changed: attrs_changed, exploded: group[:exploded]} if group[:error]
+        return {error: nil, changed: attrs_changed, exploded: group[:exploded]} if group[:exploded]
+        mode = apply_mode_on_chunk(member_args, find_prefix, dest, chunk)
         attrs_changed ||= mode[:changed]
-        return {error: mode[:error], changed: attrs_changed} if mode[:error]
+        return {error: mode[:error], changed: attrs_changed, exploded: mode[:exploded]} if mode[:error]
+        return {error: nil, changed: attrs_changed, exploded: mode[:exploded]} if mode[:exploded]
       end
-      {error: nil, changed: attrs_changed}
+      {error: nil, changed: attrs_changed, exploded: nil}
+    end
+
+    # The member real's attribute pass would die on, when the batched
+    # chown/chgrp/chmod has already died the same way. unarchive.py's
+    # main() walks handler.files_in_archive in order, passing each
+    # `os.path.join(b_dest, filename)` to set_fs_attributes_if_different,
+    # whose os.lstat raises straight into main()'s
+    # "Unexpected error when accessing exploded file." fail_json - so the
+    # reported path is the FIRST member, in archive order, that cannot be
+    # stat'ed, never the first of whichever attribute was probed.
+    #
+    # That failure is self-inflicted in the ordinary case: real chmods
+    # each directory member as it reaches it, so a task mode without the
+    # search bit (`mode: u=rw,g=r,o=r`, wso2db's wso2am pack) makes that
+    # member's own children unreachable for every later member - the
+    # batch here fails on exactly the same members, because chmod visits
+    # `find`'s start arguments in the same order and hits the same
+    # unreachable ones. Each tool it drives reports an unreachable path
+    # as "chmod: cannot access '<path>': <strerror>" / "find: '<path>':
+    # <strerror>" (its own lstat failing - distinct from
+    # "changing permissions of", the apply itself failing, which keeps
+    # the per-attribute failure text), and the strerror in words maps
+    # back to the errno basic.py prints, the same problem chcon's
+    # selinux_tool_error solves. The lowest member index any such line
+    # names is therefore real's failing member. Anything unparseable
+    # returns nil and keeps the previous per-attribute failure handling.
+    private def exploded_from_stderr(stderr : String, chunk : Array(AttributePath)) : {String, Int32}?
+      index : Int32? = nil
+      path : String? = nil
+      errno : Errno? = nil
+      stderr.each_line do |line|
+        core = line.rpartition(": ")[0]
+        next unless core.includes?("cannot access") || core.starts_with?("find: ")
+        entry_index = chunk.index do |entry|
+          core.ends_with?("'#{entry[:raw]}'") || core.ends_with?("‘#{entry[:raw]}’")
+        end
+        next unless entry_index
+        next if index && index <= entry_index
+        text = line.rpartition(": ")[2]
+        candidate = Errno.values.find { |candidate_errno| candidate_errno.message == text } || next
+        index = entry_index
+        path = chunk[entry_index][:real]
+        errno = candidate
+      end
+      return nil unless path && errno
+      {path, errno.value}
+    end
+
+    # Real's fail_json("Unexpected error when accessing exploded file.",
+    # exception=ex, **res_args): res_args is the completed extraction's
+    # own result (handler/dest/src/extract_results plus the ORed changed
+    # flag), and _return_formatted's add_path_info(dest) appends the
+    # destination's uid/gid/owner/group/mode/state/size. `exception` stays
+    # out of the dumped result (the callback strips it), it only feeds the
+    # [ERROR] header's "<msg>: <exception>" chain.
+    private def exploded_file_failure(dest : String, src : String, handler : Symbol, extract_results : JSON::Any?,
+                                      changed : Bool, exploded : {String, Int32}) : PluginResult
+      path, errno = exploded
+      failure = PluginResult.new(
+        changed: changed,
+        failed: true,
+        msg: "Unexpected error when accessing exploded file.",
+        src: src,
+        dest: dest,
+        handler: handler == :tar ? "TgzArchive" : "ZipArchive",
+        exception: "[Errno #{errno}] #{Errno.new(errno).message}: b'#{path}'",
+        # The same fail_json shape (and wire key order) the extraction
+        # failure above reports: res_args' keys, msg, then
+        # add_path_info's dest block.
+        key_order: %w[changed dest extract_results gid group handler mode msg owner size src state uid]
+      )
+      failure.extra["extract_results"] = extract_results if extract_results
+      # add_path_info probes the DEST PARAM as the task spelled it
+      # (os.path.exists, then lstat) and adds nothing when that spelling
+      # does not exist - even though the module itself resolved it with
+      # os.path.abspath - so the stat block is conditional here, unlike
+      # the success path's unconditional dest_stat_fields.
+      add_path_info(failure, dest)
+      failure
     end
 
     # chown and chgrp share Ansible's exact probe-then-apply shape
     # (set_owner_if_different / set_group_if_different): both are
     # identity changes with a -h no-dereference form, so one helper
     # drives both.
-    private def apply_identity_on_chunk(member_args : String, find_prefix : String, dest : String, attribute : String, verb : String, probe_flag : String) : NamedTuple(error: PluginResult?, changed: Bool)
-      value = @params[attribute]? || return {error: nil, changed: false}
+    private def apply_identity_on_chunk(member_args : String, find_prefix : String, dest : String, attribute : String,
+                                        verb : String, probe_flag : String, chunk : Array(AttributePath)) : NamedTuple(error: PluginResult?, changed: Bool, exploded: {String, Int32}?)
+      value = @params[attribute]? || return {error: nil, changed: false, exploded: nil}
       # -h: chown/chgrp default to dereferencing symlinks, which would
       # let an archive's symlink member redirect the ownership change
       # onto any file it points at (outside dest) - Ansible's
@@ -1713,19 +1844,29 @@ module Krikri
         # fall through to the blind apply, whose failure surfaces
         # exactly as it always did.
         result = remote_exec(apply_cmd)
-        return {error: attribute_failure(dest, attribute, result), changed: true} if result[:exit_code] != 0
-        {error: nil, changed: true}
+        if result[:exit_code] != 0
+          if exploded = exploded_from_stderr(result[:stderr], chunk)
+            return {error: nil, changed: true, exploded: exploded}
+          end
+          return {error: attribute_failure(dest, attribute, result), changed: true, exploded: nil}
+        end
+        {error: nil, changed: true, exploded: nil}
       elsif !probe[:stdout].strip.empty?
         result = remote_exec(apply_cmd)
-        return {error: attribute_failure(dest, attribute, result), changed: true} if result[:exit_code] != 0
-        {error: nil, changed: true}
+        if result[:exit_code] != 0
+          if exploded = exploded_from_stderr(result[:stderr], chunk)
+            return {error: nil, changed: true, exploded: exploded}
+          end
+          return {error: attribute_failure(dest, attribute, result), changed: true, exploded: nil}
+        end
+        {error: nil, changed: true, exploded: nil}
       else
-        {error: nil, changed: false}
+        {error: nil, changed: false, exploded: nil}
       end
     end
 
-    private def apply_mode_on_chunk(member_args : String, find_prefix : String, dest : String) : NamedTuple(error: PluginResult?, changed: Bool)
-      mode = @params["mode"]? || return {error: nil, changed: false}
+    private def apply_mode_on_chunk(member_args : String, find_prefix : String, dest : String, chunk : Array(AttributePath)) : NamedTuple(error: PluginResult?, changed: Bool, exploded: {String, Int32}?)
+      mode = @params["mode"]? || return {error: nil, changed: false, exploded: nil}
       # ! -type l: chmod has no no-dereference form on Linux, so a
       # symlink member must be SKIPPED entirely - chmodding through
       # it would change the mode of whatever file the archive points
@@ -1752,19 +1893,34 @@ module Krikri
         apply_cmd = "#{find_prefix} #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +"
         if probe[:exit_code] != 0
           result = remote_exec(apply_cmd)
-          return {error: attribute_failure(dest, "mode", result), changed: true} if result[:exit_code] != 0
-          {error: nil, changed: true}
+          if result[:exit_code] != 0
+            if exploded = exploded_from_stderr(result[:stderr], chunk)
+              return {error: nil, changed: true, exploded: exploded}
+            end
+            return {error: attribute_failure(dest, "mode", result), changed: true, exploded: nil}
+          end
+          {error: nil, changed: true, exploded: nil}
         elsif !probe[:stdout].strip.empty?
           result = remote_exec(apply_cmd)
-          return {error: attribute_failure(dest, "mode", result), changed: true} if result[:exit_code] != 0
-          {error: nil, changed: true}
+          if result[:exit_code] != 0
+            if exploded = exploded_from_stderr(result[:stderr], chunk)
+              return {error: nil, changed: true, exploded: exploded}
+            end
+            return {error: attribute_failure(dest, "mode", result), changed: true, exploded: nil}
+          end
+          {error: nil, changed: true, exploded: nil}
         else
-          {error: nil, changed: false}
+          {error: nil, changed: false, exploded: nil}
         end
       else
         result = remote_exec("#{find_prefix} #{member_args} ! -type l -exec chmod #{shell_single_quote(mode)} {} +")
-        return {error: attribute_failure(dest, "mode", result), changed: false} if result[:exit_code] != 0
-        {error: nil, changed: false}
+        if result[:exit_code] != 0
+          if exploded = exploded_from_stderr(result[:stderr], chunk)
+            return {error: nil, changed: false, exploded: exploded}
+          end
+          return {error: attribute_failure(dest, "mode", result), changed: false, exploded: nil}
+        end
+        {error: nil, changed: false, exploded: nil}
       end
     end
 

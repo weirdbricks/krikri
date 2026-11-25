@@ -1,0 +1,26 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Ensure directory files/packs] ********************************************
+changed: [localhost]
+
+TASK [Point the package location at the packs directory] ***********************
+changed: [localhost]
+
+TASK [Seed the WSO2 API Manager package] ***************************************
+ok: [localhost]
+
+TASK [Unzip WSO2 API Manager Package] ******************************************
+[ERROR]: Task failed: Module failed: Unexpected error when accessing exploded file: [Errno 13] Permission denied: b'<WORK>/files/packs-link/wso2am-3.2.0/repository/conf/'
+Origin: <WORK>/playbook.yml:42:7
+
+40       changed_when: false
+41
+42     - name: Unzip WSO2 API Manager Package
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": true, "dest": "<WORK>/files/packs-link", "extract_results": {"cmd": ["/usr/bin/unzip", "-o", "<WORK>/files/packs/wso2am-3.2.0.zip", "-d", "<WORK>/files/packs-link"], "err": "", "out": "Archive:  <WORK>/files/packs/wso2am-3.2.0.zip\n extracting: <WORK>/files/packs-link/wso2am-3.2.0/LICENSE.txt  \n extracting: <WORK>/files/packs-link/wso2am-3.2.0/bin/wso2server.sh  \n extracting: <WORK>/files/packs-link/wso2am-3.2.0/repository/conf/carbon.xml  \n extracting: <WORK>/files/packs-link/wso2am-3.2.0/repository/deployment/server/sample.txt  \n", "rc": 0}, "gid": 1000, "group": "labros", "handler": "ZipArchive", "mode": "0777", "msg": "Unexpected error when accessing exploded file.", "owner": "labros", "size": 5, "src": "<WORK>/files/packs/wso2am-3.2.0.zip", "state": "link", "uid": 1000}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=3    changed=2    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

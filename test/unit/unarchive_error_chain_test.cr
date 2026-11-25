@@ -92,4 +92,21 @@ describe "unarchive task_error_chain shapes" do
     middle.chain.as(Krikri::ErrorBlock::Node).msg.must_equal(msg)
     Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
   end
+
+  it "uses the generic Module-failed chain for the exploded-file attribute failure" do
+    # main()'s attribute pass catches the per-member OSError and fails with
+    # module.fail_json("Unexpected error when accessing exploded file.",
+    # exception=ex, **res_args) - a module-level failure like the ones
+    # above, so real keeps the "Module failed." middle segment while the
+    # header's errno detail comes from the exception (live-verified vs
+    # 2.21.6, issue #1818).
+    msg = "Unexpected error when accessing exploded file: [Errno 13] Permission denied: b'/tmp/x/repository/'"
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.unarchive", msg, "Origin: /pb.yml:6")
+
+    chain.msg.must_equal("Task failed.")
+    middle = chain.chain.as(Krikri::ErrorBlock::Node)
+    middle.msg.must_equal("Module failed.")
+    middle.chain.as(Krikri::ErrorBlock::Node).msg.must_equal(msg)
+    Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
+  end
 end
