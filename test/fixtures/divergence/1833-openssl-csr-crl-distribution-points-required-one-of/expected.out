@@ -1,0 +1,18 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Openssl_csr #21.1] *******************************************************
+[ERROR]: Task failed: Module failed: one of the following is required: full_name, relative_name, crl_issuer found in crl_distribution_points
+Origin: <WORK>/playbook.yml:16:7
+
+14     kpg_group: root
+15   tasks:
+16     - name: 'Openssl_csr #21.1'
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "one of the following is required: full_name, relative_name, crl_issuer found in crl_distribution_points"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+

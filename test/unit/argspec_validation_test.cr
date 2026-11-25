@@ -169,6 +169,31 @@ describe Krikri::ArgspecValidator do
     failure.must_be_nil
   end
 
+  # The kpg-generated multi-task playbook (#1833) fills openssl_csr with a
+  # dozen unrelated options plus crl_distribution_points: [{}], so this pins
+  # that the parent option's required_one_of still wins over the module
+  # body's own state/privatekey_path check - krikri used to fall through to
+  # "state is present but all of the following are missing: privatekey_path"
+  # while ansible reported the crl_distribution_points group.
+  it "applies crl_distribution_points required_one_of with the issue's full option set" do
+    failure = Krikri::ArgspecValidator.validate(
+      "community.crypto.openssl_csr", "community.crypto.openssl_csr",
+      {"authority_key_identifier" => "ipoijk", "basic_constraints_critical" => "false",
+       "create_subject_key_identifier" => "false", "crl_distribution_points" => "[{}]",
+       "extended_key_usage_critical" => "false", "force" => "false",
+       "group" => "{{ kpg_group }}", "key_usage" => %(["kvofdb","oiqkvr"]),
+       "mode" => "0400", "name_constraints_permitted" => %(["yxtswh","awojsl","diuqud"]),
+       "ocsp_must_staple_critical" => "true", "organization_name" => "ruwsbd",
+       "organizational_unit_name" => "cotywt", "owner" => "root",
+       "path" => "/tmp/kpg-work/out3.cfg", "privatekey_content" => "yvluus",
+       "privatekey_passphrase" => "igkdlu", "return_content" => "true",
+       "state_or_province_name" => "jcridr", "subject" => "{}",
+       "subject_alt_name_critical" => "true"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "one of the following is required: full_name, relative_name, crl_issuer " \
+      "found in crl_distribution_points")
+  end
+
   it "leaves a satisfied dict sub-spec to the top-level unsupported-params error" do
     failure = Krikri::ArgspecValidator.validate(
       "docker_image", "community.docker.docker_image",
