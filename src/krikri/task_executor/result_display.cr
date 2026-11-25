@@ -338,6 +338,25 @@ module Krikri
       end
     end
 
+    # A deprecation that must keep its position relative to the fact/vars
+    # reads around it: those two are held by the include-deferral scope
+    # (#begin_deferred_fact_deprecations) and by the task's own deprecation
+    # window (#hold_task_deprecation), so routing this block through only
+    # the stderr funnel replays it AHEAD of them however early it was
+    # raised. The conditional-as-template block needs that: real raises it
+    # after the conditional rendered, i.e. right after the fact read's
+    # block, and both replay in that order (issue #1800).
+    def self.emit_or_hold_deprecation(dedupe : Set(String), key : String, lines : Array(String), entry : JSON::Any? = nil) : Nil
+      if buffers = @@deferred_fact_deprecations[Fiber.current]?
+        unless buffers.empty?
+          buffers.last << -> { emit_or_defer_deprecation(dedupe, key, lines, entry) }
+          return
+        end
+      end
+      return if hold_task_deprecation(dedupe, key, lines, entry)
+      emit_or_defer_deprecation(dedupe, key, lines, entry)
+    end
+
     # Replays one held-back block when its task is finally reached: the
     # claim happens here, so an origin a dropped capture merely prepared is
     # still free to print for the read that really happens.

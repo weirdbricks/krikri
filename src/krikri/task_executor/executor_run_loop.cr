@@ -1589,12 +1589,13 @@ module Krikri
       if delimiter = ConditionalEvaluator.template_delimiter_error(when_condition)
         raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{delimiter}")
       end
-      # Ansible's conditional-as-template deprecation fires while the
-      # conditional is being evaluated (see
-      # maybe_conditional_delimiters_deprecation) - before the evaluation
-      # itself, matching Ansible's warning-then-error order for a non-string
-      # whole-template result.
-      maybe_conditional_delimiters_deprecation(task, when_condition, "when", vars_context) if task
+      # Ansible's conditional-as-template deprecation fires only after the
+      # whole conditional templated (see
+      # conditional_delimiters_deprecation_text): the render is where a
+      # fact read in the clause deprecates, so its block comes first and
+      # the delimiters one is emitted once the substitution below ran, and
+      # before the evaluation itself (issue #1800).
+      pending_delimiters_deprecation = conditional_delimiters_deprecation_text(task, when_condition, "when", vars_context) if task
       maybe_fact_alias_defined_deprecation(task, when_condition, vars_context) if task
       # The play_hosts read deprecation raised while THIS clause evaluates
       # gets its Origin from the clause's own source position (issue #835:
@@ -1667,6 +1668,7 @@ module Krikri
           VarSubstitutor.emit_condition_fact_deprecations(substituted_condition, vars_context,
             VariableSubstitutor::JinjaVarResolver.new(vars_context, sub))
         end
+        emit_conditional_delimiters_deprecation(pending_delimiters_deprecation)
 
         begin
           # strict: true - a task `when:` must end in a real boolean on
@@ -5607,9 +5609,11 @@ module Krikri
         module_failed = hash["failed"]?.try(&.as_bool?) == true
         begin
           if changed_when
-            maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
+            pending_delimiters_deprecation = conditional_delimiters_deprecation_text(task, changed_when, "changed_when", eval_context)
             changed_when_verdict = with_conditional_param_site(task, "changed_when", changed_when) do
-              ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, changed_when), eval_context, strict: true, raise_undefined: true)
+              rendered_condition = substitute_conditional_rendering_errors(substitutor, changed_when)
+              emit_conditional_delimiters_deprecation(pending_delimiters_deprecation)
+              ConditionalEvaluator.evaluate(rendered_condition, eval_context, strict: true, raise_undefined: true)
             end
             hash["changed"] = JSON::Any.new(changed_when_verdict)
             # TaskExecutor: result['changed_when_result'] = <verdict>
@@ -5630,9 +5634,11 @@ module Krikri
 
         begin
           if failed_when
-            maybe_conditional_delimiters_deprecation(task, failed_when, "failed_when", eval_context)
+            pending_delimiters_deprecation = conditional_delimiters_deprecation_text(task, failed_when, "failed_when", eval_context)
             failed_when_result = with_conditional_param_site(task, "failed_when", failed_when) do
-              ConditionalEvaluator.evaluate(substitute_conditional_rendering_errors(substitutor, failed_when), eval_context, strict: true, raise_undefined: true)
+              rendered_condition = substitute_conditional_rendering_errors(substitutor, failed_when)
+              emit_conditional_delimiters_deprecation(pending_delimiters_deprecation)
+              ConditionalEvaluator.evaluate(rendered_condition, eval_context, strict: true, raise_undefined: true)
             end
             hash["failed"] = JSON::Any.new(failed_when_result)
             # TaskExecutor: result['failed_when_result'] = <verdict> whenever failed_when: is set
