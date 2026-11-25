@@ -1,0 +1,38 @@
+---
+# kpg 000021-multi-synchronize-chaos #21.1, the Openssl_csr task verbatim
+# (delegate_to target2 dropped: the local inventory host stands in for it).
+# Validation never reaches the private key: the empty crl_distribution_points
+# element is rejected first.
+- name: 'Krikri-playbook-generator: multi-task #21.1'
+  hosts: kpg_targets
+  gather_facts: false
+  tasks:
+    - name: 'Openssl_csr #21.1'
+      community.crypto.openssl_csr:
+        authority_key_identifier: ipoijk
+        basic_constraints_critical: false
+        create_subject_key_identifier: false
+        crl_distribution_points:
+          - {}
+        extended_key_usage_critical: false
+        force: false
+        key_usage:
+          - kvofdb
+          - oiqkvr
+        mode: "0400"
+        name_constraints_permitted:
+          - yxtswh
+          - awojsl
+          - diuqud
+        ocsp_must_staple_critical: true
+        organization_name: ruwsbd
+        organizational_unit_name: cotywt
+        path: '{{ playbook_dir }}/out3.cfg'
+        privatekey_content: yvluus
+        privatekey_passphrase: igkdlu
+        return_content: true
+        state_or_province_name: jcridr
+        subject: {}
+        subject_alt_name_critical: true
+      register: kpg_task_1
+      ignore_errors: true

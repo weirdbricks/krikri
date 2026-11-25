@@ -1118,7 +1118,7 @@ module Krikri
         return sub_spec_type_error(name) unless elements
         elements.each do |element|
           return sub_spec_type_error(name) unless element.as_h?
-          if msg = sub_spec_required_error(spec, element, [name])
+          if msg = sub_spec_element_error(spec, element, [name])
             return msg
           end
         end
@@ -1170,19 +1170,69 @@ module Krikri
       nil
     end
 
-    # check_required_arguments against one nested dict, then the nested
-    # dicts inside it recursed the same way (options_context grows into
-    # "build -> container_limits"). Ansible's _set_defaults fills a
-    # non-null default in before the check, so a defaulted key is present;
-    # a null default never satisfies `required:`.
+    # One nested dict through Ansible's _validate_sub_spec order:
+    # mutually_exclusive -> required arguments -> required_one_of -> the
+    # dicts nested inside it (options_context grows into
+    # "build -> container_limits"). The mutually_exclusive/required_one_of
+    # groups live on the PARENT option entry, not on its sub-options -
+    # community.crypto.openssl_csr declares them on crl_distribution_points
+    # itself, so any non-empty spec there rejects an empty element dict
+    # before the module body ever runs (issue #1832).
+    private def sub_spec_element_error(spec : JSON::Any, element : JSON::Any, context : Array(String)) : String?
+      params_h = element.as_h? || return nil
+      if msg = sub_spec_mutually_exclusive_error(spec, params_h, context)
+        return msg
+      end
+      if msg = sub_spec_required_error(spec, element, context)
+        return msg
+      end
+      if msg = sub_spec_required_one_of_error(spec, params_h, context)
+        return msg
+      end
+      sub_options = spec["options"]?.try(&.as_h?) || return nil
+      sub_spec_nested_error(sub_options, params_h, context)
+    end
+
+    # check_mutually_exclusive over the nested dict. Every violating group
+    # is reported in one message, spec order, members joined by "|".
+    private def sub_spec_mutually_exclusive_error(spec : JSON::Any,
+                                                  params_h : Hash(String, JSON::Any),
+                                                  context : Array(String)) : String?
+      groups = spec["mutually_exclusive"]?.try(&.as_a?) || return nil
+      failing = [] of String
+      groups.each do |group|
+        names = group.as_a.map(&.as_s)
+        failing << names.join("|") if names.count { |name| params_h.has_key?(name) } > 1
+      end
+      return nil if failing.empty?
+      "parameters are mutually exclusive: #{failing.join(", ")} found in #{context.join(" -> ")}"
+    end
+
+    # check_required_one_of over the nested dict: bare key presence counts,
+    # like count_terms (a key present with a null value still satisfies the
+    # group).
+    private def sub_spec_required_one_of_error(spec : JSON::Any,
+                                               params_h : Hash(String, JSON::Any),
+                                               context : Array(String)) : String?
+      groups = spec["required_one_of"]?.try(&.as_a?) || return nil
+      groups.each do |group|
+        names = group.as_a.map(&.as_s)
+        unless names.any? { |name| params_h.has_key?(name) }
+          return "one of the following is required: #{names.join(", ")} found in #{context.join(" -> ")}"
+        end
+      end
+      nil
+    end
+
+    # check_required_arguments against one nested dict. Ansible's
+    # _set_defaults fills a non-null default in before the check, so a
+    # defaulted key is present; a null default never satisfies `required:`.
     private def sub_spec_required_error(spec : JSON::Any, params : JSON::Any, context : Array(String)) : String?
       sub_options = spec["options"]?.try(&.as_h?) || return nil
       params_h = params.as_h? || return nil
       missing = sub_spec_missing_keys(sub_options, params_h)
-      unless missing.empty?
-        return "missing required arguments: #{missing.sort.join(", ")} found in #{context.join(" -> ")}"
-      end
-      sub_spec_nested_error(sub_options, params_h, context)
+      return nil if missing.empty?
+      "missing required arguments: #{missing.sort.join(", ")} found in #{context.join(" -> ")}"
     end
 
     # check_required_arguments over a sub-spec: every `required:` key the
@@ -1209,7 +1259,7 @@ module Krikri
         next unless value && !value.raw.nil?
         (value.as_a? || [value]).each do |element|
           next unless element.as_h?
-          if msg = sub_spec_required_error(sub, element, context + [name])
+          if msg = sub_spec_element_error(sub, element, context + [name])
             return msg
           end
         end

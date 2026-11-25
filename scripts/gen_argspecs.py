@@ -242,6 +242,13 @@ def clean_option(spec_entry, collection_version=None):
         out["options"] = {
             name: clean_option(sub or {}) for name, sub in spec_entry["options"].items()
         }
+        # _validate_sub_spec applies the PARENT option's own groups to each
+        # element dict (community.crypto.openssl_csr declares required_one_of
+        # on crl_distribution_points itself, which is what rejects [{}]).
+        if spec_entry.get("mutually_exclusive"):
+            out["mutually_exclusive"] = spec_entry["mutually_exclusive"]
+        if spec_entry.get("required_one_of"):
+            out["required_one_of"] = spec_entry["required_one_of"]
     if spec_entry.get("no_log"):
         # AnsibleModule collects every provided no_log=True option's value
         # and runs remove_values over its fail_json result, so a spec
