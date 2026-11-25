@@ -374,6 +374,55 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
   end
 
+  it "attributes a container's later read when the first read reaches no fact" do
+    # Issue #1819, ben-le.awx_nginx: its awx_nginx.j2 reads one leaf of the
+    # awx_config role default first (`ALLOWED_HOSTS[0]`, which names no
+    # fact) and only then the whole container (`ALLOWED_HOSTS | join`),
+    # whose second leaf names ansible_default_ipv4. Real renders a
+    # container's leaves lazily, so the fact is read by the SECOND read
+    # alone and the block points at that leaf's declaration - and it is
+    # still printed when the render then dies on an undefined host_port
+    # (live-verified against 2.21.6; the first read's fruitless subtree
+    # used to win and silence the block).
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        roles:
+          - awx
+      PLAYBOOK
+      "roles/awx/defaults/main.yml" => <<-YAML,
+      ---
+      awx_config:
+        ALLOWED_HOSTS:
+          - "{{ inventory_hostname }}"
+          - "{{ ansible_default_ipv4.address }}"
+      YAML
+      "roles/awx/tasks/main.yml" => <<-TASKS,
+      ---
+      - name: render the nginx config
+        ansible.builtin.template:
+          src: awx_nginx.j2
+          dest: awx.conf
+      TASKS
+      "roles/awx/templates/awx_nginx.j2" => <<-J2,
+      access_log /var/log/nginx/sites/{{ awx_config.ALLOWED_HOSTS[0] }}.log;
+      server_name {{ awx_config.ALLOWED_HOSTS | join(" ") }};
+      proxy_pass http://{{ host_port }};
+      J2
+    })
+
+    defaults = File.join(dir, "roles", "awx", "defaults", "main.yml")
+    stdout.must_include("'host_port' is undefined")
+    stderr.must_include("Origin: #{defaults}:5:7\n")
+    stderr.must_include("4     - \"{{ inventory_hostname }}\"\n")
+    stderr.must_include("5     - \"{{ ansible_default_ipv4.address }}\"\n")
+    stderr.must_include("^ column 7")
+    stderr.wont_include(":4:7")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+  end
+
   it "ignores a loop target that shadows a same-named injected fact" do
     # Issue #1087, Turgon37.sssd: sssd.conf.j2 iterates
     # `{% for domain in sssd__domains %}` while the gathered facts inject

@@ -833,11 +833,17 @@ module Krikri
       # through the default's value and names `ansible_fqdn` directly
       # (issue #1603). Only names the file actually reads are tested, so
       # the scope's eager pre-render cannot produce a warning for a value
-      # this template never uses.
+      # this template never uses. The path is the one the occurrence being
+      # walked subscripts the name with, not the name's first occurrence in
+      # the file: a role can read one leaf and then the whole container
+      # (`awx_config.ALLOWED_HOSTS[0]` then `awx_config.ALLOWED_HOSTS |
+      # join`), and only the leaf the container read reaches names the
+      # fact (issue #1819, ben-le.awx_nginx: real Origin'd the block at
+      # defaults/main.yml:5:7 for the second read, while this engine kept
+      # the first read's fruitless subtree).
       var_value_origin : String? = nil
-      read_paths = {} of String => Array(String)
       first_fact_read = ->(read : String) do
-        if origin = re_rendered_var_fact_origin(read, access: read_paths[read]?)
+        if origin = re_rendered_var_fact_origin(read, access: @current_read_path)
           var_value_origin = origin
           true
         elsif VarSubstitutor.top_level_fact_name?(read, template_vars)
@@ -847,7 +853,7 @@ module Krikri
           false
         end
       end
-      found_fact_read = probe_walk(first_fact_read, template, failed, read_paths)
+      found_fact_read = probe_walk(first_fact_read, template, failed, track_read_paths: true)
       # An included template runs INSIDE this file's templating operation,
       # and real reports its reads at this file's Origin too - the outer
       # template alone names no fact, so Anthony25.postfix's main.cf
@@ -857,7 +863,7 @@ module Krikri
       # file). Only a completed render's loads count: a crash may have
       # removed an include that recorded its source but never ran.
       unless found_fact_read || failed
-        found_fact_read = probe_loaded_templates_for_fact(first_fact_read, template_vars, template_path, read_paths)
+        found_fact_read = probe_loaded_templates_for_fact(first_fact_read, template_vars, template_path)
       end
       VarSubstitutor.emit_fact_deprecation(var_value_origin) if found_fact_read
       # The internal `vars`-dict deprecation (issue #1028,
@@ -908,23 +914,21 @@ module Krikri
     # Issue #1354: `{{ c.key }}` reaches one leaf, while a bare `{{ c }}` or
     # a loop over the whole value reaches every leaf - the two readings
     # must not be confused, since only the first would warn. A walk that
-    # wants this records, per name, the subscript path of its FIRST read
-    # (see #record_read_path); every other probe walk leaves this nil and
-    # pays nothing.
-    @read_paths : Hash(String, Array(String))? = nil
+    # wants this records the subscript path of the read being walked at the
+    # matcher's call (see #record_read_path); every other probe walk leaves
+    # the tracking off and pays nothing.
+    @track_read_paths = false
     @read_path_stack = [] of String?
+    @current_read_path : Array(String)? = nil
 
-    private def record_read_path(name : String) : Nil
-      paths = @read_paths || return
-      return if paths.has_key?(name)
+    private def record_read_path : Nil
       # A dynamic subscript (`c[key]`, a slice) names no single leaf; the
       # read then counts as a whole-container one.
-      return if @read_path_stack.any?(Nil)
-      paths[name] = @read_path_stack.compact.reverse!
+      @current_read_path = @read_path_stack.any?(Nil) ? nil : @read_path_stack.compact.reverse!
     end
 
     private def with_read_path_component(component : String?, & : -> Bool) : Bool
-      return yield unless @read_paths
+      return yield unless @track_read_paths
       @read_path_stack.push(component)
       begin
         yield
@@ -946,7 +950,7 @@ module Krikri
                                      bound : Set(String) = Set(String).new) : Bool
       case node
       when KrikriJinja::Nodes::NameNode
-        record_read_path(node.name)
+        record_read_path
         matcher.call(node.name)
       when KrikriJinja::Nodes::TextNode, KrikriJinja::Nodes::ConstNode,
            KrikriJinja::Nodes::InTestNode
@@ -1164,22 +1168,22 @@ module Krikri
 
     # One deprecation probe walk: resets the frame gate's walk-position
     # state and scans the whole template for a read the matcher accepts.
-    # *paths* is filled with each name's first-read subscript path when the
-    # caller cares (see #record_read_path).
+    # *track_read_paths* makes the matcher see the subscript path of the
+    # read it is asked about (see #record_read_path).
     private def probe_walk(matcher : String -> Bool, template : KrikriJinja::Nodes::TemplateNode,
-                           failed : Bool = false, paths : Hash(String, Array(String))? = nil) : Bool
+                           failed : Bool = false, track_read_paths : Bool = false) : Bool
       previous_dead, previous_live, previous_macro, previous_failed =
         @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed
-      previous_paths = @read_paths
+      previous_track = @track_read_paths
       @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed = false, true, false, failed
-      @read_paths = paths
+      @track_read_paths = track_read_paths
       @read_path_stack.clear
       begin
         template_reads_name?(matcher, template)
       ensure
         @gate_dead, @gate_live, @gate_in_macro, @gate_render_failed =
           previous_dead, previous_live, previous_macro, previous_failed
-        @read_paths = previous_paths
+        @track_read_paths = previous_track
         @read_path_stack.clear
       end
     end
@@ -1193,8 +1197,7 @@ module Krikri
     # included parts do (issue #1603).
     private def probe_loaded_templates_for_fact(matcher : String -> Bool,
                                                 template_vars : Hash(String, JSON::Any),
-                                                template_path : String,
-                                                read_paths : Hash(String, Array(String))) : Bool
+                                                template_path : String) : Bool
       options = @render_lexer_options
       return false unless options
       # Arming each include replaces the gate's per-file state; the probes
@@ -1222,7 +1225,7 @@ module Krikri
           if engine = @frame_gate_engine
             prepare_frame_gate(engine, template_vars, include_template)
           end
-          return true if probe_walk(matcher, include_template, false, read_paths)
+          return true if probe_walk(matcher, include_template, false, track_read_paths: true)
         end
         false
       ensure

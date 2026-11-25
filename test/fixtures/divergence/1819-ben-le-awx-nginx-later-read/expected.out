@@ -1,0 +1,37 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [ben-le.awx_nginx : Copy over awx nginx configuration] ********************
+[ERROR]: Task failed: 'host_port' is undefined
+
+Task failed.
+Origin: <WORK>/roles/ben-le.awx_nginx/tasks/main.yml:2:3
+
+1 ---
+2 - name: Copy over awx nginx configuration
+    ^ column 3
+
+<<< caused by >>>
+
+'host_port' is undefined
+Origin: <WORK>/roles/ben-le.awx_nginx/templates/awx_nginx.j2
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: 'host_port' is undefined"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/ben-le.awx_nginx/defaults/main.yml:5:7
+
+3   ALLOWED_HOSTS:
+4     - "{{ inventory_hostname }}"
+5     - "{{ ansible_default_ipv4.address }}"
+        ^ column 7
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

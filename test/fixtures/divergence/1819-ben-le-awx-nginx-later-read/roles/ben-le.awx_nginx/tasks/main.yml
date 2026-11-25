@@ -1,0 +1,7 @@
+---
+- name: Copy over awx nginx configuration
+  template:
+    src: awx_nginx.j2
+    dest: awx.conf
+    backup: yes
+  register: __awx_nginx_config

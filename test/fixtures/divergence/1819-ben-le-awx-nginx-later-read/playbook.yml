@@ -1,0 +1,8 @@
+# The round's cold-phase play: ben-le.awx_nginx as the only role.
+# The role's apt/file/copy tasks need a real host, so only the diverging
+# template task is kept (its dest adapted to a scratch-relative path).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - ben-le.awx_nginx

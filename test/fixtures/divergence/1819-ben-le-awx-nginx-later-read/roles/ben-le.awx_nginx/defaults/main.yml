@@ -1,0 +1,61 @@
+---
+awx_config:
+  ALLOWED_HOSTS:
+    - "{{ inventory_hostname }}"
+    - "{{ ansible_default_ipv4.address }}"
+awx_nginx_ssl_cert_path: "/etc/ssl/awx/{{ inventory_hostname }}.crt"
+awx_nginx_ssl_key_path: "/etc/ssl/awx/{{ inventory_hostname }}.key"
+
+awx_nginx_ssl_key: |
+    -----BEGIN RSA PRIVATE KEY-----
+    MIIEogIBAAKCAQEAxV/eYHMKNOIp2St8O82t4HtStcFB4Gb4bQjb2Kf/OtGfn8dT
+    4+cg5WotIPsfl0P+7uKIq4tu9hiZBkioe/jiHgSJJ9Jv0LFpVDTk1eMJSS19KRWG
+    HdkepxNa7riNofzibnuG2maeh+iaclH3Wk5usk7ibN+klsUAf6sk4ytuzLNvd3Jr
+    EopRq6Yhsvwma0a7P2XuQ5daYP/x/Umhl2WUzKfsTSkVzeY8cHw4Y1Xr//r5WIeP
+    5Q5EoQs+rsHwgJtNzkigNN4IjI9qwpDpcBifQq6Fw26joHQkANlub34dgaL5z2pK
+    0V4lEZ0R1AGyM8cGXGGhpjb6tMd7o9CfKXGtfQIDAQABAoIBACqtly0t0ugqezgN
+    UhiwWcevguvwNOlr+o3BG6CWevbh+u0WscoW4SMaOVXnVyZjOo23CCxnwv+NxBD6
+    xwu/fk1VV773ntv2cLsXkN+67vgW0PiAQfbUSu9/nOr/lwiO4PtY1IkHJYJnxnWv
+    yZeKXB9MNWOrXDCJupjgjeJdMuEqDk/xMFivRSFzinFOHL7OBFNgJb1ol5Eb35yA
+    gsqqK3T+S+l9I+tqpc7IMBwQEiWcANUDXWFk+D0QNis8AhVXbNFdpt9iMdFzXDr/
+    RPkof7EWEBXQ1Pz0tnG+ZGdBxVqrHqVJfNoLNnLVpRu1hb6Kqg5/9QLxXU+daewJ
+    6RQX8rUCgYEA2iFngTtVXXNx9ez5YufaSwjks0+h2u+8ufWbwLMivmJAwlJyvNno
+    NmOEbMvUM6wgfMPSEcJGYszbLScP5qb4H9hF/wLfY35Xc06e9hRzpzELgNbJK5YF
+    B3fjJvqsd5Psk1bwCY0gw0cgWFyH3hJDNDGSqVGiXEkOi1tdj+EitHcCgYEA56P7
+    /IpPkTEg00Hotoat+dyRgTvsl5nPiQbmc/TF85sXwG3XCbENDLoahK6SkilvGZWE
+    sR6sd0xwUluF75hlMgeGX7Vz9KN4DJUjwavc4hK5ojN2gNefVoP/QTrvccjsaL1N
+    k9m1fNoA3xb/P75LUhnc+rLflZG8fNtuCRYIbqsCgYAM7/RCnvFGNKWqr15vNk8l
+    KibeV7fC03s/EEknmbhS0GME43z4pHf4Wdit1z0Dv47Bt5+K/BnOnFXXjLyNspN+
+    2AX2xQXY0dJ//UbCU540aV1ES/jsg95SfhLT6gQ2p2hdqMdd2af6zQonE33fdvfT
+    balEL5pQnOim7UlUUkcLqwKBgFN6U1tldNs8Ozom7Hiq/JOpG37ZW6AevB4DsJVl
+    RtlNsTeV3gMOHUfS4a+jQgsOh41Oxu0Vws2TbH8hoJkB8KYg9BoVyF4Hc0IFlUc8
+    anPGj8OWjEROcIu7MggN9zCoWho87nIz6SW/YsUDAqW0LGzACVUHlW/Pf3/3jCYW
+    HJ/VAoGAIbq0Q8jt2LNWNkMEBojcuKOGo9i4Ha/A0sKCZnFfTvSBeE1EUVn3vHF9
+    yMdjeah1e5EQtmpCLW//a1fBj/PAsX+STorxLfldkh/RiTjIvn2BE4c20OM1PkXs
+    vnK9DOvVX76aoyoPekg3NlyE+SXCxvo/PDKOb6TH0Zxs7dqutlo=
+    -----END RSA PRIVATE KEY-----
+awx_nginx_ssl_cert: |
+    -----BEGIN CERTIFICATE-----
+    MIIEFDCCAvygAwIBAgIRAPawX/F7sO1UYhq/oa9FcIwwDQYJKoZIhvcNAQELBQAw
+    ejELMAkGA1UEBhMCVVMxFDASBgNVBAgTC0NhbGlmb3JuaW5hMREwDwYDVQQHEwhN
+    aWxwaXRhczEVMBMGA1UEChMMRmlyZUV5ZSBJbmMuMSswKQYDVQQDEyJGaXJlRXll
+    IEluYy4gQ2VydGlmaWNhdGUgQXV0aG9yaXR5MB4XDTE3MTIxMzE3NTA0MVoXDTE4
+    MTIxMzE3NTA0MVowazELMAkGA1UEBhMCVVMxFDASBgNVBAgTC0NhbGlmb3JuaW5h
+    MREwDwYDVQQHEwhNaWxwaXRhczEVMBMGA1UEChMMRmlyZUV5ZSBJbmMuMRwwGgYD
+    VQQDExN3d3cuYXd4LmV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
+    MIIBCgKCAQEAxV/eYHMKNOIp2St8O82t4HtStcFB4Gb4bQjb2Kf/OtGfn8dT4+cg
+    5WotIPsfl0P+7uKIq4tu9hiZBkioe/jiHgSJJ9Jv0LFpVDTk1eMJSS19KRWGHdke
+    pxNa7riNofzibnuG2maeh+iaclH3Wk5usk7ibN+klsUAf6sk4ytuzLNvd3JrEopR
+    q6Yhsvwma0a7P2XuQ5daYP/x/Umhl2WUzKfsTSkVzeY8cHw4Y1Xr//r5WIeP5Q5E
+    oQs+rsHwgJtNzkigNN4IjI9qwpDpcBifQq6Fw26joHQkANlub34dgaL5z2pK0V4l
+    EZ0R1AGyM8cGXGGhpjb6tMd7o9CfKXGtfQIDAQABo4GjMIGgMA4GA1UdDwEB/wQE
+    AwIFoDAdBgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwHQYDVR0OBBYEFDYw
+    pGW3VLp+w3DLdv+z/w/FwbQGMB8GA1UdIwQYMBaAFBBQu7PbsI+oyQlF3VSeiZf7
+    aqaAMC8GA1UdEQQoMCaCD2F3eC5leGFtcGxlLmNvbYITd3d3LmF3eC5leGFtcGxl
+    LmNvbTANBgkqhkiG9w0BAQsFAAOCAQEANjy1qdBaz7cCrNTF91r1U6HfRCbPK2DA
+    B4liGqK6mPwgn+0tOxEuSjIc3+gFda6TcrCsZmTRLtjrU6sjbMbdo0gNXOZeR981
+    eq/SMG9KEzrsGn0L1JMpM1renqqlHJhQNOMk0hyPNLSmSaF0TG564IbqehOJgdk8
+    9f1s7MeMJ5AgiHsBb2FlZVyLBH/ayBvjg5iGOcNd4IZq2FzhsWe/T69wiOz2ag5F
+    sH2sQSbqEQh3+SPaU5oE2ChtU7kYxxtj7FBCTHgW1s26X9XTNp1zIYpheu4TO8yf
+    hFBBVcW7DXYW7MOlNHTC5z+TjU2qJZDFOXYTsDH/zMkiSCesQXMoTg==
+    -----END CERTIFICATE-----
