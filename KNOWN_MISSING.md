@@ -932,7 +932,7 @@ because anyone intends to fix them.
   unsanitized `msg` and a bare `install` as `cmd`) was a real engine gap, fixed with the sanitiser in
   issue #1372.
 
-- **`file:` with `state: touch` diffs wall-clock timestamps (kpg file cases, issues #1503/#1759).**
+- **`file:` with `state: touch` diffs wall-clock timestamps (kpg file cases, issues #1503/#1759/#1807).**
   Under `--diff` the module prints `initial_diff()`'s payload, and its `atime`/`mtime` entries are the
   file's own stat times plus the "now" Ansible reads immediately before applying `utime`
   (`update_timestamp_for_file`). For a NEW path the hunk carries a pair on both sides (the
@@ -944,7 +944,12 @@ because anyone intends to fix them.
   other per-run values. `test/integration/touch_result_shape_test.cr` pins the shape such a mask
   anchors on. The chaos re-file (#1759, playbook `000005-multi-expect-chaos`) is the same hunk under
   a wrong-typed integer `path` plus `follow`/`modification_time_format`: both engines coerce the int
-  to `"5"` and print identical hunk lines apart from those floats.
+  to `"5"` and print identical hunk lines apart from those floats. The happy-path re-file (#1807,
+  playbook `000000-multi-gather_facts-happy`, check mode) is the EXISTING-path variant: the before
+  pair is the file's pre-run stat (whose atime belongs to the container image and never moves on a
+  normal write, so the two engine images report ages hours apart), the after pair is one shared
+  "now" read at the run moment, and the `file -> touch` transition, key order and every other line
+  match.
 
 - **`assemble:`'s controller-side diff names a per-run staging file (kpg assemble cases, issue
   #1539).** With `remote_src` falsy under `--diff`, Ansible's assemble action assembles the fragments

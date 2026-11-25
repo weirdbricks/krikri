@@ -260,6 +260,51 @@ describe "file state=touch diff payload (issue #1441, live-verified vs 2.21.6)" 
     File.delete(created) if created && File.exists?(created)
   end
 
+  # The kpg happy-path shape (playbook 000000-multi-gather_facts-happy,
+  # issue #1807): an EXISTING 0440 file, check mode, `follow: true` and both
+  # time axes left at their "now" default. Real ansible prints the file's
+  # pre-run stat pair as the before side and one shared "now" as the after
+  # side; those four floats are each host's own clock or image age, so the
+  # generator's comparison cannot match them (KNOWN_MISSING.md). What krikri
+  # owns - the four-key hunk on both sides, the `file` -> `touch` transition,
+  # the untouched stat times and the result's own `state: file` echo - is
+  # pinned here.
+  it "keeps the four-key file -> touch hunk for an existing file in check mode" do
+    path = tmp_path("touch-diff-check-existing.txt")
+    File.write(path, "kpg locked dest\nsecond line\n")
+    File.chmod(path, 0o440)
+    # The kpg fixture's atime is the container image's own, older than its
+    # mtime - a normal write moves mtime only.
+    File.utime(Time.utc - 1.hour, Time.utc, path)
+    mtime_before = File.info(path).modification_time
+
+    result = PluginSpecHelper.run("file", {
+      "path"                => path,
+      "state"               => "touch",
+      "follow"              => "true",
+      "_ansible_check_mode" => "true",
+      "_ansible_diff"       => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["dest"].as_s.must_equal(path)
+    result["state"].as_s.must_equal("file")
+    diff = result["diff"]
+    diff["before"].as_h.keys.sort!.must_equal(["atime", "mtime", "path", "state"])
+    diff["after"].as_h.keys.sort!.must_equal(["atime", "mtime", "path", "state"])
+    diff["before"]["path"].as_s.must_equal(path)
+    diff["before"]["state"].as_s.must_equal("file")
+    diff["after"]["state"].as_s.must_equal("touch")
+    diff["after"]["mtime"].as_f.must_equal(diff["after"]["atime"].as_f)
+    (diff["after"]["mtime"].as_f > diff["before"]["mtime"].as_f).must_equal(true)
+    (diff["before"]["mtime"].as_f * 1000).round.to_i64
+      .must_equal((mtime_before.to_unix_f * 1000).round.to_i64)
+    (diff["before"]["mtime"].as_f - diff["before"]["atime"].as_f).round.to_i64.must_equal(3600)
+    File.info(path).modification_time.must_equal(mtime_before)
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
   it "carries no diff container unless diff mode is on" do
     path = tmp_path("touch-diff-off.txt")
     File.write(path, "hi\n")
