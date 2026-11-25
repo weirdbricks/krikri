@@ -87,6 +87,32 @@ describe "tempfile plugin" do
     File.delete(path)
   end
 
+  # The kpg multi-tempfile-chaos case (issue #1812) asks for state: file with
+  # an existing directory as path: and the module's DEFAULT prefix, and the
+  # oracle then lists one `ansible.<random>` entry on each engine: an empty
+  # 0600 file under the requested directory. Pin that shape, and that a second
+  # run draws a fresh name - which is why the two engines' state lines can
+  # never agree.
+  it "leaves one default-prefix mkstemp file under an explicit path: directory" do
+    dir = PluginSpecHelper.tmp_path("tempfile-default-prefix-path")
+    Dir.mkdir_p(dir)
+
+    paths = [
+      PluginSpecHelper.run("tempfile", {"path" => dir, "state" => "file"})["path"].as_s,
+      PluginSpecHelper.run("tempfile", {"path" => dir, "state" => "file"})["path"].as_s,
+    ]
+
+    paths.each do |path|
+      File.dirname(path).must_equal(dir)
+      File.basename(path).must_match(/\Aansible\.[a-z0-9_]{8}\z/)
+      File.size(path).must_equal(0)
+      File.info(path).permissions.value.must_equal(0o600)
+    end
+    paths.uniq.size.must_equal(2)
+    Dir.children(dir).size.must_equal(2)
+    paths.each { |path| File.delete(path) }
+  end
+
   # The same oracle section reports a created directory as `d <uid> <gid> 700 0`,
   # so the directory state leaves the same private mode on both engines: Python's
   # mkdtemp creates 0700, and only its random name may differ per run.
