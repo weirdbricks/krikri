@@ -994,6 +994,24 @@ because anyone intends to fix them.
   write the timestamped block, adds nothing itself, and skips the add for an already-locked
   package).
 
+- **`known_hosts`'s `hash_host` entry is salted randomly on every run (kpg known_hosts cases, issues
+  #1784/#1785/#1787).** With `hash_host: true` the module rewrites the entry's host field as
+  `|1|<salt>|<digest>`, where the salt is 20 fresh bytes from `os.urandom(20)` and the digest is
+  HMAC-SHA1(salt, hostname) (known_hosts.py's `hash_host_key`), so both the line it writes and the
+  `--diff` hunk echoing it carry a value drawn at the moment the module runs. krikri reproduces
+  Ansible's algorithm exactly - same 20-byte salt, same HMAC-SHA1, same base64 fields
+  (`KnownHostsKey.hash_host_line`) - which is why two runs of real Ansible disagree on it just like
+  Ansible disagrees with krikri (the real run and its check-mode re-file printed four different
+  salts). Everything else about that hunk matches byte for byte (`--- before: /dev/null`, the
+  `+++ after:` path, `@@ -0,0 +1 @@`, the key type and blob, `changed`), and ssh treats any `|1|`
+  entry for the host as equivalent, so this is not a krikri gap: the generator's stdout comparison
+  needs a mask for the `|1|<salt>|<digest>` field (both 20-byte fields are 28 base64 characters with
+  one `=` pad, so an anchored, fixed-width mask stays off the rest of the line), and its host-state
+  oracle needs the same normalisation before hashing a known_hosts file, like the `<TIME>` rule it
+  needs for yum_versionlock's comment above. `test/unit/known_hosts_key_test.cr` pins the field's
+  shape and that the digest really is HMAC-SHA1 over the decoded salt and hostname, so such a mask
+  keeps a stable anchor.
+
 - **The kpg state oracle's `#ports` section sees the guest's own transient UDP sockets.** The snapshot reads `/proc/net/udp` and keeps every socket in
   state `07`, which covers an unconnected outbound socket a boot-time service has open (an NTP or
   DNS query from `systemd-timesyncd`/`systemd-resolved` sits at `0.0.0.0:<ephemeral>` until its

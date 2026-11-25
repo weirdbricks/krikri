@@ -34,6 +34,23 @@ describe KnownHostsKey do
       one.wont_equal(two)
     end
 
+    # The kpg chaos shape (issues #1784/#1785/#1787): the entry's host field
+    # is |1|<salt>|<digest>, and the salt is drawn afresh every run - real
+    # ansible's hash_host_key does the same (known_hosts.py: os.urandom(20)),
+    # so the generator's byte comparison can never match that field on the
+    # two engines. Pin exactly what a mask anchors on: the two 28-character
+    # base64 fields (20 bytes each, so a single '=' pad), with the digest a
+    # real HMAC-SHA1 over the decoded salt and the hostname rather than an
+    # opaque blob.
+    it "keeps the two fixed-width base64 fields a harness hash mask anchors on" do
+      hashed = KnownHostsKey.hash_host_line("example.com",
+        "example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl")
+
+      hashed.must_match(/\A\|1\|[A-Za-z0-9+\/]{27}=\|[A-Za-z0-9+\/]{27}= ssh-ed25519 AAAA/)
+      fields = hashed.split[0].split('|', remove_empty: true)
+      Base64.strict_encode(KnownHostsKey.hmac_digest(Base64.decode(fields[1]), "example.com")).must_equal(fields[2])
+    end
+
     it "shifts the hashed field past an @cert-authority marker" do
       line = "@cert-authority mfbenchhost2 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGUv5i6LyDtqn"
       hashed = KnownHostsKey.hash_host_line("mfbenchhost2", line)
