@@ -3049,6 +3049,7 @@ module Krikri
         # everything else collapses into the header).
         if msg.starts_with?("Failed to find handler for ") || msg.starts_with?("Failure downloading ") ||
            msg.starts_with?("failed to unpack ") ||
+           msg.starts_with?("Unexpected error when accessing exploded file") ||
            (msg.starts_with?("Source '") && msg.ends_with?("' does not exist"))
           # pick_handler's and fetch_file's failures are raised by the MODULE
           # itself (AnsibleModule.fail_json in unarchive.py), not the
@@ -3058,6 +3059,11 @@ module Krikri
           # So is the src-existence gate once remote_src: is truthy: the
           # action plugin hands the whole task to the module there, which
           # fails it with its own "Source '<src>' does not exist".
+          # "Unexpected error when accessing exploded file." is main()'s
+          # own fail_json around the attribute pass' OSError
+          # (unarchive.py:1154/1169), so it keeps that same chain -
+          # live-verified vs 2.21.6 on a task whose requested mode strips
+          # a directory member's search bit (issue #1818).
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         else
           inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg

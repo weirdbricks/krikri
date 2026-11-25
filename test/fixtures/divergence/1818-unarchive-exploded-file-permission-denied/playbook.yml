@@ -1,0 +1,49 @@
+# bbaassssiiee.wso2db tasks/main.yml's "Unzip WSO2 API Manager Package"
+# verbatim, except for what cannot run in the corpus:
+# - `delegate_to: localhost` / `connection: local` / `run_once: true` /
+#   `become: false` are dropped (the replay is already a local run), and
+#   `{{ product_package_location }}` (the role's default `files`, relative
+#   to the controller cwd) is replaced by the case's own absolute scratch
+#   path, so this transcript carries no relative-destination warning: real
+#   prints that warning inline while krikri already batches warnings to the
+#   end of the run, a separate, pre-existing display gap.
+# - the role's get_url download of the 600MB GitHub pack is replaced by a
+#   seed task that base64-decodes the archive checked in beside this
+#   playbook; the extracted tree, and therefore the failure, is the same.
+# - `remote_src: false` becomes `remote_src: true`: with the action plugin
+#   staging the source, real's extract_results.cmd names its random
+#   ansible-tmp directory and no recording can reproduce it.
+# - `dest:` is a symlink to the packs directory. Real's fail_json ends with
+#   add_path_info(dest), which lstat()s the dest PARAM: for a plain
+#   directory that is the scratch filesystem's own directory size, which
+#   differs between the capture scratch (/tmp, a tmpfs) and the suite's
+#   (test/tmp), so no recording could replay. Against a symlink it is the
+#   link's fixed mode/size/state, identical wherever the case runs.
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Ensure directory files/packs
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/files/packs/"
+        state: directory
+        mode: '0750'
+
+    - name: Point the package location at the packs directory
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/files/packs-link"
+        src: "packs"
+        state: link
+
+    - name: Seed the WSO2 API Manager package
+      ansible.builtin.shell:
+        cmd: base64 -d {{ playbook_dir }}/archive.b64 > {{ playbook_dir }}/files/packs/wso2am-3.2.0.zip
+      changed_when: false
+
+    - name: Unzip WSO2 API Manager Package
+      ansible.builtin.unarchive:
+        src: "{{ playbook_dir }}/files/packs/wso2am-3.2.0.zip"
+        dest: "{{ playbook_dir }}/files/packs-link"
+        creates: "{{ playbook_dir }}/files/packs/wso2am-3.2.0/LICENSE.txt"
+        mode: u=rw,g=r,o=r
+        remote_src: true
+      no_log: false
