@@ -1917,8 +1917,9 @@ module Krikri
       # internal _ansible_that_index key; when: failures are emitted by
       # TaskExecutor's own emit_when_error_chain instead). The non-bool
       # "Conditional result" class additionally carries the
-      # ALLOW_BROKEN_CONDITIONALS hint after the block - but only when
-      # the chain itself printed (live-verified vs 2.19.11: the other
+      # ALLOW_BROKEN_CONDITIONALS hint after the block, and the templar
+      # trust failure its own help paragraph - but only when the chain
+      # itself printed (live-verified vs 2.19.11/2.21.6: the other
       # wording classes end the block at the Origin, no hint).
       if (idx = result["_ansible_that_index"]?.try(&.as_i64?)) &&
          (msg.starts_with?("Task failed: Error while evaluating conditional") ||
@@ -1926,6 +1927,7 @@ module Krikri
          msg.starts_with?("Task failed: Error rendering expression") ||
          msg.starts_with?("Task failed: The test plugin ") ||
          msg.starts_with?("Task failed: The filter plugin ") ||
+         msg == "Task failed: Encountered untrusted template or expression." ||
          msg.starts_with?("Task failed: Conditional result"))
         if emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i, loop_item) &&
            msg.starts_with?("Task failed: Conditional result")
@@ -2267,7 +2269,8 @@ module Krikri
       end
 
       root = ErrorBlock::Node.new("Task failed.", source_context: task_origin)
-      cause = ErrorBlock::Node.new(mid_msg, source_context: item_origin)
+      cause = ErrorBlock::Node.new(mid_msg, source_context: item_origin,
+        help_text: inner == UNTRUSTED_EXPRESSION_MESSAGE ? UNTRUSTED_EXPRESSION_HELP : nil)
       cause.with_chain(ErrorBlock::DIRECT_CAUSE, true, leaf) if leaf
       ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
     end
@@ -2845,6 +2848,12 @@ module Krikri
     # the block text through _ansible_error_detail.
     UTF8_REFUSAL_PREFIX = "Refusing to deserialize an invalid UTF8 string value: "
     UTF8_REFUSAL_HELP   = "This check can be disabled with the `MODULE_STRICT_UTF8_RESPONSE` setting."
+
+    # TemplateTrustCheckFailedError's _default_help_text, printed after
+    # the assert-that chain's Origin block (see emit_assert_that_chain).
+    UNTRUSTED_EXPRESSION_MESSAGE = "Encountered untrusted template or expression."
+    UNTRUSTED_EXPRESSION_HELP    = "Templates and expressions must be defined by trusted sources such as playbooks or roles, " \
+                                   "not untrusted sources such as module results."
 
     # The cause chain ansible-core 2.19 builds for each failure
     # class, as an ErrorBlock event tree rooted at the task-level

@@ -248,9 +248,27 @@ module Krikri
     class TemplateDelimiterError < Exception
     end
 
-    # Ansible never pre-renders `{{ }}` out of a conditional: both
-    # `when:` and assert's `that:` items are compiled as raw Jinja
-    # EXPRESSIONS (Templar.evaluate_expression -> Parser(state="variable")),
+    # Ansible's TemplateTrustCheckFailedError wording verbatim: templating
+    # a multi-part conditional (see #multi_span_template_conditional?)
+    # yields a string carrying no trusted tag, and its templar refuses to
+    # evaluate an untrusted expression before parsing it.
+    UNTRUSTED_EXPRESSION_MESSAGE = "Encountered untrusted template or expression."
+
+    # The same error class's _default_help_text, which real prints as the
+    # trailing paragraph of the chain block (never as part of the reported
+    # msg).
+    UNTRUSTED_EXPRESSION_HELP =
+      "Templates and expressions must be defined by trusted sources such as playbooks or roles, " \
+      "not untrusted sources such as module results."
+
+    # Raised for the shape #multi_span_template_conditional? classifies.
+    class UntrustedExpressionError < Exception
+    end
+
+    # Ansible does not pre-render the `{{ }}` out of a conditional whose
+    # delimiters sit anywhere but at both ENDS: such a `when:`/assert
+    # `that:` item is compiled as a raw Jinja EXPRESSION
+    # (Templar.evaluate_expression -> Parser(state="variable")),
     # so a balanced `{{ ... }}` anywhere outside a string literal is a
     # TemplateSyntaxError and create_template_error(is_expression=True)
     # composes "Syntax error in expression." + " Template delimiters are
@@ -272,6 +290,10 @@ module Krikri
     #     (live-verified: `when: "{{ 1 == 1 }}"` warns and passes), so
     #     they are excluded here exactly the way the caller's
     #     conditional_delimiters_deprecation_text detects them;
+    #   * the start-and-END-delimiter shapes that are not one whole
+    #     template are that same all-template path (and fail its trust
+    #     check) - see #multi_span_template_conditional?, which callers
+    #     must consult before this method;
     #   * a `{{ }}` inside a string literal (`that: name == '{{ x }}'`)
     #     is a CONST template Jinja parses fine - quoted spans are
     #     skipped;
@@ -299,6 +321,29 @@ module Krikri
       conditional.size > 4 &&
         conditional.starts_with?("{{") && conditional.ends_with?("}}") &&
         !conditional[2...-2].includes?("{{")
+    end
+
+    # Ansible's `is_possibly_all_template` is nothing more than
+    # `_starts_and_ends_with_jinja_delimiters`, so this covers every
+    # conditional there that is NOT one whole template: several `{{ }}`
+    # spans (`"{{ item }} is defined and {{ item }}"`), adjacent spans
+    # (`"{{ 'a' }}{{ 'b' }}"`), or a `{% %}` block (`"{% if x %}y{% endif %}"`).
+    # Real renders all of them and only then trust-checks the result, so
+    # they fail as UntrustedExpressionError with the undefined-reference
+    # error winning when the render itself fails (live-verified vs
+    # 2.21.6, issue #1826's lazyrichard.linux_join_ad_domain assert).
+    # Callers must test this BEFORE #template_delimiter_error, which
+    # reports these spans as the Jinja parse failure.
+    #
+    # Comment delimiters are left out: a `{# #}`-only conditional renders
+    # to the empty string, which real fails as an empty conditional, not
+    # a trust failure.
+    def self.multi_span_template_conditional?(conditional : String) : Bool
+      stripped = conditional.strip
+      return false if all_template_conditional?(stripped)
+      starts = stripped.starts_with?("{{") || stripped.starts_with?("{%")
+      ends = stripped.ends_with?("}}") || stripped.ends_with?("%}")
+      starts && ends
     end
 
     # Index of the first `{{` outside any single- or double-quoted span,

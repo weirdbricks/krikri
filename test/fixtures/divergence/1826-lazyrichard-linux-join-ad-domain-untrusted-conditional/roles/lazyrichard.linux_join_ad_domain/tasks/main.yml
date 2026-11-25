@@ -1,0 +1,20 @@
+---
+# tasks file for join_domain
+- name: Validate variables
+  include_tasks: ./validate.yml
+
+- name: "Join '{{ domain_name }}' using '{{ join_method }}'"
+  include_tasks: "./{{ join_method }}/main.yml"
+
+- name: Setup sudoers
+  include_tasks: ./setup_sudoers.yml
+  vars:
+    template_sudoers: "{{ lookup('vars','template_sudoers_' + join_method) }}"
+
+- name: Set options
+  include_tasks: ./set_options.yml
+  when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+
+- name: Set options
+  include_tasks: ./set_options_rhel.yml
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'

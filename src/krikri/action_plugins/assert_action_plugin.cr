@@ -120,17 +120,8 @@ module Krikri
         failing = nil.as(String?)
         conditions.each_with_index do |condition, idx|
           current_index = idx
-          # Ansible compiles the RAW `that:` item as an expression -
-          # no `{{ }}` pre-render - so a delimiter-bearing condition is
-          # its "Template delimiters are not supported in expressions"
-          # syntax error, not something to render away and then evaluate
-          # (chriswayg.mailcow / rockandska.rabbitmq's own assert
-          # preflights, rounds 1500413/1500208). Checked before
-          # substitution, on the raw text, while the delimiters are
-          # still visible.
-          if delimiter = ConditionalEvaluator.template_delimiter_error(condition)
-            raise ConditionalEvaluator::TemplateDelimiterError.new(delimiter)
-          end
+          reject_multi_span_template_conditional(condition, substitutor)
+          reject_template_delimiter(condition)
           substituted = substitutor.substitute(condition)
           next if evaluate_that(substituted)
           failing = condition
@@ -143,6 +134,11 @@ module Krikri
         # registers changed=false+failed=true+msg, and the [ERROR]
         # chain's second Origin points at the failing that: item
         # (_ansible_that_index).
+        return that_index_error("Task failed: #{ex.message}", current_index)
+      rescue ex : ConditionalEvaluator::UntrustedExpressionError
+        # Real's trust failure reaches assert: as the same two-level chain,
+        # "Task failed: "-prefixed fatal msg; its help_text paragraph is
+        # added by ResultDisplay, which owns the render of that chain.
         return that_index_error("Task failed: #{ex.message}", current_index)
       rescue ex : ConditionalEvaluator::UndefinedVariableError
         # ansible-core 2.19.11 prefixes assert:'s undefined-
@@ -217,6 +213,44 @@ module Krikri
       end
 
       failing ? failure_result(failing, failing_idx) : nil
+    end
+
+    # A condition that begins and ends with template delimiters but is not
+    # one whole template takes real's all-template path: it is rendered
+    # first - an undefined reference fails THERE ("Error while evaluating
+    # conditional: '<x>' is undefined") - and the rendered string, carrying
+    # no trusted tag, is then refused by the template trust check rather
+    # than compiled as an expression. That is the failure the delimiter
+    # error covers for every OTHER delimiter-bearing shape (live-verified
+    # vs 2.21.6 on issue #1826's role).
+    private def reject_multi_span_template_conditional(condition : String, substitutor : VarSubstitutor) : Nil
+      return unless ConditionalEvaluator.multi_span_template_conditional?(condition)
+
+      # strict: real's render is ordinary templating, which raises on an
+      # undefined reference before the trust check can run, and assert's
+      # undefined arm owns that wording (live-verified vs 2.21.6:
+      # `that: "{{ nope }} and {{ other }}"` fails "Error while
+      # evaluating conditional: 'nope' is undefined").
+      begin
+        substitutor.substitute(condition, strict: true)
+      rescue ex : UndefinedVariableError
+        raise ConditionalEvaluator::UndefinedVariableError.new(ex.message)
+      end
+      raise ConditionalEvaluator::UntrustedExpressionError.new(ConditionalEvaluator::UNTRUSTED_EXPRESSION_MESSAGE)
+    end
+
+    # Ansible compiles the remaining RAW `that:` items as expressions - no
+    # `{{ }}` pre-render - so a delimiter inside one is its "Template
+    # delimiters are not supported in expressions" syntax error, not
+    # something to render away and then evaluate (chriswayg.mailcow /
+    # rockandska.rabbitmq's own assert preflights, rounds 1500413/1500208).
+    # Checked on the raw text, while the delimiters are still visible, and
+    # after the multi-span shape above, which owns the delimiter-bearing
+    # items that real renders whole.
+    private def reject_template_delimiter(condition : String) : Nil
+      if delimiter = ConditionalEvaluator.template_delimiter_error(condition)
+        raise ConditionalEvaluator::TemplateDelimiterError.new(delimiter)
+      end
     end
 
     # A condition that evaluated false: the first failing `that:` entry
