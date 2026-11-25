@@ -314,12 +314,31 @@ module Krikri
     # not touch target.". state=absent with an empty path is a genuine
     # no-op ok in Ansible (changed: false), and state=link/hard
     # fail later inside their own symlink/link syscall handling, so
-    # those three fall through untouched here (return nil).
+    # those three fall through untouched here (return nil). In CHECK
+    # mode only state=file still fails this way: ensure_directory and
+    # execute_touch both answer an absent path with changed:true before
+    # any syscall.
     private def empty_path_result(path : String, state : String) : PluginResult?
       return nil unless path.empty?
 
       case state
       when "directory"
+        # Ansible's ensure_directory returns its `changed: True` verdict
+        # for an ABSENT path before it splits the path and mkdirs each
+        # component, so --check never reaches the empty-path os.mkdir
+        # abort (milad.ansible_role_create_dot_env_file leaves
+        # dot_env_directory "" and runs its file: task in check mode:
+        # real ansible reports changed, krikri used to fail the play).
+        if @check_mode
+          return PluginResult.new(
+            changed: true,
+            failed: false,
+            msg: "",
+            path: "",
+            diff: directory_transition_diff("", "absent"),
+            key_order: SUCCESS_KEY_ORDER
+          )
+        end
         PluginResult.new(
           changed: false,
           failed: true,
@@ -337,7 +356,11 @@ module Krikri
       when "touch"
         # Same plain failure wording as any other touch open() failure
         # (see handle_touch); the empty path can never exist, so
-        # add_path_info merges nothing.
+        # add_path_info merges nothing. In check mode real ansible never
+        # opens the path at all: execute_touch returns changed:true for
+        # an absent path before its open(), so let handle_touch's own
+        # check-mode-shape branch answer ({dest: "", changed: true}).
+        return nil if @check_mode
         PluginResult.new(
           changed: false,
           failed: true,

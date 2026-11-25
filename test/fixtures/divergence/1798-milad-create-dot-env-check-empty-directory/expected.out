@@ -1,0 +1,9 @@
+
+PLAY [milad.ansible_role_create_dot_env_file] **********************************
+
+TASK [Confirm .env containing directory exists] ********************************
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
