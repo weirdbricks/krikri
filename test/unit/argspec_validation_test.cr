@@ -134,6 +134,41 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("missing required arguments: name found in networks")
   end
 
+  # Ansible's _validate_sub_spec also applies the PARENT option's own
+  # mutually_exclusive/required_one_of groups to every element dict;
+  # community.crypto.openssl_csr declares both on crl_distribution_points
+  # itself, so an empty element is rejected during validation - before the
+  # module body's privatekey_path check (live-verified vs 2.21.6, issue
+  # #1832).
+  it "reports a list-of-dicts sub-spec's required_one_of with the found-in suffix" do
+    failure = Krikri::ArgspecValidator.validate(
+      "community.crypto.openssl_csr", "community.crypto.openssl_csr",
+      {"path" => "/tmp/x", "privatekey_content" => "yvluus",
+       "crl_distribution_points" => "[{}]"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "one of the following is required: full_name, relative_name, crl_issuer " \
+      "found in crl_distribution_points")
+  end
+
+  it "reports a sub-spec's mutually_exclusive violation with the found-in suffix" do
+    failure = Krikri::ArgspecValidator.validate(
+      "community.crypto.openssl_csr", "community.crypto.openssl_csr",
+      {"path" => "/tmp/x", "privatekey_content" => "yvluus",
+       "crl_distribution_points" => "[{\"full_name\":[\"URI:http://x\"],\"relative_name\":[\"CN=a\"]}]"},
+      vars)
+    failure.as(Failure).msg.must_equal(
+      "parameters are mutually exclusive: full_name|relative_name found in crl_distribution_points")
+  end
+
+  it "accepts a sub-spec element that satisfies the parent's groups" do
+    failure = Krikri::ArgspecValidator.validate(
+      "community.crypto.openssl_csr", "community.crypto.openssl_csr",
+      {"path" => "/tmp/x", "privatekey_content" => "yvluus",
+       "crl_distribution_points" => "[{\"crl_issuer\":[\"URI:http://x\"]}]"},
+      vars)
+    failure.must_be_nil
+  end
+
   it "leaves a satisfied dict sub-spec to the top-level unsupported-params error" do
     failure = Krikri::ArgspecValidator.validate(
       "docker_image", "community.docker.docker_image",

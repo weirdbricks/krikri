@@ -7277,7 +7277,20 @@
       ],
       "elements": "str"
      }
-    }
+    },
+    "mutually_exclusive": [
+     [
+      "full_name",
+      "relative_name"
+     ]
+    ],
+    "required_one_of": [
+     [
+      "full_name",
+      "relative_name",
+      "crl_issuer"
+     ]
+    ]
    },
    "select_crypto_backend": {
     "type": "str",
