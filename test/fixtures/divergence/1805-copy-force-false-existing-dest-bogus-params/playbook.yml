@@ -1,0 +1,41 @@
+# krikri-playbook-generator playbook 000016-multi-copy-chaos.yml's
+# "Copy #16.0" task VERBATIM, except for what cannot run in the corpus: the
+# dest is the case's own file instead of the generator image's
+# /tmp/kpg-work/dest-0444.txt (a case may not touch the machine), the
+# kpg_owner/kpg_group role vars the round passed with -e are pinned in the
+# play's vars, and delegate_to/delegate_facts are dropped because the case
+# runs on localhost. The seed task recreates the existing 0444 destination
+# the generator's image ships, and the trailing task is the round's own
+# `when: kpg_task_0 is succeeded` dependency - the second play of the round
+# ran only because real ansible reported this copy ok.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    kpg_owner: root
+    kpg_group: root
+  tasks:
+    - name: Seed the existing destination
+      ansible.builtin.copy:
+        content: "kpg locked dest\nsecond line\n"
+        dest: "{{ playbook_dir }}/dest-0444.txt"
+        mode: "0444"
+    - name: 'Copy #16.0'
+      ansible.builtin.copy:
+        content: kpg line without newline
+        dest: "{{ playbook_dir }}/dest-0444.txt"
+        directory_mode: "0755"
+        force: false
+        group: '{{ kpg_group }}'
+        local_follow: true
+        owner: '{{ kpg_owner }}'
+        remote_src: false
+        unsafe_writes: true
+        validate: /bin/true %s
+        dest_bogus: "{{ playbook_dir }}/dest-0444.txt"
+        group_bogus: '{{ kpg_group }}'
+      register: kpg_task_0
+    - name: Kpg successor
+      ansible.builtin.debug:
+        msg: kpg-successor
+      when: kpg_task_0 is succeeded

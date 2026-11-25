@@ -122,8 +122,13 @@ module Krikri
       # -vvv, so only -vvv sees it). remote_src runs the module directly,
       # skipping the action plugin's _get_diff_data entirely, so its
       # result has NO diff key (live-verified against ansible-core
-      # 2.21.6 for both a file and a directory remote_src copy).
-      if result.diff.nil? && !true?(@params["remote_src"]?)
+      # 2.21.6 for both a file and a directory remote_src copy). Neither
+      # does the force-false existing-dest no-op: that diff is seeded
+      # inside _copy_file's own result dict, which the action DISCARDS
+      # when it takes the early return, so its registered result is only
+      # dest/src/changed/failed (live-verified vs 2.21.6 for both the
+      # content: and src: paths - issue #1805).
+      if result.diff.nil? && !true?(@params["remote_src"]?) && result.key_order != NOOP_KEY_ORDER
         result.diff = JSON::Any.new([] of JSON::Any)
       end
       # Ansible 2.19.11's CHECK-MODE content copy reports its module
@@ -320,7 +325,8 @@ module Krikri
     # Ansible's copy ACTION plugin hands the task to the copy MODULE only
     # when there are bytes to move, so the module's own argument spec -
     # and with it the strict `type: bool` conversion of backup/force/... -
-    # only ever runs in that case (copy.py, live-verified vs 2.19.11):
+    # only ever runs in that case (copy.py, live-verified vs 2.19.11 and
+    # 2.21.6):
     #
     # - remote_src: the action plugin dispatches the module right away
     #   (copy.py:466), so the spec always applies;
@@ -330,16 +336,33 @@ module Krikri
     # - ... and when the destination already holds the source's exact
     #   content it skips the transfer altogether and dispatches
     #   ansible.legacy.file with copy's copy-only options stripped, so
-    #   those are never validated either - the task just reports ok.
+    #   those are never validated either - the task just reports ok;
+    # - ... and when force is falsy against a dest that already exists,
+    #   its dest stat's exists-and-not-force branch returns before any
+    #   transfer at all (copy.py:280-283, issue #1805).
     #
-    # So a bad `backup:` spelling in either of those two states must NOT
-    # fail the task: it fails only when the module would really run. This
-    # is the same rule the controller-side gate applies before dispatch
+    # So a bad `backup:` spelling in any of those states must NOT fail the
+    # task: it fails only when the module would really run. This is the
+    # same rule the controller-side gate applies before dispatch
     # (TaskExecutor#copy_module_never_runs?); both layers have to agree
     # or the same task would be validated twice.
     private def copy_module_never_runs? : Bool
       return false if true?(@params["remote_src"]?)
       return true if @check_mode
+      # force's default is yes and the action reads it through
+      # boolean(strict=False), so every present non-true spelling is false
+      # there. A dir dest stays undecided: the src: path re-stats
+      # dest/<basename> before the force check, so the module may still run.
+      if force = @params["force"]?
+        if !true?(force, default: true) && (dest = @params["dest"]?)
+          begin
+            return true if File.file?(dest)
+          rescue File::Error
+            # Unreadable dest: leave the module's spec applied, like the
+            # equal-content probe below.
+          end
+        end
+      end
       src = @params["src"]?
       dest = @params["dest"]?
       return false unless src && dest

@@ -96,13 +96,16 @@ describe "copy plugin result key order" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "serializes the force-false existing-dest no-op with dest and src leading (krikri's always-present diff trails)" do
+  it "serializes the force-false existing-dest no-op with dest and src leading and no diff key" do
     dest = PluginSpecHelper.tmp_path("copy-order-forcefalse.txt")
     PluginSpecHelper.run("copy", {"content" => "kept\n", "dest" => dest})
     result = PluginSpecHelper.run("copy", {"content" => "other\n", "dest" => dest, "force" => "false"})
 
     result["changed"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["dest", "src", "changed", "diff"])
+    # No diff: the action's early return discards _copy_file's own result
+    # dict, the only place a diff was ever seeded (live-verified vs
+    # ansible-core 2.21.6 - issue #1805).
+    result.as_h.keys.must_equal(["dest", "src", "changed"])
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end

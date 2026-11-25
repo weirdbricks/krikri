@@ -4593,8 +4593,8 @@ module Krikri
     # Whether Ansible's copy ACTION plugin leaves the copy MODULE unexecuted
     # for this task - in which case the copy module's own argument spec
     # (its `type: bool` conversions, its unsupported-parameter check)
-    # never runs and can never fail the task. The two ways that happens
-    # (copy.py, live-verified vs 2.19.11):
+    # never runs and can never fail the task. The ways that happens
+    # (copy.py, live-verified vs 2.19.11 and 2.21.6):
     #
     # - remote_src is truthy: the opposite - the action plugin hands the
     #   whole task straight to the module (copy.py:466), so the module
@@ -4606,16 +4606,25 @@ module Krikri
     #   altogether and dispatches ansible.legacy.file - with copy's
     #   copy-only options (backup, local_follow, remote_src, validate,
     #   checksum, directory_mode, content, src) STRIPPED, so they are
-    #   never validated either.
+    #   never validated either;
+    # - force is falsy and the destination already exists: _copy_file's
+    #   dest stat is the first thing it reads, and the exists-and-not-force
+    #   branch returns before any transfer (copy.py:280-283), so the
+    #   module - and the unsupported-parameter rejection a typo'd option
+    #   would trigger there - never runs either (issue #1805: `content:` +
+    #   `force: false` against an existing 0444 file, with dest_bogus and
+    #   group_bogus alongside, reports ok on real).
     #
-    # The checksum comparison is only made when both paths are readable
-    # on the controller (a local connection, or a destination the
-    # executor can stat); for a genuinely remote destination the branch
-    # is left undecided, which keeps the module's spec applied.
+    # The checksum comparison and the dest probe are only made when both
+    # paths are readable on the controller (a local connection, or a
+    # destination the executor can stat); for a genuinely remote
+    # destination the branch is left undecided, which keeps the module's
+    # spec applied.
     private def copy_module_never_runs?(task : Task, params : Hash(String, String), check_mode : Bool) : Bool
       return false unless {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
       return false if remote_src_param?(params)
       return true if check_mode
+      return true if copy_force_false_against_existing_dest?(params)
       return false if copy_content_given?(params)
       src = params["src"]?
       dest = params["dest"]?
@@ -4632,12 +4641,34 @@ module Krikri
       Digest::SHA1.hexdigest(File.read(src)) == Digest::SHA1.hexdigest(File.read(dest))
     end
 
+    # Whether _copy_file's exists-and-not-force branch would return before
+    # the module runs (issue #1805, see copy_module_never_runs?). Ansible
+    # reads force through boolean(strict=False) with a default of yes, so
+    # every present spelling that is not a boolean-true one - a typo like
+    # `false`-with-a-typo included - counts as false there; only force's
+    # absence keeps the module's spec applied. A dir dest is left
+    # undecided: the src: path re-stats dest/<basename> before this check,
+    # so the module can still run.
+    private def copy_force_false_against_existing_dest?(params : Hash(String, String)) : Bool
+      force = params["force"]?
+      return false if force.nil? || Krikri.lenient_boolean_true?(force)
+      dest = params["dest"]?
+      return false unless dest && Krikri.non_string_scalar(dest).nil?
+      readable_file?(dest)
+    end
+
+    # File.file? over one controller path, false on any unreadable path
+    # instead of raising (see copy_module_never_runs?).
+    private def readable_file?(path : String) : Bool
+      File.file?(path)
+    rescue File::Error
+      false
+    end
+
     # File.file? over two controller paths, false on any unreadable path
     # instead of raising (see copy_module_never_runs?).
     private def both_readable_files?(src : String, dest : String) : Bool
-      File.file?(src) && File.file?(dest)
-    rescue File::Error
-      false
+      readable_file?(src) && readable_file?(dest)
     end
 
     # SHA1 of the source content a copy/template task would deploy - the
