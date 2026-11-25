@@ -87,6 +87,21 @@ describe "tempfile plugin" do
     File.delete(path)
   end
 
+  # The same oracle section reports a created directory as `d <uid> <gid> 700 0`,
+  # so the directory state leaves the same private mode on both engines: Python's
+  # mkdtemp creates 0700, and only its random name may differ per run.
+  it "leaves the created directory private with mkdtemp's 0700 mode" do
+    dir = PluginSpecHelper.tmp_path("tempfile-state-dir-shape")
+    Dir.mkdir_p(dir)
+
+    result = PluginSpecHelper.run("tempfile", {"state" => "directory", "path" => dir, "prefix" => "kpg.", "suffix" => ".tmp"})
+
+    path = result["path"].as_s
+    File.basename(path).must_match(/\Akpg\.[a-z0-9_]{8}\.tmp\z/)
+    File.info(path).permissions.value.must_equal(0o700)
+    Dir.delete(path)
+  end
+
   it "fails for an invalid state" do
     result = PluginSpecHelper.run("tempfile", {"state" => "bogus"})
 
