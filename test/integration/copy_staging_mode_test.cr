@@ -64,6 +64,31 @@ describe "copy: staging temp never holds content wider than its final mode" do
       File.read(probe).strip.must_equal("644")
     end
   end
+
+  it "keeps an existing dest's mode across the validate: path" do
+    with_temp_dir do |dir|
+      probe = File.join(dir, "mode-probe")
+      dest = File.join(dir, "locked.conf")
+      File.write(dest, "kpg locked dest\nsecond line\n")
+      File.chmod(dest, 0o440)
+
+      result = PluginSpecHelper.run("copy", {
+        "content"  => "inner\n",
+        "dest"     => dest,
+        "validate" => "stat -c %a %s > #{probe}",
+      }, umask: 0o022)
+
+      result["changed"].as_bool.must_equal(true)
+      File.read(dest).must_equal("inner\n")
+      # copy.py's atomic_move copystat()s an existing dest over the staged
+      # source right before the rename, so a no-mode overwrite keeps the
+      # dest's own mode even with validate: (issue #1806).
+      File.info(dest).permissions.value.must_equal(0o440)
+      # That copy happens after validate: ran, which still sees the umask
+      # default it saw before.
+      File.read(probe).strip.must_equal("644")
+    end
+  end
 end
 
 describe "copy: read-only mode: as the non-root run user" do

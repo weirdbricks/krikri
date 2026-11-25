@@ -1,0 +1,25 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Seed the locked destination] *********************************************
+ok: [localhost]
+
+TASK [Copy #12.0] **************************************************************
+changed: [localhost]
+
+TASK [Observe the destination mode] ********************************************
+ok: [localhost]
+
+TASK [Report the destination mode] *********************************************
+ok: [localhost] => {
+    "msg": "dest-0440.txt mode 440"
+}
+
+RUNNING HANDLER [Kpg handler] **************************************************
+ok: [localhost] => {
+    "msg": "kpg-handler-a"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=5    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

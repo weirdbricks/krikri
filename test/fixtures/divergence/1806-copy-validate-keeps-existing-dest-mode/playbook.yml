@@ -1,0 +1,39 @@
+# krikri-playbook-generator playbook 000012-multi-copy-chaos.yml's
+# "Copy #12.0" task verbatim, except: `hosts: kpg_targets` becomes localhost
+# (the case runs in-process), the bogus connection plus the kpg-only `vars:`
+# are dropped, dest/src point into the case's own scratch directory, and the
+# pre-seeded /tmp/kpg-work/dest-0440.txt (0440, "kpg locked dest\nsecond
+# line\n") is recreated by the first task. The stat/debug pair exists only
+# because this divergence is HOST STATE, not output: it puts the
+# destination's final mode into the transcript the corpus compares.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Seed the locked destination
+      ansible.builtin.shell:
+        cmd: printf 'kpg locked dest\nsecond line\n' > {{ playbook_dir }}/dest-0440.txt && chmod 0440 {{ playbook_dir }}/dest-0440.txt
+      changed_when: false
+    - name: 'Copy #12.0'
+      ansible.builtin.copy:
+        backup: false
+        dest: '{{ playbook_dir }}/dest-0440.txt'
+        directory_mode: "0755"
+        local_follow: true
+        src: '{{ playbook_dir ~ ''/inner.txt'' }}'
+        validate: /bin/true %s
+      register: kpg_task_0
+      ignore_errors: true
+      notify: Kpg handler
+    - name: Observe the destination mode
+      ansible.builtin.command:
+        cmd: stat -c %a {{ playbook_dir }}/dest-0440.txt
+      register: kpg_dest_mode
+      changed_when: false
+    - name: Report the destination mode
+      ansible.builtin.debug:
+        msg: 'dest-0440.txt mode {{ kpg_dest_mode.stdout }}'
+  handlers:
+    - name: Kpg handler
+      ansible.builtin.debug:
+        msg: kpg-handler-a
