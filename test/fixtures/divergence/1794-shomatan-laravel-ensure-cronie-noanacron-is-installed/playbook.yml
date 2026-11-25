@@ -1,0 +1,8 @@
+---
+# The task krikri-role-tester extracted from shomatan.laravel; only the play is adapted
+# to run it against localhost (the round ran it against its testhost inventory).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Ensure cronie-noanacron is installed.

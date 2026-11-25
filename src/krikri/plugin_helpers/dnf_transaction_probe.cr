@@ -357,8 +357,32 @@ module Krikri
                         install_result = _mark_package_install(base, pkg_spec, True, allow_downgrade)
                         if not install_result['failed'] and install_result['msg']:
                             response_results.append(install_result['msg'])
+            elif state in ('absent', 'removed'):
+                for group in groups:
+                    try:
+                        base.group_remove(group)
+                    except dnf.exceptions.CompsError as e:
+                        response_results.append('%s' % e)
+                for environment in environments:
+                    try:
+                        base.environment_remove(environment)
+                    except dnf.exceptions.CompsError as e:
+                        response_results.append('%s' % e)
+                for pkg_spec in pkg_specs:
+                    try:
+                        base.remove(pkg_spec)
+                    except dnf.exceptions.MarkingError as e:
+                        response_results.append('%s: %s' % (e.value, pkg_spec))
+                # ansible's absent path forces allow_erasing=True whatever
+                # the task's allowerasing value (dnf.py _ensure_impl sets
+                # `allowerasing = True` right before resolve()), so the
+                # solver may keep a dependent package installed by adding
+                # an alternative provider from the repos.
+                allowerasing = True
+                if cfg.get('autoremove'):
+                    base.autoremove()
             else:
-                raise RuntimeError('state %s has no install transaction' % state)
+                raise RuntimeError('state %s has no transaction' % state)
 
             return _transaction_results(base, response_results, base.resolve(allow_erasing=allowerasing), download_only)
 
@@ -383,6 +407,49 @@ module Krikri
         # guess (issue #1038's gate).
         return [] of String if true?(@params["update_cache"]?)
         config = dnf_transaction_probe_config(names)
+        run_dnf_transaction_probe(config) || [] of String
+      end
+
+      # The transaction ansible's dnf module resolves for a REMOVAL, as its
+      # own `results` entries ("Installed: <nevra>" for providers the
+      # solver adds, "Removed: <nevra>" for everything it erases) - nil
+      # when the probe cannot answer, so the caller keeps the historical
+      # bare-`dnf remove` behavior.
+      #
+      # This is the case the `dnf remove` CLI cannot reproduce: ansible's
+      # absent goal fill_sack()s the available repos and resolves with
+      # allow_erasing forced on (dnf.py _ensure_impl), so a removal that
+      # would strand an installed package's requirement keeps that package
+      # and installs an alternative provider from the repos. shomatan.cron
+      # (issue #1794): `yum: name=cronie-anacron state=absent` installs
+      # cronie-noanacron to satisfy cronie's `dailyjobs`, leaving cronie -
+      # and crond - untouched, while the CLI deliberately drops the
+      # available repos ("disable all available repos to delete whole
+      # dependency tree instead of replacing removable package with
+      # available packages", dnf/cli/commands/remove.py) and erases cronie
+      # along with it.
+      def dnf_removal_transaction(names : Array(String)) : Array(String)?
+        return nil unless transaction_probe_dnf4?
+        # --downloadonly/download_only resolves a download-only plan this
+        # replay does not model, and update_cache resolves from a stale
+        # cache here (same gate as #dnf_transaction_probe_results).
+        return nil if true?(@params["download_only"]?)
+        return nil if true?(@params["update_cache"]?)
+        config = dnf_transaction_probe_config(names)
+        config["state"] = JSON::Any.new("absent")
+        # An empty answer means the bindings loaded but the goal itself was
+        # not answerable ({"error": ...}); a real removal of installed names
+        # always resolves at least one "Removed:" entry, so nil here keeps
+        # the caller's historical bare-`dnf remove` behavior.
+        answer = run_dnf_transaction_probe(config)
+        answer.nil? || answer.empty? ? nil : answer
+      end
+
+      # Runs the embedded replay with *config* through the target's first
+      # interpreter that can import python-dnf. nil means no interpreter
+      # could run it; an empty list means the bindings loaded but the goal
+      # itself was not answerable (parse_probe_output's {"error": ...}).
+      private def run_dnf_transaction_probe(config : Hash(String, JSON::Any)) : Array(String)?
         payload = Base64.strict_encode(config.to_json)
         program = "import base64,json\ncfg=json.loads(base64.b64decode('#{payload}').decode())\n" + PROBE_PROGRAM
         # base64 keeps the -c script free of quotes/metacharacters of its
@@ -393,7 +460,7 @@ module Krikri
           parsed = parse_probe_output(result[:stdout])
           return parsed if parsed
         end
-        [] of String
+        nil
       end
 
       # dnf5's module resolves through libdnf5 and reports ITS OWN
