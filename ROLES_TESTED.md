@@ -1471,9 +1471,9 @@ dispositioned per row below.
 | geerlingguy.docker | ✅ Clean |
 | geerlingguy.mysql | ✅ Clean (round 2100386, 0.9.1513, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 97.3s vs cr 78.3s; warm py 23.5s vs cr 1.1s. |
 | geerlingguy.postgresql | ✅ Clean |
-| geerlingguy.nginx | ✅ Clean (ubuntu, round29926415, 0.9.3095 debug, ansible-core 2.21.6). |
+| geerlingguy.nginx | ✅ Clean (ubuntu, round29927203, 0.9.3119 debug, ansible-core 2.21.6). |
 | geerlingguy.php | ✅ Clean |
-| geerlingguy.security | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29926418, 0.9.3095 debug, ansible-core 2.21.6). |
+| geerlingguy.security | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927206, 0.9.3119 debug, ansible-core 2.21.6). |
 | openstack.ansible-hardening | ✅ Clean |
 | githubixx.ansible_role_wireguard | ✅ Clean after 0.9.784 (round46001, Kata/Debian trixie) - byte-identical recaps both engines, cold AND warm (`ok=3 changed=0 failed=1 skipped=0`; the role fails upstream on a genuine "Setup for Raspbian" task check unrelated to krikri). Previously found DIVERGENT (round 20012): `ansible_facts['lsb']` was only ever set when `/etc/lsb-release` existed instead of always being a (possibly empty) dict, so `when: ansible_facts['lsb'] is defined and ansible_facts['lsb']['id'] == "Raspbian"` wrongly short-circuited to a skip on Debian (no lsb_release installed) where Ansible hard-fails evaluating the second clause; fixed by always setting `ansible_facts["lsb"]`, defaulting to an empty hash. Times: cold py 2.63s vs cr 0.81s; warm py 2.39s vs cr 0.42s. |
 | ansible-community.ansible-vault | ✅ Clean |
@@ -1481,9 +1481,9 @@ dispositioned per row below.
 | cloudalchemy.grafana | ✅ Clean |
 | geerlingguy.haproxy | ✅ Clean |
 | geerlingguy.certbot | ✅ Clean (round 2100064, 0.9.1513, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 30.2s vs cr 24.2s; warm py 9.2s vs cr 0.7s. |
-| geerlingguy.redis | ✅ Clean (ubuntu, round29926419, 0.9.3095 debug, ansible-core 2.21.6). |
+| geerlingguy.redis | ✅ Clean (ubuntu, round29927207, 0.9.3119 debug, ansible-core 2.21.6). |
 | geerlingguy.postfix | ✅ Clean |
-| geerlingguy.apache | ✅ Clean (rocky, round29926416, 0.9.3095 debug, ansible-core 2.21.6). |
+| geerlingguy.apache | ✅ Clean (rocky, round29927204, 0.9.3119 debug, ansible-core 2.21.6). |
 | geerlingguy.nodejs | ✅ Clean (round 1300006, 0.9.1505, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 57.2s vs cr 41.6s; warm py 15.8s vs cr 2.6s. |
 | geerlingguy.jenkins | ✅ Clean |
 | geerlingguy.elasticsearch | ✅ Clean |
@@ -1514,7 +1514,7 @@ dispositioned per row below.
 | geerlingguy.k3s | ❌ Not testable — role no longer exists on Ansible Galaxy |
 | geerlingguy.puppet | ✅ Clean (round 1200064, 0.9.1500, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 22.0s vs cr 21.1s; warm py 7.7s vs cr 1.2s. |
 | geerlingguy.phpmyadmin | ✅ Clean (after fixing two real engine bugs: `~/.my.cnf` option-file fallback entirely missing in `MysqlConnection.build_uri` — Ansible's mysql_db defaults to reading `[client]` user/password from `~/.my.cnf`, crystal used none and failed on any login-less mysql_db task; and `lineinfile` (state=present) replaced only the FIRST regexp match instead of the LAST, matching Ansible's lineinfile semantics — a `$cfg['Servers'][$i]['host'] = $dbserver;` template appears both as an active PHP-variable line and in a commented template near EOF, and Ansible rewrites only the final occurrence, leaving the active one in place. Both fixed with regression specs. Verified via a fresh 2-node Atlantic.net pair: cold crystal ok=80/changed=31/failed=0 vs baseline ok=96/changed=30/failed=0, warm `changed=1` on both (same `mysql_user` update_password re-assert), byte-identical `config.inc.php` + working `apache2.conf`, both serving HTTP 200 on port 8080. See KNOWN_MISSING.md `0.9.346` entry) |
-| geerlingguy.git | ✅ Clean (ubuntu, round29926417, 0.9.3095 debug, ansible-core 2.21.6). |
+| geerlingguy.git | ✅ Clean (ubuntu, round29927205, 0.9.3119 debug, ansible-core 2.21.6). |
 | geerlingguy.java | ✅ Clean (round 154, 0.9.503, first RHEL-family role test, fresh-2-host-pair-per-role methodology). RHEL target (Rocky Linux 9.6). Byte-identical `ok=5 changed=1 failed=0 skipped=8` cold + `ok=5 changed=0 failed=0 skipped=8` warm on both engines. Java 17 installed and functional on both. Crystal warm 2.48s vs Python warm 8.97s (3.6× speedup). |
 | robertdebock.logrotate | ✅ Clean (round 154, 0.9.503, first RHEL-family role test, fresh-2-host-pair-per-role methodology). RHEL target (Rocky Linux 9.6). Byte-identical `ok=13 changed=1 failed=0 skipped=28` cold + `ok=13 changed=0 failed=0 skipped=28` warm on both engines, fully idempotent warm rerun. Crystal warm 2.37s vs Python warm 23.50s (9.9× speedup). |
 | robertdebock.users | ✅ Clean (round 154, 0.9.503, first RHEL-family role test, fresh-2-host-pair-per-role methodology). RHEL target (Rocky Linux 9.6). Byte-identical `ok=7 changed=2 failed=0 skipped=18` cold + `ok=7 changed=0 failed=0 skipped=18` warm on both engines, fully idempotent warm rerun. Crystal warm 1.46s vs Python warm 15.75s (10.8× speedup). |
@@ -4763,6 +4763,111 @@ dispositioned per row below.
 | viasite-ansible.server-scripts | ✅ Clean (ubuntu, round29926393, 0.9.3095 debug, ansible-core 2.21.6). |
 | vmware.ansible-role-sshkeys | ❌ Divergent - issue #1796 (rocky, round29926394, 0.9.3095 debug, ansible-core 2.21.6). |
 | yanosliger_dev.datadog_niclinkspeed | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29926396, 0.9.3095 debug, ansible-core 2.21.6). |
+| 4admin2root.init_sec | ✅ Clean (rocky, round29927166, 0.9.3119 debug, ansible-core 2.21.6). |
+| AAROC.perfsonar-base | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927164, 0.9.3119 debug, ansible-core 2.21.6). |
+| AgePartnership.selinux | ✅ Clean (rocky, round29927128, 0.9.3119 debug, ansible-core 2.21.6). |
+| AlbanAndrieu.awstats | ✅ Clean (ubuntu, round29927163, 0.9.3119 debug, ansible-core 2.21.6). |
+| ArgonQQ.ansible-role-gitea | ✅ Clean (rocky, round29927130, 0.9.3119 debug, ansible-core 2.21.6). |
+| Boonyah.apache2-vhosts | ✅ Clean (ubuntu, round29927183, 0.9.3119 debug, ansible-core 2.21.6). |
+| ElaoInfra.locales | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927197, 0.9.3119 debug, ansible-core 2.21.6). |
+| HungryUp.desktop-dev | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927176, 0.9.3119 debug, ansible-core 2.21.6). |
+| Oefenweb.memcached | ❌ Divergent - issue #1817 (ubuntu, round29927195, 0.9.3119 debug, ansible-core 2.21.6). |
+| P4T12ICK.ar_splunk_enterprise_security | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927189, 0.9.3119 debug, ansible-core 2.21.6). |
+| ZeroDowntime.entropy_haveged | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927208, 0.9.3119 debug, ansible-core 2.21.6). |
+| abrararshad.mongo_db_push | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927127, 0.9.3119 debug, ansible-core 2.21.6). |
+| acez.vscode | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927168, 0.9.3119 debug, ansible-core 2.21.6). |
+| adarnimrod.nsd | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927162, 0.9.3119 debug, ansible-core 2.21.6). |
+| ajtalla.prometheus | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927165, 0.9.3119 debug, ansible-core 2.21.6). |
+| alainpham.jboss-fuse-amq-ha | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927137, 0.9.3119 debug, ansible-core 2.21.6). |
+| alekseenkoss77.filebeat | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927135, 0.9.3119 debug, ansible-core 2.21.6). |
+| alexanderjardim.consul | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927161, 0.9.3119 debug, ansible-core 2.21.6). |
+| alexanderjardim.solr | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927136, 0.9.3119 debug, ansible-core 2.21.6). |
+| alvaroaleman.gitea | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927174, 0.9.3119 debug, ansible-core 2.21.6). |
+| andrewrothstein.stunnel-config | ✅ Clean (rocky, round29927186, 0.9.3119 debug, ansible-core 2.21.6). |
+| bbaassssiiee.wso2db | ❌ Divergent - issue #1818 (ubuntu, round29927143, 0.9.3119 debug, ansible-core 2.21.6). |
+| be99inner.fluentbit | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927104, 0.9.3119 debug, ansible-core 2.21.6). |
+| ben-le.awx_nginx | ❌ Divergent - issue #1819 (rocky, round29927202, 0.9.3119 debug, ansible-core 2.21.6). |
+| blurrcat.haproxy | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927188, 0.9.3119 debug, ansible-core 2.21.6). |
+| bodsch.harbor | ❌ Divergent - issue #1820 (ubuntu, round29927187, 0.9.3119 debug, ansible-core 2.21.6). |
+| brianhartsock.nvm | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927119, 0.9.3119 debug, ansible-core 2.21.6). |
+| caermeglaeddyv.ansible_role_docker | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927184, 0.9.3119 debug, ansible-core 2.21.6). |
+| chanchalbose.hacluster | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927125, 0.9.3119 debug, ansible-core 2.21.6). |
+| chris1984.downstream_fog_testing | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927190, 0.9.3119 debug, ansible-core 2.21.6). |
+| ckaserer.pxeserver | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927175, 0.9.3119 debug, ansible-core 2.21.6). |
+| codeyourinfra.grafana | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927170, 0.9.3119 debug, ansible-core 2.21.6). |
+| consensys.web3signer | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927211, 0.9.3119 debug, ansible-core 2.21.6). |
+| cowops.debian-php-fpm | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927167, 0.9.3119 debug, ansible-core 2.21.6). |
+| cowops.debian_users | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927121, 0.9.3119 debug, ansible-core 2.21.6). |
+| danie1cohen.django | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927193, 0.9.3119 debug, ansible-core 2.21.6). |
+| dareko.rolling_reboot | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927185, 0.9.3119 debug, ansible-core 2.21.6). |
+| dba_ray.manage_mysql | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927182, 0.9.3119 debug, ansible-core 2.21.6). |
+| derbunman.debuild_polybar | ✅ Clean (ubuntu, round29927103, 0.9.3119 debug, ansible-core 2.21.6). |
+| devops.nginx | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927172, 0.9.3119 debug, ansible-core 2.21.6). |
+| ebonharme.datadog | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927196, 0.9.3119 debug, ansible-core 2.21.6). |
+| egeneralov.gitlab | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927109, 0.9.3119 debug, ansible-core 2.21.6). |
+| fallenpixel.common | ✅ Clean (ubuntu, round29927191, 0.9.3119 debug, ansible-core 2.21.6). |
+| fronczek.role_dnsfilter | ❌ Divergent - issue #1821 (rocky, round29927126, 0.9.3119 debug, ansible-core 2.21.6). |
+| gcoop-libre.percona-repo | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927124, 0.9.3119 debug, ansible-core 2.21.6). |
+| gforcada_compile_python | ❌ TIMED_OUT_OR_CRASHED (ubuntu, round29927123, 0.9.3119 debug, ansible-core 2.21.6). |
+| gilcot.ojdk | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927133, 0.9.3119 debug, ansible-core 2.21.6). |
+| gilesw.railgun | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927173, 0.9.3119 debug, ansible-core 2.21.6). |
+| gnagano.ansible_gitflow | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927160, 0.9.3119 debug, ansible-core 2.21.6). |
+| gotmax23.update | ✅ Clean (ubuntu, round29927105, 0.9.3119 debug, ansible-core 2.21.6). |
+| grycap.devstack | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927179, 0.9.3119 debug, ansible-core 2.21.6). |
+| grycap.monasca-alarms | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927129, 0.9.3119 debug, ansible-core 2.21.6). |
+| head1328.podman | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927108, 0.9.3119 debug, ansible-core 2.21.6). |
+| hmschreck.metricbeat_system | ✅ Clean (ubuntu, round29927171, 0.9.3119 debug, ansible-core 2.21.6). |
+| howtodojo.htop | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927110, 0.9.3119 debug, ansible-core 2.21.6). |
+| idealista.azkaban-role | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927156, 0.9.3119 debug, ansible-core 2.21.6). |
+| ilmarkerm.oracle-addnode | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927159, 0.9.3119 debug, ansible-core 2.21.6). |
+| inofix.yapkg | ❌ Divergent - issue #1822 (ubuntu, round29927212, 0.9.3119 debug, ansible-core 2.21.6). |
+| itdoginfo.domain_routing_openwrt | ❌ Divergent - issue #1823 (rocky, round29927210, 0.9.3119 debug, ansible-core 2.21.6). |
+| jan_matthis.julia | ✅ Clean (ubuntu, round29927145, 0.9.3119 debug, ansible-core 2.21.6). |
+| jaredhocutt.teamviewer | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927131, 0.9.3119 debug, ansible-core 2.21.6). |
+| jedimt.nebulon_create_npod | ❌ Divergent - issue #1821 (rocky, round29927114, 0.9.3119 debug, ansible-core 2.21.6). |
+| jedimt.nebulon_csi | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927112, 0.9.3119 debug, ansible-core 2.21.6). |
+| jedimt.ssh | ❌ Divergent - issue #1824 (rocky, round29927152, 0.9.3119 debug, ansible-core 2.21.6). |
+| jeffhung.spark | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927192, 0.9.3119 debug, ansible-core 2.21.6). |
+| kaos2oak.oracle_java | ❌ Divergent - issue #1825 (rocky, round29927144, 0.9.3119 debug, ansible-core 2.21.6). |
+| kenhuang.xcode | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927201, 0.9.3119 debug, ansible-core 2.21.6). |
+| kuon.firewalld | ✅ Clean (ubuntu, round29927199, 0.9.3119 debug, ansible-core 2.21.6). |
+| lazyrichard.linux_join_ad_domain | ❌ Divergent - issue #1826 (rocky, round29927194, 0.9.3119 debug, ansible-core 2.21.6). |
+| leonallen22.ansible_role_keybase | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927169, 0.9.3119 debug, ansible-core 2.21.6). |
+| lifeofguenter.nut | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927111, 0.9.3119 debug, ansible-core 2.21.6). |
+| lpcanh.centos7-nginx | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927134, 0.9.3119 debug, ansible-core 2.21.6). |
+| m31271n.docker-compose | ✅ Clean (rocky, round29927200, 0.9.3119 debug, ansible-core 2.21.6). |
+| mamercad.zabbix-agent | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927178, 0.9.3119 debug, ansible-core 2.21.6). |
+| marvinpinto.sabnzbd | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927106, 0.9.3119 debug, ansible-core 2.21.6). |
+| mateothegreat.redis_latest | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927115, 0.9.3119 debug, ansible-core 2.21.6). |
+| melvin_suter.webserver | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927177, 0.9.3119 debug, ansible-core 2.21.6). |
+| mikoim.logdna | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927150, 0.9.3119 debug, ansible-core 2.21.6). |
+| mkubenka.remi | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927139, 0.9.3119 debug, ansible-core 2.21.6). |
+| mohsenSy.java | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927148, 0.9.3119 debug, ansible-core 2.21.6). |
+| morfie.ansible_role_supervisor | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927118, 0.9.3119 debug, ansible-core 2.21.6). |
+| mrlesmithjr.ansible_etcd | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927146, 0.9.3119 debug, ansible-core 2.21.6). |
+| mullholland.proxmox_pmg | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927117, 0.9.3119 debug, ansible-core 2.21.6). |
+| nephelaiio.emacs | ✅ Clean (ubuntu, round29927149, 0.9.3119 debug, ansible-core 2.21.6). |
+| ninuxorg.olsrd2 | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927198, 0.9.3119 debug, ansible-core 2.21.6). |
+| nycrecords.scl | ✅ Clean (rocky, round29927116, 0.9.3119 debug, ansible-core 2.21.6). |
+| openapphack.daemonize | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927113, 0.9.3119 debug, ansible-core 2.21.6). |
+| penguinperk.zsh_oh_my_zsh | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927147, 0.9.3119 debug, ansible-core 2.21.6). |
+| pkorobeinikov.postgresql | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927142, 0.9.3119 debug, ansible-core 2.21.6). |
+| primozcigler.newrelic-servers | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927157, 0.9.3119 debug, ansible-core 2.21.6). |
+| rbd80.ossec | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927132, 0.9.3119 debug, ansible-core 2.21.6). |
+| redbeard28.git | ✅ Clean (ubuntu, round29927141, 0.9.3119 debug, ansible-core 2.21.6). |
+| redbeard28.jmeter | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927138, 0.9.3119 debug, ansible-core 2.21.6). |
+| rogerscuall.evpn_vxlan-leaf | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927120, 0.9.3119 debug, ansible-core 2.21.6). |
+| sbaerlocher.proxmox | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927151, 0.9.3119 debug, ansible-core 2.21.6). |
+| securenetwrk.ios_vrf | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927140, 0.9.3119 debug, ansible-core 2.21.6). |
+| softasap.sa-lamp | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927154, 0.9.3119 debug, ansible-core 2.21.6). |
+| suzuki-shunsuke.consul_config | ❌ Divergent - issue #1827 (rocky, round29927158, 0.9.3119 debug, ansible-core 2.21.6). |
+| tobias_richter.netdata | ❌ Divergent - issue #1828 (rocky, round29927209, 0.9.3119 debug, ansible-core 2.21.6). |
+| trombik.vagrant | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927155, 0.9.3119 debug, ansible-core 2.21.6). |
+| victorock.RHEL7-STIG | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927122, 0.9.3119 debug, ansible-core 2.21.6). |
+| webarchitect609.yandex_browser | ✅ Clean (ubuntu, round29927107, 0.9.3119 debug, ansible-core 2.21.6). |
+| yonoinix.rbxfirewalld_roles | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927181, 0.9.3119 debug, ansible-core 2.21.6). |
+| zaffron.install_docker_ce | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927180, 0.9.3119 debug, ansible-core 2.21.6). |
+| zenoamaro.rethinkdb | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927153, 0.9.3119 debug, ansible-core 2.21.6). |
 
 ## Round 6000-6007 (first krikri-role-tester round, 8 new-author roles, 0.9.761)
 
