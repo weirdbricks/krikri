@@ -184,6 +184,40 @@ describe "include_tasks: naming a file that doesn't exist" do
     FileUtils.rm_rf(src_dir)
   end
 
+  it "names free.py's include-result frame when the play runs on the free strategy" do
+    # Same crash as the linear case above, but real's include-result
+    # processing then lives in free.py, which passes its own
+    # `host_results` list at line 223 - so a play run under
+    # ANSIBLE_STRATEGY=free (the shape the kpg check-mode round behind
+    # issue #1783 generated) prints a different strategy frame and the
+    # engine used to counterfeit linear.py's regardless.
+    src_dir = File.tempname("include-tasks-missing-literal-free")
+    Dir.mkdir_p(src_dir)
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: include missing
+            ansible.builtin.include_tasks: {file: 54}
+    YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: stdout, error: stderr, chdir: src_dir,
+      env: {"ANSIBLE_STRATEGY" => "free"})
+
+    stdout.to_s.must_include("TASK [include missing]")
+    stderr.to_s.must_include("/plugins/strategy/free.py\", line 223, in run")
+    stderr.to_s.must_include("        host_results,")
+    stderr.to_s.wont_include("/plugins/strategy/linear.py")
+    status.exit_code.must_equal(250)
+
+    FileUtils.rm_rf(src_dir)
+  end
+
   it "counterfeits real's uncaught path_dwim TypeError crash on a non-string literal file path" do
     # Real 2.21.6 CRASHES on this shape: the linear strategy's include-result
     # processing feeds the tagged scalar to DataLoader.path_dwim, whose

@@ -3503,7 +3503,9 @@ module Krikri
     # processing time (see Krikri::IncludeTasksNonStringFileError). The
     # crash fires after the TASK banner (it happens mid-strategy in real)
     # and before any path resolution - whatever file the stringified value
-    # would have resolved to (issue #1125).
+    # would have resolved to (issue #1125). The strategy-side traceback
+    # frame names the plugin the play actually ran, so a free/host_pinned
+    # play prints free.py's own frame instead of linear.py's (issue #1783).
     private def raise_include_tasks_non_string_file_crash(task : Task) : Nil
       return unless native = task.include_file_native
       type_name = case native.raw
@@ -3512,7 +3514,7 @@ module Krikri
                   else              "bool"
                   end
       raise Krikri::IncludeTasksNonStringFileError.new(
-        Krikri::PlaybookParser.include_tasks_non_string_file_crash_render(type_name))
+        Krikri::PlaybookParser.include_tasks_non_string_file_crash_render(type_name, free_strategy?))
     end
 
     # include_role: whose named role resolves nowhere - Ansible's
