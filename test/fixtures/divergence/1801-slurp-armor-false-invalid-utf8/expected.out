@@ -1,0 +1,24 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Slurp #29.1] *************************************************************
+[ERROR]: Task failed: Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode character '\udcff' in position 12: surrogates not allowed
+
+Task failed.
+Origin: <WORK>/playbook.yml:11:7
+
+ 9   gather_facts: false
+10   tasks:
+11     - name: 'Slurp #29.1'
+         ^ column 7
+
+<<< caused by >>>
+
+Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode character '\udcff' in position 12: surrogates not allowed This check can be disabled with the `MODULE_STRICT_UTF8_RESPONSE` setting.
+
+failed: [localhost] (item=<WORK>/binary.bin) => {"ansible_loop_var": "item", "changed": false, "item": "<WORK>/binary.bin", "msg": "Task failed: Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode character '\\udcff' in position 12: surrogates not allowed"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+
