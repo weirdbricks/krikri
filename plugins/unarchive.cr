@@ -227,9 +227,12 @@ module Krikri
     # miss, dest not an existing dir) never carries the warning, and the
     # creates:-skip and bool-validation failures don't either (they
     # short-circuit before main()'s warning site).
+    # The resolved path is os.path.abspath(dest) - normpath's, so `dest:
+    # files/packs/` reports ".../files/packs" without the trailing slash -
+    # which is command_dest (same comment below applies here too).
     private def relative_dest_warning(dest : String) : String?
       return nil if dest.starts_with?("/")
-      "Relative destination path '#{dest}' was resolved to absolute path '#{File.expand_path(dest)}'."
+      "Relative destination path '#{dest}' was resolved to absolute path '#{command_dest(dest)}'."
     end
 
     private def attach_warning(res : PluginResult, warning : String) : PluginResult

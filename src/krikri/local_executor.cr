@@ -280,9 +280,19 @@ module Krikri
       File.exists?(path)
     end
 
-    # Check if directory exists
+    # Check if directory exists - the local equivalent of a shell `test -d`,
+    # whose answer is "no" for ANY error, EACCES included. Dir.exists?
+    # instead routes through File.info?, which maps only ENOENT to false and
+    # raises File::Error for everything else, so a `creates:` path below a
+    # directory whose search bit is gone (the wso2db pack's own `mode:
+    # u=rw,g=r,o=r` strips it from the extracted directories) escaped
+    # unarchive's plugin as "Plugin execution failed: Unable to get file
+    # info: ... Permission denied" where real ansible's shell probe carried
+    # on and reported the task changed (issue #1830).
     def self.dir_exists?(path : String) : Bool
       Dir.exists?(path)
+    rescue File::Error
+      false
     end
   end
 end

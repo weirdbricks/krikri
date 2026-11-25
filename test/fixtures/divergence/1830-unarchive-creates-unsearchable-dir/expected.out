@@ -1,0 +1,19 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Ensure directory files/packs] ********************************************
+changed: [localhost]
+
+TASK [Seed the WSO2 API Manager package] ***************************************
+ok: [localhost]
+
+TASK [Leave the package extracted the way the role's own earlier run did] ******
+ok: [localhost]
+
+TASK [Unzip WSO2 API Manager Package] ******************************************
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Relative destination path 'files/packs/' was resolved to absolute path '<WORK>/files/packs'.
