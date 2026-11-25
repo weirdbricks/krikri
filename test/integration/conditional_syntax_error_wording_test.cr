@@ -252,6 +252,39 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     output.wont_include("Unhandled exception")
   end
 
+  # A `that:` item that begins AND ends with template delimiters but is
+  # not ONE whole template (`"{{ item }} is defined and {{ item }}"`) is
+  # rendered whole by real before it is evaluated, so its rendered string
+  # is untrusted and the templar's trust check fails it - not the
+  # delimiter parse error the other delimiter-bearing shapes get. The
+  # cause stanza carries the error class's help paragraph; the fatal msg
+  # does not (live-verified vs 2.21.6 on issue #1826's
+  # lazyrichard.linux_join_ad_domain preflight).
+  it "fails a multi-span template that: item as untrusted, with its help paragraph" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: validate domain info
+            assert:
+              that:
+                - "{{ item }} is defined and {{ item }}"
+              fail_msg: "'{{ item }}' should be set and not be empty"
+            loop: [domain_name]
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Encountered untrusted template or expression.")
+    # two-level chain: task origin, then the failing that: item, then the
+    # trust error's help paragraph as the block's trailing paragraph
+    output.must_include("<<< caused by >>>")
+    output.must_include("Encountered untrusted template or expression.\nOrigin: ")
+    output.must_include("Templates and expressions must be defined by trusted sources such as playbooks or roles, not untrusted sources such as module results.\n\n")
+    output.must_include("failed: [localhost] (item=domain_name) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"domain_name\", \"msg\": \"Task failed: Encountered untrusted template or expression.\"}")
+    output.wont_include("Template delimiters are not supported")
+    output.wont_include("Unhandled exception")
+  end
+
   it "still accepts a whole-template conditional (deprecation only) and a quoted delimiter" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

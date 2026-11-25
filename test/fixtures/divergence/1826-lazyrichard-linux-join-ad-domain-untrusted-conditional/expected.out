@@ -1,0 +1,40 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [lazyrichard.linux_join_ad_domain : Validate variables] *******************
+included: <WORK>/roles/lazyrichard.linux_join_ad_domain/tasks/./validate.yml for localhost
+
+TASK [lazyrichard.linux_join_ad_domain : validate join_method] *****************
+ok: [localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [lazyrichard.linux_join_ad_domain : validate domain info] *****************
+[ERROR]: Task failed: Encountered untrusted template or expression.
+
+Task failed.
+Origin: <WORK>/roles/lazyrichard.linux_join_ad_domain/tasks/validate.yml:8:3
+
+6     fail_msg: "'join_method' should be 'sssd' or 'winbind'"
+7
+8 - name: validate domain info
+    ^ column 3
+
+<<< caused by >>>
+
+Encountered untrusted template or expression.
+Origin: <WORK>/roles/lazyrichard.linux_join_ad_domain/tasks/validate.yml:11:9
+
+ 9   assert:
+10     that:
+11       - "{{ item }} is defined and {{ item }}"
+           ^ column 9
+
+Templates and expressions must be defined by trusted sources such as playbooks or roles, not untrusted sources such as module results.
+
+failed: [localhost] (item=domain_name) => {"ansible_loop_var": "item", "changed": false, "item": "domain_name", "msg": "Task failed: Encountered untrusted template or expression."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

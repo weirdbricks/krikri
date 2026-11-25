@@ -1,0 +1,8 @@
+---
+# The role's preflight assert fails on its first evaluated item, so no
+# later task runs and nothing on the machine is touched.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - lazyrichard.linux_join_ad_domain
