@@ -1026,9 +1026,10 @@ because anyone intends to fix them.
   guest settle before the before-snapshot) before that half of the oracle is trusted on a freshly
   booted host.
 
-- **apt's live progress meter differs between any two runs (`ddilts.change_password`, issue
-  #1728).** The role's first task is `raw: test -e /usr/bin/python || (apt -y update && apt install
-  -y python-minimal)`. raw runs under `ssh -tt`'s pty, so `apt` paints its ANSI-coloured status
+- **apt's live progress meter differs between any two runs (`ddilts.change_password` issue #1728,
+  `crivetimihai.bootstrap` issue #1789).** In the ddilts round the role's first task is
+  `raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)`.
+  raw runs under `ssh -tt`'s pty, so `apt` paints its ANSI-coloured status
   meter, rewriting one line with `\r` on every tick (`0% [Working]`, `0% [Waiting for headers]`,
   `Reading package lists... N%`), and both the number of ticks and their percentages follow the
   target's network timing and load. The two engines run in their own containers at the same moment,
@@ -1050,6 +1051,27 @@ because anyone intends to fix them.
   divergence this issue fixed: the spawned plugins manufactured a controlling terminal for a local
   run, where real keeps only the terminal ansible-playbook itself inherited, so `sudo`'s password
   prompt blocked forever instead of failing - `test/unit/controlling_tty_test.cr` pins both sides.
+  The same meter arrives uncoloured when the target pty has no terminfo for colour:
+  `crivetimihai.bootstrap`'s only task is the role's `raw:` block (issue #1789) running
+  `apt-get update && apt-get install -y python sudo bash ca-certificates systemd-sysv` on noble,
+  which exits 100 (`Package 'python' has no installation candidate`) after painting plain-CRLF
+  `0% [Working]` / `0% [Waiting for headers]` / `Reading package lists... N%` repaints. Real
+  Ansible's own cold and warm runs of it disagree in exactly those chunks - cold downloaded
+  noble-updates' InRelease plus its two Packages files (`Get:3/5/6`, `Fetched 4153 kB in 2s` at
+  2199 kB/s there against krikri's 1803 kB/s), warm found all four already current (`Hit:1..4`)
+  with no fetch and no `Fetched ...` line at all, and their own repaint frames differ - while the
+  two engines' payloads agree everywhere else: the seven keys, the same `Hit:`/`Get:` index lines
+  and byte counts, `rc: 100`, `msg` "non-zero return code", `changed: true`, the
+  `Shared connection ... closed.` stderr and the whole `Package python is not available ...`
+  through `E: Package 'python' has no installation candidate` tail; with the
+  repaint chunks set aside, the round's warm pair matched token for token and the cold pair only
+  differed in one composite repaint (`63% [5 Packages store 0 B] [Waiting for headers]`). Not a
+  krikri gap: the harness mask needs to cover this uncoloured shape too. What krikri owns is
+  pinned in-process by the #1728 case above: a pty is really allocated, the pty's TERM is
+  forwarded (so no colour is invented either), its bytes reach `stdout` untouched and
+  `AnsibleSplitlines` derives the `\r`-aware `stdout_lines` both engines print - that derivation
+  is also pinned against this issue's own captured payload in
+  `test/unit/ansible_splitlines_test.cr`.
 
 - **dnf's own repo-metadata line differs between any two runs (`basecomponent.docker`, issue #1762).**
   The role's `install docker packages` task is a `shell: yum  install -y --setopt=obsoletes=0
