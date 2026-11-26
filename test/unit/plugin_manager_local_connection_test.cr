@@ -11,7 +11,7 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 # play on the controller. These run the full binary against an inventory
 # host whose ssh connection is refused instantly (127.0.0.1 port 1), so
 # "did it go remote" shows up in the recap without any dial-out wait.
-private def run_playbook_issue684(playbook_body : String, inventory_line : String = "farhost ansible_host=127.0.0.1 ansible_port=1 ansible_user=root") : String
+private def run_playbook_issue684(playbook_body : String, inventory_line : String = "farhost ansible_host=127.0.0.1 ansible_port=1 ansible_user=root", extra_args : Array(String) = [] of String) : String
   root = PluginSpecHelper.tmp_path("plugin_manager_local_connection_issue684")
   FileUtils.rm_rf(root) if Dir.exists?(root)
   Dir.mkdir_p(root)
@@ -21,7 +21,7 @@ private def run_playbook_issue684(playbook_body : String, inventory_line : Strin
   File.write(playbook, playbook_body)
   out_io = IO::Memory.new
   err_io = IO::Memory.new
-  Process.run(BINARY, ["-i", inventory, playbook], output: out_io, error: err_io)
+  Process.run(BINARY, ["-i", inventory] + extra_args + [playbook], output: out_io, error: err_io)
   out_io.to_s
 ensure
   FileUtils.rm_rf(root) if root && Dir.exists?(root)
@@ -96,6 +96,21 @@ describe "Krikri::PluginManager (plugin_manager_local_connection_test.cr)" do
       host = Krikri::Host.new("web1.example.com")
       vars = {"ansible_connection" => JSON::Any.new("local")}
       Krikri::PluginManager.local_connection?(host, vars).must_equal(true)
+    end
+
+    it "context_first lets a -e extra var outrank the host's own inventory connection (issue #1836)" do
+      # The implicit gather's vars_context is the exec host's own merged
+      # context, and ansible's extra-var layer tops the inventory's
+      # ansible_connection there - so `-e ansible_connection=local` must
+      # make the decision from vars even when the host's own inventory
+      # var says ssh. The default stays host-first: a delegate_to task's
+      # vars are a FOREIGN origin context that must keep losing to the
+      # target host's own setting (issue #195's crash).
+      host = Krikri::Host.new("web1.example.com")
+      host.vars["ansible_connection"] = JSON::Any.new("ssh")
+      vars = {"ansible_connection" => JSON::Any.new("local")}
+      Krikri::PluginManager.local_connection?(host, vars, context_first: true).must_equal(true)
+      Krikri::PluginManager.local_connection?(host, vars).must_equal(false)
     end
   end
 
@@ -183,6 +198,36 @@ describe "Krikri::PluginManager (plugin_manager_local_connection_test.cr)" do
       recap.must_include("ok=0")
       recap.must_include("unreachable=1")
       recap.must_include("failed=0")
+    end
+  end
+
+  describe "a -e ansible_connection extra var reaches the implicit gather (issue #1836)" do
+    # Extra vars are ansible's highest-precedence var layer and apply to
+    # the implicit setup task exactly like to any other task, so
+    # `-e ansible_connection=local` gathers locally even on an
+    # ssh-refusing host (live-verified vs 2.21.5: ok=2, not unreachable).
+    it "gathers locally under -e ansible_connection=local on an ssh-refusing host" do
+      recap = issue684_recap(run_playbook_issue684(<<-YAML, extra_args: ["-e", "ansible_connection=local"]))
+        - hosts: all
+          gather_facts: true
+          tasks:
+            - ansible.builtin.ping:
+        YAML
+
+      recap.must_include("ok=2")
+      recap.must_include("unreachable=0")
+    end
+
+    it "lets -e outrank an inventory ansible_connection=ssh for the gather" do
+      recap = issue684_recap(run_playbook_issue684(<<-YAML, "farhost ansible_host=127.0.0.1 ansible_port=1 ansible_user=root ansible_connection=ssh", ["-e", "ansible_connection=local"]))
+        - hosts: all
+          gather_facts: true
+          tasks:
+            - ansible.builtin.ping:
+        YAML
+
+      recap.must_include("ok=2")
+      recap.must_include("unreachable=0")
     end
   end
 end

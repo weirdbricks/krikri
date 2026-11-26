@@ -1,0 +1,4 @@
+- hosts: h
+  gather_facts: true
+  tasks:
+    - ansible.builtin.ping:

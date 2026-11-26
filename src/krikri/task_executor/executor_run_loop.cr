@@ -2402,7 +2402,7 @@ module Krikri
     private def try_batched_result(task : Task, host : Host, vars_context : Hash(String, JSON::Any), exec_host : Host) : {Bool, JSON::Any?}
       return {false, nil} unless @batching_enabled
       return {false, nil} unless exec_host == host
-      return {false, nil} if PluginManager.local_connection?(exec_host, vars_context)
+      return {false, nil} if PluginManager.local_connection?(exec_host, vars_context, context_first: true)
       # An unresolvable connection type must take the solo path, where
       # execute_task_once's own check fails the task like Ansible -
       # the batch script would silently SSH instead. A resolvable plugin
@@ -3132,7 +3132,7 @@ module Krikri
       if violation = copy_literal_type_failure(task, substituted_params)
         return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
-      copied = inline_copy_source_content(task, substituted_params, host, vars_context)
+      copied = inline_copy_source_content(task, substituted_params, host, vars_context, context_first: true)
       if copied.is_a?(JSON::Any)
         return apply_batch_build_changed_failed_when(task, copied, vars_context, host)
       end
@@ -3144,17 +3144,17 @@ module Krikri
       if violation = unarchive_assemble_literal_type_failure(task, substituted_params)
         return apply_batch_build_changed_failed_when(task, violation, vars_context, host)
       end
-      staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context)
+      staged = stage_unarchive_remote_src(task, substituted_params, host, vars_context, context_first: true)
       if staged.is_a?(JSON::Any)
         return apply_batch_build_changed_failed_when(task, staged, vars_context, host)
       end
       substituted_params = staged
-      staged_script = stage_script_src(task, substituted_params, host, vars_context)
+      staged_script = stage_script_src(task, substituted_params, host, vars_context, context_first: true)
       if staged_script.is_a?(JSON::Any)
         return apply_batch_build_changed_failed_when(task, staged_script, vars_context, host)
       end
       substituted_params = staged_script
-      staged_assemble = stage_assemble_dir(task, substituted_params, host, vars_context)
+      staged_assemble = stage_assemble_dir(task, substituted_params, host, vars_context, context_first: true)
       if staged_assemble.is_a?(JSON::Any)
         return apply_batch_build_changed_failed_when(task, staged_assemble, vars_context, host)
       end
@@ -3309,7 +3309,7 @@ module Krikri
       # The spawn plugins manufacture a controlling terminal only for a
       # remote dispatch (see execute_task_once's own marker): a batched
       # step always runs on the target, over the same ssh -tt real gives it.
-      if PluginManager.remote_execution?(task.module_name, host, vars_context)
+      if PluginManager.remote_execution?(task.module_name, host, vars_context, context_first: true)
         substituted_params = substituted_params.dup
         substituted_params["__krikri_remote_tty"] = "1"
       end
@@ -3548,7 +3548,7 @@ module Krikri
       interpreter = explicit || vars_context["discovered_interpreter_python"]?.try(&.as_s?)
       return nil unless interpreter && !interpreter.empty?
 
-      if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
+      if PluginManager.remote_execution?(task.module_name, exec_host, vars_context, context_first: exec_host == host)
         # The discovered fact came from a probe that ran ON the target,
         # so only a configured path can name an interpreter that is not
         # there.
@@ -3917,7 +3917,7 @@ module Krikri
       end
 
       if task.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(task, dispatch_vars), task, substitutor, host)
+        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(task, dispatch_vars), task, substitutor, host, context_first: exec_host == host)
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -4194,7 +4194,7 @@ module Krikri
       # PluginManager.become_premature_end_result. The `sudo -n` probe
       # only runs once the cheaper arms have already singled out a local
       # sudo dispatch with no configured become password.
-      goes_remote = PluginManager.remote_execution?(task.module_name, exec_host, dispatch_vars)
+      goes_remote = PluginManager.remote_execution?(task.module_name, exec_host, dispatch_vars, context_first: exec_host == host)
       controller_only = PluginManager.controller_only?(task.module_name)
       become_password = Passwords.become(dispatch_vars, host)
       sudo_noninteractive = false
@@ -4224,7 +4224,7 @@ module Krikri
           end
         end
       end
-      if PluginManager.remote_execution?(task.module_name, exec_host, dispatch_vars)
+      if PluginManager.remote_execution?(task.module_name, exec_host, dispatch_vars, context_first: exec_host == host)
         wire_vars = dispatch_vars.dup
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
@@ -4258,7 +4258,7 @@ module Krikri
       # uses; the target's plugin process env carries no usable TERM at
       # all, which is not what real's pty session has.
       if RAW_MODULES.includes?(task.action_name || task.module_name) &&
-         PluginManager.remote_execution?("shell", exec_host, dispatch_vars)
+         PluginManager.remote_execution?("shell", exec_host, dispatch_vars, context_first: exec_host == host)
         substituted_params = substituted_params.dup
         substituted_params["__raw_pty_merge"] = "1"
         if (term = ENV["TERM"]?) && !term.empty?
@@ -4353,7 +4353,7 @@ module Krikri
         # hosts take the SSH fire-and-forget path inside execute_async
         # (needs the substitutor/become_user context the local path
         # re-derives itself).
-        return apply_changed_failed_when(task, execute_async(task, exec_host, config, dispatch_vars, substitutor, substituted_become_user), vars_context, host)
+        return apply_changed_failed_when(task, execute_async(task, exec_host, config, dispatch_vars, substitutor, substituted_become_user, context_first: exec_host == host), vars_context, host)
       end
 
       # The arbitrary-Python-module runner: an unavailable module with a
@@ -4363,7 +4363,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, File.read(py_source), substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host))
+        result = execute_python_module(task, File.read(py_source), substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host), context_first: exec_host == host)
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -4391,7 +4391,7 @@ module Krikri
       # unavailable-module skip applies from here - registration
       # included, exactly where the skip above would have done it.
       if task.unavailable_module && (gate_source = import_gate_source_for(task))
-        result = execute_python_module(task, gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host))
+        result = execute_python_module(task, gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host), context_first: exec_host == host)
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -4418,14 +4418,15 @@ module Krikri
         become_user,
         dispatch_timeout,
         substituted_become_flags,
-        daemon_scope_for(host, exec_host)
+        daemon_scope_for(host, exec_host),
+        context_first: exec_host == host
       )
 
       if period = marker_task_timeout(result)
         return task_timeout_result(period)
       end
       result = shape_raw_result(task, result, substituted_params,
-        PluginManager.remote_execution?("shell", exec_host, dispatch_vars),
+        PluginManager.remote_execution?("shell", exec_host, dispatch_vars, context_first: exec_host == host),
         exec_host.connection_host)
       result = shape_script_result(task, result)
       result = attach_invocation(task, substituted_params, result, InvocationInjection.enabled?(vars_context))
@@ -4907,7 +4908,7 @@ module Krikri
     # hosts; the module's argument dict mirrors Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_text : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil, become_flags : String? = nil, daemon_scope : String? = nil) : JSON::Any
+    private def execute_python_module(task : Task, source_text : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil, become_flags : String? = nil, daemon_scope : String? = nil, context_first : Bool = false) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       # Ansible's modularizer rewrites the legacy boilerplate marker
       # into the import that pulls AnsibleModule in BEFORE style
@@ -4992,7 +4993,7 @@ module Krikri
           inner_config = build_plugin_config(inner_task, exec_host, inner_params, wire_vars,
             substituted_become_user, substituted_env, become_flag: become)
           PluginManager.execute_plugin(inner_module, inner_config, exec_host, vars_context,
-            become, become_user, task_timeout, become_flags, daemon_scope)
+            become, become_user, task_timeout, become_flags, daemon_scope, context_first: true)
         }
         begin
           result = PythonActionRunner.run_action(action_plugin, module_name, args, connection,
@@ -5184,7 +5185,8 @@ module Krikri
         become_user,
         task_timeout,
         nil,
-        daemon_scope
+        daemon_scope,
+        context_first
       )
     end
 
