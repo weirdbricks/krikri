@@ -12,3 +12,10 @@ the duplicate evaluation the fix removes.
 **Fix.** The verdict carries the captured output, and when_passes? replays it
 where the probe's own evaluation happened, so the block still prints under
 the task banner and is still filed on the skipped register.
+
+**Release-sensitive (issue #1839).** This case is also the release gate for a
+Crystal 1.22.3 `--release` miscompile that made every task take the attempt
+loop path (no deprecation capture window, no batching). It passes on a debug
+binary and failed only under `./build.sh --release`, so re-run it against a
+release build whenever the release flavor is the one shipping:
+`./build.sh --release && scripts/minitest.sh test/integration/divergence_corpus_test.cr`.

@@ -3412,14 +3412,32 @@ module Krikri
     # this engine had to ignore supplies the attempts for a task that
     # wrote neither (issue #1542). Fields: {until condition, retries,
     # delay}.
+    #
+    # Spelled as explicit returns, NOT as one if/elsif expression whose
+    # value the method returns: Crystal 1.22.3 miscompiles that shape under
+    # `--release` when the return is a nilable tuple with a nilable member
+    # (here `{String?, Int32, Int32}?`; a non-nilable outer tuple, a
+    # non-nilable member or a plain nilable scalar all compiled correctly).
+    # With every condition false it still returned the third branch's tuple,
+    # so EVERY task took the attempt-loop path in execute_task: a
+    # `when:`-skipped task then lost the deprecation window
+    # begin_task_deprecation_capture opens on the solo path (registering no
+    # deprecations) and batching never ran at all. Only release builds
+    # showed it - the corpus case 1745-deferred-when-keeps-deprecations
+    # (issue #1839) went red under `./build.sh --release` and stayed green
+    # on debug, same commit; the minimal reproducer is in that issue.
     private def retry_plan(task : Task) : {String?, Int32, Int32}?
       if until_condition = task.until_condition
-        {until_condition, task.retries, task.delay}
-      elsif task.retries_explicit?
-        {nil, task.retries, task.delay}
-      elsif @strategy_retry_fallback > 0
-        {nil, @strategy_retry_fallback, @strategy_retry_delay}
+        return {until_condition, task.retries, task.delay}
       end
+      if task.retries_explicit?
+        return {nil, task.retries, task.delay}
+      end
+      fallback = @strategy_retry_fallback
+      if fallback > 0
+        return {nil, fallback, @strategy_retry_delay}
+      end
+      nil
     end
 
     # Shared `until:` retry core - drives task.retries/task.delay attempts
