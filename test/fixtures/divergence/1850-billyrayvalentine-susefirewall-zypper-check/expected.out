@@ -1,0 +1,16 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [billyrayvalentine.susefirewall : Install SuSEfirewall2 rpm] **************
+[ERROR]: Task failed: Module failed: Failed to find required executable "zypper" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Origin: <WORK>/roles/billyrayvalentine.susefirewall/tasks/main.yml:2:3
+
+1 ---
+2 - name: Install SuSEfirewall2 rpm
+    ^ column 3
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Failed to find required executable \"zypper\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
