@@ -1,0 +1,37 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Check openvpn variables. no_log=true] ************************************
+[ERROR]: Task failed: 'openvpn_ca_password' is undefined
+
+Task failed.
+Origin: <WORK>/playbook.yml:10:7
+
+ 8   gather_facts: false
+ 9   tasks:
+10     - name: Check openvpn variables. no_log=true
+         ^ column 7
+
+<<< caused by >>>
+
+'openvpn_ca_password' is undefined
+Origin: <WORK>/playbook.yml:14:11
+
+12         msg: item is empty or None.
+13       loop:
+14         - "{{ openvpn_ca_password }}"
+             ^ column 11
+
+fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[ERROR]: A 'when' expression failed: Error while evaluating conditional: 'item' is undefined
+Origin: <WORK>/playbook.yml:17:11
+
+15         - "{{ openvpn_server_dns }}"
+16       when:
+17         - item is none or item | length == 0
+             ^ column 11
+

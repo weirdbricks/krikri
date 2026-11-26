@@ -496,7 +496,10 @@ describe "undefined loop: source is strict" do
 
     status.exit_code.must_equal(2)
     output.must_include("'some_other_undefined' is undefined")
-    output.wont_include("'some_undefined_var' is undefined")
+    # Real 2.21.6 does not silently discard the conditional that raised while
+    # the loop list rendered: it displays its own error block (deferred to
+    # stderr) before re-raising the saved loop error (issue #1867).
+    output.must_include("A 'when' expression failed: Error while evaluating conditional: 'some_undefined_var' is undefined")
     output.wont_include("skipping:")
     output.wont_include("SENTINEL-B")
     output.must_include("failed=1")
@@ -940,6 +943,29 @@ describe "strict-undefined loop ITEM entries and dict-subscript-miss messages" d
     status.success?.must_equal(true)
     output.must_include("skipping:")
     output.wont_include("object of type 'dict'")
+  end
+
+  it "fails (does not skip) a raising item-referencing when: over an undefined loop item" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: looped
+            ansible.builtin.fail:
+              msg: item is empty or None.
+            loop:
+              - "{{ missing_loop_item }}"
+              - "{{ missing_other_item }}"
+            when:
+              - item is none or item | length == 0
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("'missing_loop_item' is undefined")
+    output.must_include("A 'when' expression failed: Error while evaluating conditional: 'item' is undefined")
+    output.wont_include("skipping:")
+    output.must_include("failed=1")
   end
 
   it "keeps default() tolerant of a dict-miss loop item" do

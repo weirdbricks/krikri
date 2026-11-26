@@ -1,0 +1,18 @@
+---
+# pyronear.openvpn's tasks/main.yml "Check openvpn variables. no_log=true"
+# (issue #1867), copied verbatim; only the play wrapper is adapted so it runs
+# on localhost. The role deliberately leaves openvpn_ca_password /
+# openvpn_server_dns undefined, and this task's loop: list templates them
+# before any when: verdict matters.
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Check openvpn variables. no_log=true
+      ansible.builtin.fail:
+        msg: item is empty or None.
+      loop:
+        - "{{ openvpn_ca_password }}"
+        - "{{ openvpn_server_dns }}"
+      when:
+        - item is none or item | length == 0
+      no_log: true

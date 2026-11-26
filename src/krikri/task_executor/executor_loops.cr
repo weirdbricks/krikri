@@ -1812,14 +1812,22 @@ module Krikri
     # that skip case; raises WhenEvaluationError for the genuine failure
     # (the execute_looped_task call site turns it into one clean failed
     # task, same as a loop-source resolution failure).
+    #
+    # emit_when_error is false only for print_skipped_looped_task's
+    # display pass: an enclosing block's when: is already False there, so
+    # real short-circuits the merged conditional and never reports a
+    # raising own when: - the caller collapses the render failure to the
+    # plain skip line.
     private def render_loop_items_strict_or_raise(
       task : Task,
       loop_items : Array(JSON::Any),
       vars_context : Hash(String, JSON::Any),
-      host_name : String,
+      host : Host,
       pending_fact_reads : Array(Bool),
       source_tether : Bool = false,
+      emit_when_error : Bool = true,
     ) : Array(JSON::Any)?
+      host_name = host.name
       begin
         unsafe_items = loop_items_derive_from_unsafe_data?(task, host_name)
         # Unsafe-derived items are already rendered data (their whole source
@@ -1880,12 +1888,31 @@ module Krikri
         # when: referencing an unrelated undefined variable must fail with
         # the item render's own error (Case B), while a clean False (A) and
         # an item-rooted undefined reference (C) still skip.
+        #
+        # The item-rooted skip only applies when the conditional READS
+        # sensibly with `item` unbound (definedness / default(), the same
+        # when_tolerates_undefined? gate resolve_loop_items_or_raise uses).
+        # Real ansible still evaluates the conditional once with `item`
+        # unbound after the loop source failed, and a conditional that
+        # raises there (`item is none or item | length == 0`) does NOT
+        # skip: it displays the conditional's own error block and fails
+        # with the loop error (issue #1867, pyronear.openvpn).
         if when_condition = task.when_condition
           substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
           skippable = begin
-            !ConditionalEvaluator.evaluate(substitutor.substitute(when_condition), vars_context, raise_undefined: true)
-          rescue err : ConditionalEvaluator::UndefinedVariableError | UndefinedVariableError
-            when_undefined_name_is_loop_var?(err.message)
+            if task.when_condition_list
+              !evaluate_when_items(task, vars_context, host, substitutor)
+            else
+              !evaluate_when(when_condition, vars_context, host, substitutor, task)
+            end
+          rescue err : WhenEvaluationError
+            failing_clause = task.when_condition_list ? (@last_failed_when_clause || when_condition) : when_condition
+            if when_undefined_name_is_loop_var?(err.message) && when_tolerates_undefined?(failing_clause)
+              true
+            else
+              emit_item_render_when_error_block(task, err, failing_clause) if emit_when_error
+              false
+            end
           rescue
             false
           end
@@ -1908,6 +1935,22 @@ module Krikri
         # a host-state problem, not an undefined reference.
         raise WhenEvaluationError.new(ex.message || "Failed to render loop item")
       end
+    end
+
+    # The bare conditional-error block real prints when a looped task's when:
+    # raises while the task is still evaluated once with `item` unbound after
+    # the loop source failed. Real displays that error (deferred to stderr,
+    # after the play's own output) and THEN raises the loop error it saved, so
+    # the fatal line names the failing loop item, not the conditional
+    # (issue #1867, pyronear.openvpn; live-captured vs 2.21.6).
+    private def emit_item_render_when_error_block(task : Task, err : WhenEvaluationError, failing_clause : String) : Nil
+      msg = err.message.to_s
+      msg = msg["Task failed: ".size..] if msg.starts_with?("Task failed: ")
+      return if msg.empty?
+      return unless (task_pos = task_origin_position(task))
+      return unless (cause = conditional_cause_position(task, "when", failing_clause, task_pos))
+      source_context = origin_context_block(cause[:path], cause[:lines], cause[:idx] + 1, cause[:col])
+      ErrorBlock.emit_stderr(ErrorBlock::Node.new(msg, source_context: source_context))
     end
 
     # task_executor.py (_execute, 2.19.11): a looped task whose loop_var
@@ -1966,7 +2009,7 @@ module Krikri
       pending_fact_reads = [] of Bool
       source_tether = VarSubstitutor.take_loop_source_fact_tether
       rendered_items = with_loop_source_site(task) do
-        render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host.name, pending_fact_reads, source_tether)
+        render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host, pending_fact_reads, source_tether)
       end
       if rendered_items.nil?
         # Strict item templating failed but the task's own when: evaluates

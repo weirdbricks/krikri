@@ -2754,7 +2754,7 @@ module Krikri
         # deferred in _get_loop_items once the conditional did not skip.
         rendered_items = begin
           with_loop_source_site(task) do
-            render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host.name, pending_fact_reads)
+            render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host, pending_fact_reads)
           end
         rescue ex : WhenEvaluationError
           prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"

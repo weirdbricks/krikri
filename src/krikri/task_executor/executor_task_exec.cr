@@ -1974,7 +1974,7 @@ module Krikri
       end
 
       rendered_items = begin
-        render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host.name, [] of Bool)
+        render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host, [] of Bool, emit_when_error: false)
       rescue
         nil
       end
