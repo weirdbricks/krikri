@@ -306,6 +306,15 @@ module Krikri
       # path skipped the task and exited 4, so the role's kubectl task
       # never ran on a target this engine supports. See plugins/snap.cr.
       "community.general.snap",
+      # zypper (issue #1850, billyrayvalentine.susefirewall on rocky):
+      # real executes the module under --check, and its command builder
+      # probes get_bin_path("zypper", required=True) - on a host without
+      # zypper that is a task failure, where the unavailable-module skip
+      # let the play continue and ended in exit 4. The port is the
+      # argument-validation + probe surface (see plugins/zypper.cr and
+      # KNOWN_MISSING.md); the bare spelling resolves through
+      # MODULE_SEARCH_COLLECTIONS.
+      "community.general.zypper",
       # composer (issue #1797, marsante.ansible_role_medshakeehr on
       # ubuntu): composer.py declares check_mode support (it appends
       # --dry-run when the composer command advertises one), so real RUNS
@@ -658,6 +667,12 @@ module Krikri
       # MODULE_SEARCH_COLLECTIONS.
       "ansible.builtin.snap" => "community.general.snap",
       "ansible.legacy.snap"  => "community.general.snap",
+      # zypper's builtin-runtime redirect (ansible_builtin_runtime.yml
+      # sends both spellings to community.general.zypper, issue #1850).
+      # The bare spelling needs no entry here - community.general is
+      # already in MODULE_SEARCH_COLLECTIONS.
+      "ansible.builtin.zypper" => "community.general.zypper",
+      "ansible.legacy.zypper"  => "community.general.zypper",
       # make was never in ansible-core, but its builtin runtime redirects
       # the ansible.builtin./ansible.legacy. spellings onto
       # community.general.make and resolves and runs the module (issue

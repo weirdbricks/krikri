@@ -798,6 +798,10 @@ zypper, zypper_repository, pacman and pkgng onto their collection modules went w
 Ubuntu's own package manager and snap.py supports check mode, so babisk.kubectl's task ran under
 `--check` on a host this engine targets where krikri skipped it. The port and its
 `ansible.builtin.snap`/`ansible.legacy.snap` redirects are back in `plugins/snap.cr`.
+`community.general.zypper` came back as a probe-only port for the same class of reason (issue #1850,
+billyrayvalentine.susefirewall on rocky): real RUNS it under `--check` and the missing binary is a
+task failure, which the skip could not reproduce. See `plugins/zypper.cr` and the probe-only entry
+later in this file.
 
 ### Arbitrary Python
 
@@ -1310,9 +1314,15 @@ because anyone intends to fix them.
   quadlet unit-file generation (real drives `podman`/writes `/etc/containers/systemd/*.container`).
   The plugin answers a plain ok there, so on a host WITH podman krikri reports ok where real reports
   the real work's changed/ok - revisit if a round lands on a podman-present host.
-- `community.general.pacman`, `community.general.pkgng`, `community.general.zypper`,
-  `community.general.zypper_repository` - not implemented. Pointless on
-  the Ubuntu/RHEL-family targets this engine supports.
+- `community.general.zypper` (issue #1850) - probe-only port, the same shape as `podman_container`
+  above: the AnsibleModule argument validation and main()'s `get_bin_path("zypper", required=True)`
+  probe, plus the branches that decide whether that probe runs. A host without zypper now fails the
+  task with real's `Failed to find required executable "zypper" in paths: ...` instead of the
+  graceful skip + engine-limit exit 4. Everything after a successful probe is unported (the package/
+  pattern/patch/product state machine and its XML result shapes), so on a host WITH zypper krikri
+  answers a plain ok where real reports the real work - revisit if a round lands on a SUSE host.
+- `community.general.pacman`, `community.general.pkgng`, `community.general.zypper_repository` -
+  not implemented. Pointless on the Ubuntu/RHEL-family targets this engine supports.
 - `meta:` - every action in Ansible's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,
   `reset_connection`), each matched to Ansible's observed behavior. Non-obvious ones: `end_play` and

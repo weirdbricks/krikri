@@ -1,0 +1,14 @@
+---
+# The play krikri-role-tester generates for billyrayvalentine.susefirewall,
+# adapted only to run against localhost (the round reached its rocky testhost
+# over ssh and ran the role as root; the first task fails before it needs any
+# of that).
+#
+# gather_facts is off because the failing task needs no facts, and real
+# ansible-core 2.21.6 gathers them without printing a task (krikri still
+# prints its Gathering Facts block, a separate divergence).
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - billyrayvalentine.susefirewall
