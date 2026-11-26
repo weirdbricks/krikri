@@ -1,0 +1,42 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Create temp directory for download.] *************************************
+skipping: [localhost]
+
+TASK [Download acme-sh archive.] ***********************************************
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.get_url' failed: Error while resolving value for 'dest': The filter plugin 'ansible.builtin.path_join' failed: expected str, bytes or os.PathLike object, not UndefinedMarker
+
+Task failed.
+Origin: <WORK>/playbook.yml:19:7
+
+17       register: _acmesh_tempdir
+18
+19     - name: Download acme-sh archive.
+         ^ column 7
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.get_url' failed.
+Origin: <WORK>/playbook.yml:20:7
+
+18
+19     - name: Download acme-sh archive.
+20       get_url:
+         ^ column 7
+
+<<< caused by >>>
+
+Error while resolving value for 'dest': The filter plugin 'ansible.builtin.path_join' failed: expected str, bytes or os.PathLike object, not UndefinedMarker
+Origin: <WORK>/playbook.yml:22:15
+
+20       get_url:
+21         url: "{{ _acmesh_zipball_url }}"
+22         dest: "{{ (_acmesh_tempdir.path, 'acmesh.zip') | path_join }}"
+                 ^ column 15
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.get_url' failed: Error while resolving value for 'dest': The filter plugin 'ansible.builtin.path_join' failed: expected str, bytes or os.PathLike object, not UndefinedMarker"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=1    rescued=0    ignored=0   
+
