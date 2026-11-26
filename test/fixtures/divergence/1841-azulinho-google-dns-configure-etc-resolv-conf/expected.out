@@ -1,0 +1,17 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [configure /etc/resolv.conf] **********************************************
+[ERROR]: Task failed: Module failed: Destination /etc not writable
+Origin: <WORK>/playbook.yml:9:7
+
+7   gather_facts: false
+8   tasks:
+9     - name: configure /etc/resolv.conf
+        ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "checksum": "c3f9736e9af7bd0885578859a50b205c8fa5fc8e", "msg": "Destination /etc not writable"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

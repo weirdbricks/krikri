@@ -1,0 +1,11 @@
+# Azulinho.azulinho-google-dns tasks/main.yml's "configure /etc/resolv.conf"
+# verbatim (including its old key=value module syntax), with the localhost play
+# wrapped around it so it replays in the fast suite. `src=resolv.conf` is the
+# role's files/resolv.conf, checked in beside this playbook where a play-level
+# copy: resolves it (a role's files/ dir is the same search position).
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: configure /etc/resolv.conf
+      copy: dest=/etc/resolv.conf
+        src=resolv.conf
