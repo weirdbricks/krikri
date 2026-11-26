@@ -692,8 +692,12 @@ module Krikri
       roots = paths.flat_map { |path| LookupPlugins.resolve_first_found_roots(render_nested(ctx, path), role_path) }
       files.each do |file|
         rendered = render_nested(ctx, file)
-        roots.each do |root|
-          candidate = File.join(root, rendered)
+        # An absolute candidate is its own path - ansible's
+        # path_dwim_relative_stack tests it directly instead of joining it
+        # under a search root (see ExpressionEvaluator#first_found_candidates,
+        # issue #1847).
+        candidates = rendered.starts_with?("/") ? [rendered] : roots.map { |root| File.join(root, rendered) }
+        candidates.each do |candidate|
           return AnyValue.new(candidate) if File.exists?(candidate)
         end
       end

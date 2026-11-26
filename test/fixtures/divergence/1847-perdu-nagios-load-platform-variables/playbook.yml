@@ -1,0 +1,9 @@
+---
+# The failing task from perdu.nagios/tasks/main.yml (issue #1847), run from its
+# own role so `{{ role_path }}` resolves exactly as it did in the round; the
+# role's later package/install tasks are trimmed (this case is read-only).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - perdu.nagios

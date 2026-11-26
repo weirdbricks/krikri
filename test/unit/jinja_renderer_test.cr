@@ -948,6 +948,24 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     result.must_equal(File.join(role_dir, "vars", "main.yml"))
   end
 
+  it "renders lookup('first_found', {...}) finding an ABSOLUTE candidate directly" do
+    # perdu.nagios's `{{ role_path }}/vars/...` candidate list (issue #1847):
+    # ansible's path_dwim_relative_stack checks an absolute source against the
+    # filesystem itself instead of joining it under a search root, so the
+    # candidate is found even though no root leads to it.
+    role_dir = PluginSpecHelper.tmp_path("crinja_first_found_absolute_spec")
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "main.yml"), "found: absolute\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+
+    result = renderer.render(
+      %({{ lookup('first_found', {'files': ['#{role_dir}/vars/missing.yml', '#{role_dir}/vars/main.yml']}) }}))
+    result.must_equal(File.join(role_dir, "vars", "main.yml"))
+  end
+
   it "raises a clean error rendering first/last on a genuinely empty sequence, rather than silently rendering the raw template text" do
     v = Hash(String, JSON::Any).new
     v["mylist"] = JSON::Any.new([] of JSON::Any)

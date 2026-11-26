@@ -471,6 +471,31 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").must_equal(File.join(role_dir, "vars", "x.yml"))
   end
 
+  it "finds an ABSOLUTE first_found candidate directly, whatever the search roots are" do
+    # perdu.nagios's own `include_vars: "{{ lookup('first_found',
+    # platform_vars_files, errors='ignore') }}"` with `{{ role_path }}/vars/...`
+    # candidates (issue #1847): every entry renders ABSOLUTE. Real ansible's
+    # path_dwim_relative_stack checks an absolute source against the
+    # filesystem directly and returns it, so the last candidate
+    # (vars/main.yml) is found and the task is ok. Joining it under each
+    # search root matched nothing, errors='ignore' yielded "", and
+    # include_vars then resolved that empty path to the role's vars/
+    # DIRECTORY and failed with "YAML parsing failed: read <role>/vars: Is a
+    # directory".
+    role_dir = PluginSpecHelper.tmp_path("first_found_absolute_candidate_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    File.write(File.join(role_dir, "vars", "main.yml"), "_nagios_packages: {}\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["platform_vars_files"] = JSON.parse(
+      %({"files": ["#{role_dir}/vars/missing.yml", "#{role_dir}/vars/main.yml"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', platform_vars_files, errors='ignore')")
+      .must_equal(File.join(role_dir, "vars", "main.yml"))
+  end
+
   it "parses an inline first_found DICT literal whose files: value is a variable holding the candidate list" do
     # Real bug found benchmarking AerisCloud.vault (round 83346): the
     # DICT form passed INLINE (not through a params variable) with a
