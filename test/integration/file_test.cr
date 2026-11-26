@@ -915,6 +915,37 @@ describe "file plugin" do
       result["path"].as_s.must_equal(path)
     end
 
+    it "removes the file it created when a real state=touch then fails on an unknown owner" do
+      # fNxONE.baseline (issue #1870): Ansible's execute_touch unwinds a
+      # failed attribute apply by removing the file it just created (`if
+      # prev_state == 'absent': os.remove(b_path)`, its SystemExit handler),
+      # so a failed touch of a nonexistent path leaves nothing behind. The
+      # role's next --check run then sees the path absent and reports changed
+      # instead of failing the owner lookup a check-mode touch of an
+      # EXISTING path performs.
+      path = tmp_path("touch-failed-owner-cleanup")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "owner" => "nosuchuser734"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("chown failed: failed to look up user nosuchuser734")
+      # The failure still carries the stat block of the file that existed when
+      # Ansible's fail_json ran - its removal happens afterwards.
+      result["path"].as_s.must_equal(path)
+      result["state"].as_s.must_equal("file")
+      File.exists?(path).must_equal(false)
+    end
+
+    it "keeps a pre-existing file when state=touch fails on an unknown owner" do
+      # Ansible's cleanup only fires for prev_state 'absent' - a failed touch
+      # of a file that was already there must not delete it.
+      path = tmp_path("touch-failed-owner-kept")
+      File.write(path, "x")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "owner" => "nosuchuser734"})
+
+      result["failed"].as_bool.must_equal(true)
+      File.exists?(path).must_equal(true)
+    end
+
     it "fails the owner lookup in check mode on an already-linked hard link" do
       src = tmp_path("checkmode-hard-src")
       dest = tmp_path("checkmode-hard-dest")
