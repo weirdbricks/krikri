@@ -122,9 +122,10 @@ recap delta: `ansible-playbook` over SSH reported `ok=11` while the other three 
   `ANSIBLE_CACHE_PLUGIN=community.general.pickle` with
   `ANSIBLE_CACHE_PLUGIN_CONNECTION=/tmp/ansible_facts_cache`. Ansible skips the implicit
   `Gathering Facts` task on a host whose facts are still warm in that cache, even when the play
-  says `gather_facts: true`. krikri implements only the `jsonfile` backend, so it never sees the
-  warm pickle entry and gathers, adding exactly one `ok`. The final ansible/SSH run had a warm
-  `ssh-target` entry; ansible/SSM's `ssm-target` was cold.
+  says `gather_facts: true`. That is what produced the original one-`ok` delta: the final
+  ansible/SSH run had a warm `ssh-target` entry while ansible/SSM's `ssm-target` was cold. (krikri
+  now reads the same pickle cache too - issue #1838 - but a warm-vs-cold pair still explains a
+  one-`ok` difference on its own.)
 - Four-way runs must be normalized: clear/disable the fact cache (or set
   `ANSIBLE_CACHE_PLUGIN=memory` and `ANSIBLE_GATHERING=implicit`) and capture both engines without
   a TTY, or with `ANSIBLE_NOCOLOR=1`. With that, the two consoles match byte for byte for this
@@ -852,15 +853,43 @@ Ubuntu's own package manager and snap.py supports check mode, so babisk.kubectl'
 
 ### Fact caching
 
-- **Only the `jsonfile` backend** (`src/krikri/fact_cache.cr`): by far the most common real-world
-  choice, and the only one worth a from-scratch implementation without a client library to lean on.
+- **Two on-disk backends: `jsonfile` and `community.general.pickle`** (`src/krikri/fact_cache.cr`,
+  `src/krikri/fact_cache_pickle.cr`). The pickle codec reads `pickle.dump(protocol=2)` files and
+  writes ones ansible-core can load, so one cache directory warms both engines (issue #1838).
   `redis`/`memcached` would need real client libraries this project doesn't carry; the built-in
   `memory` backend needs no support at all (this engine's in-run `@facts` store already IS that).
-  Revisit only if a real role needs a non-jsonfile backend. Under `ANSIBLE_GATHERING=smart` a
-  configured non-jsonfile backend is invisible here, so krikri gathers while Ansible skips a warm
-  host's `Gathering Facts` - a one-`ok` recap difference with no behavioural cause (the #1691
-  four-way delta; see the SSM console-parity baseline above). Normalize comparison runs with
-  `ANSIBLE_GATHERING=implicit` or a cleared cache.
+- **The pickle reader is an allowlist, not an unpickler.** It accepts the value-building opcodes
+  (`dict`/`list`/`tuple`, strings, ints, floats, booleans, None, memo back-references) plus
+  `GLOBAL`/`NEWOBJ`/`REDUCE`/`BUILD` restricted to ansible's own datatag/unsafe modules, where the
+  class operand is only a marker that is never imported or called: `NEWOBJ` unwraps the string the
+  tagged class wraps, which is how ansible stores a `set_fact: ... cacheable: true` value
+  (`_AnsibleTaggedStr`, with its `_AnsibleTagsMapping`/`Origin` bookkeeping discarded). A pickle
+  needing anything else - `bytes` (pickled via `_codecs.encode`), a set, an unrelated class,
+  protocol 4+ - is refused whole. That is deliberate: an accepted opcode cannot import or call
+  anything, so an attacker-controlled cache file can at worst be a cache miss.
+- **An entry krikri cannot parse is never overwritten.** The run's facts are merged over whatever
+  the read returned, so writing after a failed read would replace another engine's entry with a
+  narrower fact set; such a host re-gathers and its file is left alone. Only a structurally valid
+  pickle in an unsupported shape is preserved: a file that does not start with the `PROTO` opcode
+  (a `jsonfile` entry left behind by a backend switch) or one that is truncated / not a mapping is
+  replaced, so a bad entry heals instead of wedging the host forever.
+- **A corrupt cache file aborts the run in ansible but is only a miss here.** ansible raises
+  `[ERROR]: Error while accessing the cache file '<path>': ...` and exits 1 (deleting the entry on
+  its `ValueError` path, which covers jsonfile; a corrupt pickle is left in place); krikri
+  re-gathers and writes a fresh entry. Deliberate: a cache must never fail a play.
+- **Only the play's implicit gather is persisted to the cache.** ansible writes every gathered
+  fact layer through `VariableManager.set_host_facts` - a task-level `setup:`/`gather_facts:` or
+  `package_facts:` result, and a `set_fact: ... cacheable: true` - so those land in its cache file;
+  krikri's one write site is the gather action. Reading is unaffected (an ansible-written entry of
+  any shape above is loaded), so a shared directory is fully ansible-to-krikri and covers krikri's
+  gathered facts in the other direction, just not task-level facts.
+- **Cache files are written atomically and mode 0600; ansible's are 0644**, so the controller's
+  environment (`ansible_env` carries tokens) is not world-readable. Both engines read either mode.
+  File naming matches ansible's `_sanitize_key` (a host name carrying `/`, `..`, `<`, `>`, `|`
+  becomes a sha256 of the key), so both engines find the same file in a shared directory.
+- A shared cache can still make two runs differ by one `ok` when only one side starts warm;
+  normalize comparison runs with `ANSIBLE_GATHERING=implicit` or a cleared cache (the #1691
+  four-way delta; see the SSM console-parity baseline above).
 
 ### Templating
 

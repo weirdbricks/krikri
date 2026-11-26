@@ -15,7 +15,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run(playbook : String, extra_args : Array(String), cache_dir : String) : {Process::Status, String}
+private def run(playbook : String, extra_args : Array(String), cache_dir : String, prefix : String? = nil) : {Process::Status, String}
   output = IO::Memory.new
   status = Process.run(
     BINARY,
@@ -25,6 +25,7 @@ private def run(playbook : String, extra_args : Array(String), cache_dir : Strin
     env: {
       "ANSIBLE_CACHE_PLUGIN"            => "jsonfile",
       "ANSIBLE_CACHE_PLUGIN_CONNECTION" => cache_dir,
+      "ANSIBLE_CACHE_PLUGIN_PREFIX"     => prefix,
       "ANSIBLE_GATHERING"               => nil,
     }
   )
@@ -32,6 +33,30 @@ private def run(playbook : String, extra_args : Array(String), cache_dir : Strin
 end
 
 describe "ANSIBLE_CACHE_PLUGIN=jsonfile fact caching" do
+  it "honors ANSIBLE_CACHE_PLUGIN_PREFIX like ansible's jsonfile plugin" do
+    cache_dir = File.tempname("fact-cache-prefix")
+    playbook = File.tempname("fact-cache-prefix", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        tasks:
+          - ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    status, _ = run(playbook, [] of String, cache_dir, prefix: "pfx-")
+    status.success?.must_equal(true)
+    Dir.children(cache_dir).must_equal(["pfx-localhost"])
+
+    # The prefixed entry is the one a warm rerun reads.
+    status2, output2 = run(playbook, ["--gathering", "smart"], cache_dir, prefix: "pfx-")
+    status2.success?.must_equal(true)
+    output2.wont_include("TASK [Gathering Facts]")
+  ensure
+    FileUtils.rm_rf(cache_dir) if cache_dir
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "still gathers under the default implicit gathering (matches Ansible: cache alone never skips gathering)" do
     cache_dir = File.tempname("fact-cache")
     playbook = File.tempname("fact-cache-implicit", ".yml")

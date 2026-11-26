@@ -2,6 +2,14 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
+    # Ansible's gather_facts action puts this key in the gather result
+    # (`result['ansible_facts']['_ansible_facts_gathered'] = True`).
+    # ansible-core's `_facts_gathered_for_host` gates `--gathering smart`
+    # on it, and it is what lets one engine's fact cache warm the other's.
+    # Present in the nested `ansible_facts` dict, absent from the
+    # top-level fact vars (ansible's clean_facts -> strip_internal_keys).
+    FACTS_GATHERED_MARKER = "_ansible_facts_gathered"
+
     private def gather_facts_for_all_hosts : Nil
       # --gathering smart: a host whose facts this run already collected
       # (in an earlier play, via the shared run-scoped store) is not
@@ -609,6 +617,10 @@ module Krikri
         @facts_connection_keyword_failures.delete(host.name)
         facts = Hash(String, JSON::Any).new
         ansible_facts.as_h.each { |key, value| facts[key] = value }
+        # The gather_facts action's own marker (see its comment above),
+        # so a persisted cache entry - of either backend - tells a later
+        # run of either engine that this host's facts are gathered.
+        facts[FACTS_GATHERED_MARKER] = JSON::Any.new(true)
         # Merge, not replace: with the run-scoped fact store this host may
         # already carry facts/set_facts from earlier plays of this run, and
         # Ansible's own re-gather merges the fresh discovery OVER the
@@ -640,21 +652,30 @@ module Krikri
       {false, ex.message, false}
     end
 
-    # Whether *host* has any GATHERED fact this run - a fact that came
-    # from fact gathering, not from a high-precedence set_fact. The two
-    # used to be the same question because the pre-gather check ran on a
-    # per-play store that was always empty of set_facts at gather time;
-    # with the run-scoped store a play-1 set_fact alone must NOT count as
-    # "already gathered" for --gathering smart (Ansible's smart
-    # gathering consults the fact cache, which set_facts don't enter
-    # unless cacheable: yes). merge_ansible_facts writes every
-    # high-precedence key into BOTH stores, so "every @facts key is also
-    # a @set_facts key" means "set_facts only".
+    # Whether *host* has gathered facts this run - ansible-core's
+    # `_facts_gathered_for_host` (vars/manager.py), which reads
+    # `facts.get('_ansible_facts_gathered', False)` off the host's fact
+    # cache entry and gates `--gathering smart` on exactly that. So the
+    # marker, not "any fact exists", is the question:
+    #
+    #   * an in-run implicit gather (or an earlier play's) writes the
+    #     marker into @facts, so a later play skips, cache or no cache;
+    #   * a warm cache entry written by ansible-playbook carries it, so
+    #     that host is skipped;
+    #   * a set_fact alone, or an explicit `setup:` task, does NOT set it
+    #     (the gather action does, a bare setup module result does not),
+    #     so the next play under smart gathers - live-verified against
+    #     ansible-core 2.21.6 with no cache configured: play 1 `setup:`,
+    #     then play 2's implicit gather under `gathering: smart`, still
+    #     runs there.
     private def gathered_facts_for?(host : Host) : Bool
       facts = @facts[host.name]?
-      return false if facts.nil? || facts.empty?
-      set_names = @set_facts[host.name]?
-      facts.keys.any? { |key| set_names.nil? || !set_names.has_key?(key) }
+      return false unless facts
+      # A `set_fact: _ansible_facts_gathered: true` lands in @facts at the
+      # high tier but never enters ansible's fact cache, which is all
+      # `_facts_gathered_for_host` reads - so it must not satisfy the gate.
+      return false if @set_facts[host.name]?.try(&.has_key?(FACTS_GATHERED_MARKER))
+      facts[FACTS_GATHERED_MARKER]?.try(&.as_bool?) == true
     end
 
     # Ansible's setup result carries `discovered_interpreter_python`
@@ -690,6 +711,17 @@ module Krikri
       @facts[host.name] ||= {} of String => JSON::Any
       @set_facts[host.name] ||= {} of String => JSON::Any
       @set_fact_origins[host.name] ||= {} of String => VarOrigin
+
+      # Ansible's gather_facts ACTION - a task-level `gather_facts:`, as
+      # opposed to the `setup:` module - stamps the marker onto its own
+      # result, and `--gathering smart` then honours it: live-verified vs
+      # 2.21.6, play 1 `gather_facts:` task + play 2 implicit gather under
+      # smart = no second gather, while the same playbook with `setup:`
+      # gathers again. Written into the shared result hash so a
+      # `register:`ed result carries it exactly as ansible's does.
+      if !high_precedence && task && task.module_name.split(".").last == "gather_facts"
+        facts_hash[FACTS_GATHERED_MARKER] = JSON::Any.new(true)
+      end
 
       facts_hash.each do |key, value|
         @facts[host.name][key] = value

@@ -1022,7 +1022,14 @@ module Krikri
         delegate.vars.each { |key, value| delegated[key] = value }
         set_fact_keys = @set_facts[delegate.name]?
         @facts[delegate.name]?.try do |facts|
-          facts.each { |key, value| delegated[key] ||= value unless set_fact_keys.try(&.has_key?(key)) }
+          facts.each do |key, value|
+            # ansible's clean_facts -> strip_internal_keys: `_ansible_*`
+            # module internals (the gather marker above all) never reach
+            # the top-level delegated vars; the nested `ansible_facts`
+            # dict below keeps them.
+            next if key.starts_with?("_ansible_")
+            delegated[key] ||= value unless set_fact_keys.try(&.has_key?(key))
+          end
         end
       end
       @play_vars.each { |key, value| delegated[key] = value }
@@ -1258,6 +1265,16 @@ module Krikri
       set_fact_keys = @set_facts[host.name]?
       @facts[host.name].each do |key, value|
         next if set_fact_keys.try(&.has_key?(key))
+        # `_ansible_*` entries are module-response internals - the gather
+        # marker `_ansible_facts_gathered` above all. Ansible keeps them
+        # in the fact cache and the `ansible_facts` dict (namespace_facts)
+        # but strips them from the top-level fact vars
+        # (clean_facts -> strip_internal_keys), so a `{{` `_ansible_...`
+        # `}}` read is undefined there even though the nested
+        # `ansible_facts` entry is true - verified against ansible-core
+        # 2.21.6, and needed now that a shared pickle cache feeds
+        # Ansible-written facts into this store.
+        next if key.starts_with?("_ansible_")
         result[key] ||= value
       end
 
@@ -1541,7 +1558,18 @@ module Krikri
       all_hosts.each do |other_host|
         entry = Hash(String, JSON::Any).new
         other_host.vars.each { |key, value| entry[key] = value }
-        @facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
+        @facts[other_host.name]?.try do |facts|
+          facts.each do |key, value|
+            # Same clean_facts -> strip_internal_keys rule as
+            # base_context_a_for: a hostvars entry's top level is the
+            # cleaned view, so `{{ hostvars[h]['_ansible_...'] }}` is
+            # undefined in ansible even though the nested
+            # `ansible_facts` dict carries the key (live-verified vs
+            # ansible-core 2.21.6 for `_ansible_facts_gathered`).
+            next if key.starts_with?("_ansible_")
+            entry[key] = value
+          end
+        end
         @registered_vars[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         # set_facts rank ABOVE both (Ansible's "set_facts / registered
         # vars" tier sits near the very top of the precedence ladder), so
@@ -1631,7 +1659,12 @@ module Krikri
         # "localhost", and real Ansible serves them straight back through
         # hostvars['localhost'] (verified live vs 2.20.1). Same precedence
         # order as the inventory-host entries above: set_facts last.
-        @facts["localhost"]?.try(&.each { |key, value| implicit[key] = value })
+        @facts["localhost"]?.try do |facts|
+          facts.each do |key, value|
+            next if key.starts_with?("_ansible_")
+            implicit[key] = value
+          end
+        end
         @registered_vars["localhost"]?.try(&.each { |key, value| implicit[key] = value })
         @set_facts["localhost"]?.try(&.each { |key, value| implicit[key] = value })
         result["localhost"] = JSON::Any.new(implicit)

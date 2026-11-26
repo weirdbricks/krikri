@@ -26,7 +26,71 @@ ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
 
+private def run_playbook_smart(yaml : String) : {Process::Status, String}
+  playbook = File.tempname("gather-facts-task-smart", ".yml")
+  File.write(playbook, yaml)
+  output = IO::Memory.new
+  status = Process.run(
+    BINARY,
+    ["-i", INVENTORY, "--gathering", "smart", playbook],
+    output: output,
+    error: output,
+    env: {
+      "ANSIBLE_GATHERING"               => nil,
+      "ANSIBLE_CACHE_PLUGIN"            => nil,
+      "ANSIBLE_CACHE_PLUGIN_CONNECTION" => nil,
+    }
+  )
+  {status, output.to_s}
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
 describe "task-level gather_facts" do
+  it "satisfies --gathering smart like ansible's gather_facts action" do
+    # ansible-core 2.21.6: the gather_facts ACTION stamps
+    # `_ansible_facts_gathered` on its result (a bare `setup:` task does
+    # not), so the next play's implicit gather is skipped - ok=2, no
+    # banner. Verified live for both engines.
+    status, output = run_playbook_smart(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.gather_facts:
+      - hosts: localhost
+        connection: local
+        tasks:
+          - ansible.builtin.debug:
+              msg: done
+      YAML
+
+    status.success?.must_equal(true)
+    output.wont_include("TASK [Gathering Facts]")
+    output.must_include(": ok=2")
+  end
+
+  it "does not satisfy --gathering smart from a bare setup: task" do
+    # The setup MODULE result carries no marker, so ansible gathers again
+    # on the next play under smart - and so must krikri.
+    status, output = run_playbook_smart(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.setup:
+      - hosts: localhost
+        connection: local
+        tasks:
+          - ansible.builtin.debug:
+              msg: done
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("TASK [Gathering Facts]")
+    output.must_include(": ok=3")
+  end
+
   it "runs as an ordinary task on a gather_facts: false play (the original repro)" do
     status, output = run_playbook(<<-YAML)
       - name: gather_facts test

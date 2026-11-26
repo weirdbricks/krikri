@@ -1,17 +1,26 @@
 require "json"
+require "digest/sha256"
+require "random/secure"
 require "./bigint_json"
 require "./param_sentinels"
+require "./fact_cache_pickle"
 
 module Krikri
   # Ansible's `fact_caching` support (`ANSIBLE_CACHE_PLUGIN`/
   # `ANSIBLE_CACHE_PLUGIN_CONNECTION` env vars - no ansible.cfg INI
   # parsing exists in this engine, matching the established pattern
   # elsewhere, e.g. ssh_manager.cr's own host_key_checking handling).
-  # Only the `jsonfile` backend is implemented - by far the most common
-  # real-world choice (the built-in default backend, `memory`, caches
-  # only within a single process and needs no support here at all,
-  # since @facts already IS that in-run cache; `redis`/`memcached`
-  # would need real client libraries this project doesn't carry).
+  # Two on-disk backends are implemented:
+  #
+  #   * `jsonfile` - the most common real-world choice.
+  #   * `community.general.pickle` - matched so a cache directory written
+  #     by ansible-playbook warms krikri (and vice versa), see
+  #     fact_cache_pickle.cr for the format and its safety argument.
+  #
+  # The built-in default backend, `memory`, caches only within a single
+  # process and needs no support here at all, since @facts already IS that
+  # in-run cache; `redis`/`memcached` would need real client libraries this
+  # project doesn't carry.
   #
   # Ansible's VariableManager merges the configured cache into every
   # host's vars on every play, gathering mode regardless: a play with
@@ -28,6 +37,10 @@ module Krikri
     # Matches Ansible's `fact_caching_timeout` default (24h, in
     # seconds). `0` means never expire, same as Ansible.
     DEFAULT_TIMEOUT = 86400
+
+    JSONFILE_BACKEND   = "jsonfile"
+    PICKLE_BACKEND     = "community.general.pickle"
+    SUPPORTED_BACKENDS = {JSONFILE_BACKEND, PICKLE_BACKEND}
 
     # Cache plugins whose required `_uri` config (the
     # fact_caching_connection) makes ansible-core warn at startup when
@@ -67,7 +80,14 @@ module Krikri
     end
 
     def self.enabled? : Bool
-      backend == "jsonfile" && !connection_dir.nil?
+      name = backend
+      !name.nil? && SUPPORTED_BACKENDS.includes?(name) && !connection_dir.nil?
+    end
+
+    # Whether the configured backend stores Python pickles rather than
+    # JSON text (the two share the `<host>` filename in a cache dir).
+    private def self.pickle_backend? : Bool
+      backend == PICKLE_BACKEND
     end
 
     private def self.backend : String?
@@ -76,29 +96,73 @@ module Krikri
 
     private def self.connection_dir : String?
       dir = ENV["ANSIBLE_CACHE_PLUGIN_CONNECTION"]?
-      dir && !dir.empty? ? dir : nil
+      return nil if dir.nil? || dir.empty?
+      expanded = expand_connection(dir)
+      # `~` with an empty HOME would otherwise resolve to "" and write the
+      # cache into the process's working directory (ansible's own
+      # validate_cache_connection treats an empty connection as unset).
+      expanded.empty? ? nil : expanded
     end
 
-    private def self.timeout_seconds : Int32
-      ENV["ANSIBLE_CACHE_PLUGIN_TIMEOUT"]?.try(&.to_i?) || DEFAULT_TIMEOUT
+    # Ansible's cache plugins run the connection through
+    # `os.path.expanduser(os.path.expandvars(...))`, so `~/cache` and
+    # `$HOME/cache` name the same directory for both engines. (`~user`, a
+    # login-name lookup, is left alone - no fact-caching config uses it.)
+    private def self.expand_connection(dir : String) : String
+      expanded = dir.gsub(/\$\{(\w+)\}|\$(\w+)/) do
+        name = $~[1]? || $~[2]?
+        value = name ? ENV[name]? : nil
+        # os.path.expandvars leaves a reference to an unset variable as-is.
+        value || $~[0]
+      end
+      home = ENV["HOME"]?
+      if home
+        return home if expanded == "~"
+        return File.join(home, expanded[2..]) if expanded.starts_with?("~/")
+      end
+      expanded
     end
 
-    # Ansible's jsonfile cache plugin uses the cache key (here,
-    # the inventory host name) directly as the filename - no hashing or
-    # sanitization beyond what the filesystem itself enforces.
+    # Ansible's `fact_caching_prefix` (ANSIBLE_CACHE_PLUGIN_PREFIX): both
+    # the jsonfile and pickle plugins prepend it verbatim to the cache key
+    # when naming a file (`keys` skips entries not carrying it).
+    private def self.file_prefix : String
+      ENV["ANSIBLE_CACHE_PLUGIN_PREFIX"]? || ""
+    end
+
+    # A float: the pickle plugin's `_timeout` option is `type: float`, so
+    # `ANSIBLE_CACHE_PLUGIN_TIMEOUT=0.5` is legal for ansible (it would
+    # silently mean the 86400s default if parsed as an integer).
+    private def self.timeout_seconds : Float64
+      ENV["ANSIBLE_CACHE_PLUGIN_TIMEOUT"]?.try(&.to_f?) || DEFAULT_TIMEOUT.to_f64
+    end
+
+    # Ansible's BaseFileCacheModule uses the cache key (here, the
+    # inventory host name) as the filename, replacing it with a sha256 of
+    # the key when it carries anything path-ish. Matching that exactly is
+    # what lets one cache directory serve both engines for such hosts.
+    PATH_HAZARDS = ["/", "..", "<", ">", "|"]
+
     private def self.path_for(host_name : String) : String
       # callers gate on enabled?, which guarantees connection_dir - an
       # explicit nil-check instead of not_nil! (ameba Lint/NotNil)
       dir = connection_dir
       raise "fact cache path requested with no connection dir" unless dir
-      # Guard the filename: a host name from a dynamic inventory's
-      # hostvars keys / add_host: containing "/" or being "." / ".."
-      # would escape the cache dir and write attacker-influenced JSON
-      # elsewhere. (Ansible has the same shape; we sanitize instead
-      # of inheriting it.)
-      safe = host_name.gsub('/', '_')
+      # A host name from a dynamic inventory's hostvars keys / add_host:
+      # carrying "/" or ".." would otherwise escape the cache dir and
+      # write attacker-influenced data elsewhere - the same reasoning as
+      # ansible's _sanitize_key, which this mirrors.
+      safe = safe_key(host_name)
       safe = "_dot_" if safe.empty? || safe == "." || safe == ".."
-      File.join(dir, safe)
+      File.join(dir, "#{file_prefix}#{safe}")
+    end
+
+    private def self.safe_key(host_name : String) : String
+      if PATH_HAZARDS.any? { |hazard| host_name.includes?(hazard) }
+        Digest::SHA256.hexdigest(host_name)[0, {host_name.size, 12}.max]
+      else
+        host_name
+      end
     end
 
     # Returns the cached facts for *host_name* if the cache is enabled,
@@ -110,18 +174,32 @@ module Krikri
       return nil unless File.exists?(path)
 
       limit = timeout_seconds
-      if limit > 0
+      # ansible's has_expired: only exactly 0 disables expiry, and a
+      # negative timeout therefore expires everything.
+      unless limit == 0
         age = Time.utc - File.info(path).modification_time.to_utc
         return nil if age.total_seconds > limit
       end
 
-      parsed = Krikri::BigJson.parse(File.read(path)).as_h?
-      return nil unless parsed
-      hash = Hash(String, JSON::Any).new
-      parsed.each { |key, value| hash[key] = value }
-      hash
+      if pickle_backend?
+        Pickle.decode(read_binary(path))
+      else
+        parsed = Krikri::BigJson.parse(File.read(path)).as_h?
+        return nil unless parsed
+        hash = Hash(String, JSON::Any).new
+        parsed.each { |key, value| hash[key] = value }
+        hash
+      end
     rescue
       nil
+    end
+
+    private def self.read_binary(path : String) : Bytes
+      size = File.size(path).to_i
+      raise "cache file too large" if size > Pickle::MAX_BYTES
+      bytes = Bytes.new(size)
+      File.open(path, "rb") { |io| io.read_fully(bytes) }
+      bytes
     end
 
     # Persists *facts* for *host_name*. Best-effort: a cache write
@@ -133,20 +211,71 @@ module Krikri
       dir = connection_dir
       return unless dir
       Dir.mkdir_p(dir) unless Dir.exists?(dir)
-      # Cached facts frequently embed ansible_env (the controller's whole
-      # environment - API tokens included) and set_fact-ed secrets: store
-      # them owner-only rather than umask-default 0644.
       path = path_for(host_name)
-      File.open(path, "w") do |io|
-        io.chmod(0o600)
+      # This run's facts were merged over whatever #read could return, so
+      # replacing a pickle this codec cannot read would silently drop the
+      # facts it could not parse (e.g. a construct a newer ansible-core
+      # writes). Leave a real pickle alone and let the host re-gather.
+      # Anything that is not a pickle at all (a jsonfile entry left behind
+      # by switching backends, a stray file) is still replaced, so junk
+      # cannot wedge the cache forever. Every Python protocol >= 2 stream
+      # starts with the PROTO opcode, which is the cheapest way to tell
+      # "another tool's pickle" from "not a pickle"; krikri writes
+      # atomically, so it never leaves a truncated one of its own behind.
+      return if pickle_backend? && unreadable_pickle?(path)
+      if pickle_backend?
+        bytes = Pickle.encode(facts)
+        write_atomically(path) { |io| io.write(bytes) }
+      else
         # A module-returned integer wider than Int64 rides the cached
         # facts as the BIGINT_SENTINEL_PREFIX-marked string; the cache
         # file stores its bare digits (the bytes Ansible's jsonfile
         # cache writes for a Python int) and the read side restores the
         # marker through the bigint-aware parse.
-        io.write(Krikri.unquote_bigint_json(facts.to_json).to_slice)
+        payload = Krikri.unquote_bigint_json(facts.to_json)
+        write_atomically(path) { |io| io.write(payload.to_slice) }
       end
     rescue
+    end
+
+    private def self.unreadable_pickle?(path : String) : Bool
+      return false unless File.exists?(path)
+      # Every Python protocol >= 2 stream starts with the PROTO opcode;
+      # anything else (a jsonfile entry left behind by a backend switch, a
+      # stray file) is junk and may be replaced.
+      return false unless File.open(path, "rb") { |io| io.read_byte } == 0x80_u8
+      Pickle.decode(read_binary(path))
+      false
+    rescue Pickle::Unsupported
+      # A structurally valid pickle using a construct this codec does not
+      # model: another engine's data, left untouched.
+      true
+    rescue
+      # Not a cache-file pickle at all (truncated, non-mapping root,
+      # invalid UTF-8): replacing it is safe and lets a bad entry heal.
+      false
+    end
+
+    # Write to a sibling temp file, then rename over the target: a crash
+    # mid-write leaves the previous entry intact instead of a truncated
+    # file that the next run reads as a miss.
+    private def self.write_atomically(path : String, & : IO ->) : Nil
+      # A leading dot keeps a crash-orphaned temp file out of ansible's
+      # cache `keys()` scan (it skips dotfiles), so neither engine ever
+      # mistakes one for a host entry.
+      tmp = File.join(File.dirname(path), ".#{File.basename(path)}.krikri-#{Process.pid}-#{Random::Secure.hex(4)}.tmp")
+      begin
+        # Cached facts frequently embed ansible_env (the controller's
+        # whole environment - API tokens included) and set_fact-ed
+        # secrets: store them owner-only rather than umask-default 0644.
+        File.open(tmp, "wb") do |io|
+          io.chmod(0o600)
+          yield io
+        end
+        File.rename(tmp, path)
+      ensure
+        File.delete(tmp) if File.exists?(tmp)
+      end
     end
 
     # Drops the persisted facts for *host_name* - what `meta:
