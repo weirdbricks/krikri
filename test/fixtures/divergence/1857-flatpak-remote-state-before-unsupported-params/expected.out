@@ -1,0 +1,18 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Flatpak_remote #27.0] ****************************************************
+[ERROR]: Task failed: Module failed: value of state must be one of: absent, present, got: 51
+Origin: <WORK>/playbook.yml:12:7
+
+10   gather_facts: false
+11   tasks:
+12     - name: 'Flatpak_remote #27.0'
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "value of state must be one of: absent, present, got: 51"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+

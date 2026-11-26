@@ -1,0 +1,29 @@
+---
+# krikri-playbook-generator playbook 000027-multi-flatpak_remote-chaos.yml's
+# "Flatpak_remote #27.0" task (issue #1857). The module args and the task's
+# register/ignore_errors/notify are verbatim; only `delegate_to: target2` is
+# dropped because the case runs on localhost, and the handler it notifies is
+# kept so the notify resolves. Run with --check (flags.txt): the round that
+# found this was a check-mode run.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: 'Flatpak_remote #27.0'
+      community.general.flatpak_remote:
+        enabled: true
+        executable: xtfczi
+        flatpakrepo_url: ptvuco
+        method: system
+        name: msawmz
+        state: 51
+        enabled_bogus: true
+      register: kpg_task_0
+      ignore_errors: true
+      notify: Kpg handler
+  handlers:
+    - name: Kpg handler
+      ansible.builtin.command:
+        cmd: /bin/false
+      changed_when: false
+      ignore_errors: true

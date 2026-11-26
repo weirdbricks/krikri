@@ -85,8 +85,9 @@ module Krikri
     # order: required -> types -> choices -> unsupported. ansible-core
     # 2.21.6 appends the UnsupportedError AFTER every other validation
     # error and basic.py reports only errors[0], so a missing required
-    # argument outranks a typo'd parameter name (live-verified against
-    # community.general.flatpak_remote, issue #1858).
+    # argument or an invalid value outranks a typo'd parameter name
+    # (live-verified against community.general.flatpak_remote, issues #1857,
+    # #1858).
     private def validate_arguments : PluginResult?
       return missing_required_error(["name"]) unless @params["name"]?
 
