@@ -1,0 +1,12 @@
+# totaldebug.users' failing task, copied verbatim from the role
+# (tasks/main.yml); only the play around it is adapted to run it against
+# localhost instead of the round's testhost inventory.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Get all users from device
+      getent:
+        database: passwd
+        key:
+      tags: ["users", "configuration"]
