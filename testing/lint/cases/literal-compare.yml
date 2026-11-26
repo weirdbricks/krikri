@@ -1,0 +1,27 @@
+---
+- name: Literal compare probe
+  hosts: localhost
+  gather_facts: false
+  vars:
+    my_flag: true
+  tasks:
+    - name: Compare to true
+      ansible.builtin.debug:
+        msg: eq
+      when: my_flag == True
+
+    - name: Compare to false
+      ansible.builtin.debug:
+        msg: ne
+      when: my_flag != False
+
+    - name: Compare in a list
+      ansible.builtin.debug:
+        msg: list
+      when:
+        - my_flag != False
+
+    - name: Plain condition
+      ansible.builtin.debug:
+        msg: plain
+      when: my_flag

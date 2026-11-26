@@ -26,6 +26,7 @@ module Krikri
           JinjaRule.new,
           SchemaMetaRule.new,
           KeyOrderRule.new,
+          LiteralCompareRule.new,
           YamlTrailingSpacesRule.new,
           YamlTruthyRule.new,
           YamlCommentsRule.new,
