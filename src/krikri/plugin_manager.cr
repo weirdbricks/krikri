@@ -1492,9 +1492,11 @@ module Krikri
     end
 
     # Whether a plugin invocation actually goes over SSH: everything that
-    # isn't controller-only and isn't a local connection.
-    def self.remote_execution?(plugin_name : String, host : Host, vars : Hash(String, JSON::Any)) : Bool
-      !controller_only?(plugin_name) && !local_connection?(host, vars)
+    # isn't controller-only and isn't a local connection. *context_first* is
+    # #local_connection?'s own flag - see its comment.
+    def self.remote_execution?(plugin_name : String, host : Host, vars : Hash(String, JSON::Any),
+                               context_first : Bool = false) : Bool
+      !controller_only?(plugin_name) && !local_connection?(host, vars, context_first: context_first)
     end
 
     # String-config entry point - the one the hot paths use.
@@ -1521,8 +1523,9 @@ module Krikri
       task_timeout : Int64? = nil,
       become_flags : String? = nil,
       daemon_scope : String? = nil,
+      context_first : Bool = false,
     ) : JSON::Any
-      if remote_execution?(plugin_name, host, vars)
+      if remote_execution?(plugin_name, host, vars, context_first)
         apply_task_end_remote_cleanup(
           execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout, become_flags, daemon_scope),
           host, vars
@@ -3473,8 +3476,22 @@ module Krikri
     # applies to a given host. A custom connection plugin Ansible's
     # loader resolves is local when its own class derives from Ansible's
     # local connection (issue #1457), exactly like the built-in name.
-    def self.local_connection?(host : Host, vars : Hash(String, JSON::Any), playbook_dir : String? = nil) : Bool
+    #
+    # *context_first* is for a caller that KNOWS *vars* is the exec host's
+    # own merged task context (the implicit setup task's, whose gather
+    # context is built for this very host): real resolves the connection
+    # plugin from that context, where a -e extra var outranks the
+    # inventory's own ansible_connection. The default keeps the Host's raw
+    # inventory vars first because some callers can pass a FOREIGN origin
+    # context (see the delegate note below).
+    def self.local_connection?(host : Host, vars : Hash(String, JSON::Any), playbook_dir : String? = nil,
+                               context_first : Bool = false) : Bool
       dir = playbook_dir || playbook_dir_from(vars)
+      if context_first
+        if conn = vars["ansible_connection"]?
+          return conn.as_s?.try { |name| connection_plugin_transport(name, dir) == "local" } || false
+        end
+      end
       # The host's OWN connection setting wins first. On a delegate_to:
       # task, `vars` here is the vars_context of the host the task would
       # otherwise have run on (build_vars_context injects

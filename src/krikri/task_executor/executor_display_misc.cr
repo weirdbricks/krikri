@@ -952,12 +952,12 @@ module Krikri
     # INTO inherits the new role's prefix): verified live, a NAMED
     # `include_role:` task inside "myrole" showed just its own name,
     # no "myrole :" prefix at all.
-    private def execute_async(task : Task, exec_host : Host, config_json : String, vars : Hash(String, JSON::Any), substitutor : VarSubstitutor? = nil, substituted_become_user : String? = nil) : JSON::Any
+    private def execute_async(task : Task, exec_host : Host, config_json : String, vars : Hash(String, JSON::Any), substitutor : VarSubstitutor? = nil, substituted_become_user : String? = nil, context_first : Bool = false) : JSON::Any
       # Same decision execute_plugin makes (issue #677: the host NAME is
       # never a local-connection vote - an inventory-defined localhost is
       # a plain ssh target), so async dispatch cannot disagree with the
       # synchronous path about where the same task runs.
-      is_local = PluginManager.local_connection?(exec_host, vars)
+      is_local = PluginManager.local_connection?(exec_host, vars, context_first: context_first)
       unless is_local
         return execute_remote_async(task, exec_host, config_json, vars, substitutor, substituted_become_user)
       end

@@ -1223,7 +1223,7 @@ module Krikri
       end
 
       if handler.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(handler, dispatch_vars), handler, substitutor, host)
+        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(handler, dispatch_vars), handler, substitutor, host, context_first: exec_host == host)
         result = apply_changed_failed_when(handler, result, vars_context, host)
         if register_name = handler.register
           register_result(host, register_name, result) unless register_name.empty?
@@ -1240,7 +1240,7 @@ module Krikri
       # fixed for regular tasks. Found while auditing that fix, not yet
       # hit by a real role in this round.
       substituted_params = resolve_role_relative_src(handler, substituted_params)
-      copied = inline_copy_source_content(handler, substituted_params, exec_host, dispatch_vars)
+      copied = inline_copy_source_content(handler, substituted_params, exec_host, dispatch_vars, context_first: exec_host == host)
       if copied.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, copied, vars_context, host)
         if register_name = handler.register
@@ -1260,7 +1260,7 @@ module Krikri
         end
         return result
       end
-      staged = stage_unarchive_remote_src(handler, substituted_params, exec_host, dispatch_vars)
+      staged = stage_unarchive_remote_src(handler, substituted_params, exec_host, dispatch_vars, context_first: exec_host == host)
       if staged.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged, vars_context, host)
         if register_name = handler.register
@@ -1269,7 +1269,7 @@ module Krikri
         return result
       end
       substituted_params = staged
-      staged_script = stage_script_src(handler, substituted_params, exec_host, dispatch_vars)
+      staged_script = stage_script_src(handler, substituted_params, exec_host, dispatch_vars, context_first: exec_host == host)
       if staged_script.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged_script, vars_context, host)
         if register_name = handler.register
@@ -1278,7 +1278,7 @@ module Krikri
         return result
       end
       substituted_params = staged_script
-      staged_assemble = stage_assemble_dir(handler, substituted_params, exec_host, dispatch_vars)
+      staged_assemble = stage_assemble_dir(handler, substituted_params, exec_host, dispatch_vars, context_first: exec_host == host)
       if staged_assemble.is_a?(JSON::Any)
         result = apply_changed_failed_when(handler, staged_assemble, vars_context, host)
         if register_name = handler.register
@@ -1417,7 +1417,7 @@ module Krikri
           end
         end
       end
-      if PluginManager.remote_execution?(handler.module_name, exec_host, dispatch_vars)
+      if PluginManager.remote_execution?(handler.module_name, exec_host, dispatch_vars, context_first: exec_host == host)
         wire_vars = dispatch_vars.dup
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
@@ -1467,7 +1467,8 @@ module Krikri
         become,
         become_user,
         dispatch_timeout,
-        substituted_become_flags
+        substituted_become_flags,
+        context_first: exec_host == host
       )
 
       if period = marker_task_timeout(result)

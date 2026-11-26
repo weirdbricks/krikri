@@ -473,6 +473,14 @@ module Krikri
         vars_context["ansible_connection"] ||= JSON::Any.new(play_connection)
       end
 
+      # -e extra vars are ansible's highest-precedence var layer and apply
+      # to the implicit setup task exactly like any other task, so
+      # `-e ansible_connection=local` has to reach its connection
+      # resolution too. Without them the gather kept the inventory's
+      # connection (ssh, or an unsupported plugin) while every regular
+      # task honored the override (live-verified vs 2.21.5, issue #1836).
+      @extra_vars.each { |key, value| vars_context[key] = value }
+
       # The implicit setup task inherits the play's own become: keyword, and
       # real post-validates it on the PlayContext before resolving the
       # connection plugin, the become plugin or any connection keyword
@@ -518,8 +526,11 @@ module Krikri
       # If this gathers over SSH the wire payload needs
       # ansible_connection=local, so decide that up front and serialize
       # once, instead of serializing, parsing and re-serializing just to
-      # inject one key afterwards.
-      remote = PluginManager.remote_execution?("facts", host, vars_context)
+      # inject one key afterwards. The gather's context is this host's
+      # own, so it resolves the connection from vars first: -e extra vars
+      # outrank the inventory's ansible_connection there, exactly as
+      # #local_connection? has to for the dispatch below.
+      remote = PluginManager.remote_execution?("facts", host, vars_context, context_first: true)
       wire_vars = vars_context
       if remote
         wire_vars = vars_context.dup
@@ -574,7 +585,8 @@ module Krikri
       # Fact gathering never runs under become: - this config carries no
       # become:/become_user: fields at all, which is exactly what
       # resolve_become used to read back out of it as {false, nil}.
-      result = PluginManager.execute_plugin("facts", config.to_json, host, vars_context, false, nil)
+      result = PluginManager.execute_plugin("facts", config.to_json, host, vars_context, false, nil,
+        context_first: true)
 
       # The ssh transport's connection-level failure result carries ONLY the
       # unreachable flag (no "failed" key - it mirrors the shape real's own

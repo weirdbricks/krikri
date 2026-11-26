@@ -1349,7 +1349,7 @@ module Krikri
     # krikri-playbook.cr constructs a fresh TaskExecutor per play).
     private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any),
                                check_mode : Bool = @check_mode, task : Task? = nil, substitutor : VarSubstitutor? = nil,
-                               origin_host : Host? = nil) : JSON::Any
+                               origin_host : Host? = nil, context_first : Bool = false) : JSON::Any
       # Ansible's reboot ACTION plugin refuses a local connection before it
       # ever looks at check mode (run() tests `self._connection.transport ==
       # 'local'` first, and only then `self._task.check_mode`), so `--check`
@@ -1359,7 +1359,7 @@ module Krikri
       # local connection would reboot the control node." and - because the
       # task failed rather than changed - never fires the handler it would
       # have notified (issue #1008, kpg playbooks 000019/23/27/35).
-      if PluginManager.local_connection?(exec_host, vars_context)
+      if PluginManager.local_connection?(exec_host, vars_context, context_first: context_first)
         return JSON.parse({
           "changed"  => false,
           "elapsed"  => 0,
@@ -2553,7 +2553,7 @@ module Krikri
     end
 
     # Substitute variables in task parameters
-    private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
+    private def inline_copy_source_content(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any), context_first : Bool = false) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.copy"
       # A truthy remote_src (in ANY boolean(strict=False) spelling or its
       # marked non-string literal form) hands the whole task to the copy
@@ -2600,7 +2600,7 @@ module Krikri
       # controller-side wording - previously the local early-return let
       # the plugin binary run and report its own "Source file not found"
       # msg instead (live-verified against 2.19.11 under -c local).
-      local_connection = PluginManager.local_connection?(host, vars_context)
+      local_connection = PluginManager.local_connection?(host, vars_context, context_first: context_first)
       # A leading `~` takes _find_needle's absolute branch (no search list,
       # message names the literal `~` path - live-verified vs 2.19.11).
       if !src.starts_with?('/') && !src.starts_with?('~')
@@ -3018,7 +3018,7 @@ module Krikri
     # a JSON::Any failed-task result the caller must turn into a task
     # failure via apply_changed_failed_when (same shape the param-
     # substitution rescue blocks build).
-    private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
+    private def stage_unarchive_remote_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any), context_first : Bool = false) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.unarchive"
       return params if ansible_boolean_param?(params["remote_src"]?)
       # copy: is unarchive's OLDER param spelling, mutually exclusive
@@ -3069,7 +3069,7 @@ module Krikri
       # A local connection runs the plugin on the controller itself -
       # hand it the resolved ABSOLUTE path, no staging (the transfer-
       # related remote_src/__cleanup flags below are meaningless there).
-      if PluginManager.local_connection?(host, vars_context)
+      if PluginManager.local_connection?(host, vars_context, context_first: context_first)
         resolved = params.dup
         resolved["src"] = src
         resolved["__original_src_basename"] = File.basename(src)
@@ -3141,7 +3141,7 @@ module Krikri
     # #1016), so the script's own $0 - and every shell error line quoting
     # it - reads the ansible-tmp staged path, never the controller-side
     # source path.
-    private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
+    private def stage_script_src(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any), context_first : Bool = false) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.script"
 
       cmd = params["cmd"]? || params["_raw_params"]?
@@ -3186,7 +3186,7 @@ module Krikri
         }.to_json)
       end
 
-      if PluginManager.local_connection?(host, vars_context)
+      if PluginManager.local_connection?(host, vars_context, context_first: context_first)
         if staged = stage_script_local_copy(resolved_local, vars_context)
           resolved = params.dup
           resolved["cmd"] = rest ? "#{staged[:file]} #{rest}" : staged[:file]
@@ -3427,7 +3427,7 @@ module Krikri
     #   between the two, so the plugin's own action-level emission still
     #   wins over the delimiter crash for a src that exists but is not a
     #   directory (guarded here by Dir.exists?).
-    private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String) | JSON::Any
+    private def stage_assemble_dir(task : Task, params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any), context_first : Bool = false) : Hash(String, String) | JSON::Any
       return params unless task.module_name == "ansible.builtin.assemble"
       return params if params["remote_src"]?.nil? || Krikri.lenient_boolean_true?(params["remote_src"]?)
 
@@ -3469,7 +3469,7 @@ module Krikri
       # home). See assemble.cr's own comment (issue #1536).
       resolved = params.dup
       resolved["__assemble_staged_path"] = Krikri::LocalTmp.staged_file
-      return resolved if PluginManager.local_connection?(host, vars_context)
+      return resolved if PluginManager.local_connection?(host, vars_context, context_first: context_first)
 
       conn = ConnectionSettings.resolve(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-assemble-#{Random::Secure.hex(8)}"

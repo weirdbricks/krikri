@@ -2375,7 +2375,7 @@ module Krikri
       # CiscoUcs.ucs's looped ucs_timezone with an undefined ucs_hostname).
       # Route these to the one-at-a-time path, which finalizes args per item.
       return false if task.unavailable_module && python_module_source_for(task).nil?
-      return false if PluginManager.local_connection?(exec_host, vars_context)
+      return false if PluginManager.local_connection?(exec_host, vars_context, context_first: true)
       true
     end
 
