@@ -257,7 +257,14 @@ describe "flatpak plugin" do
     state["msg"].as_s.must_equal("value of state must be one of: absent, present, latest, got: bogus")
   end
 
-  it "fails an unsupported parameter with the argspec wording" do
+  it "fails missing name ahead of an unsupported parameter" do
+    result = PluginSpecHelper.run("flatpak", {"nope" => "1"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("missing required arguments: name")
+  end
+
+  it "fails an unsupported parameter once the other arguments validate" do
     result = PluginSpecHelper.run("flatpak", {"name" => "app", "nope" => "1"})
 
     result["failed"].as_bool.must_equal(true)

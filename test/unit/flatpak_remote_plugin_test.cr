@@ -201,8 +201,18 @@ describe "flatpak_remote plugin" do
     state["msg"].as_s.must_equal("value of state must be one of: absent, present, got: bogus")
   end
 
-  it "fails an unsupported parameter before the required check" do
-    result = PluginSpecHelper.run("flatpak_remote", {"nope" => "1"})
+  it "fails missing name ahead of a typo'd parameter and its other errors" do
+    typo = PluginSpecHelper.run("flatpak_remote", {"nmae" => "jvwrzl"})
+    typo["failed"].as_bool.must_equal(true)
+    typo["msg"].as_s.must_equal("missing required arguments: name")
+
+    everything = PluginSpecHelper.run(
+      "flatpak_remote", {"nmae" => "jvwrzl", "enabled" => "bogus", "state" => "bogus"})
+    everything["msg"].as_s.must_equal("missing required arguments: name")
+  end
+
+  it "fails an unsupported parameter once the other arguments validate" do
+    result = PluginSpecHelper.run("flatpak_remote", {"name" => "flathub", "nope" => "1"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal(
