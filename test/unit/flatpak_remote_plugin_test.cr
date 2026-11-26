@@ -25,7 +25,7 @@ require "file_utils"
 # - argspec order: required, bool conversion, choices, unsupported params
 #   (real appends the Unsupported-parameters error LAST and only reports
 #   errors[0], so a missing required argument or a bad value outranks a
-#   typo'd key - issues #1857, #1858).
+#   typo'd key - issues #1857, #1858, #1859).
 describe "flatpak_remote plugin" do
   # A fake `flatpak` the tests steer through marker files: `state/` holds
   # the remote-list output and records every mutating command that ran.
