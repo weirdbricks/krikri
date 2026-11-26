@@ -3425,7 +3425,9 @@ module Krikri
     # deprecations) and batching never ran at all. Only release builds
     # showed it - the corpus case 1745-deferred-when-keeps-deprecations
     # (issue #1839) went red under `./build.sh --release` and stayed green
-    # on debug, same commit; the minimal reproducer is in that issue.
+    # on debug, same commit. Reproducer reported upstream as
+    # crystal-lang/crystal#18046; keep the explicit returns until that is
+    # fixed and a release-built corpus replay is green without them.
     private def retry_plan(task : Task) : {String?, Int32, Int32}?
       if until_condition = task.until_condition
         return {until_condition, task.retries, task.delay}
