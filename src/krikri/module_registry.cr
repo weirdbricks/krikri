@@ -14,7 +14,8 @@ module Krikri
     # exceptions verified against a ansible-core install (not
     # assumed): authorized_key lives in the separate ansible.posix
     # collection, and archive/unarchive live in community.general - neither
-    # ships with ansible-core itself.
+    # ships with ansible-core itself. `json_file` is not an Ansible module
+    # at all: it is krikri's own extension (issue #1835, see its entry).
     # A Set, not an Array: this is membership-tested once per task in
     # parse_task and again per task in validate, and a linear scan of 44
     # entries is the wrong shape for a lookup table even where the cost
@@ -242,6 +243,15 @@ module Krikri
       "community.general.pamd",
       "community.general.htpasswd",
       "community.general.ini_file",
+      # json_file (issue #1835): a krikri EXTENSION, not an Ansible module -
+      # neither ansible-core nor community.general has a JSON file editor
+      # (only the in-memory json_query/json_patch filters), so a task using
+      # it under ansible-playbook fails with "couldn't resolve
+      # module/action". Deliberately registered under the BARE name (a name
+      # no Ansible module uses, so it can never shadow one this engine
+      # should implement instead) rather than a fabricated FQCN. See
+      # plugins/json_file.cr.
+      "json_file",
       "community.general.timezone",
       # ansible.builtin.timezone (round 601463, jtprogru.configure_timesyncd):
       # same legacy-core-FQCN redirect story as ansible.builtin.mount
@@ -676,6 +686,13 @@ module Krikri
       # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
       "community.libvirt.virt_net"  => "virt_net",
       "community.libvirt.virt_pool" => "virt_pool",
+      # json_file (issue #1835) is krikri's own extension, so the only
+      # fully-qualified spelling that can exist is krikri's own - and it is
+      # an ALIAS rather than a second registration so both spellings echo
+      # one module name. ansible.builtin.json_file is deliberately NOT
+      # aliased: no such Ansible module exists, and pretending otherwise
+      # would hide the playbook's real ansible-playbook failure.
+      "krikri.json_file" => "json_file",
     }
 
     # community.docker's own removal text for docker_compose v1

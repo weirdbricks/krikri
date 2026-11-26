@@ -12,8 +12,8 @@ module Krikri
       YAML11_BOOL_FALSE = %w[no No NO false False FALSE off Off OFF]
 
       MODULES = %w[
-        assemble copy file ini_file lineinfile replace synchronize
-        template unarchive
+        assemble copy file ini_file json_file lineinfile replace
+        synchronize template unarchive
       ]
 
       def id : String

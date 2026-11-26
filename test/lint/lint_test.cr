@@ -277,6 +277,19 @@ module Krikri::Lint
       violations.map(&.rule_id).must_equal(["syntax-check[unknown-module]"])
     end
 
+    it "does not flag krikri's own json_file extension module as unknown" do
+      # json_file is not an Ansible module, so the captured reference tables
+      # cannot place it - but krikri-playbook runs it, so lint must not
+      # refuse the playbook ansible-playbook would (issue #1835).
+      dir = PluginSpecHelper.tmp_path("lint_syntax_extension")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, "---\n- name: Play one\n  hosts: all\n  tasks:\n" \
+                        + "    - name: P1\n      json_file:\n        path: /tmp/x.json\n        key: a\n        value: 1\n        mode: \"0644\"\n")
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal([] of String)
+    end
+
     it "reports syntax-check[unknown-module] where ansible's own error points" do
       # ansible-playbook --syntax-check names the first task whose module
       # it cannot resolve: the task mapping's position (an unnamed task

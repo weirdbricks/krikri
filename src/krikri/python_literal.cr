@@ -7,12 +7,21 @@ module Krikri
   # tuples, sets, trailing junk) fail the rewrite or the JSON parse, so a
   # caller only ever accepts what real Ansible's check_type_dict would
   # accept as a dict. Mirrors the approach InventoryParser already uses for
-  # inventory-sourced literals.
+  # inventory-sourced literals. `literal_json` is the same rewrite without
+  # the dict restriction (the json_file extension's `changes:` list).
   module PythonLiteral
     # Python keyword -> JSON spelling.
     private KEYWORDS = {"True" => "true", "False" => "false", "None" => "null"}
 
     def self.dict_json(value : String) : JSON::Any?
+      literal_json(value)
+    end
+
+    # The same rewrite for any literal, not only a mapping: a whole-span
+    # `{{ var }}` module arg holding a list renders through Python's own
+    # repr too (json_file's `changes:` is the caller that needs the array
+    # form).
+    def self.literal_json(value : String) : JSON::Any?
       JSON.parse(rewrite(value))
     rescue
       nil

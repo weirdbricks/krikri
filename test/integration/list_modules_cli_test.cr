@@ -35,6 +35,8 @@ describe "krikri-playbook --list-modules" do
     modules.must_include "ansible.posix.synchronize"
     modules.must_include "community.general.ini_file"
     modules.must_include "community.crypto.x509_certificate"
+    # A krikri extension rather than an Ansible module (issue #1835).
+    modules.must_include "json_file"
   end
 
   it "prints nothing but the JSON array, so a caller can parse stdout directly" do
