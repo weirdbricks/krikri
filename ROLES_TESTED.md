@@ -4749,7 +4749,7 @@ dispositioned per row below.
 | shomatan.apache | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29926399, 0.9.3095 debug, ansible-core 2.21.6). |
 | shomatan.laravel | ❌ Divergent - issue #1794 (rocky, round29926346, 0.9.3095 debug, ansible-core 2.21.6). |
 | sigio.fail2ban | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29926342, 0.9.3095 debug, ansible-core 2.21.6). |
-| softasap.sa-container-bootstrap | ❌ Divergent - issue #1795 (ubuntu, round29926405, 0.9.3095 debug, ansible-core 2.21.6). |
+| softasap.sa-container-bootstrap | ⚠ Divergent - closed as deliberate limit (issue #1795, KNOWN_MISSING.md): the role's `rm -rf /tmp/*` deletes Ansible's own in-flight module payload, so only ansible fails itself (ubuntu, round29926405, 0.9.3095 debug, ansible-core 2.21.6). |
 | softasap.sa-php-pharables | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29926422, 0.9.3095 debug, ansible-core 2.21.6). |
 | srv6d.jool | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29926410, 0.9.3095 debug, ansible-core 2.21.6). |
 | tenantcloud.elk_common | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29926328, 0.9.3095 debug, ansible-core 2.21.6). |

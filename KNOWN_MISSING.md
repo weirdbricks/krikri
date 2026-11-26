@@ -162,6 +162,28 @@ binary and needs no Python, so it gathers facts and the play proceeds. This is i
 compiled-module design, not a defect; a role then failing later on that host (e.g. a variable only
 defined from facts) is the same role-side gap either way.
 
+### A task that deletes Ansible's own in-flight module payload fails only real Ansible; krikri runs it fine (issue #1795)
+
+Real `ansible-playbook` stages every module's ansiballz payload under
+`<remote_tmp>/ansible_ansible.legacy.<module>_payload_<rand>/` (default `remote_tmp` is `/tmp`) and
+the module reads that zip lazily while it runs, so a task like
+`softasap.sa-container-bootstrap`'s `CLEANUP | rm -rf /tmp/* /var/tmp/*` deletes the running
+module's own payload mid-execution. Ansible's command module then dies (`FileNotFoundError` inside
+`_ansiballz/_loader.py`), the task reports
+`fatal: [testhost]: FAILED! => ... Module result deserialization failed: No start of json char found`
+(surfacing as `...ignoring` under the role's ignore), and the recap shows `ignored=1` / `changed=56`
+where krikri reports the task's real result (`changed`, `ignored=0` / `changed=57`). krikri's
+modules are self-contained compiled binaries with nothing left in `/tmp` to delete, so the cleanup
+just succeeds.
+
+Deliberate: matching this would mean staging decoy payloads shaped like Ansible's under `/tmp` and
+then failing, with a counterfeit Python traceback naming `command_payload_<rand>`, whenever a task
+removes them; that is effort spent reproducing Ansible's own self-sabotage, not a semantic property
+of `rm -rf /tmp/*` (Ansible's docs steer operators to `ANSIBLE_REMOTE_TEMP` for exactly this
+hazard). Where a role rides on that failure (as here: only the recap counters and the
+changed-vs-failed label of one ignored cleanup task change), krikri reports the sane result and the
+run diverges; that divergence is accepted, not fixed. Round 29926405, logs___1795578916.
+
 ### The static-musl Linux release binary cannot reach a musl host's `crypt()`
 
 `password_hash` resolves libxcrypt/libc's `crypt()`/`crypt_gensalt()` at runtime (`dlopen`), the way
