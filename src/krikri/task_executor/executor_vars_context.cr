@@ -5594,6 +5594,16 @@ module Krikri
         if facts = @facts[h.name]?
           facts.each { |key, value| merged[key] ||= value }
         end
+        # The same gap for a miss that bottoms out in a HOSTVARS entry
+        # (`hostvars[inventory_hostname]['ansible_' + iface]` on a host
+        # without that interface): real names the per-host HostVarsVars
+        # wrapper, and neither `hostvars` nor the `inventory_hostname`
+        # that selects the entry is carried by a var layer (issue #1846,
+        # mrlesmithjr.ansible_freeipa_server's freeIPA_server_ip_address).
+        if message.starts_with?("object of type '")
+          merged["hostvars"] ||= JSON::Any.new(build_hostvars)
+          merged["inventory_hostname"] ||= JSON::Any.new(h.name)
+        end
       end
 
       reachable = candidate_reachable_keys(merged, reachable_from)
@@ -8306,6 +8316,25 @@ module Krikri
       nil
     end
 
+    # The same per-item scan for a NON-undefined failure message (an
+    # attribute miss): a literal with_items/loop entry that READS a
+    # variable whose own definition carries the miss points real's cause
+    # stanza at that definition's value token, exactly as a templated
+    # loop source does (issue #1846: hostname.yml's
+    # `- "{{ freeIPA_server_ip_address }}"` over a role default reading
+    # `hostvars[inventory_hostname]['ansible_enp0s8']`).
+    private def literal_loop_item_value_failure_origin(task : Task, message : String, host : Host? = nil) : FileVarOrigin?
+      return nil unless task.loop_literal_kind
+      items = task.loop_items || return nil
+      items.each do |item|
+        next unless (text = item.as_s?) && text.includes?("{{")
+        if origin = value_failure_var_origin(task, message, reachable_from: text, host: host)
+          return origin
+        end
+      end
+      nil
+    end
+
     # The `[ERROR]:` chain block real 2.19.11 prints on stdout for a
     # loop-source / loop-item templating failure (live-captured):
     #
@@ -8405,6 +8434,14 @@ module Krikri
         # "{{ sensu_backend.namespaces }}"` over a dict-literal var, issue
         # #239): no definition qualifies there, so the scan yields nil.
         if origin = value_failure_var_origin(task, inner.to_s, reachable_from: task.loop_template, first_leaf: !task.loop_template.nil?, host: host)
+          cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        elsif task.loop_template.nil? &&
+              (origin = literal_loop_item_value_failure_origin(task, inner.to_s, host))
+          # A literal item list has no loop_template to seed the scan from,
+          # so each entry's own text supplies the reachability seed in turn
+          # (issue #1846). A source that carries the miss itself
+          # (`loop: "{{ d.ns }}"` over a dict literal, issue #239) still
+          # lands on the loop keyword's token below.
           cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
         elsif pos = locate_loop_source_line(lines, task)
           cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])

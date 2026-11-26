@@ -1,0 +1,10 @@
+- name: hostname | Updating /etc/hosts
+  lineinfile:
+    path: /etc/hosts
+    regexp: "^{{ item }}"
+    line: "{{ item }} {{ freeIPA_server_fqdn }} {{ ansible_hostname }}"
+    state: present
+  become: true
+  with_items:
+    - 127.0.1.1
+    - "{{ freeIPA_server_ip_address }}"

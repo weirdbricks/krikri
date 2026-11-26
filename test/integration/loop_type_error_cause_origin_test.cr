@@ -116,4 +116,55 @@ describe "loop type-error cause stanza origin" do
     text.must_include("object of type 'dict' has no attribute 'servers'\nOrigin: #{defaults}:2:18")
     text.wont_include("Origin: #{tasks}:5:13")
   end
+
+  # Issue #1846 (mrlesmithjr.ansible_freeipa_server) - the LITERAL-with_items
+  # sibling of the case above: the failing entry is a bare reference to a role
+  # default whose own value reads a hostvars entry that does not exist
+  # (`hostvars[inventory_hostname]['ansible_enp0s8']` on a host without that
+  # interface). Real names the per-host HostVarsVars wrapper and points the
+  # cause stanza at that default's value token, not at the `with_items:` entry
+  # that read it (live-verified vs 2.21.6).
+  it "pins the cause Origin at a literal loop item's referenced definition" do
+    dir = PluginSpecHelper.tmp_path("loop-item-attr-def-origin")
+    FileUtils.mkdir_p(File.join(dir, "roles", "freeipa", "defaults"))
+    FileUtils.mkdir_p(File.join(dir, "roles", "freeipa", "tasks"))
+    pb = File.join(dir, "pb.yml")
+    File.write(pb, <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - freeipa
+      YAML
+    tasks = File.join(dir, "roles", "freeipa", "tasks", "main.yml")
+    File.write(tasks, <<-YAML)
+      - name: hostname | Updating /etc/hosts
+        lineinfile:
+          path: /etc/hosts
+          regexp: "^{{ item }}"
+          line: "{{ item }} {{ freeIPA_server_fqdn }} {{ ansible_hostname }}"
+          state: present
+        become: true
+        with_items:
+          - 127.0.1.1
+          - "{{ freeIPA_server_ip_address }}"
+      YAML
+    defaults = File.join(dir, "roles", "freeipa", "defaults", "main.yml")
+    File.write(defaults, <<-YAML)
+      ---
+      freeIPA_server_fqdn: "{{ freeIPA_server_hostname }}.{{ freeIPA_server_domain }}"
+      freeIPA_server_hostname: "{{ ansible_hostname }}"
+      freeIPA_server_ip_address: "{{ hostvars[inventory_hostname]['ansible_' + freeIPA_server_ip_int]['ipv4']['address'] }}"
+      freeIPA_server_ip_int: enp0s8
+      YAML
+
+    stdout = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, pb], output: stdout, error: Process::Redirect::Inherit)
+    text = stdout.to_s
+
+    text.must_include("[ERROR]: Task failed: object of type 'HostVarsVars' has no attribute 'ansible_enp0s8'")
+    text.must_include("object of type 'HostVarsVars' has no attribute 'ansible_enp0s8'\nOrigin: #{defaults}:4:28")
+    text.wont_include("Origin: #{tasks}:9:7")
+  end
 end

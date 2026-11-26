@@ -103,6 +103,8 @@ def recorded_install_command(log : String, invocations : Int32 = 1) : String
 end
 
 describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
+  exclusive!
+
   it "builds the documented baseline when none of the new params are set" do
     with_recording_pkg_managers do |log|
       result = PluginSpecHelper.run("dnf", {"name" => "fake-pkg", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
@@ -488,8 +490,12 @@ SH
 # front of PATH. Unlike #with_recording_pkg_managers this dummy dnf
 # logs EVERY invocation including the availability probe, so a spec
 # can assert the exact probe/install sequence. Like the helper above,
-# everything travels through ENV, so the whole block holds ENV_MUTEX
-# against the parallel workers.
+# everything travels through ENV; the fake dnf is answered by ANY dnf
+# run in the process, including one a concurrent test starts without
+# opting into ENV_MUTEX (a dnf/yum unit spec's own in-process plugin
+# run then logged its autoremove into this spec's argv log), so the
+# describes using it are `exclusive!` rather than merely serial:
+# ENV_MUTEX alone only keeps serial-vs-serial apart.
 private def with_issue280_pkg_managers(provides : Array(String) = [] of String, available : Array(String) = [] of String, depsolve : Bool = false, &)
   PluginSpecHelper::ENV_MUTEX.synchronize do
     bin_dir = File.tempname("krikri-issue280-fakes")
@@ -527,6 +533,8 @@ private def with_issue280_pkg_managers(provides : Array(String) = [] of String, 
 end
 
 describe "dnf plugin - same-name repo package vs a Provides: match (issue 280)" do
+  exclusive!
+
   it "sends an available-name package to the install batch despite a Provides: match" do
     with_issue280_pkg_managers(provides: ["curl"], available: ["curl"]) do |log|
       result = PluginSpecHelper.run("dnf", {"name" => "curl", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})
@@ -595,6 +603,8 @@ end
 # live-verified Rocky 10) and the task fatal'd with
 # "No package bash available." - so the probe runs without them.
 describe "dnf plugin - no-op resolution probe vs goal filters (issue 1115)" do
+  exclusive!
+
   it "keeps the security/bugfix/exclude goal filters out of the installed-package no-op probe" do
     with_issue280_pkg_managers(provides: ["bash"], available: [] of String) do |log|
       result = PluginSpecHelper.run("dnf", {
@@ -625,6 +635,8 @@ end
 # specs above pin theirs; the dnf.py citations behind each
 # expectation live in handle_upgrade_all's comment.
 describe "dnf plugin - '*' upgrade-all best handling (issue 299)" do
+  exclusive!
+
   # dnf.py has nothing that turns best on for the bare upgrade_all
   # goal, and this CLI would otherwise pick dnf.conf's best=True up -
   # so the bare form carries --nobest outright, right where the
