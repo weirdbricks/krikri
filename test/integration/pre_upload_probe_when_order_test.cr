@@ -29,11 +29,15 @@ SH
   File.write(File.join(dir, "playbook.yml"), playbook_yaml)
 
   output = IO::Memory.new
+  # One real pipe for both streams (2>&1 in the shell): Process.run with
+  # `error:` pointed at the same IO still gives the child two pipes drained by
+  # two fibers, so the tail of each stream landed in the buffer in whatever
+  # order those fibers woke - this test failed ~1 run in 10 for that reason
+  # alone, never because the block was actually printed after the report.
   Process.run(
-    PROBE_ORDER_BINARY,
-    ["-i", "inventory.ini", "playbook.yml"],
+    "sh",
+    ["-c", "exec \"$0\" \"$@\" 2>&1", PROBE_ORDER_BINARY, "-i", "inventory.ini", "playbook.yml"],
     output: output,
-    error: output,
     chdir: dir,
     env: {
       "ANSIBLE_NOCOLOR"                 => "1",
