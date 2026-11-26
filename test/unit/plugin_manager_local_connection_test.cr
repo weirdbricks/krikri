@@ -242,6 +242,18 @@ end
 # removes the SHARED per-user staging dir other tests' local become
 # children exec from, a genuinely host-visible mutation, hence
 # exclusive! (like the PATH-blanking specs).
+#
+# The wipe is scoped to THIS user's per-user dir on purpose. `exclusive!`
+# quiesces only this process's test fibers; the sibling shards are separate
+# OS processes, and an aws_ssm host stages its plugin binaries under
+# /var/tmp/.krikri-playbook-ssm-user-<hash> - which a
+# `/var/tmp/.krikri-playbook-*` wildcard deletes too. A detached async
+# worker execs its plugin ~1-2s after launch, so a wildcard wipe that lands
+# in that window makes the worker report
+# "exec: /var/tmp/.../plugins/shell: not found" into its job file, and the
+# polling controller (which only accepts a JSON status) runs the whole
+# async budget and reports "Timeout exceeded" - the flake that hit the
+# aws_ssm async become-password spec.
 describe "a local become staging dir wiped mid-run (issue #1109)" do
   exclusive!
 
@@ -262,7 +274,7 @@ describe "a local become staging dir wiped mid-run (issue #1109)" do
             become_flags: '--login'
 
           - name: target plugin cache is wiped
-            shell: rm -rf /var/tmp/.krikri-playbook-*
+            shell: rm -rf /var/tmp/.krikri-playbook-#{Krikri::PluginManager.staging_dir_tag(user)}
 
           - name: become run after the cache is gone
             command: echo again
