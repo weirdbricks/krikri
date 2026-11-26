@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/get_bin_path"
 
 module Krikri
   # Filesystem plugin - creates (or wipes) a filesystem via the
@@ -43,6 +44,18 @@ module Krikri
       "swap"     => {["mkswap"], ["-f"], "swap"},
       "lvm"      => {["pvcreate"], ["-f"], "LVM2_member"},
       "ufs"      => {["newfs"], [] of String, "ufs"},
+    }
+
+    # Real filesystem.py's F2fs and Btrfs subclasses resolve their mkfs
+    # binary in __init__ (get_bin_path(required=True)), and main()
+    # instantiates the class right after reading blkid's TYPE - before
+    # the same-fs branch, and in check mode too. A host without the
+    # binary therefore fails the task where krikri's check-mode shortcut
+    # used to answer "changed" (#1856, kpg
+    # 000018-multi-dpkg_divert-happy's --check run).
+    FSTYPE_INIT_BINARIES = {
+      "f2fs"  => "mkfs.f2fs",
+      "btrfs" => "mkfs.btrfs",
     }
 
     def initialize(config : JSON::Any)
@@ -187,6 +200,18 @@ module Krikri
     ) : PluginResult
       command_info = FSTYPE_COMMANDS[fstype]
       mkfs_argv, force_flags, _blkid_name = command_info
+
+      # The class instantiation real main() does here, including the
+      # required-binary lookup its F2fs/Btrfs __init__ performs. It
+      # precedes every idempotency branch, so a missing mkfs binary is a
+      # failure even in check mode and even for an already-diverged
+      # device.
+      if (init_binary = FSTYPE_INIT_BINARIES[fstype]?)
+        unless find_required_binary(init_binary)
+          return PluginResult.new(changed: false, failed: true,
+            msg: PluginHelpers::GetBinPath.missing_executable_error(init_binary, @bin_searched_paths))
+        end
+      end
 
       create_filesystem(
         dev, current_fs, fs_class_of(current_fs), fs_class_of(fstype),

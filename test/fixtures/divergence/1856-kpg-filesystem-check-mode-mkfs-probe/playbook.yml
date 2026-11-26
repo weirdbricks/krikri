@@ -1,0 +1,20 @@
+# kpg 000018-multi-dpkg_divert-happy's Filesystem task (issue #1856), as the
+# generator ran it: fstype f2fs against a regular file that exists, in check
+# mode. Real filesystem.py instantiates the per-fstype class right after
+# blkid, and F2fs.__init__ resolves mkfs.f2fs with get_bin_path(required=True)
+# - so a host without f2fs-tools fails the task there, before any
+# check-mode "changed" answer. `dev:` points into the case's own scratch tree
+# instead of the generator fixture's /tmp/kpg-work.
+- name: 'Krikri-playbook-generator: multi-task #18.1 (Filesystem task)'
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: 'Filesystem #18.1'
+      community.general.filesystem:
+        dev: '{{ playbook_dir }}/dest.txt'
+        resizefs: true
+        state: present
+        fstype: f2fs
+      register: kpg_task_1
+      ignore_errors: true
