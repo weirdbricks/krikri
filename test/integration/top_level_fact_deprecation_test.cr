@@ -1970,3 +1970,69 @@ describe "INJECT_FACTS_AS_VARS deprecation from a parent block's become_user" do
     stdout.must_include("has no attribute 'no_such_group'")
   end
 end
+
+# real post-validates a task's play context - become: included - BEFORE it
+# evaluates that task's when: (`executor/task_executor.py`'s `_execute`), so a
+# conditional that then skips the task keeps the block that render printed and
+# drops only the keyword's own error. geerlingguy.homebrew's block-level
+# `become: "{{ (homebrew_user != ansible_user_id) | bool }}"` printed its
+# block once per skipped task of the block in micalexander.python2's run, and
+# the block's (or an inherited) `when:` blocked nothing (issue #1845,
+# live-verified against 2.21.6 for both fixtures below).
+describe "INJECT_FACTS_AS_VARS deprecation from a become: keyword" do
+  it "prints a skipped block's block-level become: block before its when: block" do
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - block:
+              - block:
+                  - name: Force update brew after installation.
+                    debug:
+                      msg: ok
+                become: "{{ (homebrew_user != ansible_user_id) | bool }}"
+                become_user: "{{ homebrew_user }}"
+            when: ansible_distribution == 'MacOSX'
+      PLAYBOOK
+    })
+
+    playbook = File.join(dir, "play.yml")
+    stdout.must_include("TASK [Force update brew after installation.]")
+    stdout.must_include("skipping: [localhost]")
+    stdout.wont_include("FAILED")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    become_at = stderr.index("Origin: #{playbook}:10:19\n")
+    when_at = stderr.index("Origin: #{playbook}:12:13\n")
+    become_at.wont_be_nil
+    when_at.wont_be_nil
+    assert become_at.not_nil! < when_at.not_nil!, stderr
+  end
+
+  it "prints a skipped task's own become: block" do
+    stdout, stderr, dir = run_files({
+      "play.yml" => <<-PLAYBOOK,
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: inner task
+            debug:
+              msg: ok
+            become: "{{ ansible_user_id != '' }}"
+            when: ansible_distribution == 'MacOSX'
+      PLAYBOOK
+    })
+
+    playbook = File.join(dir, "play.yml")
+    stdout.must_include("skipping: [localhost]")
+    stdout.wont_include("FAILED")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    become_at = stderr.index("Origin: #{playbook}:8:15\n")
+    when_at = stderr.index("Origin: #{playbook}:9:13\n")
+    become_at.wont_be_nil
+    when_at.wont_be_nil
+    assert become_at.not_nil! < when_at.not_nil!, stderr
+  end
+end

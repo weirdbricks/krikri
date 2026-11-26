@@ -1326,6 +1326,13 @@ module Krikri
     property source_line : Int32 = 0
     property vars : Hash(String, JSON::Any)
     property? become : Bool
+    # Raw `{{ ... }}` text when the CURRENT parse window's ambient become:
+    # is a templated expression - the play's own, or a block:/import
+    # statement's. A task that wrote no become: of its own inherits the
+    # expression and renders it per host at execution time (Task
+    # #become_expr), the way ansible's inherited FieldAttribute chain hands
+    # the block's value down (issue #1845).
+    property become_expr : String?
     property become_user : String?
     property become_flags : String?
     # Raw text of a become: value ansible's boolean() refuses, for the
@@ -3071,7 +3078,8 @@ module Krikri
       # task and handler that lacks its own become: pick it up while the
       # tasks parse, and its value token labels the chain's lower links.
       play.become_invalid = invalid_bool_keyword_text(yaml["become"]?)
-      if play.become_invalid
+      play.become_expr = yaml.as_h?.try { |task_hash| become_expr(task_hash) }
+      if play.become_invalid || play.become_expr
         if origin = play_keyword_origin(source_file, source_map, index, "become")
           origins = (play.inherited_become_origins || Hash(String, {String, Int32, Int32}).new).dup
           origins["become"] = origin
@@ -3908,6 +3916,7 @@ module Krikri
       # temp-file setup, while here the whole role actually executed
       # (real network installer + keyserver timeouts, ~250s vs ~5s).
       saved_become = play.become?
+      saved_become_expr = play.become_expr
       saved_become_user = play.become_user
       saved_become_flags = play.become_flags
       saved_become_origins = play.inherited_become_origins
@@ -3915,6 +3924,7 @@ module Krikri
       play.become = resolve_become(hash, play)
       if hash["become"]?
         play.become_invalid = invalid_bool_keyword_text(hash["become"]?)
+        play.become_expr = become_expr(hash)
       end
       play.become_user = hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       play.become_flags = hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
@@ -3934,6 +3944,7 @@ module Krikri
         imported_tasks = parse_tasks(imported_yaml.as_a, play, "task in imported #{resolved_path}", File.dirname(resolved_path), known_vars, role_path, playbook_dir, File.expand_path(resolved_path), imported_source_map)
       ensure
         play.become = saved_become
+        play.become_expr = saved_become_expr
         play.become_user = saved_become_user
         play.become_flags = saved_become_flags
         play.become_invalid = saved_become_invalid
@@ -7704,6 +7715,7 @@ module Krikri
       # targeted root's session instead, "Unit file docker.service does
       # not exist" regardless of the real per-user unit's presence.
       saved_become = play.become?
+      saved_become_expr = play.become_expr
       saved_become_user = play.become_user
       saved_become_flags = play.become_flags
       saved_become_origins = play.inherited_become_origins
@@ -7711,6 +7723,7 @@ module Krikri
       play.become = resolve_become(task_hash, play)
       if task_hash["become"]?
         play.become_invalid = invalid_bool_keyword_text(task_hash["become"]?)
+        play.become_expr = become_expr(task_hash)
       end
       play.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
       play.become_flags = task_hash["become_flags"]?.try { |v| safe_yaml_to_string(v) } || play.become_flags
@@ -7719,9 +7732,10 @@ module Krikri
       # children take the block's value, whose token lives in the same
       # file they do, so the shadowed entry must not label their chains.
       play.inherited_become_origins = drop_written_become_origins(saved_become_origins, task_hash)
-      # An unconvertible block-level become: fails each child as it runs,
-      # labeled at the BLOCK's own value token (issue #1497).
-      if play.become_invalid && task_hash["become"]?
+      # An unconvertible or templated block-level become: is resolved per
+      # child as it runs, labeled at the BLOCK's own value token (issue
+      # #1497, #1845) - the child's file holds no such line to scan.
+      if task_hash["become"]? && (play.become_invalid || play.become_expr)
         if block_become_origin = ambient_become_origins(task_hash, source_file, source_map, source_prefix, source_index).try(&.["become"]?)
           origins = (play.inherited_become_origins || Hash(String, {String, Int32, Int32}).new).dup
           origins["become"] = block_become_origin
@@ -7811,6 +7825,7 @@ module Krikri
         end
       ensure
         play.become = saved_become
+        play.become_expr = saved_become_expr
         play.become_user = saved_become_user
         play.become_flags = saved_become_flags
         play.become_invalid = saved_become_invalid
@@ -10355,7 +10370,10 @@ module Krikri
     # task took from it.
     private def self.apply_become_keywords(task : Task, task_hash : Hash(YAML::Any, YAML::Any), play : Play) : Nil
       task.become = resolve_become(task_hash, play)
-      task.become_expr = become_expr(task_hash)
+      # A task that wrote no become: of its own takes the parse window's
+      # ambient expression (play, block or import line), so the template is
+      # rendered instead of the parse-time guess - see Play#become_expr.
+      task.become_expr = task_hash["become"]? ? become_expr(task_hash) : play.become_expr
       task.become_explicit = !task_hash["become"]?.nil?
       task.become_invalid = task.become_explicit? ? invalid_bool_keyword_text(task_hash["become"]?) : play.become_invalid
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user

@@ -2927,10 +2927,22 @@ module Krikri
       # ansible_user set (issue #420's matrix probe, live-verified vs
       # 2.19.11), while the old full-context render converted 'labros'
       # and reported the wrong could-not-convert wording.
+      #
+      # The render is registered as the fiber's templated param so a
+      # top-level fact read inside an INLINE expression prints its
+      # INJECT_FACTS_AS_VARS block Origin'd at that value token - real tags
+      # the keyword's scalar and audits every read of its template, which
+      # geerlingguy.homebrew's block-level
+      # `become: "{{ (homebrew_user != ansible_user_id) | bool }}"` relies
+      # on (issue #1845). Without the registration the read has no
+      # placeable Origin here and the block vanishes.
       rendered = begin
+        VarSubstitutor.set_current_task_param(task.source_file, task.source_line, "become", expr, origin: keyword_value_origin(task, "become"))
         become_keyword_substitutor(task, host, vars_context, substitutor).substitute(expr, strict: true)
       rescue e : UndefinedVariableError
         raise UndefinedVariableError.new("Task failed: Error processing keyword 'become': #{e.message}")
+      ensure
+        VarSubstitutor.pop_current_task_param
       end
       decided = ansible_become_string_boolean(rendered)
       return decided unless decided.nil?
@@ -6757,6 +6769,31 @@ module Krikri
         # Python's `and` short-circuits, so a clause past the first False one
         # is never templated and a fact read in it warns about nothing.
         break if clause == @last_false_condition
+      end
+    end
+
+    # A task inside a when:-false block never reaches its own execution, but
+    # real still post-validates its play context (become: included) before
+    # deciding to skip it - so a fact read the become: template trips prints
+    # itself right after that child's banner, ahead of the block's own
+    # conditional block (live-verified vs 2.21.6: geerlingguy.homebrew's
+    # `become: "{{ (homebrew_user != ansible_user_id) | bool }}"` block
+    # reports its warning at the first child's banner, issue #1845). The
+    # render's own failure is dropped here the way real drops it for a
+    # skipped task; only its deprecation side effect is observable.
+    private def emit_skipped_task_become_deprecation(task : Task, host : Host) : Nil
+      return unless task.become_expr
+
+      vars_context = begin
+        build_vars_context(task, host)
+      rescue
+        return
+      end
+      substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      begin
+        resolve_task_become_flag(task, host, vars_context, substitutor)
+      rescue
+        # see the comment above
       end
     end
 

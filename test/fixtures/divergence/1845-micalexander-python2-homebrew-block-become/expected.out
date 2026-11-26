@@ -1,0 +1,33 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [Force update brew after installation.] ***********************************
+skipping: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/playbook.yml:18:19
+
+16           # Privilege escalation is only required for inner steps when
+17           # the `homebrew_user` doesn't match the `ansible_user_id`
+18           become: "{{ (homebrew_user != ansible_user_id) | bool }}"
+                     ^ column 19
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/playbook.yml:20:13
+
+18           become: "{{ (homebrew_user != ansible_user_id) | bool }}"
+19           become_user: "{{ homebrew_user }}"
+20       when: ansible_distribution == 'MacOSX'
+               ^ column 13
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
