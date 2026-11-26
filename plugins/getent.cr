@@ -81,9 +81,9 @@ module Krikri
       end
 
       database = @params["database"].to_s
-      key = @params["key"]?
-      service = @params["service"]?
-      split = @params["split"]?
+      key = absent_or_null("key")
+      service = absent_or_null("service")
+      split = absent_or_null("split")
       fail_key = @params["fail_key"]? ? true?(@params["fail_key"]) : true
 
       # 2.21 added an explicit guard for an empty split: a str param that
@@ -248,9 +248,9 @@ module Krikri
       args = Hash(String, JSON::Any).new
       args["database"] = JSON::Any.new(database)
       args["fail_key"] = JSON::Any.new(@params["fail_key"]? ? true?(@params["fail_key"]) : true)
-      args["key"] = (v = @params["key"]?) ? JSON::Any.new(v) : JSON::Any.new(nil)
-      args["service"] = (v = @params["service"]?) ? JSON::Any.new(v) : JSON::Any.new(nil)
-      args["split"] = (v = @params["split"]?) ? JSON::Any.new(v) : JSON::Any.new(nil)
+      args["key"] = (v = absent_or_null("key")) ? JSON::Any.new(v) : JSON::Any.new(nil)
+      args["service"] = (v = absent_or_null("service")) ? JSON::Any.new(v) : JSON::Any.new(nil)
+      args["split"] = (v = absent_or_null("split")) ? JSON::Any.new(v) : JSON::Any.new(nil)
       JSON::Any.new({"module_args" => JSON::Any.new(args)})
     end
 
@@ -271,6 +271,17 @@ module Krikri
       found, _, searched = result[:stdout].to_s.strip.partition("\n")
       @searched_paths = searched
       found.empty? ? nil : found
+    end
+
+    # getent.py reads key/service/split through `module.params.get()`, which
+    # is None both when the play omitted the param and when it passed an
+    # explicit YAML null. A role asking for the whole database spells it
+    # `key:` (totaldebug.users' "Get all users from device"); treating that
+    # null as the empty string turned enumeration into `getent passwd ''`,
+    # whose rc 2 failed the task and stopped every task after it.
+    private def absent_or_null(name : String) : String?
+      return nil if explicit_null_param?(name)
+      @params[name]?
     end
 
     private def sh_quote(value : String) : String

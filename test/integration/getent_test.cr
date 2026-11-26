@@ -98,6 +98,41 @@ describe "getent plugin" do
     module_args["key"].raw.must_be_nil
   end
 
+  it "enumerates the database when key is an explicit YAML null, not an empty key" do
+    # totaldebug.users' "Get all users from device" writes `key:` with no
+    # value to ask for the whole passwd database - getent.py's
+    # `module.params.get('key')` is None for that, exactly as when the
+    # param is absent, so it runs `getent passwd` with no key at all. The
+    # demoted "" this plugin used to read sent `getent passwd ''`, whose
+    # rc 2 failed the task and skipped every task after it.
+    result = PluginSpecHelper.run_raw("getent", {
+      "database" => JSON::Any.new("passwd"),
+      "key"      => JSON::Any.new(nil),
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    passwd = result["ansible_facts"]["getent_passwd"].as_h
+    expect((passwd.size) > (1)).must_equal(true)
+    passwd["root"].as_a.size.must_equal(6)
+    result["invocation"]["module_args"]["key"].raw.must_be_nil
+  end
+
+  it "enumerates the database when split and service are explicit YAML nulls" do
+    # Same `module.params.get()` None semantics for the other two optional
+    # strings: a null split is NOT the empty string the 2.21 guard rejects
+    # ("Invalid split value..."), and a null service must not reach the
+    # getent binary as `-s ''` (which crashes it, rc 139).
+    result = PluginSpecHelper.run_raw("getent", {
+      "database" => JSON::Any.new("passwd"),
+      "split"    => JSON::Any.new(nil),
+      "service"  => JSON::Any.new(nil),
+    })
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    passwd = result["ansible_facts"]["getent_passwd"].as_h
+    passwd["root"].as_a.size.must_equal(6)
+    result["invocation"]["module_args"]["split"].raw.must_be_nil
+    result["invocation"]["module_args"]["service"].raw.must_be_nil
+  end
+
   it "does not fail a missing key when fail_key is false, and maps it to a real null (not an empty array)" do
     # Real bug found benchmarking filviu.activemq/.tomcat's own "env |
     # determine if <user> exists" -> "setup | create system user" pair
