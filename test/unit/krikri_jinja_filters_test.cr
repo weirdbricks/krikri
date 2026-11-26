@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/variable_substitutor"
 require "../../src/krikri/variable_substitutor/filter_engine"
 require "../../src/krikri/krikri_jinja_filters"
 
@@ -106,6 +107,28 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ ['podman'] | union({'podman-plugins': ['5.0']}) | join(',') }}").must_equal("podman,podman-plugins")
     render("{{ ['podman'] | intersect({'podman': ['5.0']}) | join(',') }}").must_equal("podman")
     render("{{ ['podman'] | symmetric_difference({'podman-plugins': ['5.0']}) | join(',') }}").must_equal("podman,podman-plugins")
+  end
+
+  it "path_join fails like os.path.join on a strict undefined inside a tuple" do
+    # ansible's path_join hands a TUPLE operand straight to os.path.join, so
+    # a strict undefined crossing it fails THERE, TypeError included in the
+    # plugin wrapper - live-verified vs 2.21.6, issue #1853. A LIST literal
+    # keeps the attribute miss: real consumes its elements before the filter
+    # runs, so there the miss itself is the message.
+    vars = {"result" => JSON.parse(%({"skipped": true, "changed": false}))}
+    sub = Krikri::VarSubstitutor.new(vars: vars)
+    assert_raises_message(
+      Krikri::UndefinedVariableError,
+      "The filter plugin 'ansible.builtin.path_join' failed: expected str, bytes or os.PathLike object, not UndefinedMarker"
+    ) do
+      sub.substitute(%({{ (result.path, 'acmesh.zip') | path_join }}), strict: true)
+    end
+    assert_raises_message(
+      Krikri::UndefinedVariableError,
+      "object of type 'dict' has no attribute 'path'"
+    ) do
+      sub.substitute(%({{ [result.path, 'acmesh.zip'] | path_join }}), strict: true)
+    end
   end
 
   it "registers the ipaddr family (FQCN only), jmespath, and conversion filters" do

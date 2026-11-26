@@ -1,0 +1,23 @@
+---
+# The failing tasks from xolyu.acmesh's tasks/10_install.yml (issue #1853),
+# copied verbatim. Only `_acmesh_zipball_url` is pinned here: the role sets it
+# from its release vars, and the get_url task never reaches the URL because its
+# `dest` argument fails finalization first. Run with --check (flags.txt), which
+# is what makes `tempfile` skip and the register hold no `path` key.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    _acmesh_zipball_url: "https://example.com/acmesh.zip"
+  tasks:
+    - name: Create temp directory for download.
+      tempfile:
+        state: directory
+        suffix: ".acmesh"
+      register: _acmesh_tempdir
+
+    - name: Download acme-sh archive.
+      get_url:
+        url: "{{ _acmesh_zipball_url }}"
+        dest: "{{ (_acmesh_tempdir.path, 'acmesh.zip') | path_join }}"
+        mode: 0640

@@ -1083,10 +1083,29 @@ module Krikri
         JSON::Any.new(VariableSubstitutor::FilterCore.symmetric_difference(VariableSubstitutor::FilterCore.to_set_items(value), args[0]?.try { |arg| VariableSubstitutor::FilterCore.to_set_items(arg) } || [] of JSON::Any))
       end
 
-      # path_join takes a list of components; an absolute one resets.
-      KrikriJinja.register_default_json_filter("path_join") do |value, _args, _kwargs|
-        parts = value.as_a?.try(&.map { |part| py_str(part) }) || [py_str(value)]
-        JSON::Any.new(VariableSubstitutor::FilterCore.path_join(parts))
+      # path_join takes a list of components; an absolute one resets. Native
+      # (not JSON-wrapped) because ansible's own path_join hands a TUPLE
+      # operand straight to os.path.join: a strict undefined inside one
+      # crosses the filter unconsumed and fails THERE, TypeError included in
+      # the plugin wrapper ("The filter plugin 'ansible.builtin.path_join'
+      # failed: expected str, bytes or os.PathLike object, not
+      # UndefinedMarker", live-verified vs 2.21.6, issue #1853). The JSON
+      # wrapper finalized the undefined on the way in, so the task reported
+      # the attribute miss instead. A LIST literal keeps the old behavior on
+      # purpose: real consumes a list literal's elements before the filter
+      # runs, so there the attribute miss IS the message (also live-verified).
+      KrikriJinja.register_default_filter("path_join") do |value, _args, _kwargs, _ctx|
+        if (tuple = value.raw.as?(KrikriJinja::TupleValue)) &&
+           tuple.items.any? { |part| part.raw.as?(KrikriJinja::Undefined).try(&.strict?) }
+          raise KrikriJinja::TemplateError.new(
+            "The filter plugin 'ansible.builtin.path_join' failed: " \
+            "expected str, bytes or os.PathLike object, not UndefinedMarker",
+            0, kind: KrikriJinja::ErrorKind::Undefined
+          )
+        end
+        json = KrikriJinja.to_json_any(value)
+        parts = json.as_a?.try(&.map { |part| py_str(part) }) || [py_str(json)]
+        KrikriJinja.from_json_any(JSON::Any.new(VariableSubstitutor::FilterCore.path_join(parts)))
       end
 
       KrikriJinja.register_default_json_filter("split") do |value, args, _kwargs|
