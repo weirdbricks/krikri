@@ -1,0 +1,5 @@
+# set java home if exists
+if [ -e "{{ java_home }}" ]; then
+    export JAVA_HOME={{ java_home }}
+    export PATH=$PATH:$JAVA_HOME/bin
+fi

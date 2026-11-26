@@ -1,0 +1,35 @@
+# mjcramer.java tasks/configure.yml:16-24, the task that diverged, plus one
+# NON-check run of it that recreates the state the role's warm rerun left on
+# the host: a converged profile whose mode carries a special bit, which the
+# --check rerun must report as plain ok (issue #1851).
+#
+# The role's own `mode: 600` is an unquoted YAML int, so real's basic.py
+# keeps 600 as an INT and chmods 600 decimal = 0o1130 (sticky set). The
+# diverging comparison is identical, but 0o1130 has no read bit at all, so a
+# non-root replay cannot read the converged file in either engine and both
+# report changed for the same unreadable-content reason instead of exposing
+# the mode comparison. 0o4755 is the readable spelling of the same thing: a
+# numeric mode whose setuid bit the comparison used to drop.
+- hosts: localhost
+  gather_facts: false
+  vars:
+    java_home: /usr/lib/jvm/java-11-openjdk-amd64
+  tasks:
+    - name: warm rerun state | create shell profile
+      template:
+        src: profile.j2
+        dest: out/{{ item }}
+        mode: "4755"
+      with_items:
+        - java.sh
+        - java.cscd h
+      check_mode: false
+
+    - name:  configure | create shell profile
+      template:
+        src: profile.j2
+        dest: out/{{ item }}
+        mode: "4755"
+      with_items:
+        - java.sh
+        - java.cscd h

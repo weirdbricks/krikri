@@ -1105,6 +1105,22 @@ module Krikri
       File.chmod(path, mode)
     end
 
+    # basic.py's `stat.S_IMODE(os.lstat(path).st_mode)`, the full permission
+    # word with setuid/setgid/sticky included. `File::Info#permissions.value`
+    # carries only the 0o777 bits, so every comparison built on it ignores
+    # those three: a converged file whose numeric mode really does set one -
+    # `mode: 600` unquoted is a YAML int, and real chmods 600 DECIMAL =
+    # 0o1130, sticky set - looked "different" to a check run and made an
+    # identical-content template task report changed on every --check
+    # (issue #1851, mjcramer.java). plugins/file.cr's own comparison grew a
+    # raw-lstat helper for the same reason; this is the shared copy/template
+    # counterpart.
+    protected def lstat_mode_bits(path : String) : Int32?
+      s = uninitialized LibC::Stat
+      return nil unless LibC.lstat(path, pointerof(s)) == 0
+      (s.st_mode & 0o7777).to_i32
+    end
+
     # The mode a staging temp should be settled at once its content lands:
     # the task's own numeric `mode:` (the authoritative final
     # mode - re-applying it post-write is a no-op, so final-state
@@ -2110,7 +2126,7 @@ module Krikri
       before = skeleton[:before]
       after = skeleton[:after]
       add_owner_group_diff(before, after, info)
-      add_mode_diff(before, after, info)
+      add_mode_diff(before, after, info, path)
       add_attributes_diff(before, after, path)
       generate_attribute_diff(before, after)
     end
@@ -2192,7 +2208,7 @@ module Krikri
       end
 
       if mode = (mode_override || file_attr_param("mode"))
-        current_bits = info.permissions.value.to_i & 0o7777
+        current_bits = lstat_mode_bits(path) || (info.permissions.value.to_i & 0o7777)
         target_bits = mode =~ /\A0?[0-7]{1,4}\z/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)
         changed = true if current_bits != target_bits
       end
@@ -2224,10 +2240,10 @@ module Krikri
     # set_mode_if_different: '0%03o' on both sides, the AFTER side being
     # the RESOLVED target (a symbolic mode computed against the current
     # stat), not the task's raw string.
-    private def add_mode_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), info : File::Info) : Nil
+    private def add_mode_diff(before : Hash(String, JSON::Any), after : Hash(String, JSON::Any), info : File::Info, path : String) : Nil
       return unless mode = file_attr_param("mode")
 
-      current_bits = info.permissions.value.to_i & 0o7777
+      current_bits = lstat_mode_bits(path) || (info.permissions.value.to_i & 0o7777)
       target_bits = mode =~ /\A0?[0-7]{1,4}\z/ ? mode.to_i(8) : resolve_symbolic_mode(current_bits, mode)
       return if current_bits == target_bits
 

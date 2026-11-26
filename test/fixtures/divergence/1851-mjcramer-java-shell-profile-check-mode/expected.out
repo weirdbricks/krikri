@@ -1,0 +1,14 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [warm rerun state | create shell profile] *********************************
+changed: [localhost] => (item=java.sh)
+changed: [localhost] => (item=java.cscd h)
+
+TASK [configure | create shell profile] ****************************************
+ok: [localhost] => (item=java.sh)
+ok: [localhost] => (item=java.cscd h)
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
