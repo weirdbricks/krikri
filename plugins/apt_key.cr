@@ -441,7 +441,7 @@ module Krikri
       current = url
       visited = {} of String => Int32
       loop do
-        result = remote_exec("curl --fail --silent --show-error #{insecure_flag}-w '%{http_code} %{redirect_url}' -o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(current)}")
+        result = remote_exec("curl --fail --silent --show-error #{insecure_flag}-w '%{http_code} %{redirect_url}' -o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(urllib_request_url(current))}")
         parts = result[:stdout].strip.split(' ', 2)
         code = parts[0]?.try(&.to_i?)
         location = parts[1]?.try { |loc| loc.empty? ? nil : loc }
@@ -519,6 +519,24 @@ module Krikri
         break
       end
       nil
+    end
+
+    # The url urllib would actually request: Request() runs every url
+    # through urllib.parse's unwrap(), whose first step is a
+    # str.strip(). A role writing the url as a YAML folded block
+    # (`url: >`, iancleary.nodejs's "Nodejs - Add Nodesource apt key.")
+    # therefore hands ansible a url ending in a newline that fetch_url
+    # silently trims and fetches, while curl 8 refuses a URL containing
+    # a control character outright ("URL rejected: Malformed input to a
+    # URL function") - issue #1864. unwrap()'s '<URL:...>' /
+    # 'URL:'-prefix trimming rides along for the same parity reason.
+    private def urllib_request_url(url : String) : String
+      unwrapped = url.strip
+      if unwrapped.size >= 2 && unwrapped.starts_with?('<') && unwrapped.ends_with?('>')
+        unwrapped = unwrapped[1, unwrapped.size - 2].strip
+      end
+      unwrapped = unwrapped[4, unwrapped.size - 4].strip if unwrapped.size >= 4 && unwrapped.starts_with?("URL:")
+      unwrapped
     end
 
     # The "<urlopen error ...>" text Python's urllib raises when it

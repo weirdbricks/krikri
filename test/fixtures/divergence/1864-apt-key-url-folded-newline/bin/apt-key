@@ -1,0 +1,5 @@
+#!/bin/bash
+# apt-key double: the module resolves it in find_needed_binaries() and
+# lists the (empty) keyring before fetching the url:, then the fetch
+# itself fails, so nothing is ever added.
+exit 0

@@ -1,0 +1,22 @@
+---
+# iancleary.nodejs's "Nodejs - Add Nodesource apt key." task, copied
+# verbatim except for the URL host: the real role fetches the key from
+# keyserver.ubuntu.com, but the suite has no network. Port 1 on loopback
+# is refused instantly, so urllib and curl both report the connection
+# refusal, and the message's raw url - which still carries the folded
+# scalar's trailing newline - is what the recorded transcript pins.
+- hosts: local
+  gather_facts: false
+  environment:
+    # The case-relative apt-key double below: the module's
+    # find_needed_binaries() and pre-add keyring listing need one, and
+    # this box has no real apt-key (nothing is ever added - the fetch
+    # fails first - so the double only has to exist and exit 0).
+    PATH: "{{ playbook_dir }}/bin:/usr/local/bin:/usr/bin:/bin"
+  tasks:
+    - name: Nodejs - Add Nodesource apt key.
+      ansible.builtin.apt_key:
+        url: >
+          http://127.0.0.1:1/pks/lookup?op=get&fingerprint=on&search=0x1655A0AB68576280
+        id: "68576280"
+        state: present

@@ -16,11 +16,16 @@ private FAKE_KEY_BODY = "not a real GPG key, just spec fixture content\n"
 # binary compiles every file together, so the url:-fetch double's
 # server becomes private file-level constants started once at require
 # time (as before).
+private APT_KEY_VALID_KEY_PATH = File.join(__DIR__, "..", "fixtures", "apt_key_spec_valid_key.asc")
+
 private APT_KEY_TEST_SERVER = HTTP::Server.new do |context|
   case context.request.path
   when "/key.asc"
     context.response.status_code = 200
     context.response.print(FAKE_KEY_BODY)
+  when "/valid-key.asc"
+    context.response.status_code = 200
+    context.response.print(File.read(APT_KEY_VALID_KEY_PATH))
   when "/temporary-redirect-307"
     # urllib's HTTPRedirectHandler follows this hop; curl's --location
     # would too. Relative Location exercises the same urljoin the real
@@ -386,6 +391,24 @@ describe "apt_key plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.wont_include("Failed to fetch key")
+  end
+
+  it "trims whitespace around a url: the way urllib's Request() does (YAML folded url:, issue #1864)" do
+    # iancleary.nodejs writes the key url as a YAML folded block
+    # (`url: >`), so the module receives it with a trailing newline.
+    # ansible's fetch_url passes it through urllib's Request(), whose
+    # unwrap() starts with str.strip(), and fetches it normally; curl 8
+    # rejects a URL containing any control character ("URL rejected:
+    # Malformed input to a URL function"), so krikri failed the task
+    # where ansible reported changed (issue #1864).
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do |env|
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "id" => "1278AEBD", "url" => " #{APT_KEY_TEST_BASE}/valid-key.asc\n"}, env: env)
+
+      result["changed"].as_bool.must_equal(true)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    end
+    File.delete(state) rescue nil
   end
 
   it "fails a 308 url: with urllib's HTTP Error instead of following it like curl" do
