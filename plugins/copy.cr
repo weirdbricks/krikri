@@ -561,6 +561,24 @@ module Krikri
         end
       end
 
+      # copy.py's own pre-check, ahead of the write: atomic_move needs write
+      # permission on the DEST DIRECTORY (its temp+rename cannot work
+      # without it), so a read-only directory fails the task even when dest
+      # itself is writable, while unsafe_writes: bypasses the check and
+      # falls back to a direct in-place write. This is also the in-process
+      # shape of the issue #1841 task for a non-root user (dest
+      # /etc/resolv.conf, /etc not writable) - live-verified vs 2.21.6,
+      # whose fatal carries the action-injected checksum.
+      if !true?(@params["unsafe_writes"]?) && !File::Info.writable?(dest_dir)
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Destination #{dest_dir} not writable",
+          checksum: content_sha1,
+          key_order: ["diff", "failed", "msg", "checksum"]
+        )
+      end
+
       # Write the file (staged + validated first when validate: is given;
       # content_sha1 rides along because Ansible's copy ACTION plugin injects
       # `checksum` (its local_checksum) into any module result that lacks
@@ -868,6 +886,22 @@ module Krikri
         end
       end
 
+      # copy.py's dest-directory writability pre-check (see
+      # #handle_content_copy's identical one): a remote_src copy has no
+      # controller-side local_checksum for the copy action to inject into a
+      # failed result (its flow runs the module directly - same rule as the
+      # identical-content branch above).
+      if !true?(@params["unsafe_writes"]?) && !File::Info.writable?(dest_dir)
+        result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Destination #{dest_dir} not writable",
+          key_order: ["diff", "failed", "msg", "checksum"]
+        )
+        result.extra["checksum"] = JSON::Any.new(src_sha1) unless true?(@params["remote_src"]?)
+        return result
+      end
+
       # Copy the file (staged + validated first when validate: is given -
       # src_sha1 was already computed above for the idempotency check, so
       # this reads src a second time only on the validate: path). The
@@ -884,7 +918,7 @@ module Krikri
         write_failure = write[:failure]
         return write_failure if write_failure
       else
-        write = atomic_write(File.read(src), dest, keep_dest_attrs)
+        write = atomic_write(File.read(src), dest, src_sha1, keep_dest_attrs)
         write_failure = write[:failure]
         return write_failure if write_failure
       end
@@ -1220,9 +1254,16 @@ module Krikri
     # (round996005 deploy_helper_helper_block).
     # The errnos real's atomic_move works around (module_utils/basic.py:
     # EPERM/EACCES/ETXTBSY/EXDEV/EBUSY); any other first-rename errno
-    # fails the write locally, matching this path's own "Failed to move
-    # file to destination" shape.
+    # crashes the module with "Could not replace ..." while a workaround
+    # errno renames through a stage next to dest (see
+    # #atomic_move_workaround).
     private ATOMIC_MOVE_WORKAROUND_ERRNOS = [1, 13, 16, 18, 26]
+
+    # The fatal dump's key order for an atomic_move crash: the copy ACTION
+    # plugin backfills local_checksum into any result lacking one, failures
+    # included, so real prints {"changed", "checksum", "msg"} (live-verified
+    # vs ansible-core 2.21.6 on the bind-mounted-dest EBUSY, issue #1841).
+    private RENAME_CRASH_KEY_ORDER = ["changed", "checksum", "msg"]
 
     private ANSIBLE_TMP_RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_"
 
@@ -1255,10 +1296,115 @@ module Krikri
       expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/.source#{File.extname(dest)}")
     end
 
+    # The src real's atomic_move crash details echo: a content/src copy's
+    # module was handed the action plugin's staged `.source<ext>` (see
+    # #staged_src_echo), while a remote_src copy mkstemps its own `tmp` +
+    # 8-random candidate NEXT TO dest and moves that (copy.py's remote_src
+    # branch), so its crash names that shape instead.
+    private def atomic_move_src_echo(dest : String) : String
+      if true?(@params["remote_src"]?)
+        File.join(File.dirname(dest), "tmp#{ansible_tmp_random(8)}")
+      else
+        staged_src_echo(dest)
+      end
+    end
+
+    # The [Errno N] text the way Python's str(OSError) renders it, from the
+    # failing call's own errno - the kernel's wording ("Device or resource
+    # busy" onto a bind mount, "Operation not permitted" for a sticky
+    # directory, ...) is what real echoed, and os.rename's OSError repr
+    # carries the byte paths it was called with.
+    private def rename_errno_text(ex : File::Error, from_path : String, to_path : String? = nil) : String
+      errno = ex.os_error
+      base = errno.is_a?(Errno) ? "[Errno #{errno.value}] #{errno.message}" : ex.message.to_s
+      return "#{base}: b'#{from_path}' -> b'#{to_path}'" if to_path
+      "#{base}: b'#{from_path}'"
+    end
+
+    # The crash shape for every atomic_move failure: real's module crash
+    # wrapper joins the raise's message with its underlying OSError the way
+    # _text_utils.concat_message does (outer message's trailing period
+    # stripped, ": " between), and ResultDisplay splits the pair back out
+    # under "<<< caused by >>>" via its failed-final-rename rule - the same
+    # shapes template.cr/blockinfile.cr/lineinfile.cr/authorized_key.cr ride
+    # for their own rename ladders. The checksum rides because copy's action
+    # plugin backfills it into any result lacking one (issue #1841).
+    private def atomic_move_crash(detail : String, cause_text : String, content_sha1 : String) : PluginResult
+      joined = "#{detail.rstrip(". ")}: #{cause_text}"
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{joined}",
+        checksum: content_sha1,
+        key_order: RENAME_CRASH_KEY_ORDER,
+        _ansible_error_detail: joined)
+    end
+
+    # AnsibleModule.atomic_move's rename ladder (module_utils/basic.py): on
+    # one of the workaround errnos, a stage mkstemp'd NEXT to dest
+    # (`.ansible_tmp` + an 8-char Python-tempfile run + dest's own basename
+    # - the name matters for output parity, the crash detail names it), the
+    # staged content moved into it, then the final rename into place. When
+    # even that cannot land (EBUSY onto a container's bind-mounted
+    # /etc/resolv.conf, issue #1841, or EPERM onto a foreign-owned dest in a
+    # root-owned sticky directory) real crashes the whole MODULE with
+    # "Unable to make ... failed final rename from ..." rather than
+    # reporting a softer local failure. unsafe_writes keeps real's escape
+    # hatches: a direct in-place dest write for the stage-creation and move
+    # failures, and - real's inner handler is EBUSY-only there - the final
+    # rename. nil on success.
+    private def atomic_move_workaround(temp_file : String, dest : String, content : String,
+                                       content_sha1 : String, keep_dest_attrs : Bool,
+                                       secontext : Array(String?)?, first_error : File::Error) : PluginResult?
+      src_echo = atomic_move_src_echo(dest)
+      errno = first_error.os_error.try(&.value)
+      unless errno && ATOMIC_MOVE_WORKAROUND_ERRNOS.includes?(errno)
+        return atomic_move_crash(
+          "Could not replace '#{dest}' with b'#{src_echo}'.",
+          rename_errno_text(first_error, src_echo, dest), content_sha1)
+      end
+
+      stage_path = File.join(File.dirname(dest), ".ansible_tmp#{ansible_tmp_random(8)}#{File.basename(dest)}")
+      begin
+        File.write(stage_path, "")
+      rescue err : File::Error
+        if true?(@params["unsafe_writes"]?)
+          return unsafe_write_fallback(content, dest, secontext)
+        end
+        return atomic_move_crash(
+          "The destination directory '#{File.dirname(dest)}' is not writable by the current user.",
+          rename_errno_text(err, stage_path), content_sha1)
+      end
+
+      begin
+        FileUtils.mv(temp_file, stage_path)
+      rescue err : File::Error
+        File.delete(stage_path) if File.exists?(stage_path)
+        if true?(@params["unsafe_writes"]?)
+          return unsafe_write_fallback(content, dest, secontext)
+        end
+        return atomic_move_crash(
+          "Failed to replace '#{dest}' with b'#{src_echo}'.",
+          rename_errno_text(err, src_echo, stage_path), content_sha1)
+      end
+
+      apply_dest_attrs(stage_path, dest) if keep_dest_attrs
+      begin
+        File.rename(stage_path, dest)
+      rescue err : File::Error
+        File.delete(stage_path) if File.exists?(stage_path)
+        if true?(@params["unsafe_writes"]?) && err.os_error.try(&.value) == 16
+          return unsafe_write_fallback(content, dest, secontext)
+        end
+        return atomic_move_crash(
+          "Unable to make b'#{src_echo}' into to '#{dest}', failed final rename from '#{stage_path}'.",
+          rename_errno_text(err, stage_path, dest), content_sha1)
+      end
+      nil
+    end
+
     private def write_with_optional_validate(content : String, dest : String, content_sha1 : String, keep_dest_attrs : Bool = true) : {failure: PluginResult?, staged: String?}
       validate_cmd = @params["validate"]?
       unless validate_cmd
-        return atomic_write(content, dest, keep_dest_attrs)
+        return atomic_write(content, dest, content_sha1, keep_dest_attrs)
       end
 
       # copy.py's own gate before anything runs: fail_json(msg="validate
@@ -1338,36 +1484,9 @@ module Krikri
       begin
         File.rename(temp_file, dest)
       rescue ex : File::Error
-        errno = ex.os_error.try(&.value)
-        unless errno && ATOMIC_MOVE_WORKAROUND_ERRNOS.includes?(errno)
+        if failure = atomic_move_workaround(temp_file, dest, content, content_sha1, keep_dest_attrs, secontext, ex)
           File.delete(temp_file) if File.exists?(temp_file)
-          return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
-        end
-        # Real's atomic_move ladder (module_utils/basic.py): on the workaround
-        # errnos, stage a fresh writable file next to dest - the name matters
-        # for output parity (the crash detail names it) - move the temp into
-        # it, then rename the stage into place. NEVER open the read-only dest
-        # itself for writing: the plain FileUtils.mv fallback copies INTO dest
-        # (File.copy opens "wb"), which is exactly what fails on a 0440 dest.
-        stage_path = File.join(File.dirname(dest), ".ansible_tmp#{ansible_tmp_random(8)}#{File.basename(dest)}")
-        begin
-          File.write(stage_path, "")
-          FileUtils.mv(temp_file, stage_path)
-        rescue err : File::Error
-          File.delete(stage_path) if File.exists?(stage_path)
-          File.delete(temp_file) if File.exists?(temp_file)
-          return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{err.message}"), staged: nil}
-        end
-        # The stage is a fresh inode with the process's own ownership (the
-        # cross-device copy strips the temp's chown) - re-apply the dest's
-        # owner/group/mode before the final rename, as real's atomic_move does.
-        apply_dest_attrs(stage_path, dest) if keep_dest_attrs
-        begin
-          File.rename(stage_path, dest)
-        rescue err : File::Error
-          File.delete(stage_path) if File.exists?(stage_path)
-          File.delete(temp_file) if File.exists?(temp_file)
-          return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{err.message}"), staged: nil}
+          return {failure: failure, staged: nil}
         end
       end
 
@@ -1571,7 +1690,7 @@ module Krikri
     # (`keep_dest_attrs=not remote_src`): with remote_src: true even an
     # existing dest takes the policy's default context instead of keeping
     # its own (issue #911).
-    private def atomic_write(content : String, dest : String, keep_dest_attrs : Bool = true) : {failure: PluginResult?, staged: String?}
+    private def atomic_write(content : String, dest : String, content_sha1 : String, keep_dest_attrs : Bool = true) : {failure: PluginResult?, staged: String?}
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       # atomic_move's context capture, BEFORE the rename (issue #911).
       secontext = prewrite_selinux_context(dest, keep_dest_attrs)
@@ -1634,13 +1753,11 @@ module Krikri
 
       begin
         File.rename(temp_file, dest)
-      rescue ex
-        File.delete(temp_file) if File.exists?(temp_file)
-        if true?(@params["unsafe_writes"]?)
-          failure = unsafe_write_fallback(content, dest, secontext)
+      rescue ex : File::Error
+        if failure = atomic_move_workaround(temp_file, dest, content, content_sha1, keep_dest_attrs, secontext, ex)
+          File.delete(temp_file) if File.exists?(temp_file)
           return {failure: failure, staged: nil}
         end
-        return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
       end
 
       if failure = relabel_written_file(dest, secontext)

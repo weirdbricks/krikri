@@ -883,6 +883,35 @@ done
 # hand-written equivalents instead.
 FAT_PLUGINS+=("${FAT_EXTRA_MODULES[@]}")
 
+# Orphan prune: `bin/` is not version-controlled and nothing ever resets it,
+# so a module DELETED from plugins/ leaves its old binary behind forever.
+# test/unit/plugin_shared_libraries_test.cr reads every real binary in
+# bin/plugins, so a leftover from an older checkout fails it for a module no
+# source builds any more (the twelve narrowly-scoped ports removed in 0.9.3135
+# left stale rabbitmq_user/rabbitmq_plugin/zypper/... binaries, and
+# rabbitmq_user's older build links libxml2). Nothing uploads an orphan -
+# plugin_manager resolves names from the current plugin set - so pruning is
+# what an up-to-date bin/plugins would already look like. Dotfiles
+# (.fat-plugin) are the build's own, never a plugin name.
+for existing in "$PLUGINS_DIR"/*; do
+    [ -f "$existing" ] || continue
+    existing_name=$(basename "$existing")
+    case "$existing_name" in
+        .*) continue ;;
+    esac
+    keep=false
+    for plugin in "${STANDALONE_PLUGINS[@]}" "${FAT_PLUGINS[@]}"; do
+        if [ "$existing_name" = "$plugin" ]; then
+            keep=true
+            break
+        fi
+    done
+    if [ "$keep" = false ]; then
+        rm -f "$existing"
+        echo -e "   ${YELLOW}pruned stale plugin binary${NC} $existing_name (no plugins/$existing_name.cr)"
+    fi
+done
+
 # Builds (only when actually stale) ONE binary covering every plugin in
 # FAT_PLUGINS, dispatched at runtime by argv[0]'s basename (the same
 # trick busybox uses for its own multi-call binary) - see the generated
