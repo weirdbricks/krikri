@@ -20,6 +20,7 @@ module Krikri
         "community.general.htpasswd"  => true,
         "ini_file"                    => true,
         "community.general.ini_file"  => true,
+        "json_file"                   => true, # krikri's own JSON editor (issue #1835), creates by default
         "lineinfile"                  => false,
         "ansible.builtin.lineinfile"  => false,
       }

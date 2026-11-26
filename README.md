@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.3137-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.3138-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.21.6-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -54,6 +54,7 @@ What changes when you swap `ansible-playbook` for `krikri-playbook`:
 | Target architecture | Module binaries are compiled for the controller's CPU architecture (real Ansible ships Python modules, so it has no such constraint). A different-arch target (an x86_64 controller managing a Raspberry Pi, say) gets binaries from a `plugins-<arch>/` directory next to the `krikri-playbook` executable when one was built there - run `./build.sh` on a machine of that architecture and copy the resulting `bin/plugins/` directory across as `plugins-<arch>/`. Without one, the run fails immediately with those instructions, before uploading anything the target could not execute. External plugins (below) use the same key in their own `plugins-<key>/` subdirectories. |
 | SSH round trips | Consecutive tasks for the same host are batched into one round trip (`--no-batching` to disable). |
 | Third-party collection modules | Not vendored wholesale: a `community.*` module runs only once ported to a native plugin (list: `AVAILABLE_PLUGINS` in `src/krikri/module_registry.cr`); anything else fails with a load-time `couldn't resolve module/action` refusal. A role's own `library/*.py` modules work as usual. |
+| Extra modules | `json_file` - a JSON file editor with no Ansible counterpart (ansible-core and community.general ship only the in-memory `json_query`/`json_patch` filters), so a playbook using it does not run under `ansible-playbook`. Both `json_file:` and `krikri.json_file:` spellings resolve. It sets or removes one key of a JSON document in place (dotted `key:`, any JSON `value:`, a `changes:` list for several keys, `state:`, `create:`, `backup:`, `indent:`, owner/group/mode and SELinux arguments, check mode and `--diff`), modeled on `ini_file`'s shape. |
 | Modules outside the krikri tree | Any module can be supplied as an external executable in any language through `--plugin-path DIR` (repeatable) or `KRIKRI_PLUGIN_PATH` - no fork and no krikri rebuild per plugin or per release. The executable speaks the same stdin-JSON/stdout-JSON protocol as a built-in module (`protocol: 1`); per-platform builds live in `plugins-<key>/` directories inside the plugin root. See [docs/external-plugins.md](docs/external-plugins.md). |
 | Cloud provider modules | Out of scope, except AWS/EC2 (`ec2_instance` and its supporting modules, `aws_ec2` inventory). |
 

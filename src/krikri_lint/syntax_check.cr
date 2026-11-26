@@ -35,6 +35,13 @@ module Krikri
     # it loads is linted either - which is why a playbook broken on a
     # missing role reports one match and no role-file matches.
     class SyntaxCheck
+      # Modules krikri ships that are NOT Ansible modules at all, so the
+      # captured reference tables (and upstream ansible-lint) have never
+      # heard of them. They do resolve for krikri-playbook, so a task
+      # using one must not be reported as an unknown module. Currently
+      # just json_file (issue #1835).
+      KRIKRI_EXTENSION_MODULES = %w[json_file]
+
       def initialize(files : Array(String), targets : Array(String))
         @walked = Set(String).new
         @missing = {} of String => RoleLookup::Missing
@@ -222,6 +229,7 @@ module Krikri
                     CollectionIndex.role_meta_collections(role_path)
         TaskWalker.each_task(file) do |task|
           name = action_module_name(task) || next
+          next if KRIKRI_EXTENSION_MODULES.includes?(name)
           collections = task_collections(task) || inherited
           resolution = CollectionIndex.reference_resolves?(name, collections,
             role_path, playbook_dir)
