@@ -656,6 +656,14 @@ module Krikri
           cached.each { |key, value| persisted[key] = value }
         end
         facts.each { |key, value| persisted[key] = value }
+        # `ansible_python_interpreter` is a flat connection var Ansible
+        # resolves per run, never a cached fact - and a warm entry that
+        # carries it makes every later ansible run that seeds from the cache
+        # warn "Removed restricted key from module data:
+        # ansible_python_interpreter" (clean_facts strips
+        # `ansible_.*_interpreter`). The live capture of 2.21.6's own cache
+        # has no such key.
+        persisted.delete("ansible_python_interpreter")
         FactCache.write(host.name, persisted)
       end
 

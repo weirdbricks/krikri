@@ -1,0 +1,9 @@
+# Issue #1837's repro playbook, verbatim: a gathering play whose only task is
+# ping. The case ships the ansible-core 2.21 jsonfile entry that a first real
+# ansible run leaves behind (cache/s1_h, see env.txt), so with
+# ANSIBLE_GATHERING=smart the transcript skips the implicit gather - but only
+# for an engine that reads ansible's own `s1_` / `__payload__` layout.
+- hosts: h
+  gather_facts: true
+  tasks:
+    - ansible.builtin.ping:

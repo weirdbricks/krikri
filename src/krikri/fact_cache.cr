@@ -42,6 +42,19 @@ module Krikri
     PICKLE_BACKEND     = "community.general.pickle"
     SUPPORTED_BACKENDS = {JSONFILE_BACKEND, PICKLE_BACKEND}
 
+    # The schema marker ansible-core 2.21's cache-persistence interposer
+    # (`_cache.PluginInterposer`, ansible/_internal/_plugins/_cache.py)
+    # inserts between the user prefix and the key when the JSONFILE
+    # plugin names a file, and wraps the value as
+    # `{"__payload__": "<compact JSON of the facts>"}` - the payload is a
+    # JSON STRING, not a nested object. schema_id is 1 in 2.21.6, so the
+    # on-disk filename is `s1_<host>` (live-verified) and a cache dir
+    # written by ansible is directly readable here (and writes from here
+    # are directly readable by ansible). The prefix lets one directory
+    # hold entries from incompatible ansible versions side by side.
+    SCHEMA_PREFIX = "s1_"
+    PAYLOAD_KEY   = "__payload__"
+
     # Cache plugins whose required `_uri` config (the
     # fact_caching_connection) makes ansible-core warn at startup when
     # it is missing - live-verified vs 2.19.11 for both:
@@ -85,7 +98,9 @@ module Krikri
     end
 
     # Whether the configured backend stores Python pickles rather than
-    # JSON text (the two share the `<host>` filename in a cache dir).
+    # JSON text (the two share the cache directory and the
+    # `<user prefix><key>` naming scheme, jsonfile with its schema
+    # marker in between).
     private def self.pickle_backend? : Bool
       backend == PICKLE_BACKEND
     end
@@ -123,18 +138,18 @@ module Krikri
       expanded
     end
 
-    # Ansible's `fact_caching_prefix` (ANSIBLE_CACHE_PLUGIN_PREFIX): both
-    # the jsonfile and pickle plugins prepend it verbatim to the cache key
-    # when naming a file (`keys` skips entries not carrying it).
-    private def self.file_prefix : String
-      ENV["ANSIBLE_CACHE_PLUGIN_PREFIX"]? || ""
-    end
-
     # A float: the pickle plugin's `_timeout` option is `type: float`, so
     # `ANSIBLE_CACHE_PLUGIN_TIMEOUT=0.5` is legal for ansible (it would
     # silently mean the 86400s default if parsed as an integer).
     private def self.timeout_seconds : Float64
       ENV["ANSIBLE_CACHE_PLUGIN_TIMEOUT"]?.try(&.to_f?) || DEFAULT_TIMEOUT.to_f64
+    end
+
+    # Ansible's `fact_caching_prefix` (ANSIBLE_CACHE_PLUGIN_PREFIX): both
+    # the jsonfile and pickle plugins prepend it verbatim to the cache key
+    # when naming a file (`keys` skips entries not carrying it).
+    private def self.file_prefix : String
+      ENV["ANSIBLE_CACHE_PLUGIN_PREFIX"]? || ""
     end
 
     # Ansible's BaseFileCacheModule uses the cache key (here, the
@@ -154,7 +169,14 @@ module Krikri
       # ansible's _sanitize_key, which this mirrors.
       safe = safe_key(host_name)
       safe = "_dot_" if safe.empty? || safe == "." || safe == ".."
-      File.join(dir, "#{file_prefix}#{safe}")
+      File.join(dir, "#{file_prefix}#{schema_prefix}#{safe}")
+    end
+
+    # The jsonfile backend's schema marker: the pickle one was captured
+    # bare from ansible-core 2.21.6 by the #1838 work, so only the jsonfile
+    # side inserts `s1_` here.
+    private def self.schema_prefix : String
+      pickle_backend? ? "" : SCHEMA_PREFIX
     end
 
     private def self.safe_key(host_name : String) : String
@@ -184,7 +206,14 @@ module Krikri
       if pickle_backend?
         Pickle.decode(read_binary(path))
       else
-        parsed = Krikri::BigJson.parse(File.read(path)).as_h?
+        envelope = Krikri::BigJson.parse(File.read(path)).as_h?
+        return nil unless envelope
+        # No payload string means not an entry this layout can decode (a
+        # plain facts object predates the schema envelope); treat it as a
+        # miss, the way ansible fails the interposer's unwrap on it.
+        payload = envelope[PAYLOAD_KEY]?.try(&.as_s?)
+        return nil unless payload
+        parsed = Krikri::BigJson.parse(payload).as_h?
         return nil unless parsed
         hash = Hash(String, JSON::Any).new
         parsed.each { |key, value| hash[key] = value }
@@ -231,9 +260,11 @@ module Krikri
         # facts as the BIGINT_SENTINEL_PREFIX-marked string; the cache
         # file stores its bare digits (the bytes Ansible's jsonfile
         # cache writes for a Python int) and the read side restores the
-        # marker through the bigint-aware parse.
-        payload = Krikri.unquote_bigint_json(facts.to_json)
-        write_atomically(path) { |io| io.write(payload.to_slice) }
+        # marker through the bigint-aware parse. The digits land inside
+        # the envelope's payload string, which is where ansible keeps
+        # them in its own entry.
+        payload = Krikri.unquote_bigint_json(facts.to_json).to_s
+        write_atomically(path) { |io| io.write({PAYLOAD_KEY => payload}.to_json.to_slice) }
       end
     rescue
     end

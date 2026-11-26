@@ -46,7 +46,9 @@ describe "ANSIBLE_CACHE_PLUGIN=jsonfile fact caching" do
 
     status, _ = run(playbook, [] of String, cache_dir, prefix: "pfx-")
     status.success?.must_equal(true)
-    Dir.children(cache_dir).must_equal(["pfx-localhost"])
+    # The user prefix goes before the interposer's schema marker, exactly
+    # where ansible-core 2.21 puts it (`_get_cache_file_name`).
+    Dir.children(cache_dir).must_equal(["pfx-s1_localhost"])
 
     # The prefixed entry is the one a warm rerun reads.
     status2, output2 = run(playbook, ["--gathering", "smart"], cache_dir, prefix: "pfx-")
@@ -242,6 +244,36 @@ describe "ANSIBLE_CACHE_PLUGIN=jsonfile fact caching" do
   ensure
     File.delete(gathering_playbook) if gathering_playbook && File.exists?(gathering_playbook)
     File.delete(idle_playbook) if idle_playbook && File.exists?(idle_playbook)
+    FileUtils.rm_rf(cache_dir) if cache_dir
+  end
+
+  it "writes the entry real ansible 2.21 reads, so the cache is shared rather than duplicated" do
+    cache_dir = File.tempname("fact-cache")
+    playbook = File.tempname("fact-cache-shared", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        tasks:
+          - name: trigger
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    status, _ = run(playbook, ["--gathering", "smart"], cache_dir)
+    status.success?.must_equal(true)
+
+    # One entry, under the schema key ansible-core 2.21 uses (`s1_`) and
+    # wrapped in its payload envelope - a bare <host> file is invisible to it.
+    File.exists?(File.join(cache_dir, "localhost")).must_equal(false)
+    envelope = JSON.parse(File.read(File.join(cache_dir, "s1_localhost"))).as_h
+    payload = JSON.parse(envelope["__payload__"].as_s).as_h
+    # ansible's smart gathering only skips the gather when the cached facts
+    # carry its stamp, and it warns "Removed restricted key" for an entry
+    # that keeps the flat interpreter var.
+    payload["_ansible_facts_gathered"].as_bool.must_equal(true)
+    payload.has_key?("ansible_python_interpreter").must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
     FileUtils.rm_rf(cache_dir) if cache_dir
   end
 end
