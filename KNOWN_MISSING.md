@@ -835,7 +835,12 @@ Ubuntu's own package manager and snap.py supports check mode, so babisk.kubectl'
   `REQUIRES_ENABLED` plugins run only when named by `ANSIBLE_VARS_ENABLED` (default
   `host_group_vars`). Deliberate limits: role-adjacent `vars_plugins/` are not scanned (roles load
   after the inventory), and a plugin whose `get_vars()` raises is warned about with its vars dropped
-  instead of aborting the run the way ansible does.
+  instead of aborting the run the way ansible does. Not scanning them also means their controller
+  side effects are skipped: `gekmihesg.openwrt` (pulled in by `itdoginfo.domain_routing_openwrt`)
+  ships a `vars_plugins/monkeypatch.py` that patches `ActionBase._configure_module` for an older
+  ansible-core return shape, so ansible-core 2.21.6 dies at Gathering Facts with "not enough values
+  to unpack (expected 4, got 2)" while this engine runs the play; with that plugin file removed real
+  ansible's output is byte-identical to this engine's (issue #1844).
 - **Arbitrary-Python-module support is scoped to role-private `library/*.py` sources** (plus the
   playbook-adjacent `library/`): a module with a resolvable source RUNS on the target with the
   target's own python3 through the py_module plugin. Still cut: a module reference with NO library
