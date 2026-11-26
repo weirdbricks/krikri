@@ -1,0 +1,13 @@
+# mrlesmithjr.ansible_freeipa_server's first included task, verbatim (see
+# roles/.../tasks/hostname.yml); it loops over a literal list whose second
+# entry reads the role default `freeIPA_server_ip_address`, which templates
+# `hostvars[inventory_hostname]['ansible_' + freeIPA_server_ip_int]`. With
+# gathering off there is no `ansible_enp0s8` fact, so real ansible names the
+# per-host HostVarsVars wrapper and points the failure chain's "caused by"
+# Origin at that default's value token (defaults/main.yml:33:28), not at the
+# `with_items:` entry that read it.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - mrlesmithjr.ansible_freeipa_server

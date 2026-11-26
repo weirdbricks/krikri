@@ -1,0 +1,39 @@
+# defaults file for ansible_freeIPA_server
+
+# admin user kerberos password
+freeIPA_server_admin_password: P@55w0rd123
+
+freeIPA_server_debian_packages:
+  - freeipa-server
+  - freeipa-server-dns
+
+freeIPA_server_debian_pre_reqs:
+  - rng-tools
+
+# Directory Manager password
+freeIPA_server_dir_admin_password: P@55w0rd
+
+# Defines DNS Forwarders
+freeIPA_server_dns_forwarders:
+  []
+  # - 10.10.10.1
+  # - 10.10.10.2
+
+# domain name
+freeIPA_server_domain: vagrant.local
+
+freeIPA_server_fqdn: "{{ freeIPA_server_hostname }}.{{ freeIPA_server_domain }}"
+
+freeIPA_server_hostname: "{{ ansible_hostname }}"
+
+# configure bind with our zone
+freeIPA_server_integrated_dns: true
+
+# Master Server IP Address
+freeIPA_server_ip_address: "{{ hostvars[inventory_hostname]['ansible_' + freeIPA_server_ip_int]['ipv4']['address'] }}"
+
+# Defines interface to capture IP address from
+freeIPA_server_ip_int: enp0s8
+
+# realm name
+freeIPA_server_realm: "{{ freeIPA_server_domain|upper }}"

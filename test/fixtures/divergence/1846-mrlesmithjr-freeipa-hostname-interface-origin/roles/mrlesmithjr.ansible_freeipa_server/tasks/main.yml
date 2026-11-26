@@ -1,0 +1,2 @@
+# tasks file for ansible_freeIPA_server
+- include_tasks: hostname.yml

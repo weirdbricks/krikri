@@ -1,0 +1,30 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mrlesmithjr.ansible_freeipa_server : include_tasks] **********************
+included: <WORK>/roles/mrlesmithjr.ansible_freeipa_server/tasks/hostname.yml for localhost
+
+TASK [mrlesmithjr.ansible_freeipa_server : hostname | Updating /etc/hosts] *****
+[ERROR]: Task failed: object of type 'HostVarsVars' has no attribute 'ansible_enp0s8'
+
+Task failed.
+Origin: <WORK>/roles/mrlesmithjr.ansible_freeipa_server/tasks/hostname.yml:1:3
+
+1 - name: hostname | Updating /etc/hosts
+    ^ column 3
+
+<<< caused by >>>
+
+object of type 'HostVarsVars' has no attribute 'ansible_enp0s8'
+Origin: <WORK>/roles/mrlesmithjr.ansible_freeipa_server/defaults/main.yml:33:28
+
+31
+32 # Master Server IP Address
+33 freeIPA_server_ip_address: "{{ hostvars[inventory_hostname]['ansible_' + freeIPA_server_ip_int]['ipv4']['address']...
+                              ^ column 28
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: object of type 'HostVarsVars' has no attribute 'ansible_enp0s8'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
