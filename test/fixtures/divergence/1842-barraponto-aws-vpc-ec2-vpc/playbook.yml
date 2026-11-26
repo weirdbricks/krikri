@@ -1,0 +1,9 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  # Real refuses the whole playbook at LOAD time on the role's first task
+  # (bare `ec2_vpc:`, removed from ansible-core and never migrated into any
+  # collection), before the task name or args are templated.
+  roles:
+    - barraponto.aws-vpc
