@@ -1,0 +1,8 @@
+---
+- name: REALMD | Configure service
+  template:
+    src: realmd_conf.j2
+    dest: "{{ playbook_dir }}/realmd.conf"
+    mode: "{{ realmd_config_mode }}"
+  tags:
+    - realmd
