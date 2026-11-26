@@ -1,0 +1,25 @@
+---
+# The failing task from drew1kun.dnscrypt's tasks/install.yml (issue #1863),
+# copied verbatim. Only the URL is adapted: the role probes the public GitHub
+# API, so the case serves one GitHub-shaped 404 from a UNIX socket instead
+# (serve_once.py) - no network, no port to collide on. Everything the
+# divergence depends on is the exchange's own: the server compresses the body
+# when the client offers gzip.
+- name: repro
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: serve one GitHub-shaped 404 on a UNIX socket
+      ansible.builtin.shell: |
+        setsid python3 {{ playbook_dir }}/serve_once.py {{ playbook_dir }}/serve.path >/dev/null 2>&1 </dev/null &
+        for i in $(seq 1 200); do [ -s {{ playbook_dir }}/serve.path ] && break; sleep 0.05; done
+        cat {{ playbook_dir }}/serve.path
+      changed_when: false
+      register: served
+
+    - name: "[install] Retrieve the latest dnscrypt-proxy versions for all architectures"
+      ansible.builtin.uri:
+        url: http://127.0.0.1/missing
+        unix_socket: "{{ served.stdout | trim }}"
+      register: dnscrypt_latest_all_arch
+      ignore_errors: true

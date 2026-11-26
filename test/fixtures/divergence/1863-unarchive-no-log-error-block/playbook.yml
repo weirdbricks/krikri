@@ -1,0 +1,31 @@
+---
+# The failing task from drew1kun.dnscrypt's tasks/install.yml (issue #1863),
+# copied verbatim apart from what localhost needs: the release asset URL points
+# at a closed loopback port instead of GitHub (no network, and port 1 is never
+# listening), dest lands in the case's own scratch directory, and the two
+# handlers the role notifies are absent. What matters is the exchange: a remote
+# src whose download fails, so fetch_file reports its own "Failure downloading
+# ..." wording in the [ERROR] block real prints above the censored item line.
+- name: repro
+  hosts: localhost
+  gather_facts: false
+  vars:
+    dnscrypt_arch:
+      archive: linux_arm64
+    dnscrypt_default_version: "2.0.17"
+    dnscrypt_latest_all_arch:
+      failed: true
+      json:
+        assets:
+          - name: "dnscrypt-proxy-linux_arm64-2.0.17.tar.gz"
+            browser_download_url: "http://127.0.0.1:1/dnscrypt-proxy-linux_arm64-2.0.17.tar.gz"
+  tasks:
+    - name: "[install] Download dnscrypt-proxy version: {{ dnscrypt_default_version }}"
+      ansible.builtin.unarchive:
+        remote_src: true
+        src: "{{ item['browser_download_url'] }}"
+        dest: "{{ playbook_dir }}"
+      no_log: true
+      with_items: "{{ dnscrypt_latest_all_arch['json']['assets'] }}"
+      when: dnscrypt_arch.archive in item.name and not item.name.endswith("minisig")
+      ignore_errors: true

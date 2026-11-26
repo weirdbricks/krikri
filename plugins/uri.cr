@@ -3,6 +3,7 @@
 require "json"
 require "big"
 require "http/client"
+require "compress/gzip"
 require "uri"
 require "base64"
 require "system/user"
@@ -319,13 +320,20 @@ module Krikri
       # (live-verified vs 2.21.6: a 200 not in [201] fails with "Status
       # code was 200 and not [201]: OK (85 bytes)") - dropping that suffix
       # left the failure message truncated.
-      default_msg = status >= 400 || status == 304 ? "HTTP Error #{status}: #{http_reason(status, reason)}" : "OK (#{body.bytesize} bytes)"
+      # The count is the response's Content-Length HEADER, not the body's
+      # size (real: `r.headers.get('Content-Length', 'unknown')`): a gzip
+      # response decodes to a different length than the header names
+      # (live-verified vs 2.21.6: a 14-byte body sent gzip reports
+      # "OK (34 bytes)"), and a chunked response carries no header at all,
+      # which real renders as "OK (unknown bytes)".
+      content_length = headers["Content-Length"]?
+      default_msg = status >= 400 || status == 304 ? "HTTP Error #{status}: #{http_reason(status, reason)}" : "OK (#{content_length || "unknown"} bytes)"
       msg = if failed
               "Status code was #{status} and not #{status_codes}: #{default_msg}"
             elsif status == 304
               default_msg
             else
-              "OK (#{body.bytesize} bytes)"
+              "OK (#{content_length || "unknown"} bytes)"
             end
 
       changed = false
@@ -575,7 +583,24 @@ module Krikri
         return request(resolve_redirect(uri, location), redirect_method(method, response.status_code), username, password, src_body, redirects_left - 1, true, last_mod_time, cookie_acc)
       end
 
-      {response.status_code, response.headers, response.body, redirected, url, response.status_message || ""}
+      # decompress: (uri.py's own param, default true) gates urls.py's
+      # GzipDecodedReader, which it installs only on the object urlopen
+      # RETURNED - a 2xx response. An HTTPError (any other status, even one
+      # the task lists in status_code) is caught by fetch_url before that
+      # wrapping, so its body stays compressed (live-verified vs 2.21.6:
+      # an error status carrying gzip makes real fail on the strict-UTF8
+      # deserialize of the compressed bytes). The headers reach the result
+      # as received either way, so Content-Length keeps the COMPRESSED
+      # length while the body is decoded (also live-verified: a 14-byte body
+      # reports content_length 34).
+      body = response.body
+      if true?(@params["decompress"]?, default: true) &&
+         response.status_code >= 200 && response.status_code < 300 &&
+         response.headers["Content-Encoding"]?.try(&.downcase) == "gzip"
+        body = Compress::Gzip::Reader.new(IO::Memory.new(body)).gets_to_end
+      end
+
+      {response.status_code, response.headers, body, redirected, url, response.status_message || ""}
     ensure
       client.try(&.close)
     end
@@ -766,6 +791,18 @@ module Krikri
       client.connect_timeout = timeout
       client.read_timeout = timeout
 
+      # urllib's http.client neither offers compression nor inflates behind
+      # the caller's back: it always sends `Accept-Encoding: identity`
+      # (putrequest's default) and urls.py decodes a gzip body itself,
+      # leaving the response headers exactly as received. Crystal's client
+      # instead defaults to offering gzip/deflate and, when it inflates,
+      # DELETES Content-Encoding and Content-Length from the headers - so a
+      # compressed response lost the `content_length` and `content_encoding`
+      # fields real reports (issue #1863: drew1kun.dnscrypt's GitHub API
+      # probe, where GitHub gzipped the 404 for krikri only). Negotiation
+      # and inflation are done explicitly here instead.
+      client.compress = false
+
       if !true?(@params["validate_certs"]?, default: true) && (tls = client.tls?)
         tls.verify_mode = OpenSSL::SSL::VerifyMode::NONE
       end
@@ -822,18 +859,13 @@ module Krikri
         headers["If-Modified-Since"] = Time::Format::HTTP_DATE.format(last_mod_time)
       end
 
-      # decompress: false (real uri.py's decompress param, default true)
-      # suppresses gzip at the REQUEST level: Crystal's HTTP::Client
-      # otherwise always offers gzip/deflate and transparently inflates
-      # the response, while Ansible instead decides per-response
-      # (decompress gates its GzipDecodedReader). Asking the server for
-      # identity achieves the same observable result: the caller gets
-      # exactly the bytes the server meant to send, undecoded. A user-
-      # supplied Accept-Encoding wins, matching real header-override
-      # order.
-      if !true?(@params["decompress"]?, default: true) && !headers.has_key?("Accept-Encoding")
-        headers["Accept-Encoding"] = "identity"
-      end
+      # urllib's http.client always sends `Accept-Encoding: identity`
+      # (putrequest), whatever decompress: says - decompress only gates
+      # urls.py's own gzip decoding of the body, never the request. So a
+      # compressing server answers with the identity bytes real sees, and
+      # the response keeps its Content-Length header. A user-supplied
+      # Accept-Encoding wins, matching real header-override order.
+      headers["Accept-Encoding"] = "identity" unless headers.has_key?("Accept-Encoding")
 
       if headers_param = @params["headers"]?
         Hash(String, JSON::Any).from_json(headers_param).each { |key, value| headers[key] = value.to_s }

@@ -7,13 +7,14 @@ require "../../src/krikri/plugin_helpers/python_lib_gate"
 # censored fatal dump. This engine replicates that block only where the
 # msg is one of copy's fixed controller-side required-argument texts,
 # which ansible composes itself and so can never carry the secret a
-# no_log task is protecting (issue #271), or command/shell's fixed
-# "non-zero return code" exit text (issue #623), and copy's missing-parent
-# message when dest is a literal (issue #644); every other failure keeps
-# the censored-only fatal line. Shapes captured from ansible-playbook 2.19.11
-# (live-verified there: no_log copy with no src/content prints the block
-# and the censored fatal, a no_log fail with a data-carrying msg prints
-# neither the msg nor any block).
+# no_log task is protecting (issue #271), command/shell's fixed
+# "non-zero return code" exit text (issue #623), fetch_file's "Failure
+# downloading <url>, <detail>" wording (issue #1863), and copy's
+# missing-parent message when dest is a literal (issue #644); every other
+# failure keeps the censored-only fatal line. Shapes captured from
+# ansible-playbook 2.19.11 (live-verified there: no_log copy with no
+# src/content prints the block and the censored fatal, a no_log fail with a
+# data-carrying msg prints neither the msg nor any block).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -308,6 +309,35 @@ describe "failed no_log copy's [ERROR] block" do
     output.must_include(%(fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": true}))
     output.must_include("...ignoring")
     output.wont_include("SECRET_CMD_SENTINEL")
+  end
+
+  # fetch_file's download failure (issue #1863, drew1kun.dnscrypt's no_log
+  # unarchive of a GitHub release asset): real prints the block with urls.py's
+  # "Failure downloading <url>, <detail>" wording above the censored
+  # loop-item line - it is the only explanation of the failure the task
+  # produces, so krikri prints it too. Port 1 is never listening, so the
+  # exchange needs no server and its urllib wording is stable.
+  it "prints the block above the censored loop-item lines for a no_log unarchive download failure" do
+    scratch = PluginSpecHelper.tmp_path("no-log-unarchive-download")
+    FileUtils.mkdir_p(scratch)
+    url = "http://127.0.0.1:1/dnscrypt-proxy-linux_arm64-2.0.17.tar.gz"
+    output = run_playbook_in(scratch, <<-YAML)
+          - ansible.builtin.unarchive:
+              remote_src: true
+              src: "#{url}"
+              dest: #{scratch}
+            no_log: true
+            with_items:
+              - #{url}
+            ignore_errors: true
+    YAML
+
+    output.must_include("[ERROR]: Task failed: Module failed: Failure downloading #{url}, Request failed: <urlopen error [Errno 111] Connection refused>")
+    output.must_include(%(failed: [localhost] (item=(censored due to no_log)) => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}))
+    output.must_include("...ignoring")
+    error_at = output.index("[ERROR]: Task failed:")
+    item_at = output.index("failed: [localhost] (item=(censored due to no_log))")
+    !!(error_at && item_at && error_at < item_at).must_equal(true, output)
   end
 
   # copy's missing-parent check (issue #644): real echoes the destination
