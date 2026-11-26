@@ -280,4 +280,41 @@ describe "configured plugin dirs resolve custom plugins (issue #793)" do
   ensure
     FileUtils.rm_r(root) if root
   end
+
+  # Roles load after the inventory, so their own vars_plugins/ are never scanned
+  # (see KNOWN_MISSING.md). Ansible does load them, and a role's plugin that
+  # patches ansible's controller internals therefore aborts real ansible while
+  # this engine runs the play - gekmihesg.openwrt (via
+  # itdoginfo.domain_routing_openwrt) does exactly that to _configure_module,
+  # failing real ansible at Gathering Facts with "not enough values to unpack
+  # (expected 4, got 2)" (issue #1844).
+  it "does not import a role's own vars_plugins/ directory" do
+    root = PluginSpecHelper.tmp_path("configured-plugins-vars-role")
+    role = File.join(root, "roles", "gadget")
+    Dir.mkdir_p(File.join(role, "vars_plugins"))
+    Dir.mkdir_p(File.join(role, "tasks"))
+    File.write(File.join(role, "vars_plugins", "adjacent.py"), <<-PYTHON)
+      raise RuntimeError("a role's vars plugin must never be imported")
+      PYTHON
+    File.write(File.join(role, "tasks", "main.yml"), <<-YAML)
+      - debug:
+          msg: "{{ role_plugin_var | default('UNDEF') }}"
+      YAML
+    File.write(File.join(root, "inv.ini"), <<-INI)
+      [all]
+      localhost ansible_connection=local
+      INI
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        roles:
+          - gadget
+      YAML
+
+    output, status = ps_run_vars(root, {} of String => String)
+    status.success?.must_equal(true)
+    (output.includes?("\"msg\": \"UNDEF\"")).must_equal(true)
+  ensure
+    FileUtils.rm_r(root) if root
+  end
 end
