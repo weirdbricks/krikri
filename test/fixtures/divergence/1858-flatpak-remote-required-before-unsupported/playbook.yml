@@ -1,0 +1,19 @@
+---
+# The failing play/task from kpg playbook 000028-multi-flatpak_remote-chaos
+# (issue #1858), copied verbatim. Only the inventory is adapted: the play's
+# `kpg_targets` group and the `target2` delegate are both local here, so the
+# task's "fatal: [target -> target2]" line is preserved.
+- name: 'Krikri-playbook-generator: multi-task #28'
+  hosts: kpg_targets
+  gather_facts: false
+  strategy: free
+  tasks:
+    - name: 'Flatpak_remote #28.0'
+      community.general.flatpak_remote:
+        enabled: true
+        flatpakrepo_url: ndxbly
+        nmae: jvwrzl
+      register: kpg_task_0
+      ignore_errors: true
+      delegate_to: target2
+      delegate_facts: true

@@ -92,15 +92,14 @@ module Krikri
       ex.result
     end
 
-    # AnsibleModule init order: unsupported parameters, then type
-    # conversion, then required arguments, then choices.
+    # AnsibleModule validation, in arg_spec.ArgumentSpecValidator validate
+    # order: required -> types -> choices -> unsupported (see
+    # flatpak_remote.cr's note - ansible-core 2.21.6 only reports
+    # errors[0], and the unsupported-parameters error is appended last).
     private def validate_arguments : PluginResult?
-      if err = validate_unsupported
-        return err
-      end
-      validate_bool_params!
-
       return missing_required_error(["name"]) unless @params.has_key?("name")
+
+      validate_bool_params!
 
       method = @params["method"]? || "system"
       return choices_error("method", METHOD_CHOICES, method) unless METHOD_CHOICES.includes?(method)
@@ -108,7 +107,7 @@ module Krikri
       state = @params["state"]? || "present"
       return choices_error("state", STATE_CHOICES, state) unless STATE_CHOICES.includes?(state)
 
-      nil
+      validate_unsupported
     end
 
     private def apply_state(binary : String) : Nil
