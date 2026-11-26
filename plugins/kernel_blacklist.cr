@@ -89,7 +89,12 @@ module Krikri
           return failed_result(name, state, file,
             "Module failed with exception: [Errno 2] No such file or directory: '#{file}'")
         end
-        File.touch(file)
+        # kernel_blacklist.py creates it with a bare `open(path, "a")`,
+        # which asks the kernel for 0666 and lets the process umask take
+        # the rest (0644 under the reference images' 022, 0664 under the
+        # developer default 002). File.touch would pin 0644 instead and
+        # silently drop the umask's group-write bit.
+        File.open(file, "a", perm: 0o666) { }
       end
       lines = file_existed ? File.read_lines(file).map(&.rstrip) : nil
 

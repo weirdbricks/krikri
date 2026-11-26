@@ -1154,6 +1154,28 @@ because anyone intends to fix them.
   job file even when `_ansible_check_mode` is set, returning ansible's ok/`erased` shape - is pinned
   in-process by `test/unit/async_status_plugin_test.cr`.
 
+- **`community.general.kernel_blacklist` creates its blacklist file before any check-mode gate, so the
+  kpg check-mode oracle counts a shared mutation as a krikri finding (kpg multi-kernel_blacklist
+  case, issue #1860, `check-mode:d1557ebab536`).** `kernel_blacklist.py`'s `__init_module__` opens a
+  missing `blacklist_file` for append before the state and check-mode gates (the write lives in
+  `__quit_module__` behind `not self.module.check_mode`), so a real `--check` pass really does create
+  the empty `/etc/modprobe.d/blacklist-ansible.conf`: live-verified on ansible-core 2.21.6 with a
+  minimal `connection: local` playbook (task `changed`, a 0-byte file left on disk). Both engines'
+  deltas are byte-identical (`file added f 0 0 644 0` plus `hash added e3b0c442...`), with stdout,
+  stderr and the recap matching - which is what the generator's own `--control` noise check reports
+  with real `ansible-playbook` on both hosts (`raw_identical: true`, still `check_mode_mutated:
+  true`, the same two-block diff). So no krikri change can silence it: a check-mode skip would break
+  parity (ansible reports the creation as changed and `lines` as the empty file) and would leave the
+  ansible-side delta alone in the oracle, which still counts a one-engine mutation as a finding. The
+  oracle needs to treat a check-mode mutation both engines made identically as expected before
+  judging the row divergent. What krikri owns is pinned in-process by
+  `test/integration/kernel_blacklist_test.cr`: the created file's creation mode is Python's
+  `open(path, "a")` 0666 masked by the process umask (0644 under the reference
+  images' 022, 0664 under 002 - Crystal's `File.touch` used to pin 0644 and drop the umask's
+  group-write bit, the one real krikri gap this case exposed; a `--umask 022,002` run of the
+  reference containers now reports the same `f 0 0 644 0` / `f 0 0 664 0` line for both engines) and
+  the unchanged register surface under `--check`.
+
 - **A parallel `gather_facts:` leaves an async job file, in check mode too, whose name and bytes two
   hosts can never share (kpg gather_facts cases, issues #1808 and #1809,
   `state:9b6901ec1080`/`check-mode:d1557ebab536`).** Ansible's gather_facts action runs its fact
