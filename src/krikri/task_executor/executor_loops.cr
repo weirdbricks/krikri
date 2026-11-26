@@ -1324,6 +1324,7 @@ module Krikri
         # probe of the condition for "item" - a variable literally named
         # `item_count` is a different variable, not the loop item.
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+        when_probe_error : WhenEvaluationError? = nil
         skippable = begin
           # strict: true - the probe must judge the conditional the same
           # way the real when: evaluation does. Evaluated non-strictly, a
@@ -1358,11 +1359,15 @@ module Krikri
             !evaluate_when(when_condition, vars_context, host, substitutor, task)
           end
         rescue err : WhenEvaluationError
+          when_probe_error = err
           when_undefined_name_is_loop_var?(err.message) && when_tolerates_undefined?(when_condition)
         rescue
           false
         end
         return nil if skippable
+        # Not skippable: real's conditional stage raised, so the loop error
+        # is re-raised after the conditional's own block is displayed.
+        emit_deferred_loop_when_error_block(task, host, when_probe_error) if when_probe_error
       end
 
       raise when_error_for(ex)
@@ -1524,6 +1529,71 @@ module Krikri
              end
       return unless @@loop_source_error_seen.add?(text)
       puts text
+    end
+
+    # Real 2.21.6 displays a `when:` that raised against an UNBOUND item -
+    # the deferred loop-source error's own conditional pass - as its own
+    # [ERROR] block and only then re-raises the loop error
+    # (task_executor.py's _execute_internal: `display.error(ae)` runs only
+    # while `_loop_eval_error` is set, so the block appears exactly once,
+    # ahead of the loop error's block, and a cleanly-False conditional
+    # still short-circuits to a skip with no block at all). Its shape is
+    # the ONE-record form - the clause label plus the detail, with the
+    # failing clause's own Origin - never the "Task failed." chain a
+    # task-level conditional failure gets, because the displayed error
+    # carries no task result:
+    #
+    #   [ERROR]: A 'when' expression failed: Error while evaluating conditional: 'item' is undefined
+    #   Origin: <abs file>:<clause value line>:<col>
+    #   (2 leading context lines + the clause line, caret under the column)
+    #   (blank)
+    #
+    # (live-verified vs 2.21.6, issue #1869, drew1kun.dnscrypt).
+    #
+    # Shared by both sites that defer an error past the conditional pass: the
+    # loop-SOURCE resolution (resolve_loop_items_or_raise) and the strict
+    # loop-ITEM render (render_loop_items_strict_or_raise, whose enclosing-
+    # block skip-display pass passes emit_when_error: false because real
+    # short-circuits a merged conditional that is already False and reports
+    # nothing). The fatal line names the loop error there either way - the
+    # conditional block is extra context, never the failure (issue #1867,
+    # pyronear.openvpn; live-captured vs 2.21.6).
+    #
+    # It lands on STDERR, not stdout: this block comes from `display.error`
+    # straight out of the task executor, not from a task result, so a
+    # transcript's stdout-then-stderr ordering puts it after the PLAY RECAP
+    # (live-verified vs 2.21.6, same cases).
+    #
+    # The non-boolean class ("Conditional result (...) ... Conditionals
+    # must have a boolean result.") is the one displayed error that carries
+    # its own cause chain and help text, so real renders it as the longer
+    # shape - the clause label as its own segment, then the detail with the
+    # same Origin, then the ALLOW_BROKEN_CONDITIONALS hint (live-verified
+    # vs 2.21.6 on a deferred loop error behind `when: "x | length"`).
+    private def emit_deferred_loop_when_error_block(task : Task, host : Host?, ex : WhenEvaluationError) : Nil
+      msg = ex.message || ""
+      return if msg.empty?
+      msg = decorate_conditional_value_origin(task, msg, host)
+      return unless conditional_evaluation_failure?(msg)
+      inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      inner = "#{WHEN_EXPRESSION_FAILED_PREFIX}#{inner}" unless inner.starts_with?(WHEN_EXPRESSION_FAILED_PREFIX)
+
+      source_context = nil
+      if (task_pos = task_origin_position(task)) &&
+         (cause = conditional_cause_position(task, "when", nil, task_pos))
+        source_context = ErrorBlock.origin_context(cause[:path], cause[:idx] + 1, cause[:col])
+      end
+
+      detail = inner[WHEN_EXPRESSION_FAILED_PREFIX.size..]
+      if detail.starts_with?("Conditional result (")
+        label = ErrorBlock::Node.new("#{WHEN_EXPRESSION_FAILED_PREFIX.rstrip(": ")}.", source_context: source_context)
+        label.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+          ErrorBlock::Node.new(detail, source_context: source_context,
+            help_text: "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option."))
+        ErrorBlock.emit_stderr(label)
+      else
+        ErrorBlock.emit_stderr(ErrorBlock::Node.new(inner, source_context: source_context))
+      end
     end
 
     # The loop keyword's VALUE token position for the task whose source
@@ -1910,7 +1980,7 @@ module Krikri
             if when_undefined_name_is_loop_var?(err.message) && when_tolerates_undefined?(failing_clause)
               true
             else
-              emit_item_render_when_error_block(task, err, failing_clause) if emit_when_error
+              emit_deferred_loop_when_error_block(task, host, err) if emit_when_error
               false
             end
           rescue
@@ -1935,22 +2005,6 @@ module Krikri
         # a host-state problem, not an undefined reference.
         raise WhenEvaluationError.new(ex.message || "Failed to render loop item")
       end
-    end
-
-    # The bare conditional-error block real prints when a looped task's when:
-    # raises while the task is still evaluated once with `item` unbound after
-    # the loop source failed. Real displays that error (deferred to stderr,
-    # after the play's own output) and THEN raises the loop error it saved, so
-    # the fatal line names the failing loop item, not the conditional
-    # (issue #1867, pyronear.openvpn; live-captured vs 2.21.6).
-    private def emit_item_render_when_error_block(task : Task, err : WhenEvaluationError, failing_clause : String) : Nil
-      msg = err.message.to_s
-      msg = msg["Task failed: ".size..] if msg.starts_with?("Task failed: ")
-      return if msg.empty?
-      return unless (task_pos = task_origin_position(task))
-      return unless (cause = conditional_cause_position(task, "when", failing_clause, task_pos))
-      source_context = origin_context_block(cause[:path], cause[:lines], cause[:idx] + 1, cause[:col])
-      ErrorBlock.emit_stderr(ErrorBlock::Node.new(msg, source_context: source_context))
     end
 
     # task_executor.py (_execute, 2.19.11): a looped task whose loop_var

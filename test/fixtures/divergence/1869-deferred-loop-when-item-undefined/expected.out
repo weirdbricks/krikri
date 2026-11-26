@@ -1,0 +1,37 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [[install] Find the latest dnscrypt-proxy version for architecture linux_arm64] ***
+[ERROR]: Task failed: object of type 'dict' has no attribute 'json'
+
+Task failed.
+Origin: <WORK>/playbook.yml:10:7
+
+ 8       failed: false
+ 9   tasks:
+10     - name: "[install] Find the latest dnscrypt-proxy version for architecture {{ dnscrypt_arch.archive }} "
+         ^ column 7
+
+<<< caused by >>>
+
+object of type 'dict' has no attribute 'json'
+Origin: <WORK>/playbook.yml:13:19
+
+11       ansible.builtin.set_fact:
+12         dnscrypt_latest_version: "{{ item['browser_download_url'].split('/')[7] }}"
+13       with_items: "{{ dnscrypt_latest_all_arch['json']['assets'] }}"
+                     ^ column 19
+
+fatal: [localhost]: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": false}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[ERROR]: A 'when' expression failed: Error while evaluating conditional: 'item' is undefined
+Origin: <WORK>/playbook.yml:17:11
+
+15       when:
+16         - not dnscrypt_latest_all_arch.failed
+17         - dnscrypt_arch.archive in item.name
+             ^ column 11
+
