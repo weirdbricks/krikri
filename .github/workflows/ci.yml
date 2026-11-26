@@ -260,6 +260,25 @@ jobs:
           KRIKRI_TEST_SHARDS: "4"
         run: scripts/minitest.sh -- -p 4
 
+      - name: Divergence corpus on a release build
+        # Everything above builds and tests the DEBUG flavor (./build.sh with
+        # no flag), and the corpus replay runs whatever bin/krikri-playbook is
+        # on disk - so a `--release`-only miscompile is invisible to it.
+        # Issue #1839 was exactly that: Crystal 1.22.3 compiled a method whose
+        # if/elsif chain is returned as a nilable tuple with a nilable member
+        # so that a false condition still produced the last branch's tuple;
+        # every task then took the attempt-loop path and a `when:`-skipped
+        # register lost its deprecations - release red, debug green, same
+        # commit. Real-host rounds ship --release binaries, so rebuild the
+        # main executable in that flavor and replay the corpus against it.
+        # Main executable only: that is where the class was found, and it
+        # keeps this step affordable next to a full release build.
+        env:
+          CRYSTAL_CACHE_DIR: /root/.cache/krikri-minitest
+        run: |
+          crystal build krikri-playbook.cr -o bin/krikri-playbook --release --no-debug
+          scripts/minitest.sh test/integration/divergence_corpus_test.cr
+
       - name: Lint (ameba)
         # lib/ameba/bin/ameba does not exist after `shards install`:
         # bin/ameba.cr is only the source stub, and ameba's shard.yml
