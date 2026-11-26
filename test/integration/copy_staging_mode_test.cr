@@ -138,3 +138,42 @@ describe "copy: read-only mode: as the non-root run user" do
     end
   end
 end
+
+describe "copy: validate: across devices (TMPDIR on a different mount)" do
+  # The validate path stages the temp under Dir.tempdir (remote_tmp-style);
+  # moving that temp onto a dest on another filesystem fails the rename with
+  # EXDEV, and the plain FileUtils.mv fallback then opens the read-only
+  # dest for writing (File.copy opens "wb") - exactly the 0440 case that
+  # regressed #1806. The real atomic_move stages a fresh writable file next
+  # to dest instead. The dest lives under PluginSpecHelper.tmp_path (repo
+  # fs) while TMPDIR points at a separate mount, and the test asserts the
+  # whole sequence - changed result, preserved mode, content - so the ladder
+  # in plugins/copy.cr cannot silently pass.
+  it "overwrites an existing 0440 dest when TMPDIR is on a different mount" do
+    repo_tmp = PluginSpecHelper.tmp_path("copy-validate-cross-device")
+    FileUtils.mkdir_p(repo_tmp)
+    dest = File.join(repo_tmp, "dest-0440.txt")
+    File.write(dest, "kpg locked dest\nsecond line\n")
+    File.chmod(dest, 0o440)
+
+    shm = "/dev/shm"
+    skip("/dev/shm unavailable") unless Dir.exists?(shm)
+
+    repo_dev = `stat -f -c %d #{repo_tmp}`.strip
+    shm_dev = `stat -f -c %d #{shm}`.strip
+    skip("TMPDIR mount (#{shm_dev}) matches repo fs (#{repo_dev}); cross-device ladder not exercised") if repo_dev == shm_dev
+
+    result = PluginSpecHelper.run("copy", {
+      "content"  => "inner\n",
+      "dest"     => dest,
+      "validate" => "cat %s > /dev/null",
+    }, umask: 0o022, env: {"TMPDIR" => shm})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(dest).must_equal("inner\n")
+    File.info(dest).permissions.value.must_equal(0o440)
+    Dir.children(repo_tmp).count { |name| name.includes?(".tmp") || name.starts_with?(".ansible_tmp") }.must_equal(0)
+  ensure
+    FileUtils.rm_rf(repo_tmp) if repo_tmp && Dir.exists?(repo_tmp)
+  end
+end

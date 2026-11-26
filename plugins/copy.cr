@@ -1218,6 +1218,38 @@ module Krikri
     # working directory and this echo came out as
     # /root/~/.ansible/tmp/ansible-tmp-.../.source on a root target
     # (round996005 deploy_helper_helper_block).
+    # The errnos real's atomic_move works around (module_utils/basic.py:
+    # EPERM/EACCES/ETXTBSY/EXDEV/EBUSY); any other first-rename errno
+    # fails the write locally, matching this path's own "Failed to move
+    # file to destination" shape.
+    private ATOMIC_MOVE_WORKAROUND_ERRNOS = [1, 13, 16, 18, 26]
+
+    private ANSIBLE_TMP_RANDOM_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_"
+
+    private def ansible_tmp_random(count : Int) : String
+      String.build(count) do |io|
+        count.times { io << ANSIBLE_TMP_RANDOM_CHARS[Random::Secure.rand(ANSIBLE_TMP_RANDOM_CHARS.size)] }
+      end
+    end
+
+    # The existing dest's owner/group/mode, applied to a fresh stage path -
+    # the same stance the temp-side keep_dest_attrs half takes.
+    private def apply_dest_attrs(path : String, dest : String) : Nil
+      begin
+        if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
+          begin
+            File.chown(path, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+          rescue File::Error
+            # Best-effort like atomic_move's EPERM-only tolerance: non-root
+            # can't chown, and the rename still lands correct-mode content.
+          end
+          File.chmod(path, info.permissions.value.to_i32)
+        end
+      rescue File::Error
+        # Stat/chmod failed (broken dest?) - proceed without preservation.
+      end
+    end
+
     private def staged_src_echo(dest : String) : String
       random = Random.rand(100_000_000_000_000..999_999_999_999_999)
       expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/.source#{File.extname(dest)}")
@@ -1296,20 +1328,7 @@ module Krikri
       # validate:, the order real uses, so a validator still reads the task's
       # mode (or the umask default) rather than the dest's.
       if keep_dest_attrs
-        begin
-          if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
-            begin
-              File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
-            rescue File::Error
-              # Best-effort like atomic_move's EPERM-only tolerance: non-root
-              # can't chown, and the rename still lands correct-mode content.
-            end
-            File.chmod(temp_file, info.permissions.value.to_i32)
-          end
-        rescue File::Error
-          # Stat/chmod failed (broken dest?) - proceed without preservation,
-          # matching atomic_write's own stance.
-        end
+        apply_dest_attrs(temp_file, dest)
       end
 
       # atomic_move's own context capture: this staged temp is mv'd in as
@@ -1317,10 +1336,39 @@ module Krikri
       # write was meant to land on (issue #911) - read BEFORE the move.
       secontext = prewrite_selinux_context(dest, keep_dest_attrs)
       begin
-        FileUtils.mv(temp_file, dest)
-      rescue ex
-        File.delete(temp_file) if File.exists?(temp_file)
-        return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
+        File.rename(temp_file, dest)
+      rescue ex : File::Error
+        errno = ex.os_error.try(&.value)
+        unless errno && ATOMIC_MOVE_WORKAROUND_ERRNOS.includes?(errno)
+          File.delete(temp_file) if File.exists?(temp_file)
+          return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
+        end
+        # Real's atomic_move ladder (module_utils/basic.py): on the workaround
+        # errnos, stage a fresh writable file next to dest - the name matters
+        # for output parity (the crash detail names it) - move the temp into
+        # it, then rename the stage into place. NEVER open the read-only dest
+        # itself for writing: the plain FileUtils.mv fallback copies INTO dest
+        # (File.copy opens "wb"), which is exactly what fails on a 0440 dest.
+        stage_path = File.join(File.dirname(dest), ".ansible_tmp#{ansible_tmp_random(8)}#{File.basename(dest)}")
+        begin
+          File.write(stage_path, "")
+          FileUtils.mv(temp_file, stage_path)
+        rescue err : File::Error
+          File.delete(stage_path) if File.exists?(stage_path)
+          File.delete(temp_file) if File.exists?(temp_file)
+          return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{err.message}"), staged: nil}
+        end
+        # The stage is a fresh inode with the process's own ownership (the
+        # cross-device copy strips the temp's chown) - re-apply the dest's
+        # owner/group/mode before the final rename, as real's atomic_move does.
+        apply_dest_attrs(stage_path, dest) if keep_dest_attrs
+        begin
+          File.rename(stage_path, dest)
+        rescue err : File::Error
+          File.delete(stage_path) if File.exists?(stage_path)
+          File.delete(temp_file) if File.exists?(temp_file)
+          return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{err.message}"), staged: nil}
+        end
       end
 
       if failure = relabel_written_file(dest, secontext)
