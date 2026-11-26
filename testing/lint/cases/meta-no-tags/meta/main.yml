@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: krikri
+  description: A role whose galaxy tags are invalid.
+  license: MIT
+  min_ansible_version: "2.9"
+  platforms:
+    - name: Ubuntu
+  galaxy_tags:
+    - Web
+    - my-sql
+    - my s q l
