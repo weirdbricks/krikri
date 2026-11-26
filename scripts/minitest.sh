@@ -284,7 +284,11 @@ clock_seconds() {
 # PluginSpecHelper::Slice). Per-shard binaries meant N ~2.4GB crystal builds at
 # once, which is what made a shard count above two unpalatable on the 16GB dev
 # box, and they still could not balance (see scripts/minitest_stats.sh).
-hash=$(cat "${files[@]}" "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock" | sha256sum | cut -d' ' -f1)
+# shard.yml is baked into the binary as well (src/krikri/version.cr reads it
+# with read_file at compile time), so a manifest-only change - a version bump
+# landing through a merge, say - has to rebuild too, or the binary keeps
+# reporting the version it was compiled with.
+hash=$(cat "${files[@]}" "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock" "$ROOT/shard.yml" | sha256sum | cut -d' ' -f1)
 
 build_test_binary() {
   if [ -f "$HASHFILE" ] && [ "$(cat "$HASHFILE")" = "$hash" ] && [ -x "$BINARY" ]; then
@@ -296,13 +300,17 @@ build_test_binary() {
     printf 'require "./%s"\n' "${file#"$ROOT"/}" >> "$tmp_ep"
   done
   mv "$tmp_ep" "$ENTRYPOINT"
-  # Hash first, binary second - but a failed build drops BOTH, or the next run
-  # would "validate" against the hash and silently execute stale code.
-  echo "$hash" > "$HASHFILE"
+  # Only a build that actually succeeded may record its sources' hash. Writing
+  # it beforehand let a build killed from outside (timeout, OOM, SIGKILL of a
+  # whole run) leave the PREVIOUS binary behind already blessed by the new
+  # hash, and every later run then reused stale code - one slot spent a round
+  # failing a version-manifest test because of exactly that.
+  rm -f "$HASHFILE"
   if ! (cd "$ROOT" && crystal build --no-debug "$ENTRYPOINT" -o "$BINARY"); then
-    rm -f "$BINARY" "$HASHFILE"
+    rm -f "$BINARY"
     return 1
   fi
+  echo "$hash" > "$HASHFILE"
 }
 
 # Default fiber count: 8. The workers share ONE OS thread per process

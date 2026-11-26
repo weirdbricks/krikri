@@ -13,9 +13,13 @@ module Krikri
   # file system" task (fstype: swap on a freshly dd'd swap file)
   # silently dropped while Ansible actually ran mkswap.
   #
-  # `resizefs:`/`uuid:` are not implemented (Ansible module's own resize/
-  # UUID-reset paths per fstype) - same class of documented, narrow
-  # scope cut as this repo's other RHEL/FreeBSD-only module gaps.
+  # `resizefs:` and the post-create `uuid:` reset of an already-matching
+  # filesystem are not implemented (Ansible module's own resize/UUID-reset
+  # paths per fstype) - same class of documented, narrow scope cut as this
+  # repo's other RHEL/FreeBSD-only module gaps. `uuid:` ON CREATION is
+  # implemented: the create path's argv has to carry the same `-U <uuid>`
+  # real's create() appends, since that argv is what a failed mkfs reports
+  # back as `cmd` (kpg round, issue #1855).
   # `ufs` IS in the accepted choices (real filesystem.py's FILESYSTEMS
   # has UFS with MKFS=newfs) but creating one only works on FreeBSD.
   class FilesystemPlugin < BasePlugin
@@ -58,6 +62,26 @@ module Krikri
       "btrfs" => "mkfs.btrfs",
     }
 
+    # Per-fstype `-U <uuid>` flag list (real filesystem.py's
+    # MKFS_SET_UUID_OPTIONS on each class - the Ext classes share one,
+    # bcachefs and LVM their own doubles). A fstype with neither this nor a
+    # CHANGE_UUID command refuses `uuid:` outright rather than silently
+    # formatting without it.
+    MKFS_UUID_OPTIONS = {
+      "ext2"     => ["-U"],
+      "ext3"     => ["-U"],
+      "ext4"     => ["-U"],
+      "ext4dev"  => ["-U"],
+      "bcachefs" => ["-U", "--uuid"],
+      "lvm"      => ["-u", "--uuid"],
+    }
+
+    # Fstypes whose existing filesystem can be re-uuid'd after creation
+    # (real's CHANGE_UUID: tune2fs/xfs_admin/pvchange) - only the
+    # "is uuid supported at all" test needs them here, since that
+    # post-create path itself is still unimplemented.
+    CHANGE_UUID_FSTYPES = %w[ext2 ext3 ext4 ext4dev xfs lvm]
+
     def initialize(config : JSON::Any)
       super(config)
       PARAM_ALIASES.each do |alias_name, canonical|
@@ -96,6 +120,10 @@ module Krikri
       force = true?(@params["force"]?)
       opts = @params["opts"]?.try(&.split) || [] of String
       check_mode = true?(@params["_ansible_check_mode"]?)
+      # Python's `if uuid` treats the argspec's own empty-string default the
+      # same as an absent uuid.
+      uuid = @params["uuid"]?
+      uuid = nil if uuid.try(&.empty?)
 
       exists_result = remote_exec("test -e #{shell_quote(dev)}")
       unless exists_result[:exit_code] == 0
@@ -114,7 +142,7 @@ module Krikri
           msg: "state is present but all of the following are missing: fstype")
       end
       present_result(
-        dev, current_fs, state, fstype, force, opts, check_mode,
+        dev, current_fs, state, fstype, force, opts, uuid, check_mode,
         blkid_result[:exit_code], blkid_result[:stderr],
       )
     end
@@ -173,11 +201,35 @@ module Krikri
       return fs_success(false) if current_fs.empty?
       return fs_success(true) if check_mode
 
-      wipe_result = remote_exec("wipefs --all #{shell_quote(dev)}")
+      wipefs = find_required_binary("wipefs")
+      return missing_binary_result("wipefs") unless wipefs
+
+      argv = [wipefs, "--all", dev]
+      wipe_result = remote_exec(argv.map { |itm| shell_quote(itm) }.join(' '))
       unless wipe_result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "wipefs failed: #{wipe_result[:stderr]}")
+        return check_rc_failure(argv, wipe_result)
       end
       fs_success(true)
+    end
+
+    # basic.py's run_command(check_rc=True) exit: fail_json(msg=the
+    # rstripped stderr, cmd=the shlex-quoted argv, rc/stdout/stderr and the
+    # controller's *_lines). Real filesystem.py lets that shape through
+    # untouched for both mkfs and wipefs - it never wraps the tool's own
+    # message in a "<cmd> failed: " label, and a role that ignores the
+    # error still reads `msg`/`rc`/`cmd`/`stderr` from the registered
+    # result (kpg 000010-multi-flatpak-happy, issue #1855).
+    private def check_rc_failure(
+      argv : Array(String),
+      result : NamedTuple(exit_code: Int32, stdout: String, stderr: String),
+    ) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: result[:stderr].rstrip,
+        cmd: argv.map { |itm| Shell.quote_arg(itm) }.join(' '),
+        rc: result[:exit_code],
+        stdout: result[:stdout], stdout_lines: result[:stdout].lines.map(&.chomp),
+        stderr: result[:stderr], stderr_lines: result[:stderr].lines.map(&.chomp),
+        key_order: ["changed", "cmd", "msg", "rc", "stderr", "stderr_lines", "stdout", "stdout_lines"])
     end
 
     # Real filesystem.py's idempotency compares FILESYSTEMS values (the
@@ -195,7 +247,7 @@ module Krikri
 
     private def present_result(
       dev : String, current_fs : String, state : String, fstype : String,
-      force : Bool, opts : Array(String), check_mode : Bool,
+      force : Bool, opts : Array(String), uuid : String?, check_mode : Bool,
       blkid_rc : Int32, blkid_err : String,
     ) : PluginResult
       command_info = FSTYPE_COMMANDS[fstype]
@@ -214,41 +266,82 @@ module Krikri
       end
 
       create_filesystem(
-        dev, current_fs, fs_class_of(current_fs), fs_class_of(fstype),
-        mkfs_argv, force_flags, opts, force, check_mode, blkid_rc, blkid_err,
+        dev, current_fs, fs_class_of(current_fs), fs_class_of(fstype), fstype,
+        mkfs_argv, force_flags, opts, uuid, force, check_mode, blkid_rc, blkid_err,
       )
     end
 
     private def create_filesystem(
-      dev : String, current_fs : String, current_fs_class : String, fstype_class : String,
+      dev : String, current_fs : String, current_fs_class : String, fstype_class : String, fstype : String,
       mkfs_argv : Array(String), force_flags : Array(String),
-      opts : Array(String), force : Bool, check_mode : Bool,
+      opts : Array(String), uuid : String?, force : Bool, check_mode : Bool,
       blkid_rc : Int32, blkid_err : String,
     ) : PluginResult
+      # real main() runs this refusal before its idempotency checks, so a
+      # fstype with no way to take a uuid at all fails even when the device
+      # already carries that same filesystem.
+      if error = uuid_unsupported_result(fstype, uuid)
+        return error
+      end
+
       same_fs = !current_fs.empty? && current_fs_class == fstype_class
       if same_fs && !force
         return fs_success(false)
       elsif !current_fs.empty? && !same_fs && !force
-        # Real filesystem.py's fail_json passes the blkid run_command
-        # result along as rc/err kwargs (filesystem.py's
-        # `fail_json(msg=..., rc=rc, err=err)`), so the registered
-        # result carries blkid's rc (0 whenever it identified a
-        # filesystem at all) and its stderr (usually empty).
-        return PluginResult.new(changed: false, failed: true,
-          msg: "'#{dev}' is already used as #{current_fs}, use force=true to overwrite",
-          rc: blkid_rc, err: blkid_err,
-          key_order: %w[rc err failed msg changed exception])
+        return already_used_result(dev, current_fs, blkid_rc, blkid_err)
       end
 
+      # create()'s check-mode return comes before get_bin_path, so a host
+      # without the mkfs tool still reports changed=true under --check.
       return fs_success(true) if check_mode
 
-      cmd = (mkfs_argv + force_flags + opts + [dev]).map { |itm| shell_quote(itm) }.join(' ')
-      mkfs_result = remote_exec(cmd)
-      unless mkfs_result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "#{mkfs_argv.first} failed: #{mkfs_result[:stderr]}")
-      end
+      mkfs = find_required_binary(mkfs_argv.first)
+      return missing_binary_result(mkfs_argv.first) unless mkfs
+
+      argv = [mkfs] + force_flags + mkfs_create_opts(fstype, uuid, opts) + [dev]
+      mkfs_result = remote_exec(argv.map { |itm| shell_quote(itm) }.join(' '))
+      return check_rc_failure(argv, mkfs_result) unless mkfs_result[:exit_code] == 0
 
       fs_success(true)
+    end
+
+    private def uuid_unsupported_result(fstype : String, uuid : String?) : PluginResult?
+      return nil if uuid.nil?
+      return nil if MKFS_UUID_OPTIONS.has_key?(fstype) || CHANGE_UUID_FSTYPES.includes?(fstype)
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "module does not support UUID option for this filesystem (#{fstype}) yet.")
+    end
+
+    # Real filesystem.py's fail_json passes the blkid run_command result along
+    # as rc/err kwargs (filesystem.py's `fail_json(msg=..., rc=rc, err=err)`),
+    # so the registered result carries blkid's rc (0 whenever it identified a
+    # filesystem at all) and its stderr (usually empty).
+    private def already_used_result(
+      dev : String, current_fs : String, blkid_rc : Int32, blkid_err : String,
+    ) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "'#{dev}' is already used as #{current_fs}, use force=true to overwrite",
+        rc: blkid_rc, err: blkid_err,
+        key_order: %w[rc err failed msg changed exception])
+    end
+
+    # get_bin_path(MKFS, required=True): the module's own search order ($PATH
+    # then the standard sbin dirs) and its failure text.
+    private def missing_binary_result(name : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: PluginHelpers::GetBinPath.missing_executable_error(name, @bin_searched_paths))
+    end
+
+    # create() appends the uuid flag pair unless the task's own opts already
+    # carry one of them, so `opts: -U xyz` is not doubled.
+    private def mkfs_create_opts(fstype : String, uuid : String?, opts : Array(String)) : Array(String)
+      mkfs_opts = opts.dup
+      uuid_opt = MKFS_UUID_OPTIONS[fstype]?
+      if uuid_opt && (given_uuid = uuid)
+        mkfs_opts += [uuid_opt[0], given_uuid] if (uuid_opt & mkfs_opts).empty?
+      end
+      mkfs_opts
     end
 
     private def shell_quote(s : String) : String

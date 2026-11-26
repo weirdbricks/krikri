@@ -1,0 +1,9 @@
+#!/bin/sh
+# The case's own mkfs.ext2 (reached through env.txt's PATH): a real one names
+# its version banner in the first stderr line, so no recording of a real mkfs
+# would replay on a host with another e2fsprogs. What this case records is the
+# shape ansible's run_command(check_rc=True) puts around ANY failing command
+# the filesystem module runs.
+echo "mke2fs stub: bogus filesystem image" >&2
+echo "mke2fs stub: cannot format the device" >&2
+exit 1
