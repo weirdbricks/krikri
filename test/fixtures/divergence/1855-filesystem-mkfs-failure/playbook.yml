@@ -1,0 +1,25 @@
+---
+# issue #1855's failing task, copied from kpg 000010-multi-flatpak-happy and
+# adapted only to run against localhost: the delegated host (target2) and the
+# absolute /tmp work path become this case's own scratch directory, and the
+# zero-byte image real's /opt/kpg-fixtures ships is created by the task above.
+#
+# gather_facts is off because the failing task needs no facts, and real
+# ansible-core 2.21.6 gathers them without printing a task (krikri still
+# prints its Gathering Facts block, a separate divergence).
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Kpg empty image
+      ansible.builtin.file:
+        path: '{{ playbook_dir }}/dest-0440.txt'
+        state: touch
+    - name: 'Filesystem #10.1'
+      community.general.filesystem:
+        dev: '{{ playbook_dir }}/dest-0440.txt'
+        force: false
+        uuid: okypgd
+        fstype: ext2
+      register: kpg_task_1
+      ignore_errors: true

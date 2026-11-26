@@ -1,0 +1,22 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Kpg empty image] *********************************************************
+changed: [localhost]
+
+TASK [Filesystem #10.1] ********************************************************
+[ERROR]: Task failed: Module failed: mke2fs stub: bogus filesystem image
+mke2fs stub: cannot format the device
+Origin: <WORK>/playbook.yml:18:7
+
+16         path: '{{ playbook_dir }}/dest-0440.txt'
+17         state: touch
+18     - name: 'Filesystem #10.1'
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "cmd": "./stubbin/mkfs.ext2 -F -U okypgd <WORK>/dest-0440.txt", "msg": "mke2fs stub: bogus filesystem image\nmke2fs stub: cannot format the device", "rc": 1, "stderr": "mke2fs stub: bogus filesystem image\nmke2fs stub: cannot format the device\n", "stderr_lines": ["mke2fs stub: bogus filesystem image", "mke2fs stub: cannot format the device"], "stdout": "", "stdout_lines": []}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+
