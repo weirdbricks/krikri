@@ -1,0 +1,26 @@
+# fNxONE.baseline tasks/main.yml:45-51, the task that diverged, run twice:
+# the real (non-check) run the role's cold phase performs, then the same task
+# under the play's --check mode. A real run creates /etc/drift and then fails
+# the owner:/group: lookup for the not-yet-created `ntp` user; Ansible removes
+# the file again on that failure, so the later --check run sees the path
+# absent and reports changed (issue #1870).
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Criando o arquivo drift para o serviço NTP
+      file:
+        path: "{{ playbook_dir }}/drift"
+        state: touch
+        owner: ntp
+        group: ntp
+        mode: 0640
+      check_mode: false
+      ignore_errors: true
+
+    - name: Criando o arquivo drift para o serviço NTP
+      file:
+        path: "{{ playbook_dir }}/drift"
+        state: touch
+        owner: ntp
+        group: ntp
+        mode: 0640

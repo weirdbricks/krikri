@@ -274,6 +274,7 @@ module Krikri
       # state handlers run, so their warnings ride EVERY check-mode result
       # (failures included), whatever the state handler returned.
       attach_unknown_owner_group_warnings(result)
+      remove_created_touch_target(result)
       result
     end
 
@@ -1225,8 +1226,7 @@ module Krikri
       diff_data = touch_diff(path, prev_state)
 
       # Apply attributes
-      apply_file_attributes(path)
-      update_times(path)
+      apply_created_touch_attributes(path, prev_state)
 
       PluginResult.new(
         changed: true,
@@ -1236,6 +1236,39 @@ module Krikri
         dest: path,
         key_order: SUCCESS_KEY_ORDER
       )
+    end
+
+    # Ansible's execute_touch unwinds a failed attribute apply by removing the
+    # file it just created (`if prev_state == 'absent': os.remove(b_path)`,
+    # file.py execute_touch's SystemExit handler), so a failed touch of a
+    # nonexistent path leaves nothing behind. fNxONE.baseline (#1870) depends
+    # on that: its failed cold run used to leave the new /etc/drift in place,
+    # and the following --check run then performed the owner:/group: lookup a
+    # real 2.21.6 check-mode touch of an ABSENT path never reaches
+    # (execute_touch returns changed:true before set_fs_attributes) and failed
+    # the play. The removal itself happens in execute, after add_path_info has
+    # merged the file's stat block - Ansible's fail_json prints that block
+    # while the file still exists, then removes it.
+    private def apply_created_touch_attributes(path : String, prev_state : String) : Nil
+      apply_file_attributes(path)
+      update_times(path)
+    rescue ex
+      @created_touch_path = path if prev_state == "absent"
+      raise ex
+    end
+
+    # The cleanup half of Ansible's execute_touch unwind: a state=touch that
+    # created the target and then failed has to leave the path absent again
+    # (see handle_touch). Best-effort like Ansible's bare os.remove - a removal
+    # that itself fails must not replace the task's real failure.
+    private def remove_created_touch_target(result : PluginResult) : Nil
+      path = @created_touch_path
+      return unless path && result.failed?
+      @created_touch_path = nil
+      begin
+        File.delete(path)
+      rescue File::Error
+      end
     end
 
     # Check-mode verdict for an existing file under state=touch - shares
@@ -2508,6 +2541,10 @@ module Krikri
 
     @last_error : String? = nil
     @file_warnings : Array(String)? = nil
+    # Set by handle_touch when it created the target and the attribute apply
+    # then failed; execute removes it after the failure result (and its stat
+    # block) has been built - see handle_touch.
+    @created_touch_path : String? = nil
   end
 end
 

@@ -1,0 +1,23 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Criando o arquivo drift para o serviço NTP] ******************************
+[ERROR]: Task failed: Module failed: chown failed: failed to look up user ntp
+Origin: <WORK>/playbook.yml:10:7
+
+ 8   gather_facts: false
+ 9   tasks:
+10     - name: Criando o arquivo drift para o serviço NTP
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "gid": 1000, "group": "labros", "mode": "0664", "msg": "chown failed: failed to look up user ntp", "owner": "labros", "path": "<WORK>/drift", "size": 0, "state": "file", "uid": 1000}
+...ignoring
+
+TASK [Criando o arquivo drift para o serviço NTP] ******************************
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+
+[WARNING]: failed to look up user ntp. Create user up to this point in real play
+[WARNING]: failed to look up group ntp. Create group up to this point in real play
