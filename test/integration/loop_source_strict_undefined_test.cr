@@ -497,9 +497,12 @@ describe "undefined loop: source is strict" do
     status.exit_code.must_equal(2)
     output.must_include("'some_other_undefined' is undefined")
     # Real 2.21.6 does not silently discard the conditional that raised while
-    # the loop list rendered: it displays its own error block (deferred to
-    # stderr) before re-raising the saved loop error (issue #1867).
-    output.must_include("A 'when' expression failed: Error while evaluating conditional: 'some_undefined_var' is undefined")
+    # the loop list rendered: it displays its own [ERROR] block (deferred to
+    # stderr) before re-raising the saved loop error, so the unrelated
+    # undefined name appears - inside that block, never as the failure itself
+    # (issues #1867 and #1869, live-verified vs 2.21.6).
+    output.must_include("[ERROR]: A 'when' expression failed: Error while evaluating conditional: 'some_undefined_var' is undefined")
+    output.must_include(%({"msg": "Task failed: 'some_other_undefined' is undefined"}))
     output.wont_include("skipping:")
     output.wont_include("SENTINEL-B")
     output.must_include("failed=1")
@@ -535,7 +538,9 @@ describe "undefined loop: source is strict" do
   # / `default(...)`). A bare access over an undefined TEMPLATED loop
   # source (`with_items: ["{{ sites }}"]`) fails with the loop source's
   # own 'sites' is undefined - the unbound `item` in the when: must
-  # neither mask it as a skip nor be blamed for the failure.
+  # neither mask it as a skip nor be blamed for the failure (2.21.6 does
+  # display that when: failure as its own block ahead of the loop error,
+  # see issue #1869).
   it "fails with the loop source's undefined error when a bare item access sits in the when:" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
@@ -553,7 +558,8 @@ describe "undefined loop: source is strict" do
 
     status.exit_code.must_equal(2)
     output.must_include("'sites' is undefined")
-    output.wont_include("'item' is undefined")
+    output.must_include("[ERROR]: A 'when' expression failed: Error while evaluating conditional: 'item' is undefined")
+    output.must_include(%({"msg": "Task failed: 'sites' is undefined"}))
     output.wont_include("skipping:")
     output.wont_include("SENTINEL-D")
     output.must_include("failed=1")
@@ -588,7 +594,13 @@ describe "undefined loop: source is strict" do
 
     status.exit_code.must_equal(2)
     output.must_include("'no_such_list' is undefined")
-    output.wont_include("Conditionals must have a boolean result")
+    # 2.21.6 also displays the broken conditional itself - as the longer
+    # chained block (its bare clause label, the detail, and the
+    # ALLOW_BROKEN_CONDITIONALS hint) - before re-raising the loop error
+    # (issue #1869, live-verified vs 2.21.6).
+    output.must_include("[ERROR]: A 'when' expression failed: Conditional result (False) was derived from value of type 'int'")
+    output.must_include("Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.")
+    output.must_include(%({"msg": "Task failed: 'no_such_list' is undefined"}))
     output.wont_include("SENTINEL-808")
     output.must_include("failed=1")
   end
@@ -617,8 +629,53 @@ describe "undefined loop: source is strict" do
 
     status.exit_code.must_equal(2)
     output.must_include("has no attribute ''")
-    output.wont_include("Conditionals must have a boolean result")
+    output.must_include("[ERROR]: A 'when' expression failed: Conditional result (False) was derived from value of type 'int'")
+    output.must_include("Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.")
     output.wont_include("SENTINEL-808G")
+    output.must_include("failed=1")
+  end
+
+  # Issue #1869 (drew1kun.dnscrypt): the loop source is a dict-subscript miss
+  # ('json' on a registered result that never got one) while the when: LIST
+  # dereferences the still-unbound `item`. Real displays the conditional's
+  # own failure - one-record block, clause label + detail, Origin at the
+  # failing CLAUSE's value token - and only then re-raises the loop error,
+  # so the transcript carries both blocks (live-verified vs 2.21.6).
+  it "shows the deferred loop error's when: failure as its own block (issue #1869)" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          latest:
+            failed: false
+          arch:
+            archive: linux_arm64
+        tasks:
+          - name: t
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_items: "{{ latest['json']['assets'] }}"
+            when:
+              - not latest.failed
+              - arch.archive in item.name
+          - name: sentinel
+            ansible.builtin.debug:
+              msg: "SENTINEL-1869"
+      YAML
+
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: A 'when' expression failed: Error while evaluating conditional: 'item' is undefined")
+    # The Origin belongs to the failing CLAUSE (`arch.archive in item.name`),
+    # never the task's name key or the with_items keyword.
+    output.must_match(/:15:11\n/)
+    output.must_include("^ column 11")
+    output.must_include(%({"msg": "Task failed: object of type 'dict' has no attribute 'json'"}))
+    # The when: block comes FIRST - real displays it before the loop error.
+    when_block = output.index("A 'when' expression failed: Error while evaluating conditional: 'item' is undefined")
+    loop_error = output.index("object of type 'dict' has no attribute 'json'")
+    assert_equal(true, !!when_block && !!loop_error && when_block.as(Int32) < loop_error.as(Int32))
+    output.wont_include("skipping:")
+    output.wont_include("SENTINEL-1869")
     output.must_include("failed=1")
   end
 

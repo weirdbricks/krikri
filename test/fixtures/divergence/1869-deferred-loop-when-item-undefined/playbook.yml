@@ -1,0 +1,18 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    dnscrypt_arch:
+      archive: linux_arm64
+      dir: linux-arm64
+    dnscrypt_latest_all_arch:
+      failed: false
+  tasks:
+    - name: "[install] Find the latest dnscrypt-proxy version for architecture {{ dnscrypt_arch.archive }} "
+      ansible.builtin.set_fact:
+        dnscrypt_latest_version: "{{ item['browser_download_url'].split('/')[7] }}"
+      with_items: "{{ dnscrypt_latest_all_arch['json']['assets'] }}"
+      no_log: true  # prevent huge green or yellow output
+      when:
+        - not dnscrypt_latest_all_arch.failed
+        - dnscrypt_arch.archive in item.name
+        - not item.name.endswith("minisig")
