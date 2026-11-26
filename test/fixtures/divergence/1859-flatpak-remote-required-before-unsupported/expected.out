@@ -1,0 +1,18 @@
+
+PLAY [Krikri-playbook-generator: multi-task #28] *******************************
+
+TASK [Flatpak_remote #28.0] ****************************************************
+[ERROR]: Task failed: Module failed: missing required arguments: name
+Origin: <WORK>/playbook.yml:11:7
+
+ 9   gather_facts: false
+10   tasks:
+11     - name: 'Flatpak_remote #28.0'
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "missing required arguments: name"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+

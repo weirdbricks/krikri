@@ -1,0 +1,17 @@
+---
+# kpg 000028-multi-flatpak_remote-chaos, the Flatpak_remote #28.0 task
+# verbatim (delegate_to target2 / delegate_facts dropped: the local
+# inventory host stands in for target2). The typo'd `nmae` key and the
+# missing required `name` both fail argument validation, and real reports
+# the missing argument first.
+- name: 'Krikri-playbook-generator: multi-task #28'
+  hosts: kpg_targets
+  gather_facts: false
+  tasks:
+    - name: 'Flatpak_remote #28.0'
+      community.general.flatpak_remote:
+        enabled: true
+        flatpakrepo_url: ndxbly
+        nmae: jvwrzl
+      register: kpg_task_0
+      ignore_errors: true
