@@ -278,6 +278,60 @@ describe "cronvar plugin" do
     result["msg"].as_s.must_equal("parameters are mutually exclusive: insertbefore|insertafter")
   end
 
+  # A `crontab` shim that reads an empty crontab and records the staged
+  # file the install half is handed, so the live-crontab path can be
+  # pinned without touching the suite host's real crontab.
+  describe "user crontab install" do
+    private def staged_install(params : Hash(String, String), tag : String) : {String, String}
+      shim_dir = tmp_path("cronvar-install-bin-#{tag}")
+      Dir.mkdir_p(shim_dir)
+      staged_content = tmp_path("cronvar-installed-content-#{tag}")
+      staged_path = tmp_path("cronvar-installed-path-#{tag}")
+      shim = File.join(shim_dir, "crontab")
+      File.write(shim, <<-SH)
+        #!/bin/sh
+        if [ "$1" = "-l" ]; then
+          echo "no crontab for root" >&2
+          exit 1
+        fi
+        printf '%s' "$1" > #{staged_path}
+        cp "$1" #{staged_content}
+        exit 0
+      SH
+      File.chmod(shim, 0o755)
+
+      result = PluginSpecHelper.run("cronvar", params, env: {"PATH" => "#{shim_dir}:/usr/bin:/bin"})
+      result["changed"].as_bool.must_equal(true)
+      {File.read(staged_content), File.read(staged_path)}
+    end
+
+    # kpg cronvar chaos #22 (issue #1854): insertbefore naming a variable
+    # the crontab does not hold drops the new line but still reinstalls
+    # the crontab - real cronvar's own quirk. Real CronVar.write()
+    # renders "" for that and stages it through
+    # tempfile.mkstemp(prefix="crontab"), and `crontab` stamps that path
+    # AND the wall clock into the crontab file's own
+    # "# (/tmp/crontabXXXXXXXX installed on ...)" header - so the empty
+    # body and the name's 20-character shape both end up on the host.
+    it "installs an emptied crontab as an empty file at Ansible's /tmp/crontabXXXXXXXX path" do
+      content, path = staged_install({
+        "name"         => "efimnk",
+        "value"        => "xyzzly",
+        "state"        => "present",
+        "insertbefore" => "cctyml",
+      }, "emptied")
+
+      content.must_equal("")
+      path.must_match(%r{\A/tmp/crontab[a-z0-9_]{8}\z})
+    end
+
+    it "stages exactly the rendered crontab, with no added blank line" do
+      content, _ = staged_install({"name" => "MAILTO", "value" => "admin@example.com"}, "rendered")
+
+      content.must_equal("MAILTO=admin@example.com\n")
+    end
+  end
+
   # Real community.general cronvar's result shape (live-verified against
   # ansible-core 2.19.11): changed + vars (the full current var-name
   # list), plus cron_file/backup_file only when they apply - a backup

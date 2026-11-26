@@ -170,15 +170,9 @@ module Krikri
     # Install the updated crontab via a tmp file. Returns the failure
     # result when `crontab` rejects it, nil on success.
     private def install_user_crontab(crontab_target : String, new_content : String) : PluginResult?
-      # File.tempfile (unguessable name + O_EXCL + 0600), not a
-      # predictable Random.rand path: File.write followed a symlink
-      # planted there. Same class of fix cron.cr already made for its
-      # own crontab tmp.
-      tmp_file = File.tempfile(".krikri-playbook-crontab-", nil)
+      tmp_path = create_crontab_tmpfile(new_content)
       begin
-        tmp_file.print(new_content.empty? ? "\n" : new_content)
-        tmp_file.close
-        install_result = remote_exec("crontab #{crontab_target} #{tmp_file.path}")
+        install_result = remote_exec("crontab #{crontab_target} #{tmp_path}")
         unless install_result[:exit_code] == 0
           # Real CronVar.write() hands `crontab`'s stderr straight to
           # fail_json(msg=err) - verbatim, trailing newline and all, with
@@ -186,10 +180,43 @@ module Krikri
           return PluginResult.new(changed: false, failed: true, msg: install_result[:stderr])
         end
       ensure
-        tmp_file.delete rescue nil
+        File.delete(tmp_path) rescue nil
       end
 
       nil
+    end
+
+    # Real CronVar.write() stages the new crontab through
+    # tempfile.mkstemp(prefix="crontab"): "/tmp/crontab" plus eight random
+    # characters, mode 0600, created exclusively. The installer stamps
+    # that path AND the wall clock into the crontab file's own
+    # "# (/tmp/crontabXXXXXXXX installed on ...)" header, so the name's
+    # 20-character shape is part of what lands on the host - a longer
+    # ".krikri-playbook-crontab-" File.tempfile name left krikri a
+    # 213-byte crontab where Ansible leaves 194 (kpg cronvar chaos #22,
+    # issue #1854). O_EXCL keeps File.tempfile's guarantee that a path
+    # planted in /tmp cannot be followed.
+    #
+    # An empty crontab is written as an EMPTY file, not a literal "\n":
+    # real render() returns "" when the insert target never matched or
+    # the last variable was removed, `crontab <empty-file>` installs that
+    # fine, and a newline instead becomes a body line `crontab -l` lists
+    # back - the same bug cron.cr's own installer fixed for state=absent.
+    private def create_crontab_tmpfile(content : String) : String
+      chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
+      10.times do
+        name = String.build(15) do |builder|
+          builder << "crontab"
+          8.times { builder << chars[Random::Secure.rand(chars.size)] }
+        end
+        candidate = File.join("/tmp", name)
+        fd = LibC.open(candidate, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_EXCL, 0o600)
+        next if fd == -1
+        LibC.close(fd)
+        File.write(candidate, content)
+        return candidate
+      end
+      raise "unable to create a temporary crontab file in /tmp"
     end
 
     private def should_backup?(path : String) : Bool

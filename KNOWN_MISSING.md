@@ -1117,6 +1117,24 @@ because anyone intends to fix them.
   that the oracle's `f ... 0 0 600 0` and `e3b0c442...` lines report, with and without an explicit
   `path:`/`prefix:`).
 
+- **The kpg state oracle hashes the crontab installer's own per-run header (kpg cronvar cases, issue
+  #1854).** `community.general.cronvar` without `cron_file:` reinstalls the user crontab through
+  `tempfile.mkstemp(prefix="crontab")` plus `crontab <file>`, and the vixie `crontab` binary writes
+  the staged path and the wall clock into the crontab file itself (`# (/tmp/crontabXXXXXXXX installed
+  on Thu Nov 26 14:17:07 2026)`). The cronvar-chaos #22 task's `insertbefore: cctyml` names a
+  variable the (empty) crontab does not hold, which real cronvar drops while still reinstalling, so
+  both engines leave the same empty 194-byte 0600 root:crontab `/var/spool/cron/crontabs/root` - the
+  oracle's `file added f 0 997 600 194` line matches - but the two header stamps differ, so its
+  `hash added` lines never can. The generator's own `--control` noise check (real
+  `ansible-playbook` on both hosts, same playbook) reports exactly the same hash-only state diff -
+  the `file added f 0 997 600 194` line identical on both sides, the two `hash added` values
+  different - so two real Ansible runs disagree here identically and no krikri change can match it.
+  The oracle needs to normalise the crontab header's staged path and timestamp before hashing that
+  path. What krikri owns is pinned in-process by `test/integration/cronvar_test.cr`: an emptied
+  crontab is staged as an empty file at Ansible's 20-character `/tmp/crontabXXXXXXXX` path (a longer
+  File.tempfile name and the old `"\n"` body changed the installed file's size, and the newline made
+  `crontab -l` list a blank line), and a rendered one is staged verbatim.
+
 - **Real ansible's own `async_status: mode: cleanup` deletes its job file under `--check`, so the kpg
   check-mode oracle counts a shared mutation as a krikri finding (kpg multi-apt_repository case,
   issue #1804, `check-mode:3bb5f161acaf`).** The playbook's second play runs
