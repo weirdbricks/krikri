@@ -45,6 +45,24 @@ describe "kernel_blacklist plugin" do
     File.read(file).must_equal("")
   end
 
+  # kpg issue #1860: the check-mode oracle fingerprints the empty file
+  # kernel_blacklist leaves behind. kernel_blacklist.py creates it with a
+  # bare `open(path, "a")` - 0666 masked by the process umask - so under a
+  # group-write umask (002) it is 0664, not the 0644 Crystal's File.touch
+  # used to pin.
+  it "creates the missing blacklist file with Ansible's 0666 creation mode under --check" do
+    file = PluginSpecHelper.tmp_path("kernel-blacklist-check-mode-create-mode.conf")
+    File.delete(file) if File.exists?(file)
+
+    result = PluginSpecHelper.run("kernel_blacklist",
+      {"name" => "krikri_mod", "blacklist_file" => file, "_ansible_check_mode" => "true"},
+      umask: 0o002)
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(file).must_equal("")
+    File.info(file).permissions.value.must_equal(0o664)
+  end
+
   it "rejects a user-supplied check_mode module param like Ansible's unsupported-params validator" do
     file = PluginSpecHelper.tmp_path("kernel-blacklist-check-mode-param.conf")
     File.delete(file) if File.exists?(file)
