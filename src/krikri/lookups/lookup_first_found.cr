@@ -206,8 +206,7 @@ module Krikri
 
           files.each do |file_entry|
             rendered_file = renderer.substitute(file_entry.as_s? || "", strict: true)
-            rendered_paths.each do |path|
-              candidate = File.join(path, rendered_file)
+            first_found_candidates(rendered_file, rendered_paths).each do |candidate|
               next unless File.exists?(candidate)
               # Ansible normpath/unfrackpaths the found path, so the lookup
               # result is the collapsed one, ../ and all; a relative join is
@@ -222,6 +221,20 @@ module Krikri
         return "[]" if skip_errors
         raise FirstFoundLookupError.new(
           "The lookup plugin '#{spelled_name || "first_found"}' failed: No file was found when using first_found.")
+      end
+
+      # ansible's DataLoader#path_dwim_relative_stack tests a candidate that is
+      # already absolute directly against the filesystem instead of joining it
+      # under any search root. Joining it made every absolute candidate miss:
+      # perdu.nagios's own first_found over `{{ role_path }}/vars/...` entries
+      # (issue #1847) found nothing while ansible-playbook loaded vars/main.yml,
+      # and under errors='ignore' the empty result became include_vars's path,
+      # which then resolved to the role's vars/ DIRECTORY ("YAML parsing
+      # failed: read <role>/vars: Is a directory"). Relative candidates keep
+      # the root-by-root search.
+      private def first_found_candidates(rendered_file : String, rendered_paths : Array(String)) : Array(String)
+        return [rendered_file] if rendered_file.starts_with?("/")
+        rendered_paths.map { |path| File.join(path, rendered_file) }
       end
 
       # A first_found params dict's own `files:`/`paths:` values can be
