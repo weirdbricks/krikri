@@ -2449,11 +2449,21 @@ module Krikri
         # pre-render (issue #1427): ansible validates the play context -
         # this item's own or its parent block's become_user: - before the
         # item's when:, so a fact read templating the keyword prints its
-        # deprecation block ahead of the clause's own.
+        # deprecation block ahead of the clause's own. become: joins that
+        # pre-conditional pass, rendered first because PlayContext
+        # declares it ahead of become_user: (issue #1845).
+        pre_become_flag_done = false
+        pre_become_flag_error : Exception? = nil
         pre_become_user : String? = nil
         pre_become_user_done = false
         pre_become_user_error : Exception? = nil
         if task.when_condition
+          begin
+            resolve_task_become_flag(task, host, vars_context, item_substitutor)
+            pre_become_flag_done = true
+          rescue err
+            pre_become_flag_error = err
+          end
           begin
             pre_become_user = resolve_task_become_user(task, host, vars_context, item_substitutor)
             pre_become_user_done = true
@@ -2497,6 +2507,7 @@ module Krikri
         end
 
         case outcome = prepare_batch_step(task, host, vars_context, shared: item_substitutor,
+          pre_become_flag_done: pre_become_flag_done, pre_become_flag_error: pre_become_flag_error,
           pre_become_user: pre_become_user, pre_become_user_done: pre_become_user_done,
           pre_become_user_error: pre_become_user_error)
         when JSON::Any

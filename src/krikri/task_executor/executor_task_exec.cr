@@ -1808,6 +1808,13 @@ module Krikri
 
         emit_action_plugin_import_deprecations(nested_task)
         Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
+        # Real post-validates the skipped child's play context - become:
+        # included - before its conditional, so a fact read templating that
+        # keyword prints its deprecation block here, ahead of the block's
+        # own conditional below (issue #1845).
+        if block_task
+          emit_skipped_task_become_deprecation(nested_task, host)
+        end
         # A skipped block's inherited when: IS evaluated per child in real
         # (once per child task's own conditional check), so a deprecation
         # it raises - the top-level fact alias read - prints after the

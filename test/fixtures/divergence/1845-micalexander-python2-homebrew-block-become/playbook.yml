@@ -1,0 +1,20 @@
+# geerlingguy.homebrew's block from tasks/main.yml lines 89-154, as
+# micalexander.python2 pulls it in through its meta/main.yml dependency
+# `- { role: geerlingguy.homebrew, when: ansible_distribution == 'MacOSX' }`
+# (line 61). The dependency's condition is the outer block's `when:`, so the
+# inner tasks are skipped exactly as they were in the round while the block's
+# own become:/become_user: are still post-validated per task.
+- hosts: localhost
+  gather_facts: true
+  tasks:
+    - block:
+        - block:
+            # geerlingguy.homebrew tasks/main.yml:90
+            - name: Force update brew after installation.
+              command: "{{ homebrew_brew_bin_path }}/brew update --force"
+              when: not homebrew_binary.stat.exists
+          # Privilege escalation is only required for inner steps when
+          # the `homebrew_user` doesn't match the `ansible_user_id`
+          become: "{{ (homebrew_user != ansible_user_id) | bool }}"
+          become_user: "{{ homebrew_user }}"
+      when: ansible_distribution == 'MacOSX'
