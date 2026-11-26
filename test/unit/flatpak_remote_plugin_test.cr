@@ -22,7 +22,10 @@ require "file_utils"
 #   command, queries included (changed, command, rc, stdout, stderr);
 # - a nonzero `flatpak` exit under run_command(check_rc=True) fails with
 #   stderr.rstrip as msg plus the shell-quoted cmd/rc/stdout/stderr;
-# - argspec order: unsupported params, bool conversion, required, choices.
+# - argspec order: required, bool conversion, choices, unsupported params
+#   (real appends the Unsupported-parameters error LAST and only reports
+#   errors[0], so a missing required argument or a bad value outranks a
+#   typo'd key - issues #1857, #1858).
 describe "flatpak_remote plugin" do
   # A fake `flatpak` the tests steer through marker files: `state/` holds
   # the remote-list output and records every mutating command that ran.
@@ -219,6 +222,35 @@ describe "flatpak_remote plugin" do
       "Unsupported parameters for (community.general.flatpak_remote) module: nope. " \
       "Supported parameters include: enabled, executable, flatpakrepo_url, method, name, state."
     )
+  end
+
+  # The kpg chaos shape: an int-typed value on the str-typed `state` plus a
+  # hallucinated key. Real reports the choices failure, not the typo.
+  it "fails a bad state before an unsupported parameter" do
+    result = PluginSpecHelper.run("flatpak_remote", {
+      "name"            => "msawmz",
+      "flatpakrepo_url" => "ptvuco",
+      "method"          => "system",
+      "state"           => "51",
+      "enabled"         => "true",
+      "enabled_bogus"   => "true",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("value of state must be one of: absent, present, got: 51")
+  end
+
+  it "fails a bad bool before an unsupported parameter" do
+    result = PluginSpecHelper.run("flatpak_remote", {
+      "name"    => "flathub",
+      "enabled" => "bogus",
+      "nope"    => "1",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.starts_with?(
+      "argument 'enabled' is of type str and we were unable to convert to bool: "
+    ).must_equal(true)
   end
 
   it "fails a non-boolean enabled with the bool-param wording" do
