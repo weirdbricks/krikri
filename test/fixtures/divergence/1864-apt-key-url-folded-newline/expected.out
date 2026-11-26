@@ -1,0 +1,27 @@
+
+PLAY [local] *******************************************************************
+
+TASK [Nodejs - Add Nodesource apt key.] ****************************************
+[ERROR]: Task failed: Module failed: Failed to download key at http://127.0.0.1:1/pks/lookup?op=get&fingerprint=on&search=0x1655A0AB68576280
+: Request failed: <urlopen error [Errno 111] Connection refused>
+Origin: <WORK>/playbook.yml:17:7
+
+15     PATH: "{{ playbook_dir }}/bin:/usr/local/bin:/usr/bin:/bin"
+16   tasks:
+17     - name: Nodejs - Add Nodesource apt key.
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Failed to download key at http://127.0.0.1:1/pks/lookup?op=get&fingerprint=on&search=0x1655A0AB68576280\n: Request failed: <urlopen error [Errno 111] Connection refused>"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: ansible.builtin.apt_key has been deprecated. Use deb822_repository instead. This feature will be removed from ansible-core version 2.25.
+Origin: <WORK>/playbook.yml:18:7
+
+16   tasks:
+17     - name: Nodejs - Add Nodesource apt key.
+18       ansible.builtin.apt_key:
+         ^ column 7
+
