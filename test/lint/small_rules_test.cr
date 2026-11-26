@@ -104,4 +104,38 @@ module Krikri::Lint
       v.must_be_empty
     end
   end
+
+  describe LiteralCompareRule do
+    private def rule
+      LiteralCompareRule.new
+    end
+
+    it "flags comparisons to literal True/False at the task line" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: eq\n      when: flag == True\n    - name: B\n      debug:\n        msg: ne\n      when: flag != False\n", FileType::PLAYBOOK)
+      v.size.must_equal(2)
+      v.map(&.line).must_equal([5, 9])
+      v.each { |violation| violation.column.must_equal(0) }
+      v.first.message.must_equal("Don't compare to literal True/False.")
+    end
+
+    it "accepts lowercase literals" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: eq\n      when: flag == true\n    - name: B\n      debug:\n        msg: ne\n      when: flag != false\n", FileType::PLAYBOOK)
+      v.size.must_equal(2)
+    end
+
+    it "reports the block and the nested task, like upstream's nested walk" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: Block\n      block:\n        - name: Inner\n          debug:\n            msg: inner\n          when: flag == True\n", FileType::PLAYBOOK)
+      v.map(&.line).must_equal([5, 7])
+    end
+
+    it "flags any list item matching a literal" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: list\n      when:\n        - flag\n        - flag != False\n", FileType::PLAYBOOK)
+      v.size.must_equal(1)
+    end
+
+    it "allows plain conditions and non-literal comparisons" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: plain\n      when: flag\n    - name: B\n      debug:\n        msg: other\n      when: flag == other\n", FileType::PLAYBOOK)
+      v.must_be_empty
+    end
+  end
 end
