@@ -52,6 +52,18 @@ URI_TEST_SERVER = HTTP::Server.new do |context|
   elsif request.method == "GET" && request.path == "/redirect-auth"
     response.status_code = 302
     response.headers["Location"] = "/echo-headers"
+  elsif request.method == "GET" && request.path == "/gz-always"
+    # Ignores Accept-Encoding: a server may compress unprompted, and real
+    # decodes such a body while keeping the response's own headers.
+    body = "gzip-body-here"
+    io = IO::Memory.new
+    Compress::Gzip::Writer.open(io, &.print(body))
+    packed = io.to_s
+    response.status_code = 200
+    response.headers["Content-Type"] = "text/plain"
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = packed.bytesize.to_s
+    response.print(packed)
   elsif request.method == "GET" && request.path == "/gz"
     body = "gzip-body-here"
     if request.headers["Accept-Encoding"]?.try(&.includes?("gzip"))
@@ -568,9 +580,37 @@ describe "uri plugin" do
     result["json"]["cache_control"].as_s?.must_be_nil
   end
 
-  it "decompresses a gzip response by default" do
+  it "decodes an unprompted gzip response while keeping its headers" do
+    # urllib's http.client always asks for identity, so a server that
+    # compresses anyway is the only way real sees a gzip body - and it
+    # keeps the response's Content-Encoding/Content-Length in the result
+    # (live-verified vs 2.21.6: content decoded, content_encoding "gzip",
+    # content_length the COMPRESSED size, and msg naming that same size).
+    result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/gz-always", "return_content" => "true"})
+    result["content"].as_s.must_equal("gzip-body-here")
+    result["content_encoding"].as_s.must_equal("gzip")
+    packed = result["content_length"].as_s.to_i
+    result["msg"].as_s.must_equal("OK (#{packed} bytes)")
+    # The header names the compressed size, which is not the body's.
+    packed.wont_equal("gzip-body-here".bytesize)
+  end
+
+  it "sends identity encoding by default, whatever decompress says" do
+    # urllib's putrequest always adds `Accept-Encoding: identity` (issue
+    # #1863: offering gzip made GitHub compress the response, and the
+    # transparent inflation used to drop content_length from the result).
+    result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/echo-headers"})
+    result["json"]["accept_encoding"].as_s.must_equal("identity")
+  end
+
+  it "gets the plain body when the server only gzips on request" do
+    # The other half of asking for identity: a server that would compress for
+    # a gzip offer sends the plain body, so nothing inflates and the header
+    # survives (real never advertises gzip, so this is its only outcome).
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/gz", "return_content" => "true"})
     result["content"].as_s.must_equal("gzip-body-here")
+    result.as_h.has_key?("content_encoding").must_equal(false)
+    result["content_length"].as_s.must_equal("gzip-body-here".bytesize.to_s)
   end
 
   it "requests identity encoding when decompress is false" do

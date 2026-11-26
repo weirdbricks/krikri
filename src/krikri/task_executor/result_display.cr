@@ -1222,8 +1222,11 @@ module Krikri
         # generates those itself, so they can carry no secret (issue
         # #271) - and debconf's get_bin_path miss (issue #578), whose
         # text ansible also composes itself and names only the target's
-        # PATH entries. Every other failure's block would echo the very
-        # thing this control exists to hide, so those stay suppressed.
+        # PATH entries - plus fetch_file's "Failure downloading ..."
+        # wording (issue #1863), the only explanation of a failed remote
+        # download and what real always shows. Every other failure's
+        # block would echo the very thing this control exists to hide,
+        # so those stay suppressed.
         # Everything else matches Ansible 2.19.11: a solo failed no_log
         # task prints the censored fatal dump (which carries no secret)
         # plus "...ignoring" when ignore_errors: caught it; ok/changed
@@ -1607,6 +1610,16 @@ module Krikri
       return true if module_name.try { |name| name == "command" || name.ends_with?(".command") || name == "shell" || name.ends_with?(".shell") } &&
                      (msg == "non-zero return code" ||
                      msg == "The command exited with a non-zero return code.")
+      # fetch_file's download failure (issue #1863, observed on
+      # drew1kun.dnscrypt's no_log unarchive of a GitHub release whose
+      # asset URL 404s): the wording is urls.py's own "Failure downloading
+      # <masked url>, <detail>" - mask_url strips any credentials from the
+      # url - and real prints the block with it above the censored
+      # per-item line (live-verified vs 2.21.6). Real's block is what a
+      # role's operator reads to learn WHY the download failed, so parity
+      # wins here: suppressing it hides the only explanation of the
+      # failure the role produces.
+      return true if msg.starts_with?("Failure downloading ")
       # copy's missing-parent check (issue #644): real prints the block
       # for a no_log copy whose dest's parent is absent (live-verified
       # against 2.19.11), and its wording echoes the destination directory.

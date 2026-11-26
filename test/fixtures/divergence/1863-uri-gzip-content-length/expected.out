@@ -1,0 +1,21 @@
+
+PLAY [repro] *******************************************************************
+
+TASK [serve one GitHub-shaped 404 on a UNIX socket] ****************************
+ok: [localhost]
+
+TASK [[install] Retrieve the latest dnscrypt-proxy versions for all architectures] ***
+[ERROR]: Task failed: Module failed: Status code was 404 and not [200]: HTTP Error 404: Not Found
+Origin: <WORK>/playbook.yml:20:7
+
+18       register: served
+19
+20     - name: "[install] Retrieve the latest dnscrypt-proxy versions for all architectures"
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "connection": "close", "content_length": "130", "content_type": "application/json", "elapsed": 0, "json": {"documentation_url": "https://docs.github.com/rest/releases/releases#get-the-latest-release", "message": "Not Found", "status": "404"}, "msg": "Status code was 404 and not [200]: HTTP Error 404: Not Found", "redirected": false, "status": 404, "url": "http://127.0.0.1/missing"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+
