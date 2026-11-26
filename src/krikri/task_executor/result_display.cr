@@ -2651,13 +2651,42 @@ module Krikri
         val_indent = val_line.size - val_line.lstrip.size
         break if val_indent < key_indent
         next unless val_stripped.starts_with?("- ")
-        next if name && !val_line.includes?(name)
+        # A folded/literal block scalar item (`- >-`, iancleary.nodejs's
+        # NodeSource repo entries) writes its template on the indented
+        # lines BELOW the dash, while real anchors a read there at the
+        # scalar's own start - the block indicator itself - so the name
+        # match has to look through the item's continuation lines
+        # (issue #1871, live-verified against 2.21.6).
+        if name
+          names_item = val_line.includes?(name) ||
+                       (block_scalar_item?(val_stripped) && loop_item_continuation_names?(lines, val_idx, val_indent, name))
+          next unless names_item
+        end
         # The element's own scalar start - a quoted scalar's opening quote,
         # which is where ansible anchors it.
         return ErrorBlock.origin_context(path, val_idx + 1, val_indent + 3)
       end
       return nil unless name
       loop_source_member_origin(path, lines, idx, key, name)
+    end
+
+    # `- >-`, `- |`, `- >+2` - a block scalar indicator as the item's whole
+    # value.
+    private def self.block_scalar_item?(item_text : String) : Bool
+      item_text.matches?(/\A-\s+[>|][0-9+-]*\z/)
+    end
+
+    # Whether a block scalar item's indented continuation lines name
+    # *name*: stops at the first line back at the item's own indent (the
+    # next element, or the enclosing block).
+    private def self.loop_item_continuation_names?(lines : Array(String), item_idx : Int32, item_indent : Int32, name : String) : Bool
+      ((item_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        next if line.strip.empty?
+        return false if (line.size - line.lstrip.size) <= item_indent
+        return true if line.includes?(name)
+      end
+      false
     end
 
     # The Origin of a fact read inside a loop-source ITEM that is itself a

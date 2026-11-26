@@ -1205,10 +1205,11 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
   end
 
   it "stays silent for a set_fact-written name" do
-    # real's SET_FACT variable layer is untagged and outranks the
-    # injected-facts copy, so a name written by set_fact: prints no block
-    # however it is read - plain or cacheable, bare or `ansible_`-spelled
-    # (live-verified against 2.21.6).
+    # real's SET_FACT layer stores whatever object its value template
+    # produced, and a literal is a fresh untagged one - so reading the
+    # name prints no block however it is read (live-verified against
+    # 2.21.6). A copy of a fact's own value keeps the tag and DOES warn,
+    # see "warns for a set_fact copy of a fact".
     stdout, stderr = run(<<-PLAYBOOK)
       - hosts: localhost
         connection: local
@@ -1224,6 +1225,61 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
 
     stdout.must_include("\"msg\": \"hello\"")
     stderr.wont_include("INJECT_FACTS_AS_VARS")
+  end
+
+  it "warns for a set_fact copy of a fact, at the reading template" do
+    # Issue #1871, iancleary.nodejs: ansible tags the value the fact cache
+    # injects, and a bare `{{ ansible_<fact> }}` set_fact copy stores that
+    # object itself - so every later read of the name trips the
+    # deprecation again, Origin'd at the value that read it (live-verified
+    # against 2.21.6: both blocks print, the write's at 7:17 and the
+    # read's at 10:14).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: produce
+            ansible.builtin.set_fact:
+              copied: "{{ ansible_system }}"
+          - name: consume
+            ansible.builtin.debug:
+              msg: "{{ copied }}"
+      PLAYBOOK
+
+    stdout.must_include("\"msg\": \"Linux\"")
+    stderr.must_include(":7:17\n")
+    stderr.must_include(":10:14\n")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+  end
+
+  it "warns at a folded block scalar loop item's own token" do
+    # Issue #1871: the role's NodeSource repo entries are `- >-` items
+    # whose text sits on the indented lines BELOW the dash. Real anchors
+    # the read at the item's block indicator itself (12:11 below), not at
+    # the continuation line that names the fact (live-verified against
+    # 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: carried
+            ansible.builtin.set_fact:
+              copied: "{{ ansible_system }}"
+          - name: loop over it
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            loop:
+              - >-
+                deb {{ copied }} main
+      PLAYBOOK
+
+    stdout.must_include("(item=deb Linux main)")
+    stderr.must_include(":12:11\n")
+    stderr.must_include("12         - >-\n")
+    stderr.must_include("^ column 11")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
   end
 
   it "warns at a skipped block's when: clause that opens the task mapping" do

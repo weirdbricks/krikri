@@ -1,0 +1,11 @@
+---
+# The round's check-phase play, trimmed to the iancleary.nodejs tasks up to
+# the NodeSource repo loop. The role's package/key tasks are dropped: their
+# ok/changed answer depends on the replay host's own apt state, and the block
+# the issue lost comes from the loop SOURCE render, before any module runs -
+# so the looped task keeps its loop source verbatim but asks debug, since
+# apt_repository needs a root apt host.
+- hosts: local
+  gather_facts: true
+  roles:
+    - iancleary.nodejs

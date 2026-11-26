@@ -772,11 +772,19 @@ module Krikri
         # share its name.
         UnsafeValues.mark_value(value)
         VarSubstitutor.add_resolved_var_name(host.name, key) if high_precedence
-        # A set_fact: write also retires the name from the
-        # INJECT_FACTS_AS_VARS deprecation - real's SET_FACT layer is
-        # untagged and outranks the injected copy, so the name warns no
-        # more (see VarSubstitutor.set_fact_var_name?).
-        VarSubstitutor.add_set_fact_var_name(host.name, key) if high_precedence
+        # A set_fact: write also records the name's own value PROVENANCE:
+        # real stores whatever object the value template produced, so a
+        # bare fact copy keeps the injected deprecation tag and warns on
+        # every later read while a freshly built value does not (see
+        # VarSubstitutor.set_fact_fact_tagged_value?).
+        if high_precedence
+          VarSubstitutor.add_set_fact_var_name(host.name, key)
+          if (value_text = task.try(&.params[key]?))
+            VarSubstitutor.set_set_fact_value_text(host.name, key, value_text)
+          else
+            VarSubstitutor.clear_set_fact_value_text(host.name, key)
+          end
+        end
       end
       @facts_dict_cache.delete(host.name)
       @hv_generation += 1

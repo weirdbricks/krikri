@@ -1,0 +1,81 @@
+
+PLAY [local] *******************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [iancleary.nodejs : Massage ansible_distribution_release for elementary OS 6] ***
+skipping: [localhost]
+
+TASK [iancleary.nodejs : Debug elementary_os] **********************************
+ok: [localhost] => {
+    "msg": "elementary_os"
+}
+
+TASK [iancleary.nodejs : Bypass ansible_distribution_release for non elementary OS] ***
+ok: [localhost]
+
+TASK [iancleary.nodejs : Nodejs - Add NodeSource repositories for Node.js.] ****
+ok: [localhost] => (item=deb https://deb.nodesource.com/node_14.x
+ Linux main) => {
+    "msg": "deb https://deb.nodesource.com/node_14.x\n Linux main"
+}
+ok: [localhost] => (item=deb-src https://deb.nodesource.com/node_14.x
+ Linux main) => {
+    "msg": "deb-src https://deb.nodesource.com/node_14.x\n Linux main"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/iancleary.nodejs/tasks/main.yml:3:9
+
+1 ---
+2 - import_tasks: setup-nodejs-Debian.yml
+3   when: ansible_os_family == 'Debian' or ansible_os_family == 'elementary OS'
+          ^ column 9
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/iancleary.nodejs/tasks/setup-nodejs-Debian.yml:5:9
+
+3   set_fact:
+4     massaged_ansible_distribution_release: focal
+5   when: ansible_distribution_release == "odin"
+          ^ column 9
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/iancleary.nodejs/tasks/setup-nodejs-Debian.yml:15:9
+
+13   set_fact:
+14     massaged_ansible_distribution_release: "{{ ansible_system }}"
+15   when: ansible_distribution_release != "odin"
+           ^ column 9
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/iancleary.nodejs/tasks/setup-nodejs-Debian.yml:14:44
+
+12 - name: Bypass ansible_distribution_release for non elementary OS
+13   set_fact:
+14     massaged_ansible_distribution_release: "{{ ansible_system }}"
+                                              ^ column 44
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/iancleary.nodejs/tasks/setup-nodejs-Debian.yml:21:7
+
+19     msg: "{{ item }}"
+20   loop:
+21     - >-
+         ^ column 7
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

@@ -2730,9 +2730,13 @@ module Krikri
     # no block (live-verified vs 2.21.6: a `services:` play var shadowing
     # service_facts' own stays silent). A scope carrying no copy of the
     # name at all (the text-scan fallbacks) cannot tell the two apart and
-    # takes the name-level answer. A set_fact: write is the same shape of
-    # answer - real's own SET_FACT layer is untagged and wins over the
-    # injected copy whatever the name looks like (see #set_fact_var_name?).
+    # takes the name-level answer.
+    #
+    # A set_fact: write keeps whatever OBJECT its value template produced,
+    # so it warns only when that object is still the tagged fact itself -
+    # a bare `{{ ansible_<fact> }}` copy, which every later read of the
+    # name re-trips, while a literal or a value built from the fact is a
+    # fresh untagged one (see #set_fact_fact_tagged_value?).
     #
     # Because the injected name IS the fact store's own key spelling, a
     # fact whose cache key carries the `ansible_` prefix is never readable
@@ -2748,10 +2752,18 @@ module Krikri
     # with_first_found candidates printed the deprecation at the candidate
     # line instead of the task var's declaration (issue #1766).
     def self.top_level_fact_name?(name : String, vars : Hash(String, JSON::Any)) : Bool
+      top_level_fact_name?(name, vars, 0)
+    end
+
+    # *depth* bounds the set_fact-copy chain below: a value written from
+    # another set_fact-written name asks this same question one link up.
+    def self.top_level_fact_name?(name : String, vars : Hash(String, JSON::Any), depth : Int32) : Bool
       return false if name == "ansible_local"
       return false if name.ends_with?("_interpreter")
       host_name = host_from_vars(vars)
-      return false if set_fact_var_name?(host_name, name)
+      if set_fact_var_name?(host_name, name)
+        return set_fact_fact_tagged_value?(host_name, name, vars, depth)
+      end
       facts = vars["ansible_facts"]?.try(&.as_h?)
       return false unless facts
       injected = facts[name]? || (name.starts_with?("ansible_") ? facts[name["ansible_".size..]]? : nil)
@@ -2763,6 +2775,30 @@ module Krikri
         return false
       end
       true
+    end
+
+    # Whether the set_fact: write for *name* stored a deprecated fact's own
+    # VALUE rather than a value built from one. ansible tags the value the
+    # fact cache injects, and set_fact stores the object its value template
+    # produced: a bare `{{ ansible_<fact> }}` copy (and a copy of such a
+    # copy) keeps the tag, so every later read of the name trips the
+    # deprecation again - a literal, a concatenation and an
+    # `ansible_facts[...]` read all build a fresh untagged value and stay
+    # silent (issue #1871, live-verified against 2.21.6). The as-written
+    # value text comes from the write, see #set_fact_value_text.
+    private def self.set_fact_fact_tagged_value?(host_name : String?, name : String, vars : Hash(String, JSON::Any), depth : Int32) : Bool
+      return false if depth > 8
+      text = set_fact_value_text(host_name, name) || return false
+      stripped = text.strip
+      return false unless single_top_level_span?(stripped)
+      chain = VariableSubstitutor::FilterEngine.split_chain(stripped[2..-3].strip)
+      return false if chain.empty?
+      base = chain[0]
+      # A dotted/subscripted access, a call or an operator builds a new
+      # object just like a filter chain does.
+      return false unless base.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      return false unless chain[1..].all? { |segment| identity_preserving_filter?(segment) }
+      top_level_fact_name?(base, vars, depth + 1)
     end
 
     # Whether an unevaluated EXPRESSION names a top-level fact alias. The
@@ -3524,12 +3560,15 @@ module Krikri
     end
 
     # Names written by set_fact: for the host - real keeps those in its
-    # own SET_FACT variable layer, untagged and above the injected-facts
-    # copy, so reading one prints no INJECT_FACTS_AS_VARS block however
-    # the fact cache spells it (live-verified vs 2.21.6: plain and
-    # cacheable set_fact names, `ansible_`-prefixed included, all stay
-    # silent - cross_play_hostvars_test's `myfact`, issue #1021's
-    # investigation). The gathered-only facts still warn.
+    # own SET_FACT variable layer, above the injected-facts copy, so the
+    # fact cache's own spelling never decides whether reading one warns.
+    # What does is the VALUE the write stored (see
+    # #set_fact_fact_tagged_value?): a name written from a literal, a
+    # concatenation or an `ansible_facts[...]` read stays silent however
+    # it is read (live-verified vs 2.21.6: `myfact: hello`,
+    # cross_play_hostvars_test's `myfact`, issue #1021's investigation),
+    # while one holding a bare fact copy warns again. The gathered-only
+    # facts still warn.
     @@set_fact_var_names = Hash(String, Set(String)).new
 
     def self.add_set_fact_var_name(host_name : String, name : String) : Nil
@@ -3540,6 +3579,26 @@ module Krikri
     def self.set_fact_var_name?(host_name : String?, name : String) : Bool
       return false unless host_name
       @@set_fact_var_names[host_name]?.try(&.includes?(name)) || false
+    end
+
+    # The AS-WRITTEN value text of every set_fact: key, per host - kept so
+    # a later read can answer whether the write stored a deprecated fact's
+    # own tagged value (#set_fact_fact_tagged_value?). The text is the
+    # provenance, not the rendered value: copying the value would make
+    # every name look like an untagged fresh object.
+    @@set_fact_value_texts = Hash(String, Hash(String, String)).new
+
+    def self.set_set_fact_value_text(host_name : String, name : String, text : String) : Nil
+      (@@set_fact_value_texts[host_name] ||= {} of String => String)[name] = text
+    end
+
+    def self.clear_set_fact_value_text(host_name : String, name : String) : Nil
+      @@set_fact_value_texts[host_name]?.try(&.delete(name))
+    end
+
+    def self.set_fact_value_text(host_name : String?, name : String) : String?
+      return nil unless host_name
+      @@set_fact_value_texts[host_name]?.try(&.[name]?)
     end
 
     # Names whose STORED VALUE still carries ansible-core's
