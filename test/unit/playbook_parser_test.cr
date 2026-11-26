@@ -770,6 +770,31 @@ describe Krikri::PlaybookParser do
       assert_includes(error.message.to_s, "'ec2_ami_find'")
     end
 
+    it "hard-stops the parse for a bare ec2_vpc task, before any templating (barraponto.aws-vpc)" do
+      # issue #1842: ec2_vpc was ansible-core's own VPC module before the
+      # collections split and was dropped rather than migrated (amazon.aws
+      # shipped the split ec2_vpc_net/ec2_vpc_subnet/... modules), so it
+      # has no builtin-runtime redirect either - real 2.21.6 refuses the
+      # whole playbook at load (rc=4, no PLAY output) even though the
+      # role's task NAME and args template an undefined variable. While the
+      # name was not tombstoned this engine ran the play, failed the task
+      # during arg finalization and reported rc=2 with a full PLAY RECAP.
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'ec2_vpc'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: Ready up the {{ aws_vpc_cidr_block }} VPC
+                register: aws_vpc_vpc
+                ec2_vpc:
+                  region: "{{ aws_vpc_region }}"
+                  cidr_block: "{{ aws_vpc_cidr_block }}"
+          YAML
+        )
+      end
+    end
+
     it "hard-stops at the FIRST unresolvable module in task order, not a later tombstoned one (Aplyca.deployab)" do
       # issue #1592: real refuses the role at its "Get ELB facts"
       # ec2_elb_facts task (line 13). While only the later

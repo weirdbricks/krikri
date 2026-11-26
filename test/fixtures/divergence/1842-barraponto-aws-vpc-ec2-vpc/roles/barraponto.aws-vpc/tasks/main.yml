@@ -1,0 +1,12 @@
+---
+# tasks file for aws_vpc
+- name: Ready up the {{ aws_vpc_cidr_block }} VPC
+  register: aws_vpc_vpc
+  ec2_vpc:
+    region: "{{ aws_vpc_region }}"
+    cidr_block: "{{ aws_vpc_cidr_block }}"
+    internet_gateway: true
+    resource_tags: "{{ aws_vpc_resource_tags }}"
+    wait: true
+    subnets: "{{ aws_vpc_subnets }}"
+    route_tables: "{{ aws_vpc_route_tables }}"

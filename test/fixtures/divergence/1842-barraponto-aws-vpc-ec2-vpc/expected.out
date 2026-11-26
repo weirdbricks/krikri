@@ -1,0 +1,8 @@
+[ERROR]: couldn't resolve module/action 'ec2_vpc'. This often indicates a misspelling, missing collection, or incorrect module path.
+Origin: <WORK>/roles/barraponto.aws-vpc/tasks/main.yml:3:3
+
+1 ---
+2 # tasks file for aws_vpc
+3 - name: Ready up the {{ aws_vpc_cidr_block }} VPC
+    ^ column 3
+

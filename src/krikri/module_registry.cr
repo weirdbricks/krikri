@@ -964,6 +964,25 @@ module Krikri
       "ec2_ami_find"                 => nil,
       "ansible.builtin.ec2_ami_find" => nil,
       "ansible.legacy.ec2_ami_find"  => nil,
+      # ec2_vpc was ansible-core's own VPC module in the pre-collections
+      # era, and it was dropped rather than migrated: amazon.aws shipped the
+      # split ec2_vpc_net/ec2_vpc_subnet/... modules instead. No current
+      # release of amazon.aws or community.aws ships an ec2_vpc module file
+      # or a routing entry naming it (checked against amazon.aws 12.1.0 and
+      # community.aws 12.0.0), and ansible_builtin_runtime.yml has no
+      # redirect for it either - so every controller refuses the whole
+      # playbook at load with the generic couldn't-resolve wording, rc=4,
+      # for all five spellings (probed real 2.21.6: each names the
+      # AS-WRITTEN spelling). barraponto.aws-vpc (round 29928201, issue
+      # #1842) writes the bare name as the role's FIRST task; while it was
+      # not tombstoned this engine ran on, templated the task name and args,
+      # and failed at run time with "Finalization of task args ... failed" -
+      # a PLAY RECAP and rc=2 where real never starts the run.
+      "ec2_vpc"                 => nil,
+      "ansible.builtin.ec2_vpc" => nil,
+      "ansible.legacy.ec2_vpc"  => nil,
+      "amazon.aws.ec2_vpc"      => nil,
+      "community.aws.ec2_vpc"   => nil,
       # community.aws deprecated ec2_elb_facts in 2.0.0 with
       # removal_version 3.0.0 and ships no module or routing entry for
       # it since, while ansible_builtin_runtime.yml still redirects the
