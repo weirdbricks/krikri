@@ -1,0 +1,30 @@
+{#- Body Options #}
+{% macro body_option(key,override) -%}
+{%   set value = undefined %}
+{%   if override is defined %}
+{%     set value = override %}
+{%   elif realmd[key] is defined %}
+{%     set value = realmd[key] %}
+{%   elif realmd_defaults[key] is defined and realmd_skip_defaults != true %}
+{%     set value = realmd_defaults[key] %}
+{%   endif %}
+{{ render_option(key,value) -}}
+{%- endmacro %}
+
+{#- Render Options Jinja Template #}
+{% macro render_option(key,value,indent=false) -%}
+{%   if value is defined %}
+{%     if indent == true %}  {% endif %}
+{%     if value is string or value is number %}
+{{ key | replace("_","-") }} = {{ value }}
+{%     elif value is mapping %}
+{%       for k,v in value.iteritems() %}
+{{ k | replace("_","-") }} = {{ v }}
+{%       endfor %}
+{%     else %}
+{%       for i in value %}
+{{ key | replace("_","-") }} = {{ i }}
+{%       endfor %}
+{%     endif %}
+{%   endif %}
+{%- endmacro %}

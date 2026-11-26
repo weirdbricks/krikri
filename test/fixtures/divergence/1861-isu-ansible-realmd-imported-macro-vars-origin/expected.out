@@ -1,0 +1,23 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [ISU-Ansible.realmd : REALMD | Configure service] *************************
+changed: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/ISU-Ansible.realmd/vars/RedHat.yml:22:12
+
+20
+21 realmd_defaults: 
+22   os_name: "{{ ansible_distribution }}"
+              ^ column 12
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

@@ -1,0 +1,16 @@
+---
+realmd_os_supported: false
+realmd_skip_defaults: false
+
+realmd_packages:
+  - realmd
+  - oddjob
+  - oddjob-mkhomedir
+  - sssd
+  - adcli
+  - samba-common-tools
+
+realmd: {}
+realmd_defaults: {}
+
+realmd_domain: 'example.com'

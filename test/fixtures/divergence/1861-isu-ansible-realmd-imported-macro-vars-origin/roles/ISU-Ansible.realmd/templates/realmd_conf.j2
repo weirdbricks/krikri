@@ -1,0 +1,25 @@
+{% from 'macros/macros.j2' import body_option,render_option with context -%}
+#=====
+# {{ ansible_managed }}
+#=====
+
+[active-directory]
+{{ body_option("default_client",realmd_default_client) -}}
+{{ body_option("os_name",realmd_os_name) -}}
+{{ body_option("os_version",realmd_os_version) -}}
+
+[service]
+{{ body_option("automatic_install",realmd_automatic_install) -}}
+
+[users]
+{{ body_option("default_home",realmd_default_home) -}}
+{{ body_option("default_shell",realmd_default_shell) -}}
+
+[{{ realmd_domain }}]
+{{ body_option("computer_ou",realmd_computer_ou) -}}
+{{ body_option("computer_name",realmd_computer_name) -}}
+{{ body_option("user_principal",realmd_user_principal) -}}
+{{ body_option("automatic_join",realmd_automatic_join) -}}
+{{ body_option("automatic_id_mapping",realmd_automatic_id_mapping) -}}
+{{ body_option("manage_system",realmd_manage_system) -}}
+{{ body_option("fully_qualified_names",realmd_fully_qualified_names) -}}

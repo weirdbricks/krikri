@@ -1,0 +1,32 @@
+---
+realmd_packages:
+  - realmd
+  - oddjob
+  - oddjob-mkhomedir
+  - sssd
+  - sssd-ad
+  - sssd-client
+  - sssd-common
+  - sssd-dbus
+  - sssd-ldap
+  - sssd-krb5
+  - sssd-krb5-common
+  - sssd-tools
+  - adcli
+  - samba-common-tools
+
+realmd_manage_service: ""
+realmd_allow_reload: ""
+
+realmd_defaults: 
+  os_name: "{{ ansible_distribution }}"
+  os_version: "{{ ansible_distribution_version }}"
+
+realmd_os_supported: true
+
+realmd_config_file: "/etc/realmd.conf"
+realmd_config_owner: "root"
+realmd_config_group: "root"
+realmd_config_mode: "0644"
+
+realmd_keytab: "/etc/krb5.keytab"

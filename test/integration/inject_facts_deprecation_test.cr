@@ -1573,6 +1573,52 @@ describe "INJECT_FACTS_AS_VARS deprecation and a template's unentered frames" do
     stderr.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
   end
 
+  # A `{% from ... import %}` splits a macro's call from its body: the outer
+  # template names the macro, the imported file holds it. Real renders both in
+  # one templating operation, so the body's fact reads warn - here through a
+  # vars-file dict value, the ISU-Ansible.realmd shape (`realmd_defaults[key]`
+  # read inside its imported `body_option` macro, issue #1861, live-verified
+  # against 2.21.6: Origin points at the value in the vars file).
+  it "warns for an imported macro body the outer template calls" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-imported-macro-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "defs.yml"), <<-VARS)
+      ---
+      pkg_defaults:
+        os_name: "{{ ansible_distribution }}"
+      VARS
+    File.write(File.join(dir, "macros.j2"), <<-MACROS)
+      {% macro body_option(key, override) -%}
+      {%   if override is defined %}{{ override }}{% elif pkg_defaults[key] is defined %}{{ pkg_defaults[key] }}{% endif %}
+      {%- endmacro %}
+      MACROS
+    File.write(File.join(dir, "t.j2"), <<-TEMPLATE)
+      {% from 'macros.j2' import body_option -%}
+      {{ body_option("os_name", pkg_os_name) }}
+      TEMPLATE
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars_files:
+          - defs.yml
+        tasks:
+          - name: render t.j2
+            ansible.builtin.template:
+              src: #{File.join(dir, "t.j2")}
+              dest: #{File.join(dir, "out.txt")}
+              mode: "0644"
+      PLAYBOOK
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("Origin: #{File.join(dir, "defs.yml")}:3:12")
+  end
+
   it "stays silent for a loop inside a branch that never runs" do
     _stdout, stderr = run_template_file("{% if false %}{% for x in ['a'] %}{{ ansible_distribution }}{% endfor %}{% endif %}ok\n")
 

@@ -1,0 +1,13 @@
+# ISU-Ansible.realmd's "REALMD | Configure service" task, the only one that
+# diverged (see tasks/main.yml); dest points into the run's own directory and
+# owner/group are dropped so a non-root localhost can render it, and the role's
+# vars file is loaded here with vars_files (the role's own include_vars
+# with_first_found only matches its RedHat files). Everything else is the
+# role's verbatim.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - roles/ISU-Ansible.realmd/vars/RedHat.yml
+  roles:
+    - ISU-Ansible.realmd

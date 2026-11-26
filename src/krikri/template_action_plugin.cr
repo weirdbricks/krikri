@@ -1207,6 +1207,7 @@ module Krikri
       previous_for_entry = @for_entry_memo
       begin
         outer_path = File.expand_path(template_path)
+        parsed = [] of KrikriJinja::Nodes::TemplateNode
         @loaded_template_files.each do |include_path|
           next if include_path == outer_path
           next unless File.file?(include_path)
@@ -1220,10 +1221,30 @@ module Krikri
           rescue KrikriJinja::TemplateError
             next
           end
+          parsed << include_template
+        end
+        return false if parsed.empty?
+
+        # A macro body counts as entered when its NAME is read somewhere in
+        # the render (see #macro_body_entered?), and a `{% from ... import %}`
+        # splits the two: the call sits in the outer file, the body lives in
+        # the imported one. Arming each file on its own names would leave
+        # every imported macro looking never-called, so its fact reads - the
+        # ISU-Ansible.realmd role's `vars/RedHat.yml` value reached through
+        # the `realmd_defaults[key]` read inside its imported `body_option`
+        # macro, issue #1861 - stayed invisible. The set therefore spans
+        # every file this render loaded, the same over-approximation
+        # #prepare_frame_gate already documents. With no set armed while
+        # collecting, every macro body is walked, so the result cannot depend
+        # on where in a file a called macro's definition sits.
+        shared_names = (previous_names || Set(String).new).dup
+        @frame_gate_names = nil
+        parsed.each { |include_template| collect_template_names(include_template, shared_names) }
+        parsed.each do |include_template|
           # The include has its own bindings and macros; the scope it
           # resolves against is the outer render's.
           if engine = @frame_gate_engine
-            prepare_frame_gate(engine, template_vars, include_template)
+            prepare_frame_gate(engine, template_vars, include_template, shared_names)
           end
           return true if probe_walk(matcher, include_template, false, track_read_paths: true)
         end
@@ -1241,20 +1262,30 @@ module Krikri
     # entered when its name appears in that set somewhere - an
     # over-approximation of a real call, which is the safe direction here:
     # it keeps today's warn-everything behavior for shapes the gate cannot
-    # prove dead.
+    # prove dead. *names* lets a caller that already collected the set
+    # across several files (see #probe_loaded_templates_for_fact) hand it
+    # in instead of collecting this file's own again.
     private def prepare_frame_gate(engine : KrikriJinja::Engine,
                                    template_vars : Hash(String, JSON::Any),
-                                   template : KrikriJinja::Nodes::TemplateNode) : Nil
+                                   template : KrikriJinja::Nodes::TemplateNode,
+                                   names : Set(String)? = nil) : Nil
       @frame_gate_engine = engine
       @frame_gate_scope = template_vars.transform_values { |value| engine_scope_value(value) }
       @gate_render_failed = false
       bound = Set(String).new
       collect_frame_bound_names(template.body, bound)
       @frame_gate_bound = bound
-      names = Set(String).new
-      probe_walk(->(name : String) { names << name; false }, template)
+      names ||= Set(String).new
+      collect_template_names(template, names)
       @frame_gate_names = names
       @for_entry_memo.clear
+    end
+
+    # Adds every name one template reads to *names*; the walk never stops
+    # early, so it collects the whole set.
+    private def collect_template_names(template : KrikriJinja::Nodes::TemplateNode,
+                                       names : Set(String)) : Nil
+      probe_walk(->(name : String) { names << name; false }, template)
     end
 
     # Every name a statement in this template binds for the render's own
