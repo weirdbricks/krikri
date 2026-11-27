@@ -1824,13 +1824,15 @@ module Krikri
         rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
           # A compile-time-rejected filter/test name gets Ansible's own
           # "Syntax error in expression: " wording - Jinja's compiler
-          # rejects the name when it COMPILES the template, a different
-          # failure class from a runtime conditional-evaluation problem
-          # (live-verified vs 2.19.11: `when: x|version_compare(...)`
+          # rejects the name when it COMPILES the template, a
+          # different failure class from a runtime conditional-evaluation
+          # problem (live-verified vs 2.19.11: `when: x|version_compare(...)`
           # and `when: x is list` both fatal "Task failed: Syntax error
           # in expression: No filter/test named '...'.", found via
-          # adarnimrod.apache's assert: version_compare preflight).
-          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}Syntax error in expression: #{ex.message}")
+          # adarnimrod.apache's assert: version_compare preflight). The
+          # delimiter sentence rides along whenever the RAW clause carries
+          # one (see ConditionalEvaluator.expression_syntax_error).
+          raise WhenEvaluationError.new("Task failed: #{WHEN_EXPRESSION_FAILED_PREFIX}#{ConditionalEvaluator.expression_syntax_error(ex.message.to_s, when_condition)}")
         rescue ex
           # An operand TypeError that killed a VARIABLE's own value - reached
           # because the clause read it - is a failed TEMPLATE render in real,
@@ -5564,7 +5566,7 @@ module Krikri
         return message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
       end
       if exc.is_a?(VariableSubstitutor::FilterEngine::UnknownFilterError)
-        return "Syntax error in expression: #{message}"
+        return ConditionalEvaluator.expression_syntax_error(message, raw || "")
       end
       unless exc.is_a?(ConditionalEvaluator::ConditionalBooleanError) && message.starts_with?("Conditional result (")
         return "Error while evaluating conditional: #{message}"

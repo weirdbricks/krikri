@@ -6634,6 +6634,13 @@ module Krikri
                               conditional.starts_with?("{{") && conditional.ends_with?("}}") &&
                               !conditional[2...-2].includes?("{{")
       if !whole_delimiters_span && conditional_quoted_template_const?(conditional)
+        # Real's constant warning fires from the Jinja RENDER of the
+        # conditional, so an expression Jinja rejects while COMPILING it
+        # (an unresolvable filter/test name) fails the task before any
+        # constant is accessed and prints no warning at all - the issue
+        # #1907 clause `mysqld_exporter_check|failed ... "version {{ v }}"`
+        # warned here but not in real 2.21.6.
+        return if ConditionalEvaluator.compile_time_name_error?(conditional, vars_context)
         text = conditional_deprecation_text(task, key, raw, that_index,
           header: JINJA_CONST_TEMPLATE_WARNING_HEADER, footer: JINJA_CONST_TEMPLATE_WARNING_FOOTER)
         return if text.empty?

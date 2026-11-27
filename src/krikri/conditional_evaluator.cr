@@ -313,6 +313,32 @@ module Krikri
       "Syntax error in expression. Template delimiters are not supported in expressions: #{suffix}"
     end
 
+    # Ansible's create_template_error appends the delimiter sentence to
+    # EVERY expression syntax error whose raw expression merely CONTAINS a
+    # template start string: its gate is is_possibly_template, a
+    # `{{`/`{%`/`{#` (or leading `#jinja2:` override) scan that - unlike
+    # #template_delimiter_error's quote-aware pre-reject above - does not
+    # skip string literals. So a conditional that fails to compile for an
+    # unrelated reason still carries it: the idealista prometheus_mysqld_
+    # exporter role's `... or mysqld_exporter_check|failed or "version
+    # {{ v }}" not in ...` (`failed` is a test, not a filter) is real's
+    # "Syntax error in expression. Template delimiters are not supported
+    # in expressions: No filter named 'failed'." (issue #1907, live-verified
+    # vs 2.21.6).
+    #
+    # The cause joins through AnsibleError.concat_message, which drops the
+    # trailing "." (and spaces) before appending ": <cause>" - so the clause
+    # ends "in expressions: No filter named ..." in real, not "expressions.:".
+    def self.expression_syntax_error(message : String, expression : String) : String
+      clause = if expression.starts_with?("#jinja2:") || expression.includes?("{{") ||
+                  expression.includes?("{%") || expression.includes?("{#")
+                 " Template delimiters are not supported in expressions."
+               else
+                 ""
+               end
+      "Syntax error in expression.#{clause}".rstrip(". ") + ": #{message}"
+    end
+
     # Ansible's own all-template detection shape (the same condition the
     # conditional-as-template deprecation in executor_vars_context.cr
     # uses): delimiters wrap the WHOLE conditional and no inner `{{`

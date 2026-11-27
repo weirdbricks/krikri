@@ -1,0 +1,29 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [MYSQLD_EXPORTER | Download package] **************************************
+[ERROR]: Task failed: A 'when' expression failed: Syntax error in expression. Template delimiters are not supported in expressions: No filter named 'failed'.
+
+Task failed.
+Origin: <WORK>/playbook.yml:20:7
+
+18       stdout: ""
+19   tasks:
+20     - name: MYSQLD_EXPORTER | Download package
+         ^ column 7
+
+<<< caused by >>>
+
+A 'when' expression failed: Syntax error in expression. Template delimiters are not supported in expressions: No filter named 'failed'.
+Origin: <WORK>/playbook.yml:24:13
+
+22         url: "{{ mysqld_exporter_url }}"
+23         dest: /tmp
+24       when: 'mysqld_exporter_force_reinstall or mysqld_exporter_check|failed or "mysqld_exporter, version {{ mysql...
+               ^ column 13
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Syntax error in expression. Template delimiters are not supported in expressions: No filter named 'failed'."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

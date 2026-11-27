@@ -170,8 +170,10 @@ module Krikri
         # "Task failed: Syntax error in expression: No filter named
         # 'version_compare'."). Before this rescue the raise escaped
         # the plugin uncaught and killed the whole process (found via
-        # adarnimrod.apache's ca-store Assertions preflight).
-        return that_index_error("Task failed: Syntax error in expression: #{ex.message}", current_index)
+        # adarnimrod.apache's ca-store Assertions preflight). The
+        # delimiter sentence rides along when the RAW item carries one
+        # (see ConditionalEvaluator.expression_syntax_error).
+        return that_index_error("Task failed: #{expression_syntax_error_for(conditions, current_index, ex.message)}", current_index)
       rescue ex : RenderExpressionError | VariableSubstitutor::TemplateSyntaxError
         # A `{% do %}` tag inside a variable the `that:` item reads is a
         # compile-time syntax error in ansible: the task fails cleanly
@@ -251,6 +253,13 @@ module Krikri
       if delimiter = ConditionalEvaluator.template_delimiter_error(condition)
         raise ConditionalEvaluator::TemplateDelimiterError.new(delimiter)
       end
+    end
+
+    # The compile-time filter/test-name failure worded from the FAILING that:
+    # item's own raw text, which is where real's delimiter sentence comes
+    # from - the item is what Jinja compiled (issue #1907).
+    private def expression_syntax_error_for(conditions : Array(String), index : Int32, message : String?) : String
+      ConditionalEvaluator.expression_syntax_error(message.to_s, conditions[index]? || "")
     end
 
     # A condition that evaluated false: the first failing `that:` entry
