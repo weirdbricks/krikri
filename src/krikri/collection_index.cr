@@ -205,7 +205,7 @@ module Krikri
     # where real fails the task with "was not found").
     def self.bare_lookup_resolves?(name : String) : Bool?
       return nil if name.empty? || name.includes?(".")
-      return true if Krikri.builtin_lookup_names.includes?(name)
+      return true if builtin_lookup_names.includes?(name)
       if redirects = baked_redirects("lookup")
         if target = redirects[name]?
           return true if lookup_chain_resolves?(target, Set(String).new)
@@ -224,7 +224,7 @@ module Krikri
       return false if parts.size < 3
       leaf = parts[2..].join('.')
       if parts[0] == "ansible" && parts[1] == "builtin"
-        return Krikri.builtin_lookup_names.includes?(leaf)
+        return builtin_lookup_names.includes?(leaf)
       end
       fq = "#{parts[0]}.#{parts[1]}"
       if paths = CollectionRuntimeData.collection(fq).try(&.paths)
@@ -242,8 +242,24 @@ module Krikri
     # table is what makes bare `yum:` resolve (its module is gone from
     # ansible-core but the action routing redirects onto ansible.builtin.dnf,
     # and real runs it, live-verified vs 2.19.11).
+    #
+    # Decoded once per process: the tables are a gzip+base64 JSON blob, and
+    # re-decoding it on every lookup cost ~130ms of CPU per task (several
+    # lookups per task in parse_task's name resolution).
+    @@baked_redirects : {Hash(String, String), Hash(String, String), Hash(String, String)}?
+    @@builtin_module_names : Set(String)?
+    @@builtin_lookup_names : Set(String)?
+
+    private def self.builtin_module_names : Set(String)
+      @@builtin_module_names ||= Krikri.builtin_module_names.to_set
+    end
+
+    private def self.builtin_lookup_names : Set(String)
+      @@builtin_lookup_names ||= Krikri.builtin_lookup_names.to_set
+    end
+
     private def self.baked_redirects(kind : String) : Hash(String, String)
-      modules, action, lookups = Krikri.builtin_runtime_redirects
+      modules, action, lookups = (@@baked_redirects ||= Krikri.builtin_runtime_redirects)
       case kind
       when "modules" then modules
       when "action"  then action
@@ -313,7 +329,7 @@ module Krikri
     # community.google.gc_storage), so the redirect keys are subtracted
     # again here and those names take the chain instead.
     def self.builtin_module?(leaf : String) : Bool
-      Krikri.builtin_module_names.includes?(leaf) &&
+      builtin_module_names.includes?(leaf) &&
         !baked_redirects("modules").has_key?(leaf) &&
         !baked_redirects("action").has_key?(leaf)
     end
@@ -574,7 +590,7 @@ module Krikri
       when "modules"
         builtin_module?(leaf)
       when "lookup"
-        Krikri.builtin_lookup_names.includes?(leaf)
+        builtin_lookup_names.includes?(leaf)
       else
         builtin_action_plugin?(leaf) || builtin_module?(leaf)
       end
