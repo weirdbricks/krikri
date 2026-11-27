@@ -53,8 +53,9 @@ jobs:
       - name: Parity run
         # Known, documented divergence classes (syntax-check YAML
         # strictness, abort-after-unknown-module, args[module] on
-        # community modules) keep the exit code at 1; the report is
-        # what matters, so don't fail the job on it.
+        # community modules) keep the exit code at 1, and so does the
+        # catalogue diff while any upstream rule is still missing (issue
+        # #1930); the report is what matters, so don't fail the job on it.
         run: |
           python3 testing/lint/parity.py | tee parity-report.txt
           echo "Parity report written (exit code ignored; triage the report)."

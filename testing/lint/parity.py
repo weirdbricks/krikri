@@ -13,8 +13,17 @@ Runs both tools with parseable output over the same targets, extracts
 Targets are linted under the nearest .ansible-lint above each one (passed
 as -c), so a case dir can carry its own config - a `kinds:` entry, say.
 
-Exit code 0 when every upstream-only triple is an unimplemented rule id,
-1 when there are real divergences, 2 on harness usage errors.
+It also diffs the two rule catalogues (`ansible-lint -L` against
+`krikri-lint --list-rules` families), because a rule id krikri does not
+implement is otherwise invisible until some corpus file happens to trip it -
+and even then its triples land in the `unimplemented` bucket, which does not
+affect the exit code. Every upstream id that is neither implemented nor on
+CATALOGUE_ALLOW (structural internals and deliberate limits, with their
+reason) is printed as a `missing:` line and counted in the `CATALOGUE|` line.
+
+Exit code 0 when every upstream-only triple is an unimplemented rule id and
+the catalogue has no missing rule, 1 when there are real divergences or
+catalogue gaps, 2 on harness usage errors.
 
 Usage:
   testing/lint/parity.py [targets ...]          (default: testing/)
@@ -52,6 +61,25 @@ OPT_IN_RULES = (
     "only-builtins",
 )
 ENABLE_OPT_IN = [arg for rule in OPT_IN_RULES for arg in ("--enable-list", rule)]
+
+# Upstream ids that can never appear as a krikri triple, so the catalogue check
+# must not report them as gaps. Everything else that is missing is a real gap:
+# listing it here without a reason would hide it again (issue #1930: no-prompting
+# sat in the `unimplemented` bucket until a corpus file happened to trip it).
+CATALOGUE_ALLOW = {
+    "internal-error": "ansible-lint's own crash reporter when a run raises, "
+                      "not a rule with matches",
+    "parser-error": "ansible-lint's AnsibleParserError wrapper, not a rule with matches",
+    "warning": "other warnings ansible-lint prints during a run, not a rule with matches",
+    "galaxy": "collection metadata: krikri-lint v1 lints playbooks and roles, never "
+              "collection targets (FileType.from_kind_name leaves upstream's galaxy "
+              "kind unrunnable)",
+}
+
+# ansible-lint -L line: `- <id> <description>`. A rule family is listed once
+# (`yaml`, `fqcn`) while krikri lists the sub-rules it implements, so a catalogue
+# entry matches when the family prefix is implemented.
+ANSIBLE_L_RE = re.compile(r"^- (?P<rule>[a-z0-9][a-z0-9-]*) ")
 
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
@@ -112,6 +140,32 @@ def is_implemented(known: set, rule_id: str) -> bool:
     if rule_id in known:
         return True
     return "[" in rule_id and f"{rule_id.split('[')[0]}[" in known
+
+
+def upstream_rules(binary: str) -> set:
+    """Rule ids from `ansible-lint -L`, one per catalogue entry."""
+    out = run([binary, "-L", "--nocolor"])
+    return {m["rule"] for m in (ANSIBLE_L_RE.match(line) for line in out.splitlines()) if m}
+
+
+def implemented_families(known: set) -> set:
+    """Family ids krikri can report, from its --list-rules entries.
+
+    Upstream lists `yaml`/`fqcn` once while krikri lists `yaml[truthy]` and
+    `fqcn[canonical]`, so the prefix - not the whole id - is what a catalogue
+    entry has to match for a rule family to count as implemented.
+    """
+    return {rule.split("[")[0] for rule in known}
+
+
+def catalogue_gaps(known: set, ansible_lint: str):
+    """Upstream ids with no krikri rule behind them, minus the allowed ones."""
+    upstream = upstream_rules(ansible_lint)
+    families = implemented_families(known)
+    implemented = {rule for rule in upstream if rule in families}
+    allowed = upstream & set(CATALOGUE_ALLOW)
+    missing = upstream - implemented - allowed
+    return upstream, implemented, allowed, missing
 
 
 def config_for(target: Path) -> Path | None:
@@ -176,6 +230,17 @@ def main():
     print(f"matched: {len(matched)}  krikri-only: {len(krikri_only)}  "
           f"upstream-only: {len(real_gaps)}  unimplemented-upstream: {len(gaps)}")
 
+    upstream, implemented, allowed, missing = catalogue_gaps(known, args.ansible_lint)
+    print(f"catalogue: upstream {len(upstream)}, krikri {len(implemented)}, "
+          f"allowed {len(allowed)}, {count_label(len(missing), 'missing', RED)}")
+    for rule in sorted(missing):
+        print(f"  missing: {rule} (not implemented and not in CATALOGUE_ALLOW)")
+    if args.verbose:
+        for rule in sorted(allowed):
+            print(f"  allowed: {rule} ({CATALOGUE_ALLOW[rule]})")
+    print(f"CATALOGUE| upstream={len(upstream)} krikri={len(implemented)} "
+          f"allowed={len(allowed)} missing={len(missing)}")
+
     by_file = defaultdict(dict)
     for t in matched:
         by_file[t[0]].setdefault("matched", []).append(t[1:])
@@ -222,10 +287,14 @@ def main():
             "targets": targets,
             "counts": {"matched": len(matched), "krikri_only": len(krikri_only),
                        "upstream_only": len(real_gaps), "unimplemented": len(gaps)},
+            # Not triples: a catalogue gap has no file, line or column, and the
+            # triager must not treat one as a lintable to reproduce against.
+            "catalogue": {"upstream": sorted(upstream), "missing": sorted(missing),
+                          "allowed": sorted(allowed)},
             "triples": triples,
         }, indent=2))
 
-    sys.exit(1 if real_gaps or krikri_only else 0)
+    sys.exit(1 if real_gaps or krikri_only or missing else 0)
 
 
 if __name__ == "__main__":

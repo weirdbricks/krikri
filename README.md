@@ -296,10 +296,15 @@ diverges on.
 `testing/lint/parity.py` is the parity harness: it runs both linters with
 parseable output over the same targets, diffs their (file, line, column, rule)
 triples, prints a `PARITY| matched=... krikri_only=... upstream_only=...
-unimplemented=...` line and, with `--json PATH`, the triples as records.
-`krikri-role-tester`'s loop runs it every cycle (step 0c) and files one issue
-per rule that goes one way, so a parity gap is worked like any other
-divergence instead of waiting for someone to read the weekly report.
+unimplemented=...` line and, with `--json PATH`, the triples as records. It
+also diffs the two rule catalogues (`ansible-lint -L` against krikri-lint's
+`--list-rules` families), printing a `CATALOGUE|` line and one `missing:` line
+per upstream id krikri does not implement and that is not on the harness's
+allowance list (structural internals and documented limits, with the reason),
+so a rule krikri does not implement cannot stay invisible just because no
+corpus file trips it. `krikri-role-tester`'s loop runs it every cycle (step 0c)
+and files one issue per rule that goes one way, so a parity gap is worked like
+any other divergence instead of waiting for someone to read the weekly report.
 
 ---
 
