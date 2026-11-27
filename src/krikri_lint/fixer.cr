@@ -4,15 +4,17 @@ module Krikri
   module Lint
     # Line-edit buffer for autofixes. All fixes operate on the file's
     # original line numbers: edits are spans within existing lines,
-    # whole-line deletions, or the final-newline flag. Nothing may
-    # insert or remove lines before the end, so violation coordinates
-    # stay valid for the whole fix pass.
+    # whole-line deletions, whole lines queued for insertion after an
+    # original line, or the final-newline flag. Inserted lines are only
+    # emitted by result(), so violation coordinates stay valid for the
+    # whole fix pass.
     class FixBuffer
       getter lines : Array(String)
       getter? had_trailing_newline
       getter add_trailing_newline
       getter? changed
       property deleted : Array(Bool)
+      getter insertions : Array({Int32, String})
 
       def initialize(source : String)
         if source.empty?
@@ -26,6 +28,7 @@ module Krikri
           @had_trailing_newline = false
         end
         @deleted = Array.new(@lines.size, false)
+        @insertions = [] of {Int32, String}
         @add_trailing_newline = false
         @changed = false
       end
@@ -56,6 +59,15 @@ module Krikri
         @changed = true
       end
 
+      # Queues a whole line to be emitted after the given original line.
+      # Returns false when the anchor is not a line of the file.
+      def insert_after(line : Int32, text : String) : Bool
+        return false if line < 1 || line > @lines.size
+        @insertions << {line, text}
+        @changed = true
+        true
+      end
+
       def add_final_newline : Nil
         @add_trailing_newline = true
         @changed = true
@@ -64,7 +76,10 @@ module Krikri
       def result : String
         kept = [] of String
         @lines.each_with_index do |text, idx|
-          kept << text unless @deleted[idx]
+          next if @deleted[idx]
+          kept << text
+          line = idx + 1
+          @insertions.each { |(anchor, added)| kept << added if anchor == line }
         end
         body = kept.join('\n')
         return "" if body.empty?
