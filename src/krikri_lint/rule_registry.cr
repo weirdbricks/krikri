@@ -56,6 +56,7 @@ module Krikri
           PartialBecomeRule.new,
           NoFreeFormRule.new,
           NoLogPasswordRule.new,
+          NoSameOwnerRule.new,
           ComplexityRule.new,
           SanityRule.new,
         ])
