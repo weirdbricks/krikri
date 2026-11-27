@@ -364,6 +364,45 @@ module Krikri
         end
       end
 
+      # Every task statement mapping in the order ansible's loader parses
+      # them: play sections in turn, each list front to back, and a
+      # block's own sublists right after the block statement itself.
+      # Handlers come first because Base.load_data walks a play's
+      # attributes by FieldAttribute priority (all four lists share -1,
+      # so class order decides) and handlers are declared first -
+      # verified against ansible-lint 25.2.1: one broken task in each
+      # section reports the handler.
+      # Block statements are yielded too - the syntax-check gate has to
+      # skip them, since load_list_of_tasks hands a `block:` to
+      # Block.load and never runs ModuleArgsParser over it.
+      def self.each_statement(file : PositionedFile, &) : Nil
+        root = file.root || return
+        list = root.as?(YAML::Nodes::Sequence) || return
+        stack = [] of YAML::Nodes::Node
+        if playbook_root?(file)
+          # Reversed pushes so the first play's first task pops first.
+          list.nodes.reverse_each do |play_node|
+            play = play_node.as?(YAML::Nodes::Mapping) || next
+            %w[tasks post_tasks pre_tasks handlers].each do |section|
+              entry = NodeUtil.entry(play, section) || next
+              sub = entry[1].as?(YAML::Nodes::Sequence) || next
+              sub.nodes.reverse_each { |item| stack << item }
+            end
+          end
+        else
+          list.nodes.reverse_each { |item| stack << item }
+        end
+        while node = stack.pop?
+          mapping = node.as?(YAML::Nodes::Mapping) || next
+          yield mapping
+          %w[always rescue block].each do |section|
+            entry = NodeUtil.entry(mapping, section) || next
+            sub = entry[1].as?(YAML::Nodes::Sequence) || next
+            sub.nodes.reverse_each { |item| stack << item }
+          end
+        end
+      end
+
       private def self.walk_list(list : YAML::Nodes::Sequence, file : PositionedFile, tasks : Array(LintTask), in_handlers : Bool = false) : Nil
         list.nodes.each do |item|
           node = item.as?(YAML::Nodes::Mapping) || next

@@ -1,0 +1,12 @@
+# Issue #1922's failing task, replayed in-process: a task carrying only
+# task keywords (`name`, and `become` here) and no module/action at all.
+# ansible's load-time ModuleArgsParser refuses the whole playbook
+# ("no module/action detected in task."), and ansible-lint turns that
+# into a syntax-check[specific] match that gates every other rule on the
+# file - the lint half this issue is about. The engine side already
+# printed the same block.
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: no action at all
+      become: true

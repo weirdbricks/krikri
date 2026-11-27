@@ -511,6 +511,195 @@ module Krikri::Lint
         FileUtils.rm_rf(dir)
       end
     end
+
+    it "reports only syntax-check[specific] on a task with no action at all" do
+      # ansible's load refuses a task that carries only task keywords
+      # ("no module/action detected in task."), and ansible-lint runs no
+      # other rule on the file - verified against ansible-lint 25.2.1: an
+      # unnamed play around the task reports only syntax-check[specific],
+      # at the task mapping's first key (line 5, column 7).
+      dir = PluginSpecHelper.tmp_path("lint_syntax_no_action")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          gather_facts: false
+          tasks:
+            - name: no action at all
+              become: true
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal(["syntax-check[specific]"])
+      match = violations.first
+      {match.line, match.column}.must_equal({5, 7})
+      match.message.must_equal("no module/action detected in task.")
+    end
+
+    it "reports a second action statement as syntax-check[specific]" do
+      # With skip_action_validation every non-attribute key is an action
+      # candidate, so two module keys abort the load. ansible-lint 25.2.1
+      # reports only "conflicting action statements: <first>, <second>"
+      # (task-key order, names as written) and no name[...] or
+      # no-changed-when beside it.
+      dir = PluginSpecHelper.tmp_path("lint_syntax_conflict")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          gather_facts: false
+          tasks:
+            - name: two actions
+              ansible.builtin.command: echo one
+              ansible.builtin.shell: echo two
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal(["syntax-check[specific]"])
+      match = violations.first
+      {match.line, match.column}.must_equal({5, 7})
+      match.message.must_equal("conflicting action statements: " \
+                               "ansible.builtin.command, ansible.builtin.shell")
+    end
+
+    it "gates a task with no action inside a block's task list" do
+      # A `block:` statement itself never reaches ModuleArgsParser, so the
+      # block's own keywords are not a failure; its nested tasks are
+      # parsed like any other and the one without an action fails the
+      # check (ansible-lint 25.2.1 reports only syntax-check[specific]).
+      dir = PluginSpecHelper.tmp_path("lint_syntax_block_child")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          tasks:
+            - name: A block with a bad child
+              block:
+                - name: child without action
+                  when: true
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal(["syntax-check[specific]"])
+      match = violations.first
+      {match.line, match.column}.must_equal({6, 11})
+      match.message.must_equal("no module/action detected in task.")
+    end
+
+    it "reports a non-string action value the way ModuleArgsParser does" do
+      # `sudo:` is no Task attribute, so ansible takes it as the action
+      # and refuses its bool value before it reaches the `command:` key:
+      # ansible-lint 25.2.1 reports the type error, not a conflict pair.
+      dir = PluginSpecHelper.tmp_path("lint_syntax_type")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          gather_facts: false
+          tasks:
+            - name: legacy key
+              sudo: true
+              ansible.builtin.command: echo hi
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal(["syntax-check[specific]"])
+      violations.first.message.must_equal(
+        "unexpected parameter type in action: <class 'bool'>")
+    end
+
+    it "reports a null action: directive value as a type error" do
+      # _normalize_old_style_args takes only a string or a mapping, so a
+      # null directive value is refused as NoneType (ansible-lint
+      # 25.2.1) - unlike a module key's null value, which stands for a
+      # module taking no params and does not fail the load.
+      dir = PluginSpecHelper.tmp_path("lint_syntax_directive_null")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          gather_facts: false
+          tasks:
+            - name: null action
+              action:
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal(["syntax-check[specific]"])
+      match = violations.first
+      {match.line, match.column}.must_equal({5, 7})
+      match.message.must_equal(
+        "unexpected parameter type in action: <class 'NoneType'>")
+    end
+
+    it "reports the handler list's failure before the task list's" do
+      # Base.load_data walks a play's lists by FieldAttribute priority;
+      # handlers, pre_tasks, post_tasks and tasks all share one priority,
+      # so class order decides and handlers load first. The first failure
+      # the load hits is therefore the handler's (verified against
+      # ansible-lint 25.2.1), not the task's.
+      dir = PluginSpecHelper.tmp_path("lint_syntax_handler_first")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          gather_facts: false
+          handlers:
+            - name: broken handler
+              become: true
+          tasks:
+            - name: two actions
+              ansible.builtin.command: echo one
+              ansible.builtin.shell: echo two
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal(["syntax-check[specific]"])
+      match = violations.first
+      {match.line, match.column}.must_equal({5, 7})
+      match.message.must_equal("no module/action detected in task.")
+    end
+
+    it "does not gate a task whose action: directive names its module" do
+      # An `action:` directive is a task attribute to ModuleArgsParser and
+      # is normalized into the action itself, so the task parses: upstream
+      # keeps reporting the ordinary rules (verified against ansible-lint
+      # 25.2.1).
+      dir = PluginSpecHelper.tmp_path("lint_syntax_action_directive")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          tasks:
+            - name: old style action
+              action: ping
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).wont_include("syntax-check[specific]")
+      violations.any? { |v| v.rule_id == "name[play]" }.must_equal(true)
+    end
+
+    it "keeps the action shapes ModuleArgsParser accepts permissive" do
+      # A module key may be left null (a module taking no params), and
+      # PyYAML's bool resolver spells whole words only, so a bare `y` is a
+      # string: neither fails the load (verified against ansible-lint
+      # 25.2.1, which reports the ordinary rules instead).
+      dir = PluginSpecHelper.tmp_path("lint_syntax_accepted_shapes")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - hosts: localhost
+          tasks:
+            - name: no params
+              ansible.builtin.ping:
+            - name: bare y
+              ansible.builtin.command: y
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).wont_include("syntax-check[specific]")
+    end
   end
 
   describe "Runner against a collection krikri's tables do not know" do

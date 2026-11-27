@@ -7,7 +7,10 @@ module Krikri
     # play `roles:` entry no search path holds is detected here
     # (RoleLookup), while an unresolvable module name needs the run's
     # targets to know which files a check loads - SyntaxCheck builds that
-    # match and the runner's gate emits it. Either way the file the check
+    # match and the runner's gate emits it. A task whose shape
+    # ModuleArgsParser itself refuses (a conflicting second action
+    # statement, no action at all) aborts the check the same way, with
+    # the task's own position. Either way the file the check
     # failed on gets only its syntax-check match and no other rule runs
     # on it (upstream's failed-file gate).
     class SyntaxCheckRule < Rule
@@ -46,6 +49,18 @@ module Krikri
         Violation.new(file.path, NodeUtil.line(task.node),
           NodeUtil.column(task.node), UNKNOWN_MODULE_TAG, Severity::VERY_HIGH,
           "couldn't resolve module/action '#{name}'. #{MESSAGE_SUFFIX}")
+      end
+
+      # The match for a task ansible's load-time ModuleArgsParser refuses
+      # outright (a conflicting second action statement, or no action at
+      # all). ansible-lint tags every load-time failure that is not a
+      # rule's own as syntax-check[specific]; the position is the task
+      # mapping's start, which is the first key's line and column.
+      def self.task_parse_failure(file : PositionedFile,
+                                  node : YAML::Nodes::Mapping,
+                                  message : String) : Violation
+        Violation.new(file.path, NodeUtil.line(node), NodeUtil.column(node),
+          "syntax-check[specific]", Severity::VERY_HIGH, message)
       end
     end
   end

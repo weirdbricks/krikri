@@ -1,0 +1,8 @@
+[ERROR]: no module/action detected in task.
+Origin: <WORK>/playbook.yml:11:7
+
+ 9   gather_facts: false
+10   tasks:
+11     - name: no action at all
+         ^ column 7
+
