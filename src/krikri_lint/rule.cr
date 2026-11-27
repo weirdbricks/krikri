@@ -11,8 +11,17 @@ module Krikri
         return false unless applies_to.includes?(file.file_type)
         # Upstream's matchyaml dispatch skips any lintable whose base_kind
         # is not text/yaml, so a plain-text sanity ignore file reaches
-        # only a rule that opts in to it.
+        # only a rule that opts in to it. A role directory has no yaml
+        # base kind either: it reaches only the rules upstream calls
+        # through matchdir.
+        return true if file.file_type == FileType::ROLE && role_lintable?
         file.file_type.yaml_lintable? || non_yaml_lintable?
+      end
+
+      # Whether this rule inspects a role directory target. Upstream
+      # dispatches those to matchdir rather than matchyaml.
+      def role_lintable? : Bool
+        false
       end
 
       # Whether this rule inspects a non-YAML lintable (sanity ignore

@@ -32,6 +32,17 @@ module Krikri
         targets.select { |target| File.directory?(target) }
       end
 
+      # Directory targets upstream's kind detection calls a role: one of
+      # the role subdirectories is present. Only a target named outright
+      # becomes kind "role" - a parent directory walk expands to its
+      # files and never lints nested role directories.
+      def role_targets(targets : Array(String)) : Array(String)
+        targets.select do |target|
+          File.directory?(target) &&
+            Imports::ROLE_SUBDIRS.any? { |sub| File.directory?(File.join(target, sub)) }
+        end.uniq!
+      end
+
       # Targets that are neither files nor directories. Upstream lints
       # these instead of erroring: each yields load-failure matches.
       def missing_targets(targets : Array(String)) : Array(String)

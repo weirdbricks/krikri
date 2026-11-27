@@ -18,6 +18,7 @@ module Krikri
           RiskyFilePermissionsRule.new,
           RiskyOctalRule.new,
           NameRule.new,
+          RoleNameRule.new,
           FqcnActionCoreRule.new,
           YamlLineLengthRule.new,
           VarNamingRule.new,

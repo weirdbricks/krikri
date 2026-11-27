@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  author: krikri
+  description: A role whose galaxy_info.role_name is invalid.
+  license: MIT
+  min_ansible_version: "2.9"
+  platforms:
+    - name: Ubuntu
+  role_name: Bad-Role-Name
