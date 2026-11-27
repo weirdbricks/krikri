@@ -1,0 +1,7 @@
+# ansible-lint's default kind patterns only call *.yml/*.yaml files
+# playbooks, so the playbook-extension rule can only fire on another
+# extension when a kinds entry names it. Lint the target explicitly, so
+# the harness picks this config up:
+#   testing/lint/parity.py testing/lint/cases/playbook-extension/demo.play
+kinds:
+  - playbook: "**/*.play"

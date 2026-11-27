@@ -26,6 +26,7 @@ module Krikri
           NoRelativePathsRule.new,
           NoJinjaWhenRule.new,
           NoTabsRule.new,
+          PlaybookExtensionRule.new,
           JinjaRule.new,
           SchemaMetaRule.new,
           MetaNoTagsRule.new,

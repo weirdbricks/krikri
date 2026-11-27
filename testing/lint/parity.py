@@ -10,6 +10,9 @@ Runs both tools with parseable output over the same targets, extracts
   - upstream triples whose rule id is not implemented here at all
     (expected gaps; shown separately, not counted as divergences)
 
+Targets are linted under the nearest .ansible-lint above each one (passed
+as -c), so a case dir can carry its own config - a `kinds:` entry, say.
+
 Exit code 0 when every upstream-only triple is an unimplemented rule id,
 1 when there are real divergences, 2 on harness usage errors.
 
@@ -96,6 +99,29 @@ def is_implemented(known: set, rule_id: str) -> bool:
     return "[" in rule_id and f"{rule_id.split('[')[0]}[" in known
 
 
+def config_for(target: Path) -> Path | None:
+    """Nearest .ansible-lint above a target, like project discovery."""
+    start = target if target.is_dir() else target.parent
+    for directory in (start, *start.parents):
+        candidate = directory / ".ansible-lint"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def config_groups(targets: list[str]) -> dict[Path | None, list[str]]:
+    """Group targets by their config file so each linter runs once each.
+
+    A case that needs its own `.ansible-lint` (e.g. a `kinds:` entry that
+    makes a non-.yml file a playbook) can then be linted directly; targets
+    with no config above them keep the linter's own discovery.
+    """
+    groups: dict[Path | None, list[str]] = defaultdict(list)
+    for target in targets:
+        groups[config_for(Path(target))].append(target)
+    return groups
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("targets", nargs="*", default=["testing"])
@@ -107,8 +133,14 @@ def main():
     args = parser.parse_args()
 
     targets = [str(Path(t).resolve()) for t in args.targets]
-    ours = set(parse_krikri(run([args.krikri, "-p", "--nocolor", *targets])))
-    theirs = set(parse_ansible(run([args.ansible_lint, "--nocolor", "-p", *targets])))
+    ours: set = set()
+    theirs: set = set()
+    for config, group in config_groups(targets).items():
+        flags = ["-c", str(config)] if config else []
+        ours |= set(parse_krikri(
+            run([args.krikri, "-p", "--nocolor", *flags, *group])))
+        theirs |= set(parse_ansible(
+            run([args.ansible_lint, "--nocolor", "-p", *flags, *group])))
     known = implemented_rules(args.krikri)
 
     # normalize to repo-relative paths
