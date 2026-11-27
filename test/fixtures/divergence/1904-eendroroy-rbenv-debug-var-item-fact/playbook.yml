@@ -1,0 +1,38 @@
+---
+# Issue #1904's failing task - eendroroy.rbenv's roles/.../tasks/info.yml,
+# replayed in-process: a debug loop over a list of variable NAMES, four of
+# them gathered facts. `no_log: true` is the only addition - those items
+# print host-specific fact VALUES, while the INJECT_FACTS_AS_VARS blocks
+# this case pins are printed either way. `rbenv`/`rubies` mirror the role's
+# defaults enough for the first four items to resolve: the role's real
+# `rubies` is a LIST whose `rubies.version` read fails with a
+# "[WARNING]: Encountered 1 template error." block that real prints ahead
+# of the deprecation blocks (krikri's ordering of that separate warning is
+# not part of this case), so a mapping keeps the transcript to the pinned
+# divergence.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    rbenv:
+      repo: https://github.com/rbenv/rbenv.git
+      path: /usr/local/rbenv
+      plugins:
+        - { name: rbenv-default-gems, repo: 'https://github.com/rbenv/rbenv-default-gems.git' }
+        - { name: rbenv-vars, repo: 'https://github.com/rbenv/rbenv-vars.git' }
+    rubies:
+      version: 2.5.0
+  tasks:
+    - name: Show information
+      debug:
+        var: "{{ item }}"
+      with_items:
+        - rbenv.repo
+        - rbenv.path
+        - rbenv.plugins
+        - rubies.version
+        - ansible_os_family
+        - ansible_distribution
+        - ansible_distribution_release
+        - ansible_user_id
+      no_log: true

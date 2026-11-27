@@ -2222,6 +2222,50 @@ module Krikri
       nil
     end
 
+    # The Origin of the loop source ELEMENT whose own scalar IS *item_text*.
+    # A template that passed an element's value through (debug's
+    # `var: "{{ item }}"` resolving a fact NAME it then reads) makes real
+    # blame that stored value's defining position, and a list element's is
+    # its own start - the opening quote of a quoted one (issue #1904,
+    # eendroroy.rbenv, live-verified against 2.21.6). A loop source written
+    # as a template (`loop: "{{ names }}"`) anchors its reads at whatever
+    # the template resolved from, so it stays unplaced here rather than
+    # mislabeled.
+    def self.loop_item_scalar_origin(path : String?, source_line : Int32, item_text : String) : String?
+      return nil unless path && source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      return nil if lines.size < source_line || item_text.empty?
+      task_indent = lines[source_line - 1].size - lines[source_line - 1].lstrip.size
+      ((source_line - 1)...Math.min(lines.size, source_line + 40)).each do |idx|
+        line = lines[idx]
+        if idx > source_line - 1
+          indent = line.size - line.lstrip.size
+          break if indent <= task_indent && line.lstrip.starts_with?("- ")
+        end
+        next unless (m = line.match(/^\s*(?:-\s+)?(loop|with_\w+):(.*)$/))
+        rest = m[2].strip
+        if rest.starts_with?('[')
+          col = flow_item_scalar_column(line, item_text)
+          return col ? ErrorBlock.origin_context(path, idx + 1, col) : nil
+        end
+        next unless rest.empty? || rest.starts_with?('#')
+        return conditional_value_origin(path, source_line, m[1], nil, item_text, item_text)
+      end
+      nil
+    end
+
+    # The 1-based column of the flow-sequence element whose scalar IS
+    # *item_text* - the element's own start, its opening quote when quoted
+    # (live-verified against 2.21.6, one element of several included). nil
+    # when the line holds no such element, so no Origin is invented.
+    private def self.flow_item_scalar_column(line : String, item_text : String) : Int32?
+      return nil unless (open = line.index('['))
+      return nil unless (match = line[(open + 1)..].match(/(?<![A-Za-z0-9_.])#{Regex.escape(item_text)}(?![A-Za-z0-9_])/))
+      at = open + 1 + match.begin(0)
+      quote = at > 0 ? line[at - 1]? : nil
+      ((quote == '"' || quote == '\'') ? at - 1 : at) + 1
+    end
+
     # A templated no_log: whose variable is undefined (issue #317):
     # ansible-core 2.19 prints the keyword failure through BOTH channels -
     # the "[WARNING]: Invalid no_log value for task, output will be
