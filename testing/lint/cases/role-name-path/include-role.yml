@@ -1,0 +1,8 @@
+- name: Role path repro
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Include a role by path
+      ansible.builtin.include_role:
+        name: roles/bad_role

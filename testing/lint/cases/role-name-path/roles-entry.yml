@@ -1,0 +1,6 @@
+- name: Role path repro
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - roles/bad_role
