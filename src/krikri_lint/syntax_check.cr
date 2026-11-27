@@ -4,9 +4,10 @@ require "./imports"
 
 module Krikri
   module Lint
-    # Upstream's failed-file gate, for the two syntax-check failure kinds
-    # krikri-lint can reach a verdict on: unresolvable module names and
-    # unresolvable play `roles:` entries.
+    # Upstream's failed-file gate, for the syntax-check failure kinds
+    # krikri-lint can reach a verdict on: unresolvable module names,
+    # unresolvable play `roles:` entries, and tasks whose shape
+    # ModuleArgsParser refuses.
     # ansible-lint runs `ansible-playbook --syntax-check` per
     # playbook/role lintable and then runs NO other rule on a file the
     # check failed on (Lintable.failed()/stop_processing in
@@ -15,7 +16,10 @@ module Krikri
     # module name the controller cannot resolve aborts the check with
     # "couldn't resolve module/action 'x'" (syntax-check[unknown-module]):
     # #violation builds that single match and the runner emits it, so the
-    # file reports nothing else and the triples stay identical. A play
+    # file reports nothing else and the triples stay identical. A task
+    # whose shape ModuleArgsParser itself refuses - a conflicting second
+    # action statement, no action at all - aborts the load the same way,
+    # with ansible-lint's syntax-check[specific] at the task mapping. A play
     # whose `roles:` entry names a role no search path holds fails the
     # check on the playbook itself (syntax-check[specific]), which the
     # SyntaxCheckRule reports at the entry.
@@ -42,6 +46,44 @@ module Krikri
       # just json_file (issue #1835).
       KRIKRI_EXTENSION_MODULES = %w[json_file]
 
+      # The keys ansible's ModuleArgsParser filters out before it looks
+      # for the action: Task.fattributes plus the handler-only `listen`
+      # and the `local_action`/`static` entries task.py adds by hand.
+      # `action` is one of them, which is why an `action:` directive
+      # never counts as a second action statement. Keys this set does not
+      # know - `sudo:` and friends among them, removed from the Task
+      # model long ago - are action candidates to ansible, so they are
+      # candidates here too.
+      MODULE_ARGS_TASK_ATTRS = Set{
+        "action", "any_errors_fatal", "args", "async", "async_val",
+        "become", "become_exe", "become_flags", "become_method",
+        "become_user", "changed_when", "check_mode", "collections",
+        "connection", "debugger", "delay", "delegate_facts",
+        "delegate_to", "diff", "environment", "failed_when",
+        "ignore_errors", "ignore_unreachable", "listen", "local_action",
+        "loop", "loop_control", "loop_with", "module_defaults", "name",
+        "no_log", "notify", "poll", "port", "register", "remote_user",
+        "retries", "run_once", "static", "tags", "throttle", "timeout",
+        "until", "vars", "when",
+      }
+
+      # PyYAML's YAML 1.1 implicit resolvers, as much of them as decides
+      # whether an action value is a Python str (accepted) or a bool,
+      # int, float or list (refused), and the datatag class names
+      # ansible 2.19+ prints for the non-bool ones. PyYAML's bool resolver
+      # spells the whole words only: a bare `y`/`n` stays a string.
+      INT_CLASS    = "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+      FLOAT_CLASS  = "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+      LIST_CLASS   = "ansible.module_utils._internal._datatag._AnsibleTaggedList"
+      NULL_SCALARS = Set{"", "~", "null", "Null", "NULL"}
+      BOOL_SCALARS = Set{
+        "yes", "Yes", "YES", "no", "No", "NO",
+        "true", "True", "TRUE", "false", "False", "FALSE",
+        "on", "On", "ON", "off", "Off", "OFF",
+      }
+      INT_SCALAR   = /\A[-+]?(0b[0-1_]+|0x[0-9a-fA-F_]+|0[0-7_]+|0|[1-9][0-9_]*)(:[0-5]?[0-9])*\z/
+      FLOAT_SCALAR = /\A([-+]?[0-9][0-9_]*\.[0-9_]*([eE][-+][0-9]+)?|[-+]?\.[0-9_]+([eE][-+][0-9]+)?|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))\z/
+
       def initialize(files : Array(String), targets : Array(String),
                      @kinds : Array(KindPattern) = [] of KindPattern)
         @walked = Set(String).new
@@ -56,22 +98,22 @@ module Krikri
       end
 
       # The match upstream reports for this file, and the reason it runs
-      # no other rule on it: its tasks carry a module name the controller
-      # cannot resolve, and the file is one a playbook/role syntax check
-      # names. Nil for every file the check does not fail on.
+      # no other rule on it: one of its tasks is one ansible's own load
+      # refuses, and the file is one a playbook/role syntax check names.
+      # Nil for every file the check does not fail on.
       def violation(file : PositionedFile) : Violation?
         return nil unless file.root
         role = role_dir_for(file.path)
         named_by_check = playbook_kind?(file) ||
                          (!role.nil? && @walked.includes?(Imports.relative(file.path)))
         return nil unless named_by_check
-        unknown_module(file, role)
+        first_task_failure(file, role)
       end
 
       # Whether this file's own playbook syntax check failed on a role no
       # search path holds, so no rule but syntax-check may report on it.
-      # (An unresolvable module name is the match #violation reports; the
-      # runner never reaches here for such a file.)
+      # (A task failure is the match #violation reports; the runner never
+      # reaches here for such a file.)
       def failed?(file : PositionedFile) : Bool
         @missing.has_key?(Imports.relative(file.path))
       end
@@ -210,25 +252,36 @@ module Krikri
         nil
       end
 
-      # The match for the file's own first task carrying a module name
+      # The match for the file's own first task ansible's syntax check
+      # refuses, or nil when every task parses and resolves. A task fails
+      # the load on its shape (module_args_failure) or on a module name
       # krikri's OWN baked reference tables say cannot resolve to a module
-      # file (CollectionIndex.reference_resolves?), with the same inputs
-      # the real load uses (the task's own `collections:` replaces the
-      # play's list plus the role's meta declaration). The tables are
-      # captured, not read from this controller, so the rule reports the
-      # same files whether or not ansible-core/collections are installed
-      # here. Ansible's check stops at the first such name, so only that
-      # task is reported. Names the tables cannot decide (a collection
-      # krikri kept no file tree for, templated action strings) stay
-      # permissive, so a file reports only on a definite negative.
-      # Unlike the parser, this rule does not exempt names krikri has
-      # ported: upstream's ansible-playbook --syntax-check has no such
-      # carve-out.
-      private def unknown_module(file : PositionedFile, role_path : String?) : Violation?
+      # file (CollectionIndex.reference_resolves?) - resolved with the
+      # same inputs the real load uses (the task's own `collections:`
+      # replaces the play's list plus the role's meta declaration) - and
+      # the scan stops at the first task that fails either, since a load
+      # aborts there. The tables are captured, not read from this
+      # controller, so the rule reports the same files whether or not
+      # ansible-core/collections are installed here. Names the tables
+      # cannot decide (a collection krikri kept no file tree for,
+      # templated action strings) stay permissive, so a file reports only
+      # on a definite negative. Unlike the parser, this rule does not
+      # exempt names krikri has ported: upstream's ansible-playbook
+      # --syntax-check has no such carve-out.
+      private def first_task_failure(file : PositionedFile, role_path : String?) : Violation?
         playbook_dir = File.dirname(File.expand_path(file.path))
         inherited = play_collections(file) +
                     CollectionIndex.role_meta_collections(role_path)
-        TaskWalker.each_task(file) do |task|
+        TaskWalker.each_statement(file) do |node|
+          # A `block:` statement is handed to Block.load, never to
+          # ModuleArgsParser, so it has no action to be missing or to
+          # conflict.
+          if NodeUtil.entry(node, "block").nil?
+            if failure = module_args_failure(file, node)
+              return failure
+            end
+          end
+          task = TaskWalker.from_mapping(node, file) || next
           name = action_module_name(task) || next
           next if KRIKRI_EXTENSION_MODULES.includes?(name)
           collections = task_collections(task) || inherited
@@ -238,6 +291,151 @@ module Krikri
             return SyntaxCheckRule.unknown_module(file, task, name)
           end
         end
+        nil
+      end
+
+      # The match for a task whose shape ansible's ModuleArgsParser
+      # refuses at load time, or nil when it accepts the task.
+      # load_list_of_tasks parses every task statement with
+      # `ModuleArgsParser.parse(skip_action_validation=True)`, which
+      # makes every key that is not a Task/Handler attribute an action
+      # candidate: a second one aborts with "conflicting action
+      # statements: <first>, <second>", a candidate whose value is not a
+      # string/mapping/null aborts with "unexpected parameter type in
+      # action", and a task whose every key is an attribute has no
+      # action at all ("no module/action detected in task.").
+      private def module_args_failure(file : PositionedFile,
+                                      task : YAML::Nodes::Mapping) : Violation?
+        action, failure = directive_action(file, task)
+        return failure if failure
+        conflicting_action_failure(file, task, action)
+      end
+
+      # The module an `action:`/`local_action:` directive names (nil when
+      # neither is written) and, when one of them refuses its value, that
+      # match. Ansible normalizes the directives before it walks the other
+      # keys, so the module one names leads the conflicting pair whichever
+      # key order wrote it; both together are refused before that walk.
+      private def directive_action(file : PositionedFile,
+                                   task : YAML::Nodes::Mapping) : {String?, Violation?}
+        action = nil.as(String?)
+        if entry = NodeUtil.entry(task, "action")
+          if type_name = directive_value_class(entry[1])
+            return {nil.as(String?), type_failure(file, task, type_name)}
+          end
+          action = action_directive_module(entry[1])
+        end
+        if entry = NodeUtil.entry(task, "local_action")
+          if action
+            return {nil.as(String?), SyntaxCheckRule.task_parse_failure(file, task,
+              "action and local_action are mutually exclusive")}
+          end
+          if type_name = directive_value_class(entry[1])
+            return {nil.as(String?), type_failure(file, task, type_name)}
+          end
+          action = action_directive_module(entry[1])
+        end
+        {action, nil.as(Violation?)}
+      end
+
+      # The match for the first of the task's remaining action candidates,
+      # given the module a directive already names: a candidate beside one
+      # is a conflict (its value is never type-checked), a lone candidate
+      # whose value cannot be normalized is a type error, and no candidate
+      # at all is a missing action.
+      private def conflicting_action_failure(file : PositionedFile,
+                                             task : YAML::Nodes::Mapping,
+                                             action : String?) : Violation?
+        first = nil.as(String?)
+        NodeUtil.each_entry(task) do |key_node, value_node|
+          key = NodeUtil.scalar_value(key_node) || next
+          next if MODULE_ARGS_TASK_ATTRS.includes?(key)
+          next if key.starts_with?("with_")
+          if earlier = action || first
+            return SyntaxCheckRule.task_parse_failure(file, task,
+              "conflicting action statements: #{earlier}, #{key}")
+          end
+          if type_name = action_value_class(value_node)
+            return type_failure(file, task, type_name)
+          end
+          first = key
+        end
+        return nil if action || first
+        SyntaxCheckRule.task_parse_failure(file, task,
+          "no module/action detected in task.")
+      end
+
+      private def type_failure(file : PositionedFile, task : YAML::Nodes::Mapping,
+                               type_name : String) : Violation
+        SyntaxCheckRule.task_parse_failure(file, task,
+          "unexpected parameter type in action: <class '#{type_name}'>")
+      end
+
+      # The module an old-style `action:`/`local_action:` directive
+      # names: the first token of its string form ("command echo one") or
+      # the `module:` value of its mapping form. Nil when the directive
+      # names no module that way.
+      private def action_directive_module(value : YAML::Nodes::Node) : String?
+        if (text = NodeUtil.scalar_value(value))
+          token = text.strip.split(/\s+/).first?
+          return token.nil? || token.empty? ? nil : token
+        end
+        if (mapping = value.as?(YAML::Nodes::Mapping)) &&
+           (module_entry = NodeUtil.entry(mapping, "module"))
+          return NodeUtil.scalar_value(module_entry[1])
+        end
+        nil
+      end
+
+      # The class name for an `action:`/`local_action:` directive's value.
+      # A module key's null value is accepted (a module taking no params),
+      # but _normalize_old_style_args takes only a string or a mapping and
+      # raises for everything else, NoneType included.
+      private def directive_value_class(node : YAML::Nodes::Node) : String?
+        return "NoneType" if node.is_a?(YAML::Nodes::Scalar) && null_scalar?(node)
+        action_value_class(node)
+      end
+
+      private def null_scalar?(node : YAML::Nodes::Scalar) : Bool
+        return true if node.tag == "tag:yaml.org,2002:null"
+        node.style.plain? && NULL_SCALARS.includes?(node.value)
+      end
+
+      # The Python class name ModuleArgsParser's "unexpected parameter
+      # type in action" names for an action value it cannot normalize, or
+      # nil for the shapes it accepts (a string, a mapping, or null).
+      # Ansible's YAML loader resolves plain scalars with PyYAML's YAML
+      # 1.1 rules, so an unquoted `yes`/`true` is a bool and `5` an int;
+      # the non-bool containers and numbers print under the datatag
+      # subclasses ansible 2.19+ tags them with.
+      private def action_value_class(node : YAML::Nodes::Node) : String?
+        case node
+        when YAML::Nodes::Mapping
+          nil
+        when YAML::Nodes::Sequence
+          LIST_CLASS
+        when YAML::Nodes::Scalar
+          scalar_action_class(node)
+        end
+      end
+
+      private def scalar_action_class(node : YAML::Nodes::Scalar) : String?
+        case node.tag
+        when "tag:yaml.org,2002:str", "tag:yaml.org,2002:null", "!vault"
+          return nil
+        when "tag:yaml.org,2002:bool"
+          return "bool"
+        when "tag:yaml.org,2002:int"
+          return INT_CLASS
+        when "tag:yaml.org,2002:float"
+          return FLOAT_CLASS
+        end
+        return nil unless node.style.plain?
+        value = node.value
+        return nil if NULL_SCALARS.includes?(value)
+        return "bool" if BOOL_SCALARS.includes?(value)
+        return INT_CLASS if value.matches?(INT_SCALAR)
+        return FLOAT_CLASS if value.matches?(FLOAT_SCALAR)
         nil
       end
 
