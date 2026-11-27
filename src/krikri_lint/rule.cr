@@ -8,7 +8,18 @@ module Krikri
       abstract def check(file : PositionedFile, violations : Array(Violation))
 
       def applies?(file : PositionedFile) : Bool
-        applies_to.includes?(file.file_type)
+        return false unless applies_to.includes?(file.file_type)
+        # Upstream's matchyaml dispatch skips any lintable whose base_kind
+        # is not text/yaml, so a plain-text sanity ignore file reaches
+        # only a rule that opts in to it.
+        file.file_type.yaml_lintable? || non_yaml_lintable?
+      end
+
+      # Whether this rule inspects a non-YAML lintable (sanity ignore
+      # files). Upstream's sanity rule overrides matchyaml wholesale
+      # instead of relying on the generic text/yaml gate.
+      def non_yaml_lintable? : Bool
+        false
       end
 
       # Whether this rule's violations belong to an enclosing task, and

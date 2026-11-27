@@ -24,14 +24,19 @@ module Krikri
       end
 
       def self.load(path : String) : PositionedFile
+        type = FileType.from_path(path)
         source = File.read(path)
+        # A sanity ignore file is plain text, which upstream never loads
+        # as YAML: parsing it here would report a load-failure for a file
+        # the sanity rule alone answers for.
+        return new(path, type, nil, nil) if type.sanity_ignore?
         begin
           document = YAML::Nodes.parse(source)
           root = document.nodes.first?
-          new(path, FileType.from_path(path), root, nil)
+          new(path, type, root, nil)
         rescue ex : YAML::ParseException
           info = ParseErrorInfo.new(ex.line_number.to_i, ex.column_number.to_i, ex.message.to_s)
-          new(path, FileType.from_path(path), nil, info)
+          new(path, type, nil, info)
         end
       end
     end
