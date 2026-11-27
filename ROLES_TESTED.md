@@ -4821,7 +4821,7 @@ dispositioned per row below.
 | idealista.azkaban-role | ⚠ both engines fail identically (broken role/host), byte-identical (rocky, round29927156, 0.9.3119 debug, ansible-core 2.21.6). |
 | ilmarkerm.oracle-addnode | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927159, 0.9.3119 debug, ansible-core 2.21.6). |
 | inofix.yapkg | ❌ Divergent - issue #1822 (ubuntu, round29927212, 0.9.3119 debug, ansible-core 2.21.6). |
-| itdoginfo.domain_routing_openwrt | ❌ Divergent - issue #1908 (rocky, round29928828, 0.9.3164 debug, ansible-core 2.21.6). |
+| itdoginfo.domain_routing_openwrt | ⚠ ansible-only failure - issue #1908 re-files the same divergence as closed #1844: its `gekmihesg.openwrt` dependency's `vars_plugins/monkeypatch.py` patches ansible's controller `_configure_module` for the old 4-tuple, so ansible-core 2.21.6 dies at Gathering Facts ("not enough values to unpack (expected 4, got 2)") while krikri (which does not run role-adjacent vars plugins, see `KNOWN_MISSING.md`) runs the play; with that plugin removed both engines are byte-identical (rocky, round29928828, 0.9.3164 debug, ansible-core 2.21.6; cold ansible 1.35s krikri 1.23s, warm ansible 1.18s krikri 0.51s). |
 | jan_matthis.julia | ✅ Clean (ubuntu, round29927145, 0.9.3119 debug, ansible-core 2.21.6). |
 | jaredhocutt.teamviewer | ⚠ both engines fail identically (broken role/host), byte-identical (ubuntu, round29927131, 0.9.3119 debug, ansible-core 2.21.6). |
 | jedimt.nebulon_create_npod | ❌ Divergent - issue #1821 (rocky, round29927114, 0.9.3119 debug, ansible-core 2.21.6). |
