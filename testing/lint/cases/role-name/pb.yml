@@ -1,0 +1,9 @@
+---
+# Parity fixture for the role-name rule: a role directory target is kind
+# "role", and Bad_Role's derived name does not match ^[a-z][a-z0-9_]*$.
+- name: Role name fixture play
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - Bad_Role

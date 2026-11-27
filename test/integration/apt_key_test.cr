@@ -508,21 +508,16 @@ describe "apt_key plugin" do
     File.write(File.join(shim_dir, "apt-key"), APT_KEY_SHIM)
     File.chmod(File.join(shim_dir, "apt-key"), 0o755)
     state = PluginSpecHelper.tmp_path("apt-key-state")
-    PluginSpecHelper::ENV_MUTEX.synchronize do
-      old_path = ENV["PATH"]?
-      ENV["PATH"] = "#{shim_dir}:#{old_path}"
-      ENV["KRIKRI_APT_KEY_STATE"] = state
-      begin
-        result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://baltocdn.com/helm/signing.asc"},
-          vars: {"ansible_python_interpreter" => fake_python})
+    # The doubles ride on the CHILD's PATH only (apt_key_shim_env): a
+    # process-wide PATH would put the fake curl/python3 in front of every
+    # concurrently running spec's plugin and flip its fetch (the same
+    # leak issue #1190 fixed for the apt-key double).
+    result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://baltocdn.com/helm/signing.asc"},
+      vars: {"ansible_python_interpreter" => fake_python},
+      env: apt_key_shim_env(shim_dir, state))
 
-        result["failed"].as_bool.must_equal(true)
-        result["msg"].as_s.must_equal("Failed to download key at https://baltocdn.com/helm/signing.asc: Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1000)>")
-      ensure
-        ENV["PATH"] = old_path if old_path
-        ENV.delete("KRIKRI_APT_KEY_STATE")
-      end
-    end
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to download key at https://baltocdn.com/helm/signing.asc: Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1000)>")
   end
 
   it "rebuilds the TLS rejection from curl's own reason when no target python can word it" do
@@ -552,21 +547,12 @@ describe "apt_key plugin" do
     File.write(File.join(shim_dir, "apt-key"), APT_KEY_SHIM)
     File.chmod(File.join(shim_dir, "apt-key"), 0o755)
     state = PluginSpecHelper.tmp_path("apt-key-state")
-    PluginSpecHelper::ENV_MUTEX.synchronize do
-      old_path = ENV["PATH"]?
-      ENV["PATH"] = "#{shim_dir}:#{old_path}"
-      ENV["KRIKRI_APT_KEY_STATE"] = state
-      begin
-        result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://baltocdn.com/helm/signing.asc"},
-          vars: {"ansible_python_interpreter" => fake_python})
+    result = PluginSpecHelper.run("apt_key", {"state" => "present", "url" => "https://baltocdn.com/helm/signing.asc"},
+      vars: {"ansible_python_interpreter" => fake_python},
+      env: apt_key_shim_env(shim_dir, state))
 
-        result["failed"].as_bool.must_equal(true)
-        result["msg"].as_s.must_equal("Failed to download key at https://baltocdn.com/helm/signing.asc: Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1147)>")
-      ensure
-        ENV["PATH"] = old_path if old_path
-        ENV.delete("KRIKRI_APT_KEY_STATE")
-      end
-    end
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failed to download key at https://baltocdn.com/helm/signing.asc: Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1147)>")
   end
 
   it "attempts a real keyserver fetch (and fails cleanly, not a crash) when id: is given but not yet present" do

@@ -18,10 +18,11 @@ module Krikri
 
       # Upstream's Lintable.base_kind gate: only a text/yaml lintable
       # reaches the generic matchyaml dispatch. A sanity ignore file is
-      # plain text, so only a rule that opts in (Rule#non_yaml_lintable?)
-      # looks at it.
+      # plain text and a role directory is kind "role" with no yaml base
+      # kind, so each reaches only a rule that opts in
+      # (Rule#non_yaml_lintable? / Rule#applies?).
       def yaml_lintable? : Bool
-        self != SANITY_IGNORE
+        self != SANITY_IGNORE && self != ROLE
       end
 
       # Upstream's kind_from_path glob **/tests/sanity/ignore-*.txt.

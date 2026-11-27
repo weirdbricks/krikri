@@ -8,7 +8,8 @@ module Krikri
                      @syntax_check : SyntaxCheck? = nil)
       end
 
-      def run(paths : Array(String), targets : Array(String) = paths) : Array(Violation)
+      def run(paths : Array(String), targets : Array(String) = paths,
+              role_dirs : Array(String) = [] of String) : Array(Violation)
         rules = active_rules
         return [] of Violation if rules.empty?
 
@@ -40,6 +41,10 @@ module Krikri
           end
         end
 
+        # A role directory target is a lintable of its own upstream (kind
+        # "role"), not a walk of its contents.
+        check_role_dirs(role_dirs, rules, violations)
+
         scoped = Set(String).new
         rules.each do |rule|
           next unless rule.task_scoped?
@@ -48,6 +53,19 @@ module Krikri
         end
         kept = violations.reject { |v| suppressed?(v, scoped, noqa_maps, task_spans) }
         apply_warn_list(kept.map { |v| describe(v, task_names) })
+      end
+
+      # Only rules declaring ROLE read a role directory, and they read
+      # the directory itself rather than a parsed YAML document.
+      private def check_role_dirs(role_dirs : Array(String), rules : Array(Rule),
+                                  violations : Array(Violation)) : Nil
+        role_dirs.each do |path|
+          file = PositionedFile.new(path, FileType::ROLE, nil, nil)
+          rules.each do |rule|
+            next unless rule.applies?(file)
+            rule.check(file, violations)
+          end
+        end
       end
 
       # Collected once per file, on first need: the enclosing-task spans a

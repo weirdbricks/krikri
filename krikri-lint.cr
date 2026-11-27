@@ -210,6 +210,9 @@ module Krikri::Lint
     files = Imports.expand(FileDiscovery.discover(targets))
       .reject { |path| config.excluded?(path) }
     missing = FileDiscovery.missing_targets(targets)
+    # A role directory target is a lintable of its own (upstream kind
+    # "role"); it is never excluded, because an explicit target is not.
+    role_dirs = FileDiscovery.role_targets(targets)
     syntax_check = SyntaxCheck.new(files, targets)
     # A directory target is walked but yields no matches; upstream still
     # counts it, so the summary's file total has to include it. Missing
@@ -221,7 +224,7 @@ module Krikri::Lint
 
     runner = Runner.new(registry, config, syntax_check)
     violations = begin
-      runner.run(files, targets)
+      runner.run(files, targets, role_dirs)
     rescue ex
       STDERR.puts "krikri-lint: internal error: #{ex.message}"
       exit 3
