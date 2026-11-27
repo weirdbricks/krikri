@@ -98,12 +98,18 @@ end
 # port): Ansible's own result for it carries the deprecations entry, so
 # failure vs success is irrelevant to the assertions - only that the
 # task executed rather than skipped.
+#
+# Port 1, not a high "unused" port (#1960): this used 33399, inside the
+# kernel's ephemeral range (32768-60999), where any concurrent test's
+# port-0 listener can land. A silent one there left the plugin waiting on
+# the server greeting until the 120s playbook deadline. Below 1024 no
+# unprivileged test server can bind, so the connect is always refused.
 private FAILING_MYSQL_INFO = [
   "    - name: failing info",
   "      community.mysql.mysql_info:",
   "        filter: \"*\"",
   "        login_host: 127.0.0.1",
-  "        login_port: 33399",
+  "        login_port: 1",
   "      ignore_errors: true",
   "      register: r",
 ]
@@ -115,13 +121,13 @@ describe "community.mysql redirect deprecation" do
       "      community.mysql.mysql_info:",
       "        filter: \"*\"",
       "        login_host: 127.0.0.1",
-      "        login_port: 33399",
+      "        login_port: 1",
       "      ignore_errors: true",
       "    - name: other module",
       "      community.mysql.mysql_query:",
       "        query: \"SELECT 1\"",
       "        login_host: 127.0.0.1",
-      "        login_port: 33399",
+      "        login_port: 1",
       "      ignore_errors: true",
     ])
     success.must_equal(true, output)
@@ -196,7 +202,7 @@ describe "community.mysql redirect deprecation" do
       "      ansible.mysql.mysql_info:",
       "        filter: \"*\"",
       "        login_host: 127.0.0.1",
-      "        login_port: 33399",
+      "        login_port: 1",
       "      ignore_errors: true",
     ])
     success.must_equal(true, output)
@@ -210,7 +216,7 @@ describe "community.mysql redirect deprecation" do
       "      mysql_info:",
       "        filter: \"*\"",
       "        login_host: 127.0.0.1",
-      "        login_port: 33399",
+      "        login_port: 1",
       "      ignore_errors: true",
     ])
     success.must_equal(true, output)
