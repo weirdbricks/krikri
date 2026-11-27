@@ -1,0 +1,21 @@
+---
+# Parity fixture for the only-builtins rule. Opt-in upstream (tags
+# opt-in,experimental), so it is only reachable with
+# `--enable-list only-builtins`; the collection task is skipped so the
+# play still runs on both engines.
+- name: Only builtins triage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Configure a sysctl with a collection module
+      ansible.posix.sysctl:
+        name: kernel.pid_max
+        value: "4194304"
+        state: present
+        reload: false
+      when: false
+
+    - name: Confirm the play still runs
+      ansible.builtin.debug:
+        msg: only builtins would be allowed here
