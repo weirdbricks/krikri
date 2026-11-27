@@ -48,6 +48,7 @@ module Krikri
         "yaml[colons]"                  => "basic",
         "partial-become"                => "basic",
         "no-free-form"                  => "basic",
+        "playbook-extension"            => "basic",
         "schema[meta]"                  => "basic",
       }
 
