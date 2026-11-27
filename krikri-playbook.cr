@@ -246,12 +246,19 @@ if ARGV[0]? == Krikri::SsmRsyncRsh::ARGV_DISPATCH
   exit Krikri::SsmRsyncRsh.run(ARGV[1..])
 end
 
-# `krikri-playbook __async_run <module> <config_path> <status_path>` is an
-# internal-only entry point (not a user-facing subcommand): TaskExecutor's
-# async:/poll: support spawns this as a detached background process to run
-# a single module and write its result to the job's status file, so the
-# job outlives the poll loop (or the whole playbook run) rather than being
-# tied to a Fiber in the parent process. See
+# `setsid(2)` is missing from Crystal's LibC bindings. A top-level
+# re-opened `lib LibC` only adds to the namespace already in play (the
+# same pattern facts_gatherer.cr uses for the plugin binary).
+lib LibC
+  fun setsid : Int32
+end
+
+# `krikri-playbook __async_run <module> <config_path> <status_path> <async_seconds>`
+# is an internal-only entry point (not a user-facing subcommand):
+# TaskExecutor's async:/poll: support spawns this as a detached background
+# process to run a single module and write its result to the job's status
+# file, so the job outlives the poll loop (or the whole playbook run)
+# rather than being tied to a Fiber in the parent process. See
 # TaskExecutor#execute_async/AsyncJobs.
 if ARGV[0]? == "__async_run"
   module_name = ARGV[1]
@@ -275,6 +282,44 @@ if ARGV[0]? == "__async_run"
   # as before for pruned configs).
   child_host = Krikri::Host.new(config_json["host"]?.try(&.["name"]?.try(&.as_s?)) || "localhost")
   child_vars = config_json["vars"]?.try(&.as_h?) || Hash(String, JSON::Any).new
+
+  # ansible-core's async_wrapper enforces async: on the target itself,
+  # whether or not anyone polls: it runs the module inside a supervisee
+  # process group, SIGKILLs that whole group when the budget expires and
+  # leaves its "Timeout exceeded" record in the job file. Without the same
+  # timer a fire-and-forget job simply runs to completion - the reboot
+  # idiom (`shell: sleep 2 && shutdown -r now` with `async: 1, poll: 0`)
+  # really rebooted the host under this engine where real ansible kills
+  # the shell before its sleep ends (issue #1899), and any
+  # `async: N, poll: 0` command outlived N seconds.
+  #
+  # The kill targets this process's whole group so a shell module's own
+  # children (`sh -c` and everything under it) die with it; setsid makes
+  # this job process the leader of a fresh group before the module starts
+  # its children, which is what makes that both safe and complete. The
+  # controller spawns this process, so it is not a group leader yet and
+  # setsid does not fail in practice; the pgid guard below keeps a failed
+  # setsid from signalling an unrelated group anyway.
+  if (budget = ARGV[4]?.try(&.to_i?)) && budget > 0
+    LibC.setsid
+    spawn do
+      sleep budget.seconds
+      begin
+        # A tmp path of its own, not AsyncJobs.write_status's: the module's
+        # writer can be finishing at this same instant, and two writers
+        # sharing one tmp file would interleave their bytes.
+        File.open("#{status_path}.timeout.tmp", "w") do |io|
+          io.chmod(0o600)
+          io.write(Krikri::AsyncJobs.timeout_record(Process.pid.to_i64).to_json.to_slice)
+        end
+        File.rename("#{status_path}.timeout.tmp", status_path)
+      rescue
+      end
+      LibC.kill(-Process.pgid, Signal::KILL.value) if Process.pgid == Process.pid
+      exit 1
+    end
+  end
+
   result = Krikri::PluginManager.execute_plugin(module_name, config_json, child_host, child_vars)
 
   # as_h.dup, not JSON.parse(result.to_json).as_h: only a top-level key is

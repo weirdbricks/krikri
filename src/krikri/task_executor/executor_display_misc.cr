@@ -977,9 +977,13 @@ module Krikri
       AsyncJobs.write_config(jid, config_json)
 
       executable = Process.executable_path || File.join(Dir.current, "krikri-playbook")
+      # The async: budget goes along so the job process enforces it on its
+      # own: ansible's async_wrapper kills a job that outlives async:
+      # whether or not anyone polls it, and a poll:0 job here has no
+      # controller-side poll loop left to do that (issue #1899).
       Process.new(
         executable,
-        ["__async_run", task.module_name, AsyncJobs.config_path(jid), AsyncJobs.status_path(jid)],
+        ["__async_run", task.module_name, AsyncJobs.config_path(jid), AsyncJobs.status_path(jid), (task.async_seconds || 0).to_s],
         input: Process::Redirect::Close,
         output: Process::Redirect::Close,
         error: Process::Redirect::Close
@@ -1170,13 +1174,11 @@ module Krikri
       substituted_become_flags = resolve_task_become_flags(task, exec_host, vars, substitutor)
       target = PluginManager.remote_plugin_target(task.module_name, become, become_user, conn.become_baseline_user, become_pw, substituted_become_flags, PluginManager.remote_term_forwarding(vars), conn.staging_user)
       # With a become password the target is the probe+sudo -S wrapper,
-      # which is full of single quotes - it cannot live inside the
-      # `sh -c '<...>'` argv string below (the quotes would terminate
-      # it, and argv is exactly where a password must never appear
-      # anyway). That shape writes the inner command to its own base64'd
-      # file instead; without a password the launch bytes stay exactly
-      # as they always were.
-      pw_wrapped = !become_pw.nil? && PluginManager.become_needed?(become, become_user, conn.become_baseline_user)
+      # which is full of single quotes - it cannot live inside an inline
+      # shell string (the quotes would terminate it, and argv is exactly
+      # where a password must never appear anyway). The worker is therefore
+      # always written to its own base64'd file and run from there, so both
+      # target shapes travel verbatim.
       connection_host = conn.conn_host
       user = conn.user
       identity_file = conn.identity_file
@@ -1222,32 +1224,53 @@ module Krikri
       # the config over stdin. The worker is started outside that
       # subshell, so the module itself keeps the target's normal umask
       # (Ansible's async_wrapper runs its worker under 022).
-      launch = if pw_wrapped
-                 inner = "#{target} < #{dir}/#{jid}.config.json > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}"
-                 inner_encoded = Base64.strict_encode(inner)
-                 <<-SCRIPT
-                   mkdir -p #{dir}
-                   printf '#{ASYNC_DIR_MARKER}%s\\n' #{dir}
-                   echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
-                   ( umask 077; echo '#{encoded}' | base64 -d > #{dir}/#{jid}.config.json )
-                   ( umask 077; echo '#{inner_encoded}' | base64 -d > #{dir}/#{jid}.run )
-                   detach=""
-                   command -v setsid >/dev/null 2>&1 && detach=setsid
-                   nohup $detach sh #{dir}/#{jid}.run </dev/null >/dev/null 2>&1 &
-                   printf '#{ASYNC_CHILD_PID_MARKER}%s\\n' "$!"
-                 SCRIPT
-               else
-                 <<-SCRIPT
-                   mkdir -p #{dir}
-                   printf '#{ASYNC_DIR_MARKER}%s\\n' #{dir}
-                   echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
-                   ( umask 077; echo '#{encoded}' | base64 -d > #{dir}/#{jid}.config.json )
-                   detach=""
-                   command -v setsid >/dev/null 2>&1 && detach=setsid
-                   nohup $detach sh -c '#{target} < #{dir}/#{jid}.config.json > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' </dev/null >/dev/null 2>&1 &
-                   printf '#{ASYNC_CHILD_PID_MARKER}%s\\n' "$!"
-                 SCRIPT
-               end
+      # The module runs as a supervisee of the worker below, which also owns
+      # an async: timer: ansible's async_wrapper SIGKILLs the module's whole
+      # process group when the budget expires and records it in the job
+      # file, and both halves matter. Without the kill a poll:0 job simply
+      # ran to completion - this role's `async: 1, poll: 0`,
+      # `shell: sleep 2 && shutdown -r now` really rebooted the host under
+      # this engine while real ansible had already killed the shell (issue
+      # #1899) - and without the record a later async_status: saw a job that
+      # never finished. `timeout -s KILL` runs the module in a process group
+      # of its own and signals that whole group, which is what takes a shell
+      # module's `sh -c` (and everything under it) down with the module
+      # instead of leaving it orphaned and running. A target without
+      # `timeout` falls back to the untimed run this engine always did.
+      limit = task.async_seconds || raise "BUG: async_seconds missing"
+      module_command = "#{target} < #{dir}/#{jid}.config.json"
+      module_encoded = Base64.strict_encode(module_command)
+      worker = <<-WORKER
+        ( umask 077; echo '#{module_encoded}' | base64 -d > #{dir}/#{jid}.mod )
+        if command -v timeout >/dev/null 2>&1; then
+          timeout -s KILL #{limit} sh #{dir}/#{jid}.mod > #{dir}/#{jid}.tmp 2>&1 &
+        else
+          sh #{dir}/#{jid}.mod > #{dir}/#{jid}.tmp 2>&1 &
+        fi
+        mod=$!
+        wait $mod
+        st=$?
+        if [ "$st" -eq 124 ] || [ "$st" -eq 137 ]; then
+          printf '{"msg": "Timeout exceeded", "failed": true, "child_pid": %s}' "$mod" > #{dir}/#{jid}.timeout.tmp
+          mv #{dir}/#{jid}.timeout.tmp #{dir}/#{jid}
+          rm -f #{dir}/#{jid}.tmp #{dir}/#{jid}.mod
+          exit 0
+        fi
+        mv #{dir}/#{jid}.tmp #{dir}/#{jid}
+        rm -f #{dir}/#{jid}.mod
+      WORKER
+      worker_encoded = Base64.strict_encode(worker)
+      launch = <<-SCRIPT
+        mkdir -p #{dir}
+        printf '#{ASYNC_DIR_MARKER}%s\\n' #{dir}
+        echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
+        ( umask 077; echo '#{encoded}' | base64 -d > #{dir}/#{jid}.config.json )
+        ( umask 077; echo '#{worker_encoded}' | base64 -d > #{dir}/#{jid}.run )
+        detach=""
+        command -v setsid >/dev/null 2>&1 && detach=setsid
+        nohup $detach sh #{dir}/#{jid}.run </dev/null >/dev/null 2>&1 &
+        printf '#{ASYNC_CHILD_PID_MARKER}%s\\n' "$!"
+      SCRIPT
 
       launched = SSHManager.exec_script(connection_host, user, launch, conn.port, identity_file: identity_file, extra_args: extra_args, ssh_executable: conn.ssh_executable, connection: conn)
       if launched[:exit_code] != 0
@@ -1265,13 +1288,15 @@ module Krikri
       # wrapped result had no path to report at all (issue #1397).
       remote_async_dir = launched[:stdout].lines.find(&.starts_with?(ASYNC_DIR_MARKER)).try(&.lchop(ASYNC_DIR_MARKER).strip)
       results_file = remote_async_dir ? File.join(remote_async_dir, jid) : AsyncJobs.status_path(jid)
-      # The detached worker's own pid, reported the same way - a remote async
-      # timeout names it as child_pid, exactly the slot async_wrapper's
-      # timeout record fills with the pid of the module it killed. This is
-      # the `&` job's pid: nohup/setsid exec in place here (the launch runs
-      # in a non-interactive shell, so the child is not a process-group
-      # leader and setsid does not fork); under a job-control shell setsid
-      # would fork and child_pid would name the exiting parent instead.
+      # The detached worker's own pid, reported the same way. The worker's
+      # own timer is what normally records a timeout, with the module's pid
+      # in child_pid (the slot async_wrapper fills with the pid it killed);
+      # this value only backs the controller-side synthesis below, for a job
+      # whose worker died before it could write anything. It is the `&`
+      # job's pid: nohup/setsid exec in place here (the launch runs in a
+      # non-interactive shell, so the child is not a process-group leader
+      # and setsid does not fork); under a job-control shell setsid would
+      # fork and child_pid would name the exiting parent instead.
       remote_child_pid = launched[:stdout].lines.find(&.starts_with?(ASYNC_CHILD_PID_MARKER)).try(&.lchop(ASYNC_CHILD_PID_MARKER).strip).try(&.to_i64?)
 
       poll = task.poll_seconds || 10

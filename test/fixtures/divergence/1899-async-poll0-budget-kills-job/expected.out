@@ -1,0 +1,21 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Reboot host] *************************************************************
+changed: [localhost]
+
+TASK [Let the job outlive its async budget] ************************************
+Pausing for 3 seconds
+ok: [localhost]
+
+TASK [Did the killed job reach its command anyway] *****************************
+ok: [localhost]
+
+TASK [Report] ******************************************************************
+ok: [localhost] => {
+    "msg": "rebooted=False"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

@@ -83,6 +83,39 @@ describe "async timeout output shape" do
     output.wont_include(%("exception":))
   end
 
+  it "kills a poll:0 job at its async budget and records it" do
+    # Issue #1899: async_wrapper's timer runs on the target whether or not
+    # anyone polls, so a fire-and-forget job must not outlive async: - the
+    # reboot idiom `sleep 2 && shutdown -r now` with `async: 1, poll: 0`
+    # never reaches its shutdown under real ansible, and a host that really
+    # rebooted there made the next phase's first connection unreachable.
+    home = PluginSpecHelper.tmp_path("home")
+    Dir.mkdir_p(home)
+    marker = File.join(home, "poked")
+    playbook = PluginSpecHelper.tmp_path("async-poll0.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.shell: sleep 3 && echo done > "#{marker}"
+            async: 1
+            poll: 0
+          - ansible.builtin.wait_for: {timeout: 4}
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", local_inventory, playbook], output: output, error: output, env: {"HOME" => home})
+    File.exists?(marker).must_equal(false)
+    # The job file holds async_wrapper's own timeout record, which is what a
+    # later async_status: reads; it carries no "finished" key because the
+    # record's appearance IS the completion (AsyncJobs.finished?).
+    records = Dir.children(File.join(home, ".ansible_async")).reject(&.ends_with?(".config.json"))
+    records.size.must_equal(1)
+    File.read(File.join(home, ".ansible_async", records.first)).must_include(%("msg":"Timeout exceeded"))
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "reports the wrapper's Timeout exceeded record over ssh" do
     skip "no reachable test sshd (see task_timeout_ssh_loop_test.cr's header)" unless sshd_reachable?
 
