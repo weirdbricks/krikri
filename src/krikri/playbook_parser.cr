@@ -5156,9 +5156,44 @@ module Krikri
           # resolve: the collection shipping in the PLAYBOOK-ADJACENT
           # `collections/` tree (play input, the layout a round's role
           # dependencies land in) and the task/play naming that collection
-          # in `collections:`. Undecidable verdicts (nil) and FQCNs keep
-          # the graceful unavailable-module flow above - an FQCN names a
-          # collection release krikri cannot pin.
+          # in `collections:`. Undecidable verdicts (nil) keep the graceful
+          # unavailable-module flow above.
+          #
+          # An FQCN whose namespace.collection the captured environment never
+          # saw AT ALL is a definitive miss too: real's loader searches only
+          # the controller's installed ansible_collections roots (plus the
+          # playbook-adjacent tree), finds no such collection and refuses the
+          # WHOLE playbook at load time - rc=4, no PLAY output, the
+          # couldn't-resolve line plus the task's Origin, even behind
+          # `when: false`. Live-verified vs 2.21.6 (issue #1909:
+          # nebulon.nebulon_on.neb_npod_info; that role declares no collection
+          # and the round installed none). A collection krikri's capture did
+          # see - even with routing/version data only - is one the controller
+          # has installed, so it stays undecidable rather than a definitive
+          # miss (kubernetes.core and its import gate, issue #1155).
+          # ansible.* collections are always core-provided, never refused.
+          # A mapping-form `action:`/`local_action:` directive is exempt: real
+          # parses that shape's module name lazily, so a reached task fails
+          # with "Cannot resolve '...' to an action or module." instead of
+          # refusing the load (issue #666).
+          if module_name.includes?('.') && resolution[:resolves].nil? && !action_mapping
+            fqcn_parts = module_name.split('.')
+            if fqcn_parts.size >= 3
+              fqcn_ns = fqcn_parts[0]
+              fqcn_coll = fqcn_parts[1]
+              # Only the adjacent tree escapes: a `collections:` keyword
+              # narrows bare-name search to installed collections, it never
+              # conjures a collection real's loader cannot import.
+              if fqcn_ns != "ansible" &&
+                 !CollectionIndex.known_collection?(fqcn_ns, fqcn_coll) &&
+                 !CollectionIndex.playbook_collection?(fqcn_ns, fqcn_coll, playbook_dir)
+                message = "couldn't resolve module/action '#{module_name}'. " \
+                          "This often indicates a misspelling, missing collection, or incorrect module path."
+                raise UnresolvedModuleError.new(message,
+                  origin_error_render(message, source_file, source_map, task_source_prefix(source_prefix, index)))
+              end
+            end
+          end
           if !module_name.includes?('.') && resolution[:resolves] == false &&
              (redirect_target = CollectionIndex.builtin_module_redirect(module_name))
             target_parts = redirect_target.split('.')

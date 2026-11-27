@@ -1,0 +1,8 @@
+[ERROR]: couldn't resolve module/action 'nebulon.nebulon_on.neb_npod_info'. This often indicates a misspelling, missing collection, or incorrect module path.
+Origin: <WORK>/roles/jedimt.nebulon_manage_volumes/tasks/main.yml:4:3
+
+2 # tasks file for jedimt.nebulon_manage_volumes
+3
+4 - name: Retrieve nPod by name
+    ^ column 3
+
