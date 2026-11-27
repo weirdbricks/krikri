@@ -13,6 +13,7 @@ module Krikri
           SyntaxCheckRule.new,
           CommandInsteadOfShellRule.new,
           CommandInsteadOfModuleRule.new,
+          InlineEnvVarRule.new,
           NoChangedWhenRule.new,
           RiskyFilePermissionsRule.new,
           RiskyOctalRule.new,

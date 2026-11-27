@@ -1,0 +1,48 @@
+---
+# Parity fixture for the inline-env-var rule: `command` must not take
+# environment assignments inline, while `shell` and the `environment:`
+# keyword are accepted.
+- name: Inline env var
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Var before command
+      ansible.builtin.command: FOO=bar /usr/bin/printenv FOO
+      changed_when: false
+
+    - name: Shell var before command
+      ansible.builtin.shell: FOO=bar /usr/bin/printenv FOO
+      changed_when: false
+
+    - name: Env keyword form
+      ansible.builtin.command: /usr/bin/printenv FOO
+      changed_when: false
+      environment:
+        FOO: bar
+
+    - name: Mapping cmd form
+      ansible.builtin.command:
+        cmd: A=1 B=2 /usr/bin/printenv A
+      changed_when: false
+
+    - name: Argv form
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/printenv
+          - FOO
+      changed_when: false
+
+    - name: Var after command
+      ansible.builtin.command: /usr/bin/printenv FOO=bar
+      changed_when: false
+
+    - name: Args chdir form
+      ansible.builtin.command: FOO=bar /usr/bin/printenv FOO
+      changed_when: false
+      args:
+        chdir: /tmp
+
+    - name: Var only
+      ansible.builtin.command: FOO=bar
+      changed_when: false
