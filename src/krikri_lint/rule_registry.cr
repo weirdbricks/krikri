@@ -26,6 +26,7 @@ module Krikri
           NoTabsRule.new,
           JinjaRule.new,
           SchemaMetaRule.new,
+          MetaNoTagsRule.new,
           KeyOrderRule.new,
           LiteralCompareRule.new,
           YamlTrailingSpacesRule.new,
