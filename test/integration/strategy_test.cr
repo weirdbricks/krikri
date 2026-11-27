@@ -37,7 +37,9 @@ private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env 
   # plain sleep stays there - linear's order never depended on timing.
   free_like = (strategy || env["ANSIBLE_STRATEGY"]?).in?("free", "host_pinned")
   h1_wait = if free_like
-              "i=0; while [ ! -f #{dir}/h2-second ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done"
+              # +1s after the marker: h2 writes it while its second task is
+              # still running, before krikri prints that result.
+              "i=0; while [ ! -f #{dir}/h2-second ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; sleep 1"
             else
               "sleep 1"
             end

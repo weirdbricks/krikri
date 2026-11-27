@@ -38,7 +38,10 @@ describe "pause plugin" do
     elapsed = Time.instant - started
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    (elapsed.total_seconds < 1.0).must_equal(true)
+    # Generous bound: a real regression waits for seconds or forever (an
+    # interactive prompt); the plugin's own startup under full-suite load
+    # has exceeded 1s.
+    (elapsed.total_seconds < 5.0).must_equal(true)
   end
 
   it "never reports changed" do
