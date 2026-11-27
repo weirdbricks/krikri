@@ -40,6 +40,23 @@ module Krikri::Lint
       Noqa.suppresses?(map, 1, nil, "run-once[play]").must_equal(true)
       Noqa.suppresses?(map, 1, nil, "risky-octal").must_equal(false)
     end
+
+    it "rewrites a legacy numeric tag to the rule it now names" do
+      # Upstream rewrites the tag while reading the comment (RENAMED_TAGS),
+      # so `# noqa: 301` suppresses no-changed-when and nothing else.
+      map = Noqa.build_map("x  # noqa: 301\n")
+      Noqa.suppresses?(map, 1, nil, "no-changed-when").must_equal(true)
+      Noqa.suppresses?(map, 1, nil, "command-instead-of-shell").must_equal(false)
+    end
+
+    it "follows a rename chain to the rule that actually gets skipped" do
+      # 302 is deprecated-command-syntax, which is itself renamed to
+      # no-free-form: upstream normalizes the tag twice, and a `# noqa: 302`
+      # on a free-form task leaves no-free-form unreported.
+      map = Noqa.build_map("x  # noqa: 302\n")
+      Noqa.suppresses?(map, 1, nil, "no-free-form").must_equal(true)
+      Noqa.suppresses?(map, 1, nil, "no-changed-when").must_equal(false)
+    end
   end
 
   describe LintConfig do
@@ -118,6 +135,13 @@ module Krikri::Lint
       rules = [NoChangedWhenRule.new, RiskyShellPipeRule.new] of Rule
       v = run_rules_yaml(yaml, rules)
       v.map(&.rule_id).must_equal(["no-changed-when"])
+    end
+
+    it "suppresses a violation from a legacy numeric noqa tag" do
+      yaml = "---\n- hosts: all\n  tasks:\n    - name: t\n" \
+             "      ansible.builtin.command: echo hi # noqa: 301\n"
+      rules = [NoChangedWhenRule.new] of Rule
+      run_rules_yaml(yaml, rules).must_be_empty
     end
 
     it "does not let a task-scoped noqa silence a file-level rule" do
