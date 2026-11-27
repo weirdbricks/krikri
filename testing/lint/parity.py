@@ -38,6 +38,21 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
+# ansible-lint's opt-in rules are inert unless --enable-list names them, so a
+# run that never passes the flag compares zero triples for every one of them
+# and looks clean (issue #1926). Upstream's option is a plain append with no
+# comma splitting, while krikri-lint accepts a repeated flag too, so one argv
+# fragment serves both. Keep in sync with upstream's `opt-in` tagged rules.
+OPT_IN_RULES = (
+    "empty-string-compare",
+    "galaxy-version-incorrect",
+    "no-log-password",
+    "no-prompting",
+    "no-same-owner",
+    "only-builtins",
+)
+ENABLE_OPT_IN = [arg for rule in OPT_IN_RULES for arg in ("--enable-list", rule)]
+
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
@@ -138,9 +153,9 @@ def main():
     for config, group in config_groups(targets).items():
         flags = ["-c", str(config)] if config else []
         ours |= set(parse_krikri(
-            run([args.krikri, "-p", "--nocolor", *flags, *group])))
+            run([args.krikri, "-p", "--nocolor", *ENABLE_OPT_IN, *flags, *group])))
         theirs |= set(parse_ansible(
-            run([args.ansible_lint, "--nocolor", "-p", *flags, *group])))
+            run([args.ansible_lint, "--nocolor", "-p", *ENABLE_OPT_IN, *flags, *group])))
     known = implemented_rules(args.krikri)
 
     # normalize to repo-relative paths

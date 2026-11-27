@@ -1,0 +1,20 @@
+---
+# Parity fixture for no-same-owner. Opt-in upstream (tag opt-in), so it is
+# only reachable with `--enable-list no-same-owner`; both tasks are skipped so
+# the play never touches the paths and the fixture stays lint-only.
+- name: No same owner repro
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Synchronize a config file
+      ansible.posix.synchronize:
+        src: /etc/hostname
+        dest: /tmp/krikri-no-same-owner/hostname.synced
+      when: false
+
+    - name: Extract a tarball
+      ansible.builtin.unarchive:
+        src: /tmp/krikri-no-same-owner/archive.tar.gz
+        dest: /tmp/krikri-no-same-owner/extracted
+      when: false
