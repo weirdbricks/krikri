@@ -1,0 +1,3 @@
+- name: Say hi
+  ansible.builtin.debug:
+    msg: hi
