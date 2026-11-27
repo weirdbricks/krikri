@@ -181,6 +181,7 @@ module Krikri
       private def active_rules : Array(Rule)
         @registry.rules.select do |rule|
           next true if @config.enable_list.includes?(rule.id)
+          next false if rule.opt_in?
           next false unless Profile.includes?(@config.profile, rule.id)
           next true if @config.tags.empty?
           rule.tags.any? { |tag| @config.tags.includes?(tag) } ||

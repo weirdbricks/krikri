@@ -42,6 +42,15 @@ module Krikri
         false
       end
 
+      # Upstream's "opt-in" tag: the rule loader keeps such a rule out of
+      # the run unless --enable-list names it. The runner needs this
+      # explicitly because Profile.includes? treats a rule no profile
+      # lists as production, which would turn an opt-in rule on by
+      # default.
+      def opt_in? : Bool
+        tags.includes?("opt-in")
+      end
+
       # Whether this rule's violations belong to an enclosing task, and
       # so are suppressed by a `# noqa:` appearing anywhere inside that
       # task's body. Upstream separates these: matchtask results are
