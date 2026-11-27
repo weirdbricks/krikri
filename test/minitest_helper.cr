@@ -195,7 +195,23 @@ module PluginSpecHelper
       stalled.each do |(name, elapsed, in_flight)|
         STDERR.puts "test: still running after #{elapsed}s with #{in_flight} test(s) in flight: #{name}"
       end
+      report_lock_state unless stalled.empty?
     end
+  end
+
+  # Who holds the suite's two test-scheduling locks, printed with every
+  # stall report: the test the watchdog names is the OLDEST in flight, which
+  # is often only a victim queued behind the real holder.
+  class_property excl_holder : String? = nil
+  class_property state_holder : String? = nil
+
+  private def self.report_lock_state : Nil
+    now = Time.instant
+    lines = @@tmp_mutex.synchronize do
+      @@test_by_fiber.map { |_fiber, (name, started)| "test:   #{(now - started).total_seconds.to_i}s #{name}" }
+    end
+    STDERR.puts "test: locks: active_parallel=#{@@active_parallel} exclusive_waiting=#{@@exclusive_waiting} EXCL_MUTEX held by #{@@excl_holder || "-"}; STATE_MUTEX (test-level) held by #{@@state_holder || "-"}; in flight:"
+    lines.each { |line| STDERR.puts line }
   end
 
   def self.tmp_path(*parts : String) : String
@@ -250,14 +266,28 @@ module PluginSpecHelper
   # the handoff real: the next exclusive waits on EXCL_MUTEX until the
   # previous one unlocks in exit_exclusive, and enter_parallel/exit_parallel
   # block on the same mutex instead of racing a flag.
+  #
+  # Writer preference: while any exclusive test is waiting, no NEW parallel
+  # test may start (@@exclusive_waiting). Without it the gate starved its
+  # writers: an exclusive test polls every 1ms for @@active_parallel == 0,
+  # but each worker fiber finishing a parallel test starts the next one
+  # without yielding, so the count was almost never 0 at a poll. Exclusive
+  # tests piled up one per fiber until a shard sat for minutes with every
+  # fiber but one parked in enter_exclusive and the stall watchdog killed
+  # it (58 stall reports, more likely at higher shard counts).
   EXCL_MUTEX = Mutex.new
   @@active_parallel = 0
+  @@exclusive_waiting = 0
 
   # Returns with EXCL_MUTEX still held (exit_exclusive releases it).
   def self.enter_exclusive : Nil
+    EXCL_MUTEX.synchronize { @@exclusive_waiting += 1 }
     loop do
       EXCL_MUTEX.lock
-      return if @@active_parallel == 0
+      if @@active_parallel == 0
+        @@exclusive_waiting -= 1
+        return
+      end
       EXCL_MUTEX.unlock
       sleep 1.millisecond
     end
@@ -268,9 +298,16 @@ module PluginSpecHelper
   end
 
   def self.enter_parallel : Nil
-    EXCL_MUTEX.lock
-    @@active_parallel += 1
-    EXCL_MUTEX.unlock
+    loop do
+      EXCL_MUTEX.lock
+      if @@exclusive_waiting == 0
+        @@active_parallel += 1
+        EXCL_MUTEX.unlock
+        return
+      end
+      EXCL_MUTEX.unlock
+      sleep 1.millisecond
+    end
   end
 
   def self.exit_parallel : Nil
@@ -748,20 +785,28 @@ class Minitest::Spec
     PluginSpecHelper.begin_test_tmp("#{self.class.name}##{name}")
     if exclusive?
       PluginSpecHelper.enter_exclusive
+      PluginSpecHelper.excl_holder = "#{self.class.name}##{name}"
       begin
         PluginSpecHelper::STATE_MUTEX.synchronize do
+          PluginSpecHelper.state_holder = "#{self.class.name}##{name}"
           started = Time.instant
           super
           PluginSpecHelper.record_timing("#{self.class.name}##{name}", true, Time.instant - started)
+        ensure
+          PluginSpecHelper.state_holder = nil
         end
       ensure
+        PluginSpecHelper.excl_holder = nil
         PluginSpecHelper.exit_exclusive
       end
     elsif serial?
       PluginSpecHelper::STATE_MUTEX.synchronize do
+        PluginSpecHelper.state_holder = "#{self.class.name}##{name}"
         started = Time.instant
         super
         PluginSpecHelper.record_timing("#{self.class.name}##{name}", true, Time.instant - started)
+      ensure
+        PluginSpecHelper.state_holder = nil
       end
     else
       PluginSpecHelper.enter_parallel
