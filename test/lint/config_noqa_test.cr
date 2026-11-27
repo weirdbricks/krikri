@@ -73,6 +73,20 @@ module Krikri::Lint
         File.delete(path) if path
       end
     end
+
+    it "parses a config file's kinds assignments in file order" do
+      path = File.tempname("lintcfg", "")
+      File.write(path, "---\nkinds:\n  - playbook: \"**/*.play\"\n  - tasks: \"**/tasks/*.yaml\"\n")
+      begin
+        config = LintConfig.from_file(path)
+        config.kinds.must_equal([
+          KindPattern.new("playbook", "**/*.play"),
+          KindPattern.new("tasks", "**/tasks/*.yaml"),
+        ])
+      ensure
+        File.delete(path) if path
+      end
+    end
   end
 
   describe "Runner (config_noqa_test.cr)" do

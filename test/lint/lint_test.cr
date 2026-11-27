@@ -39,6 +39,34 @@ module Krikri::Lint
       FileType.from_path("roles/foo/meta/main.yml").must_equal(FileType::META)
       FileType.from_path("site.yml").must_equal(FileType::PLAYBOOK)
     end
+
+    it "leaves a path no kind pattern matches unknown" do
+      # ansible-lint's kind_from_path returns an empty kind here and
+      # runs no rules on the lintable.
+      FileType.from_path("playbook").must_equal(FileType::UNKNOWN)
+      FileType.from_path("notes.txt").must_equal(FileType::UNKNOWN)
+    end
+
+    it "prepends a config's kinds to the default patterns" do
+      kinds = [KindPattern.new("tasks", "**/custom.yml")]
+      FileType.from_path("roles/foo/custom.yml", kinds).must_equal(FileType::TASKS)
+      # The project pattern wins even where a role subdirectory would
+      # otherwise decide the kind.
+      FileType.from_path("roles/foo/tasks/custom.yml", kinds).must_equal(FileType::TASKS)
+      FileType.from_path("other.yml", kinds).must_equal(FileType::PLAYBOOK)
+    end
+
+    it "keeps a kind it has no rules for unknown" do
+      kinds = [KindPattern.new("python", "**/*.py")]
+      FileType.from_path("library/module.py", kinds).must_equal(FileType::UNKNOWN)
+    end
+
+    it "only gives a text/yaml base kind to yaml file names" do
+      # Upstream assigns the base kind from the name alone; it gates the
+      # yaml/task rule dispatch independently of the explicit kind.
+      PositionedFile.new("site.yml", FileType::PLAYBOOK, nil, nil).base_yaml?.must_equal(true)
+      PositionedFile.new("demo.play", FileType::PLAYBOOK, nil, nil).base_yaml?.must_equal(false)
+    end
   end
 
   describe NodeUtil do
@@ -187,6 +215,20 @@ module Krikri::Lint
       begin
         violations = Runner.new(RuleRegistry.default).run([path])
         violations.size.must_equal(1)
+      ensure
+        File.delete(path)
+      end
+    end
+
+    it "reports nothing for an explicitly named file with an unknown kind" do
+      # ansible-lint lints an extensionless playbook target but its
+      # kind resolution leaves it with no kind, so no rule applies.
+      path = File.tempname("lintspec")
+      File.write(path, "---\n- name: extension demo\n  hosts: localhost\n  tasks:\n" \
+                        + "    - name: say hello\n      ansible.builtin.debug:\n" \
+                           + "        msg: hello\n")
+      begin
+        Runner.new(RuleRegistry.default).run([path]).must_be_empty
       ensure
         File.delete(path)
       end

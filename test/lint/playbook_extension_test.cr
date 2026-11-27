@@ -49,10 +49,24 @@ module Krikri::Lint
       path = File.join(dir, "demo.play")
       File.write(path, "- name: Play\n  hosts: all\n  tasks: []\n")
       registry = RuleRegistry.new([rule] of Rule)
-      v = Runner.new(registry).run([path])
+      config = LintConfig.new(kinds: [KindPattern.new("playbook", "**/*.play")])
+      v = Runner.new(registry, config).run([path])
       v.size.must_equal(1)
       v.first.rule_id.must_equal("playbook-extension")
       v.first.path.must_equal(path)
+    ensure
+      File.delete(path) if path && File.exists?(path)
+    end
+
+    it "reports nothing for a non-yaml file no kinds entry calls a playbook" do
+      # ansible-lint's default kinds only map *.yml/*.yaml, so such a
+      # target has no kind and no rule, this one included, applies.
+      dir = PluginSpecHelper.tmp_path("playbook-extension-unknown")
+      Dir.mkdir_p(dir)
+      path = File.join(dir, "demo.play")
+      File.write(path, "- name: Play\n  hosts: all\n  tasks: []\n")
+      registry = RuleRegistry.new([rule] of Rule)
+      Runner.new(registry).run([path]).must_be_empty
     ensure
       File.delete(path) if path && File.exists?(path)
     end

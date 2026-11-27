@@ -87,7 +87,8 @@ module Krikri::Lint
     it "classifies a tests/sanity/ignore-*.txt path as a sanity ignore file" do
       FileType.from_path("x/tests/sanity/ignore-2.15.txt").must_equal(FileType::SANITY_IGNORE)
       FileType.from_path("x/tests/sanity/ignore-2.15.yml").must_equal(FileType::PLAYBOOK)
-      FileType.from_path("x/tests/other/ignore-2.15.txt").must_equal(FileType::PLAYBOOK)
+      # No kind pattern names this path upstream, so it gets no kind.
+      FileType.from_path("x/tests/other/ignore-2.15.txt").must_equal(FileType::UNKNOWN)
     end
 
     it "discovers the ignore files in a directory walk" do

@@ -9,13 +9,24 @@ module Krikri
 
       def applies?(file : PositionedFile) : Bool
         return false unless applies_to.includes?(file.file_type)
-        # Upstream's matchyaml dispatch skips any lintable whose base_kind
-        # is not text/yaml, so a plain-text sanity ignore file reaches
+        return false if file.file_type.unknown?
+        # Upstream's matchyaml/matchtasks dispatch skips any lintable
+        # whose base_kind is not text/yaml (a path pattern alone does not
+        # make a file yaml), so a plain-text sanity ignore file reaches
         # only a rule that opts in to it. A role directory has no yaml
         # base kind either: it reaches only the rules upstream calls
         # through matchdir.
         return true if file.file_type == FileType::ROLE && role_lintable?
-        file.file_type.yaml_lintable? || non_yaml_lintable?
+        return true if non_yaml_lintable?
+        return false unless file.file_type.yaml_lintable?
+        !base_kind_gated? || file.base_yaml?
+      end
+
+      # Whether upstream's base-kind gate applies to this rule. The gate
+      # is part of the inherited matchyaml, so a rule that overrides
+      # matchyaml without it keys off the explicit kind alone.
+      def base_kind_gated? : Bool
+        true
       end
 
       # Whether this rule inspects a role directory target. Upstream

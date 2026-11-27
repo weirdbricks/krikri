@@ -1,4 +1,5 @@
 require "yaml"
+require "./file_type"
 
 module Krikri
   module Lint
@@ -11,6 +12,9 @@ module Krikri
       getter exclude_paths : Array(String)
       getter profile : String
       getter config_dir : String
+      # Project-declared kind assignments, in file order. Upstream
+      # prepends them to its default patterns, so the first match wins.
+      getter kinds : Array(KindPattern)
       # The warn_list a config file defined, nil when it had none (and
       # the defaults stand); lets the CLI merge reproduce upstream's
       # "CLI list, extended with the file's" behavior exactly.
@@ -28,7 +32,8 @@ module Krikri
                      @enable_list = [] of String, @tags = [] of String,
                      @exclude_paths = [] of String, @profile = "production",
                      @config_dir = ".",
-                     @file_warn_list : Array(String)? = nil)
+                     @file_warn_list : Array(String)? = nil,
+                     @kinds = [] of KindPattern)
       end
 
       # Excluded paths are dropped before linting, so they are neither
@@ -57,37 +62,67 @@ module Krikri
       end
 
       def self.from_file(path : String) : LintConfig
-        config = LintConfig.new(config_dir: File.dirname(path))
+        data = parse_config_file(path)
+        dir = File.dirname(path)
+        return LintConfig.new(config_dir: dir) unless data
+        apply_config(data, dir)
+      end
+
+      private def self.parse_config_file(path : String) : Hash(YAML::Any, YAML::Any)?
         begin
-          data = YAML.parse(File.read(path)).as_h?
+          YAML.parse(File.read(path)).as_h?
         rescue ex : YAML::ParseException
           STDERR.puts "krikri-lint: invalid config #{path}: #{ex.message}"
           exit 3
         end
-        return config unless data
+      end
+
+      private def self.apply_config(data : Hash(YAML::Any, YAML::Any), dir : String) : LintConfig
+        config = LintConfig.new(config_dir: dir)
         if (v = data["exclude_paths"]?) && v.as_a?
           config = LintConfig.new(config.skip_list, config.warn_list,
             config.enable_list, config.tags,
             v.as_a.map(&.as_s), config.profile, config.config_dir,
-            config.file_warn_list)
+            config.file_warn_list, config.kinds)
         end
         if (v = data["skip_list"]?) && v.as_a?
           config = LintConfig.new(v.as_a.map(&.as_s), config.warn_list,
             config.enable_list, config.tags, config.exclude_paths,
-            config.profile, config.config_dir, config.file_warn_list)
+            config.profile, config.config_dir, config.file_warn_list,
+            config.kinds)
         end
         if (v = data["warn_list"]?) && v.as_a?
           list = v.as_a.map(&.as_s)
           config = LintConfig.new(config.skip_list, list,
             config.enable_list, config.tags, config.exclude_paths,
-            config.profile, config.config_dir, list)
+            config.profile, config.config_dir, list, config.kinds)
         end
         if (v = data["profile"]?) && v.as_s?
           config = LintConfig.new(config.skip_list, config.warn_list,
             config.enable_list, config.tags, config.exclude_paths,
-            v.as_s, config.config_dir, config.file_warn_list)
+            v.as_s, config.config_dir, config.file_warn_list, config.kinds)
+        end
+        if (v = data["kinds"]?) && v.as_a?
+          config = LintConfig.new(config.skip_list, config.warn_list,
+            config.enable_list, config.tags, config.exclude_paths,
+            config.profile, config.config_dir, config.file_warn_list,
+            parse_kinds(v.as_a))
         end
         config
+      end
+
+      # `kinds:` is a list of one-entry mappings (upstream's shape):
+      # `- playbook: "**/*.play"`. Entries it cannot read are ignored.
+      private def self.parse_kinds(list : Array(YAML::Any)) : Array(KindPattern)
+        kinds = [] of KindPattern
+        list.each do |item|
+          entry = item.as_h? || next
+          entry.each do |name, pattern|
+            next unless glob = pattern.as_s?
+            kinds << KindPattern.new(name.as_s, glob)
+          end
+        end
+        kinds
       end
     end
   end

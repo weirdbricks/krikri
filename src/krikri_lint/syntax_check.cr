@@ -42,7 +42,8 @@ module Krikri
       # just json_file (issue #1835).
       KRIKRI_EXTENSION_MODULES = %w[json_file]
 
-      def initialize(files : Array(String), targets : Array(String))
+      def initialize(files : Array(String), targets : Array(String),
+                     @kinds : Array(KindPattern) = [] of KindPattern)
         @walked = Set(String).new
         @missing = {} of String => RoleLookup::Missing
         @suppressed = Set(String).new
@@ -111,7 +112,7 @@ module Krikri
           normalized = Imports.relative(path)
           next unless File.exists?(normalized)
           next unless @walked.add?(normalized)
-          queue.concat(Imports.static_children(normalized))
+          queue.concat(Imports.static_children(normalized, @kinds))
         end
       end
 
@@ -140,14 +141,14 @@ module Krikri
       end
 
       private def collect_children(root : String, into : Set(String)) : Nil
-        queue = Imports.children(root)
+        queue = Imports.children(root, @kinds)
         until queue.empty?
           child = queue.shift
           next unless child
           rel = Imports.relative(child)
           next unless File.exists?(rel)
           next unless into.add?(rel)
-          queue.concat(Imports.children(rel))
+          queue.concat(Imports.children(rel, @kinds))
         end
       end
 
