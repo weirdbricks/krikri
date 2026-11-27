@@ -1,0 +1,6 @@
+galaxy_info:
+  author: triage
+  description: repro
+  license: MIT
+  min_ansible_version: "2.9"
+  role_name: Bad-Role-Name

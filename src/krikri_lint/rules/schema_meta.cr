@@ -46,7 +46,8 @@ module Krikri
         result = JsonSchema.validate(instance, SCHEMA)
         return if result.valid?
         err = result.error || raise "expected error"
-        message = if err.keyword == "required"
+        message = case err.keyword
+                  when "required", "pattern", "minLength"
                     "#{err.formatted_path} #{err.message}"
                   else
                     "#{err.formatted_path} #{err.formatted_instance} should not be valid under #{err.formatted_clause}"

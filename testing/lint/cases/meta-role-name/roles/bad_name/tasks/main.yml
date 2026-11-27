@@ -1,0 +1,4 @@
+---
+- name: noop
+  ansible.builtin.debug:
+    msg: noop
