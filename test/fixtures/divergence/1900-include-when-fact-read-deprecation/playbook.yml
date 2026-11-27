@@ -1,0 +1,15 @@
+---
+# Issue #1900's failing task, replayed in-process. krikri-role-tester ran the
+# role against a Rocky host; its `include_tasks: rhel.yml` guarded by
+# `when: ansible_lsb.id == 'RedHatEnterprise'` raised "object of type 'dict'
+# has no attribute 'id'" there (gathering produced no lsb data), and real
+# ansible printed the INJECT_FACTS_AS_VARS block for that read before the
+# error while krikri dropped it. `ansible_lsb.id` only raises on a host
+# without lsb_release - elsewhere the same clause just skips - so the case
+# looks up a key no host's `ansible_env` can own: the same AttributeError on
+# the same top-level fact read, on every host.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - adminsnzh.update_el8

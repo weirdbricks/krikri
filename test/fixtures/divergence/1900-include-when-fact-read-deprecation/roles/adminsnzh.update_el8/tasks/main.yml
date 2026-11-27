@@ -1,0 +1,21 @@
+---
+- name: Update OS
+  block:
+  # tasks file for update-el8
+  - include_tasks: rhel.yml
+    when: ansible_env.KRIKRI_1900_MISSING_KEY == 'RedHatEnterprise'
+
+  - include_tasks: centos.yml
+    when: ansible_env.KRIKRI_1900_MISSING_KEY == 'CentOS'
+
+  - include_tasks: oel.yml
+    when: ansible_env.KRIKRI_1900_MISSING_KEY == 'OracleServer'
+
+  - name: Success message
+    debug:
+      msg: "OK: System is up to date."
+
+  rescue:
+    - name: Failed message
+      debug:
+        msg: "Failed: Failed to complete update process!"

@@ -1,0 +1,48 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [adminsnzh.update_el8 : include_tasks] ************************************
+[ERROR]: Task failed: A 'when' expression failed: Error while evaluating conditional: object of type 'dict' has no attribute 'KRIKRI_1900_MISSING_KEY'
+
+Task failed.
+Origin: <WORK>/roles/adminsnzh.update_el8/tasks/main.yml:5:5
+
+3   block:
+4   # tasks file for update-el8
+5   - include_tasks: rhel.yml
+      ^ column 5
+
+<<< caused by >>>
+
+A 'when' expression failed: Error while evaluating conditional: object of type 'dict' has no attribute 'KRIKRI_1900_MISSING_KEY'
+Origin: <WORK>/roles/adminsnzh.update_el8/tasks/main.yml:6:11
+
+4   # tasks file for update-el8
+5   - include_tasks: rhel.yml
+6     when: ansible_env.KRIKRI_1900_MISSING_KEY == 'RedHatEnterprise'
+            ^ column 11
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Error while evaluating conditional: object of type 'dict' has no attribute 'KRIKRI_1900_MISSING_KEY'"}
+
+TASK [adminsnzh.update_el8 : Failed message] ***********************************
+ok: [localhost] => {
+    "msg": "Failed: Failed to complete update process!"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=1    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: INJECT_FACTS_AS_VARS default to `True` is deprecated, top-level facts will not be auto injected after the change. This feature will be removed from ansible-core version 2.24.
+Origin: <WORK>/roles/adminsnzh.update_el8/tasks/main.yml:6:11
+
+4   # tasks file for update-el8
+5   - include_tasks: rhel.yml
+6     when: ansible_env.KRIKRI_1900_MISSING_KEY == 'RedHatEnterprise'
+            ^ column 11
+
+Use `ansible_facts["fact_name"]` (no `ansible_` prefix) instead.
+

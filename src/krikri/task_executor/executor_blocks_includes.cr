@@ -888,11 +888,13 @@ module Krikri
     # #partition_by_when for a dynamic include, holding the batch's
     # conditional deprecations until its verdicts are known - they reach the
     # console only for the hosts the include is SKIPPED for (see
-    # ResultDisplay.begin_deferred_fact_deprecations).
+    # ResultDisplay.begin_deferred_fact_deprecations), or for one whose
+    # clause RAISED (partition_by_when flushes those itself, at the failure
+    # display point).
     private def partition_include_by_when(task : Task, hosts : Array(Host), skip_conditions : Hash(String, String)) : {Array(Host), Array(Host)}
       ResultDisplay.begin_deferred_fact_deprecations
       begin
-        run_hosts, skip_hosts = partition_by_when(task, hosts, skip_conditions: skip_conditions)
+        run_hosts, skip_hosts = partition_by_when(task, hosts, skip_conditions: skip_conditions, flush_held_fact_deprecations: true)
         ResultDisplay.finish_deferred_fact_deprecations(flush: !skip_hosts.empty?)
         {run_hosts, skip_hosts}
       rescue ex
