@@ -7,9 +7,11 @@ module Krikri
       extend self
 
       # Given user-supplied targets (files or directories), return the list
-      # of YAML files to lint. A file target is kept as-is; a directory is
+      # of files to lint. A file target is kept as-is; a directory is
       # searched recursively for *.yml/*.yaml, skipping VCS and non-lintable
-      # role directories (files/templates hold no YAML lint targets).
+      # role directories (files/templates hold no YAML lint targets). A
+      # collection's tests/sanity/ignore-*.txt is plain text but still a
+      # lintable upstream (the sanity rule's), so it is collected too.
       def discover(targets : Array(String)) : Array(String)
         files = [] of String
         targets.each do |target|
@@ -54,8 +56,9 @@ module Krikri
           if File.directory?(full)
             next if SKIP_DIRS.includes?(child)
             found.concat(search_dir(full))
-          elsif EXTENSIONS.includes?(File.extname(child)) &&
-                lintable_role_file?(full)
+          elsif (EXTENSIONS.includes?(File.extname(child)) &&
+                lintable_role_file?(full)) ||
+                FileType.sanity_ignore_path?(full)
             found << full
           end
         end

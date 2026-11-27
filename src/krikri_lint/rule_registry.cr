@@ -51,6 +51,7 @@ module Krikri
           PartialBecomeRule.new,
           NoFreeFormRule.new,
           ComplexityRule.new,
+          SanityRule.new,
         ])
       end
 

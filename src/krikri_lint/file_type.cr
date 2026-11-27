@@ -9,12 +9,32 @@ module Krikri
       META
       ROLE
       YAML
+      # A collection's tests/sanity/ignore-*.txt. Plain text, never YAML.
+      SANITY_IGNORE
 
       def playbook? : Bool
         self == PLAYBOOK
       end
 
+      # Upstream's Lintable.base_kind gate: only a text/yaml lintable
+      # reaches the generic matchyaml dispatch. A sanity ignore file is
+      # plain text, so only a rule that opts in (Rule#non_yaml_lintable?)
+      # looks at it.
+      def yaml_lintable? : Bool
+        self != SANITY_IGNORE
+      end
+
+      # Upstream's kind_from_path glob **/tests/sanity/ignore-*.txt.
+      def self.sanity_ignore_path?(path : String) : Bool
+        parts = path.split('/')
+        return false if parts.size < 3
+        name = parts[-1]
+        parts[-3] == "tests" && parts[-2] == "sanity" &&
+          name.starts_with?("ignore-") && name.ends_with?(".txt")
+      end
+
       def self.from_path(path : String) : FileType
+        return SANITY_IGNORE if sanity_ignore_path?(path)
         parts = path.split('/')
         # Files under a role's well-known subdirectories classify by the
         # subdirectory, whatever the file name (upstream lints every

@@ -1,0 +1,2 @@
+plugins/modules/foo.py validate-modules:missing-gplv3-license
+plugins/modules/bar.py validate-modules:invalid-documentation
