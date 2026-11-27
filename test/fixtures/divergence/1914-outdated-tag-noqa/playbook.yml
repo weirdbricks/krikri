@@ -1,0 +1,12 @@
+---
+# Issue #1914's playbook verbatim: the divergence it reports is in the LINT
+# tools only (`warning[outdated-tag]` for the legacy `301` noqa tag), so this
+# case pins the runtime half - the same playbook, run by ansible-playbook and
+# krikri-playbook, prints the same transcript with the comment in place.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Say hi  # noqa: 301
+      ansible.builtin.debug:
+        msg: hi

@@ -209,7 +209,13 @@ module Krikri::Lint
     # ansible-lint walks each target's import graph before linting,
     # so imported task files and playbooks are linted too and counted in
     # the "on N files" summary.
-    files = Imports.expand(FileDiscovery.discover(targets), config.kinds)
+    discovered = FileDiscovery.discover(targets)
+    # The lintables the run was pointed at (targets plus everything a
+    # walked directory yielded), as opposed to the children the import
+    # walk adds: upstream loads these eagerly, which a rule's reported
+    # position can depend on (see OutdatedTagRule).
+    explicit = discovered.map { |path| Imports.relative(path) }.to_set
+    files = Imports.expand(discovered, config.kinds)
       .reject { |path| config.excluded?(path) }
     missing = FileDiscovery.missing_targets(targets)
     # A role directory target is a lintable of its own (upstream kind
@@ -226,7 +232,7 @@ module Krikri::Lint
 
     runner = Runner.new(registry, config, syntax_check)
     violations = begin
-      runner.run(files, targets, role_dirs)
+      runner.run(files, targets, role_dirs, explicit)
     rescue ex
       STDERR.puts "krikri-lint: internal error: #{ex.message}"
       exit 3
@@ -274,7 +280,7 @@ module Krikri::Lint
         changed_set = Set.new(changed)
         post_yaml = Set({String, Int32, String, String, String, Int32}).new
         if changed.present?
-          runner.run(changed, targets).each do |v|
+          runner.run(changed, targets, explicit: explicit).each do |v|
             post_yaml << v.report_key if v.rule_id.starts_with?("yaml[")
           end
         end

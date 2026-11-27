@@ -43,51 +43,11 @@ module Krikri
       end
 
       private def scan_line(file : PositionedFile, line : String, line_number : Int32, violations : Array(Violation)) : Nil
-        comment_start = find_comment_start(line)
+        comment_start = YamlText.comment_start(line)
         return if comment_start >= line.size
 
         check_min_spaces_before(file, line, line_number, comment_start, violations)
         check_starting_space(file, line, line_number, comment_start, violations)
-      end
-
-      # Index of the first '#' that starts a comment (line start, after
-      # whitespace, or directly after a closed quote), or line.size.
-      private def find_comment_start(line : String) : Int32
-        in_single = false
-        in_double = false
-        escaped = false
-        quote_closed_at = -1
-        i = 0
-        while i < line.size
-          ch = line[i]
-          if in_single
-            if ch == '\''
-              in_single = false
-              quote_closed_at = i
-            end
-          elsif in_double
-            if escaped
-              escaped = false
-            elsif ch == '\\'
-              escaped = true
-            elsif ch == '"'
-              in_double = false
-              quote_closed_at = i
-            end
-          elsif ch == '\''
-            in_single = true
-          elsif ch == '"'
-            in_double = true
-          elsif ch == '#' && comment_boundary?(line, i, quote_closed_at)
-            break
-          end
-          i += 1
-        end
-        i
-      end
-
-      private def comment_boundary?(line : String, i : Int32, quote_closed_at : Int32) : Bool
-        i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t' || quote_closed_at == i - 1
       end
 
       # min-spaces-from-content: only for inline comments (content

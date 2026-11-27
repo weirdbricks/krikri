@@ -51,6 +51,22 @@ module Krikri
         tags.includes?("opt-in")
       end
 
+      # Whether a skip_list entry or a `# noqa` comment can drop this
+      # rule's matches. Upstream raises the warning family outside the
+      # per-rule match pipeline, after the skip list and the line skips
+      # have been applied, so `-x warning` leaves its matches in the
+      # report (verified against ansible-lint 25.2.1).
+      def suppressible? : Bool
+        true
+      end
+
+      # Whether a profile or tag filter may unload this rule. Upstream
+      # never unloads its internal rules (`unloadable`), so `--profile min`
+      # and `-t <tag>` both keep the warning family's matches.
+      def unloadable? : Bool
+        false
+      end
+
       # Whether this rule's violations belong to an enclosing task, and
       # so are suppressed by a `# noqa:` appearing anywhere inside that
       # task's body. Upstream separates these: matchtask results are
