@@ -1,4 +1,4 @@
 ---
-- name: Say hi  # noqa: 301
+- name: Say hi  # noqa: 305
   ansible.builtin.debug:
     msg: hi

@@ -172,9 +172,18 @@ module Krikri::Lint
       v.first.warning?.must_equal(false)
     end
 
-    it "is not dropped by a skip_list entry" do
-      config = LintConfig.new(skip_list: ["warning"])
-      run_rules_yaml(LEGACY_NOQA_TASK, [OutdatedTagRule.new] of Rule, config).size.must_equal(1)
+    it "is not dropped by a skip_list entry naming its family or tag" do
+      ["warning", "experimental"].each do |entry|
+        config = LintConfig.new(skip_list: [entry])
+        run_rules_yaml(LEGACY_NOQA_TASK, [OutdatedTagRule.new] of Rule, config).size.must_equal(1)
+      end
+    end
+
+    it "is dropped by a skip_list entry naming its exact tag" do
+      # Upstream's last filter drops any match whose own tag is listed,
+      # even for the unloadable rule the earlier filters leave alone.
+      config = LintConfig.new(skip_list: ["warning[outdated-tag]"])
+      run_rules_yaml(LEGACY_NOQA_TASK, [OutdatedTagRule.new] of Rule, config).must_be_empty
     end
 
     it "is not dropped by a noqa naming its own family" do
@@ -192,7 +201,7 @@ module Krikri::Lint
       tasks = File.tempname("linttasks", ".yml")
       File.write(tasks, LEGACY_NOQA_TASK)
       registry = RuleRegistry.new([OutdatedTagRule.new] of Rule)
-      v = Runner.new(registry).run([tasks], [tasks], Set(String).new)
+      v = Runner.new(registry).run([tasks], [tasks], Array(String).new, Set(String).new)
       v.size.must_equal(1)
       v.first.line.must_equal(1)
     ensure
@@ -203,7 +212,7 @@ module Krikri::Lint
       tasks = File.tempname("linttasks", ".yml")
       File.write(tasks, LEGACY_NOQA_TASK)
       registry = RuleRegistry.new([OutdatedTagRule.new] of Rule)
-      v = Runner.new(registry).run([tasks], [tasks], Set{tasks})
+      v = Runner.new(registry).run([tasks], [tasks], Array(String).new, Set{tasks})
       v.size.must_equal(1)
       v.first.line.must_equal(2)
     ensure

@@ -9,9 +9,11 @@ module Krikri
     # rename is warned about once per legacy tag per run.
     #
     # The match is raised outside the per-rule pipeline upstream, after
-    # the skip list and the per-line skips are applied, so no `-x` entry
-    # or `# noqa` can drop it; the default warn_list's "experimental"
-    # entry is what makes it a warning rather than a failure.
+    # the skip list and the per-line skips are applied, so no skip entry
+    # naming the family or a category tag, and no `# noqa`, can drop it
+    # (only an entry naming the exact tag does, see Runner#suppressed?);
+    # the default warn_list's "experimental" entry is what makes it a
+    # warning rather than a failure.
     class OutdatedTagRule < Rule
       # ansible-lint 25.2.1's RENAMED_TAGS (ansiblelint/constants.py),
       # baked in: krikri never consults an installed ansible-lint.
@@ -92,7 +94,7 @@ module Krikri
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
-        return unless File.exists?(file.path)
+        return unless File.file?(file.path)
         continuation = YamlText.scalar_continuation_lines(file)
         # A `# noqa` comment above the document's first node never
         # reaches upstream's parser at all: ruamel keeps it out of the

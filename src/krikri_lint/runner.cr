@@ -140,6 +140,10 @@ module Krikri
                               noqa_maps : Hash(String, Hash(Int32, Noqa::Entry)),
                               task_spans : Hash(String, Array({Int32, Int32}))) : Bool
         family = v.rule_id.split("[").first
+        # Upstream's final pass drops every match whose exact tag is in
+        # the skip list, internal (unskippable) rules included, so this
+        # check has to come before the unsuppressible short-circuit.
+        return true if @config.skip_list.includes?(v.rule_id)
         rule = @registry.rules.find { |reg_rule| reg_rule.id == family }
         return false if rule && !rule.suppressible?
         return true if list_matches?(@config.skip_list, v)

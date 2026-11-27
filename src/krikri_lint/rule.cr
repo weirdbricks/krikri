@@ -51,11 +51,14 @@ module Krikri
         tags.includes?("opt-in")
       end
 
-      # Whether a skip_list entry or a `# noqa` comment can drop this
-      # rule's matches. Upstream raises the warning family outside the
-      # per-rule match pipeline, after the skip list and the line skips
-      # have been applied, so `-x warning` leaves its matches in the
-      # report (verified against ansible-lint 25.2.1).
+      # Whether a skip_list entry naming the rule's family or one of its
+      # category tags, or a `# noqa` comment, can drop this rule's
+      # matches. Upstream raises the warning family outside the per-rule
+      # match pipeline, after those skips have been applied, so `-x
+      # warning` and `-x experimental` keep its matches in the report
+      # (verified against ansible-lint 25.2.1). An entry naming the
+      # match's exact tag still drops it: that filter runs afterwards,
+      # over every match.
       def suppressible? : Bool
         true
       end

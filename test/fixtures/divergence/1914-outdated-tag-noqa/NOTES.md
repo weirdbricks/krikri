@@ -18,6 +18,13 @@ while `krikri-lint` reported no violations, and its `--list-rules` had no
 `testing/lint/cases/warning/tasks/main.yml` fixture that
 `testing/lint/parity.py` now compares against upstream.
 
+That fixture names legacy tag `305`, not the issue's `301`: upstream reports
+each legacy tag once per run, and which of two files naming the same tag gets
+the match depends on the iteration order of its lintable set (a Python set of
+path-hashed objects, so it flips between runs). `301` already appears in
+`testing/lint/cases/noqa-legacy-tag`, which would make the tree-wide parity
+run disagree half the time on which file carries the match.
+
 ## What this case pins
 
 The playbook is the one the issue reports from, with its `# noqa: 301`
