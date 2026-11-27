@@ -1,0 +1,17 @@
+---
+- name: Relative src paths
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Copy with a playbook-relative src
+      ansible.builtin.copy:
+        src: ../files/foo.txt
+        dest: /tmp/no-relative-paths-copy.txt
+        mode: "0644"
+
+    - name: Template with a playbook-relative src
+      ansible.builtin.template:
+        src: ../templates/foo.j2
+        dest: /tmp/no-relative-paths-template.conf
+        mode: "0644"

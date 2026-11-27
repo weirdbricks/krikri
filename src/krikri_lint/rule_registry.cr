@@ -22,6 +22,7 @@ module Krikri
           YamlLineLengthRule.new,
           VarNamingRule.new,
           NoHandlerRule.new,
+          NoRelativePathsRule.new,
           NoJinjaWhenRule.new,
           NoTabsRule.new,
           JinjaRule.new,
