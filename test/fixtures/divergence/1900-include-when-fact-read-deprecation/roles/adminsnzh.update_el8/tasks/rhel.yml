@@ -1,0 +1,5 @@
+# Update RHEL
+- name: Specific release
+  rhsm_release:
+    release: "{{ release }}"
+  when: release != ""

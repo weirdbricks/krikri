@@ -1,0 +1,5 @@
+# Update OEL
+- name: Install version lock plugin
+  dnf:
+    name: python3-dnf-plugin-versionlock
+    state: latest

@@ -753,6 +753,49 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.includes?("/inner.yml:7:").must_equal(false)
   end
 
+  # The FAILING half of a dynamic include's own when: clause: real holds the
+  # clause's readings until the include's fate is known and shows them for a
+  # skip (issue #974) as well as for a clause that RAISES - the failed
+  # include's result still carries them, and the callback prints them ahead of
+  # the error. A host whose ansible_lsb has no `id` reads the top-level fact,
+  # then fails on the attribute, and ansible-core 2.21.6 prints the block
+  # (issue #1900: adminsnzh.update_el8's `when: ansible_lsb.id ==
+  # 'RedHatEnterprise'` on the round's Rocky host). Krikri flushed only the
+  # skip case, and a failed host is in neither the run nor the skip set, so
+  # the buffer was dropped.
+  it "warns for a dynamic include whose when: clause raises" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-when-error-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "inner.yml"), <<-YAML)
+      ---
+      - name: inner task
+        debug:
+          msg: hi
+      YAML
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: include inner
+            include_tasks: inner.yml
+            when: ansible_env.KRIKRI_1900_MISSING_KEY == 'x'
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    stdout.to_s.must_include("object of type 'dict' has no attribute 'KRIKRI_1900_MISSING_KEY'")
+    stdout.to_s.includes?("TASK [inner task]").must_equal(false)
+    stderr = stderr.to_s
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(1)
+    stderr.must_include("/play.yml:7:13\n")
+    stderr.must_include("^ column 13")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
   # The RUNNING half of the same inheritance: real evaluates the block's
   # when: as its own clause on every child (afpacket.devops_tools's
   # `when: ansible_os_family == "RedHat"` wrapping per-tool blocks, issue

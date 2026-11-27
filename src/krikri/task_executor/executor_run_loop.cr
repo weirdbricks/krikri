@@ -852,7 +852,15 @@ module Krikri
     # skip result per host (issue #888) after this method has moved on to
     # later hosts, by which time @last_false_condition no longer holds that
     # host's clause.
-    private def partition_by_when(task : Task, hosts : Array(Host), inherit_on_error : Bool = false, skip_conditions : Hash(String, String)? = nil) : {Array(Host), Array(Host)}
+    # *flush_held_fact_deprecations*, when true, marks the caller as holding
+    # this batch's fact readings (a dynamic include's when:): a host whose
+    # clause RAISES prints the readings it captured before its own failure
+    # line (live-verified vs 2.21.6, issue #1900: adminsnzh.update_el8's
+    # `include_tasks: rhel.yml` guarded by `when: ansible_lsb.id == ...` on a
+    # host whose ansible_lsb has no `id` prints the INJECT_FACTS_AS_VARS
+    # block ahead of the "object of type 'dict' has no attribute 'id'"
+    # error), so the buffer is flushed there rather than at the batch's end.
+    private def partition_by_when(task : Task, hosts : Array(Host), inherit_on_error : Bool = false, skip_conditions : Hash(String, String)? = nil, flush_held_fact_deprecations : Bool = false) : {Array(Host), Array(Host)}
       return {hosts, [] of Host} unless task.when_condition
 
       run_hosts = [] of Host
@@ -872,6 +880,9 @@ module Krikri
           # skip_hosts. (inherit_on_error's push-down-to-children doesn't
           # apply: the error is deterministic, so every child would fail
           # the same way - swallow once per host instead.)
+          if flush_held_fact_deprecations
+            ResultDisplay.finish_deferred_fact_deprecations(flush: true)
+          end
           swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"), pre_keyword: false)
         end
         next if vars_context.nil?
@@ -904,6 +915,9 @@ module Krikri
             # The failed host is excluded from both run_hosts and
             # skip_hosts - it's already been fully accounted for, unlike
             # a genuine skip.
+            if flush_held_fact_deprecations
+              ResultDisplay.finish_deferred_fact_deprecations(flush: true)
+            end
             swallow_when_error(task, host, ex)
           end
         end
