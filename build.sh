@@ -638,34 +638,12 @@ else
     echo -e "${GREEN}✅ Main executable up to date${NC}"
 fi
 
-# Build krikri (ad-hoc CLI)
-echo -e "${YELLOW}🔨 Building krikri (ad-hoc CLI)...${NC}"
-
+# krikri (ad-hoc CLI) is not a separate build: bin/krikri is a hardlink
+# of bin/krikri-playbook, which runs Krikri::AdhocCli when exec'd under
+# that name (see krikri-playbook.cr). Building krikri.cr on its own
+# compiled the whole engine a second time (~14s and ~2GB per build).
+# The link is (re)made after the pool drains, below.
 ADHOC_BINARY="$OUTPUT_DIR/krikri"
-ADHOC_SOURCE="krikri.cr"
-
-NEEDS_BUILD=false
-
-if [ "$FORCE_ALL" = true ]; then
-    NEEDS_BUILD=true
-elif [ ! -f "$ADHOC_BINARY" ]; then
-    NEEDS_BUILD=true
-elif [ "$ADHOC_SOURCE" -nt "$ADHOC_BINARY" ]; then
-    NEEDS_BUILD=true
-elif find src -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | grep -q .; then
-    NEEDS_BUILD=true
-elif [ -d lib ] && find lib -name '*.cr' -newer "$ADHOC_BINARY" -print -quit | grep -q .; then
-    NEEDS_BUILD=true
-elif [ -n "$(binary_build_flavor "$ADHOC_BINARY")" ] && [ "$(binary_build_flavor "$ADHOC_BINARY")" != "$BUILD_MODE" ]; then
-    NEEDS_BUILD=true
-fi
-
-if [ "$NEEDS_BUILD" = true ]; then
-    MAIN_BUILDS+=("krikri|$ADHOC_SOURCE|$ADHOC_BINARY")
-else
-    echo -e "   ${BLUE}✓${NC} krikri (up to date)"
-    echo -e "${GREEN}✅ krikri up to date${NC}"
-fi
 
 # Build krikri-lint (static analysis, see krikri-lint.md)
 echo -e "${YELLOW}🔨 Building krikri-lint...${NC}"
@@ -1052,7 +1030,7 @@ build_fat_plugin() {
 
         # archive/mysql_db/postgresql_db (part of FAT_PLUGINS) need the
         # same static-bz2 link fix their own individual builds used to
-        # apply separately (see BZ2_STATIC_PLUGINS's own comment below,
+        # apply separately (see the libbz2 comment further below,
         # still used for the STANDALONE_PLUGINS loop) - applying it to
         # the whole fat binary is harmless for the other 78 modules and
         # keeps the same missing-libbz2.so.1.0-on-RHEL fix intact.
@@ -1107,59 +1085,43 @@ build_fat_plugin() {
     done
 }
 
-# Standalone-plugin staleness scan: which of the 5 remaining
-# independent binaries need a rebuild (cheap mtime checks, no
-# compilation). Runs before the pool is launched, not after it drains -
-# these builds are just as independent as the main executables, so
-# leaving them to a second stage appended ~11s (the two largest, debug
-# and assert, are ~11s each) to the end of every post-edit build even
-# though the pool's own long pole is the ~21s main executable they
-# could have been overlapping with. They share launch_bg's cap with the
-# mains; a failure is still reported last, in the original order.
-PLUGIN_COUNT=0
+# Action-plugin staleness scan (cheap mtime checks, no compilation).
+# The 5 STANDALONE_PLUGINS are ONE busybox-style multi-call binary,
+# $PLUGINS_DIR/.action-plugin, hardlinked under each name and dispatched
+# by argv[0] exactly like the fat plugin. They used to be 5 separate
+# builds that each compiled the templating engine on its own (~26s of
+# compiler time after any src/ edit, 1.3GB peak each for debug/assert);
+# one build of the union costs about as much as debug alone. Still kept
+# apart from the fat binary so the fat binary does not link the
+# templating engine (see STANDALONE_PLUGINS above). Not daemon-capable:
+# plugin_manager only treats the .fat-plugin inode as such.
+ACTION_BINARY="$PLUGINS_DIR/.action-plugin"
+PLUGIN_COUNT=${#STANDALONE_PLUGINS[@]}
 TO_BUILD=()
-
-for plugin in "${STANDALONE_PLUGINS[@]}"; do
-    SOURCE="plugins/$plugin.cr"
-
-    if [ -f "$SOURCE" ]; then
-        BINARY="$PLUGINS_DIR/$plugin"
-
-        # Check if rebuild is needed
-        NEEDS_BUILD=false
-
-        if [ "$FORCE_ALL" = true ]; then
-            NEEDS_BUILD=true
-        elif [ ! -f "$BINARY" ]; then
-            # Binary doesn't exist
-            NEEDS_BUILD=true
-        elif [ "$SOURCE" -nt "$BINARY" ]; then
-            # Source is newer than binary
-            NEEDS_BUILD=true
-        elif find src -name '*.cr' -newer "$BINARY" -print -quit | grep -q .; then
-            # Plugin's own mtime doesn't change when only a src/ dependency
-            # (e.g. base_plugin.cr, local_executor.cr) does - same class of
-            # gap the main executable's own check already accounts for
-            # above; without this, `./build.sh` after a src/ change reports
-            # every plugin "up to date" and silently ships stale binaries.
-            NEEDS_BUILD=true
-        elif [ -d lib ] && find lib -name '*.cr' -newer "$BINARY" -print -quit | grep -q .; then
-            # Same gap as above, for a `shards update` touching lib/'s
-            # own mtimes (e.g. a Crinja fork fix) - see the main
-            # executable's own identical check for the story.
-            NEEDS_BUILD=true
+ACTION_NEEDS_BUILD=false
+if [ "$FORCE_ALL" = true ] || [ ! -f "$ACTION_BINARY" ]; then
+    ACTION_NEEDS_BUILD=true
+else
+    for plugin in "${STANDALONE_PLUGINS[@]}"; do
+        if [ "plugins/$plugin.cr" -nt "$ACTION_BINARY" ]; then
+            ACTION_NEEDS_BUILD=true
+            break
         fi
-
-        if [ "$NEEDS_BUILD" = true ]; then
-            TO_BUILD+=("$plugin")
-        else
-            echo -e "   ${BLUE}✓${NC} $plugin (up to date)"
-        fi
-        ((PLUGIN_COUNT++))
-    else
-        echo -e "   ${YELLOW}⚠  Skipping $plugin (not found)${NC}"
+    done
+    # A src/ or lib/ dependency changing leaves every plugin source's
+    # own mtime alone - same gap the main executable's check covers.
+    if [ "$ACTION_NEEDS_BUILD" = false ] && find src -name '*.cr' -newer "$ACTION_BINARY" -print -quit | grep -q .; then
+        ACTION_NEEDS_BUILD=true
     fi
-done
+    if [ "$ACTION_NEEDS_BUILD" = false ] && [ -d lib ] && find lib -name '*.cr' -newer "$ACTION_BINARY" -print -quit | grep -q .; then
+        ACTION_NEEDS_BUILD=true
+    fi
+fi
+if [ "$ACTION_NEEDS_BUILD" = true ]; then
+    TO_BUILD=("${STANDALONE_PLUGINS[@]}")
+else
+    echo -e "   ${BLUE}✓${NC} action plugin binary (up to date)"
+fi
 
 REBUILT_COUNT=${#TO_BUILD[@]}
 
@@ -1179,43 +1141,49 @@ REBUILT_COUNT=${#TO_BUILD[@]}
 # "glibc is a non-issue, no full static/musl build needed" stance -
 # this fixes the one specific library that WAS missing rather than
 # switching the whole build to static linking.
-BZ2_STATIC_PLUGINS="archive mysql_db postgresql_db"
+# (Every one of these is in FAT_PLUGINS now; the fat build applies the fix.)
 
-build_one_plugin() {
-    local plugin="$1"
-    local source="plugins/$plugin.cr"
-    local binary="$PLUGINS_DIR/$plugin"
 
-    local link_flags=()
-    # Skipped under --static or on Darwin - see the fat-plugin build's
-    # own comment above for why.
-    if [ "$STATIC" != true ] && [ "$IS_DARWIN" != true ] && [[ " $BZ2_STATIC_PLUGINS " == *" $plugin "* ]]; then
-        # Must stay one argument (crystal splits --link-flags' OWN
-        # value on whitespace internally) - an unquoted expansion
-        # here would let bash split it into three separate argv
-        # entries first, breaking the build.
-        link_flags=("--link-flags=-Wl,-Bstatic -lbz2 -Wl,-Bdynamic")
-    fi
+# build_action_plugin: compile the STANDALONE_PLUGINS multi-call binary
+# (see ACTION_BINARY above). Each plugin source is spliced in minus its
+# shebang and its `input = STDIN.gets_to_end` driver trailer (the same
+# sed the fat plugin uses); the trailer itself becomes that plugin's
+# entry def, so whatever a trailer does before `plugin.run` (debug and
+# assert hydrate the unsafe registry first) is kept verbatim.
+build_action_plugin() {
+    local generated="plugins/.action_plugin_generated.cr"
+    {
+        echo '# Generated by build.sh (build_action_plugin) - do not edit.'
+        for plugin in "${STANDALONE_PLUGINS[@]}"; do
+            sed -e '/^#!\/usr\/bin\/env crystal/d' \
+                -e '/^input = STDIN.gets_to_end/,$d' \
+                "plugins/$plugin.cr"
+        done
+        for plugin in "${STANDALONE_PLUGINS[@]}"; do
+            echo ''
+            echo "def __krikri_action_plugin_$plugin : Nil"
+            sed -n '/^input = STDIN.gets_to_end/,$p' "plugins/$plugin.cr" | sed 's/^/  /'
+            echo 'end'
+        done
+        echo ''
+        echo 'case File.basename(PROGRAM_NAME)'
+        for plugin in "${STANDALONE_PLUGINS[@]}"; do
+            echo "when \"$plugin\" then __krikri_action_plugin_$plugin"
+        done
+        echo 'else'
+        echo '  STDERR.puts "unknown plugin: #{File.basename(PROGRAM_NAME)}"'
+        echo '  exit 1'
+        echo 'end'
+    } > "$generated"
 
-    # Each parallel job gets its own persistent CRYSTAL_CACHE_DIR
-    # (under $CACHE_DIR_ROOT, keyed per target) - concurrent
-    # `crystal build` invocations sharing one cache dir can race on
-    # the compiler's own temp/object files (seen as a spurious "you've
-    # found a bug in the Crystal compiler" /
-    # errno.cr "No such file or directory" mid-codegen under real
-    # parallel load - not an actual bug in any of these plugins).
-    # Persistent (not mktemp-per-run) because cache warmth is worth
-    # ~100s per big release rebuild - see the CACHE_DIR_ROOT comment
-    # up top. A failed build wipes its own dir so a corrupt cache
-    # can't poison the next run.
-    if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-$plugin" crystal build "$source" -o "$binary" $BUILD_FLAGS "${link_flags[@]}" 2>&1); then
-        chmod +x "$binary"
-        strip_release_binary "$binary"
-        echo -e "   ${GREEN}✓${NC} $plugin"
+    if OUTPUT=$(CRYSTAL_CACHE_DIR="$CACHE_DIR_ROOT/cache-action-plugin" crystal build "$generated" -o "$ACTION_BINARY" $BUILD_FLAGS 2>&1); then
+        chmod +x "$ACTION_BINARY"
+        strip_release_binary "$ACTION_BINARY"
+        echo -e "   ${GREEN}✓${NC} action plugin binary (${STANDALONE_PLUGINS[*]})"
     else
-        echo -e "   ${RED}✗${NC} $plugin"
-        printf '%s\n' "$OUTPUT" > "$STATUS_DIR/$plugin.fail"
-        rm -rf "$CACHE_DIR_ROOT/cache-$plugin"
+        echo -e "   ${RED}✗${NC} action plugin binary"
+        printf '%s\n' "$OUTPUT" > "$STATUS_DIR/ACTION_BUILD.fail"
+        rm -rf "$CACHE_DIR_ROOT/cache-action-plugin"
     fi
 }
 
@@ -1231,10 +1199,7 @@ for task in "${MAIN_BUILDS[@]}"; do
 done
 launch_bg build_fat_plugin
 if [ "$REBUILT_COUNT" -gt 0 ]; then
-    echo -e "   ${YELLOW}Building $REBUILT_COUNT plugin(s) (up to $PARALLEL_JOBS in parallel)...${NC}"
-    for plugin in "${TO_BUILD[@]}"; do
-        launch_bg build_one_plugin "$plugin"
-    done
+    launch_bg build_action_plugin
 fi
 wait
 
@@ -1266,6 +1231,12 @@ for task in "${MAIN_BUILDS[@]}"; do
     esac
 done
 
+# bin/krikri -> bin/krikri-playbook (multi-call, see ADHOC_BINARY above).
+# Also replaces a real bin/krikri left by a pre-multi-call build.
+if [ -f "$MAIN_BINARY" ] && [ "$(stat $STAT_INODE_FLAG "$ADHOC_BINARY" 2>/dev/null)" != "$(stat $STAT_INODE_FLAG "$MAIN_BINARY")" ]; then
+    ln -f "$MAIN_BINARY" "$ADHOC_BINARY"
+fi
+
 if [ -f "$STATUS_DIR/FAT_BUILD.fail" ]; then
     echo ""
     echo -e "${RED}❌ Build failed for fat plugin binary${NC}"
@@ -1276,28 +1247,33 @@ if [ -f "$STATUS_DIR/FAT_BUILD.fail" ]; then
 fi
 echo ""
 
-FAILED=()
-for plugin in "${TO_BUILD[@]}"; do
-    [ -f "$STATUS_DIR/$plugin.fail" ] && FAILED+=("$plugin")
-done
-
-if [ ${#FAILED[@]} -gt 0 ]; then
+if [ -f "$STATUS_DIR/ACTION_BUILD.fail" ]; then
     echo ""
-    echo -e "${RED}❌ Build failed for: ${FAILED[*]}${NC}"
+    echo -e "${RED}❌ Build failed for action plugin binary (${STANDALONE_PLUGINS[*]})${NC}"
     echo ""
-    for plugin in "${FAILED[@]}"; do
-        echo -e "${RED}--- $plugin ---${NC}"
-        cat "$STATUS_DIR/$plugin.fail"
-        echo ""
-    done
+    cat "$STATUS_DIR/ACTION_BUILD.fail"
+    echo ""
     echo -e "${YELLOW}Fix the error(s) above and run ./build.sh again${NC}"
     exit 1
+fi
+
+# Hardlink every STANDALONE_PLUGINS name onto the multi-call binary
+# (also when it was up to date: a name left over as a real file from a
+# pre-multi-call build must be replaced, as build_fat_plugin does).
+if [ -f "$ACTION_BINARY" ]; then
+    action_inode=$(stat $STAT_INODE_FLAG "$ACTION_BINARY")
+    for plugin in "${STANDALONE_PLUGINS[@]}"; do
+        target="$PLUGINS_DIR/$plugin"
+        if [ ! -e "$target" ] || [ "$(stat $STAT_INODE_FLAG "$target" 2>/dev/null)" != "$action_inode" ]; then
+            ln -f "$ACTION_BINARY" "$target"
+        fi
+    done
 fi
 
 echo ""
 PLUGIN_COUNT=$((PLUGIN_COUNT + ${#FAT_PLUGINS[@]}))
 if [ $REBUILT_COUNT -gt 0 ]; then
-    echo -e "${GREEN}✅ $PLUGIN_COUNT plugins checked ($REBUILT_COUNT standalone rebuilt, ${#FAT_PLUGINS[@]} via fat binary)${NC}"
+    echo -e "${GREEN}✅ $PLUGIN_COUNT plugins checked (${#STANDALONE_PLUGINS[@]} via action binary${REBUILT_COUNT:+, rebuilt}, ${#FAT_PLUGINS[@]} via fat binary)${NC}"
 else
     echo -e "${GREEN}✅ All $PLUGIN_COUNT plugins up to date${NC}"
 fi

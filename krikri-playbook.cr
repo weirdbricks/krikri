@@ -43,6 +43,16 @@ require "./src/krikri/ssm_rsync_rsh"
 require "./src/krikri/vault"
 require "./src/krikri/vault_cli"
 require "./src/krikri/ansible_config"
+require "./src/krikri/adhoc_cli"
+
+# Multi-call: build.sh hardlinks bin/krikri (the ad-hoc `ansible`
+# counterpart) to this binary, so the engine compiles once per build
+# instead of twice. Exec'd under that name, run the ad-hoc CLI and nothing
+# of the playbook CLI below (krikri.cr still builds the same CLI alone).
+if File.basename(PROGRAM_NAME) == "krikri"
+  Krikri::AdhocCli.run
+  exit 0
+end
 
 # ansible loads ansible.cfg, and resolves every relative path in it, from
 # the directory it was started in - before any playbook-relative chdir.
