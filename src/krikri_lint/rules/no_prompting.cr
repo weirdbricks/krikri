@@ -1,11 +1,19 @@
 module Krikri
   module Lint
     # Upstream parity: ansible-lint's no-prompting rule (severity
-    # VERY_LOW, tags opt-in). A pause with no truthy duration stops an
-    # unattended run at a prompt, so upstream reports it at the task's
-    # first line with no column.
+    # VERY_LOW, tags opt-in). Its two halves report different shapes:
+    #  - a pause with no truthy duration stops an unattended run at a
+    #    prompt, so upstream reports it at the task's first line with no
+    #    column;
+    #  - a play whose `vars_prompt` list is non-empty is reported once, at
+    #    the first entry's first key: upstream hands `vars_prompt[0]` to
+    #    create_matcherror as the match data, so the position is that
+    #    entry's mapping key (line 7, column 7 in the issue's playbook),
+    #    and a second entry is never reported. An empty `vars_prompt: []`
+    #    is falsy upstream and reports nothing.
     class NoPromptingRule < Rule
-      MESSAGE = "Disallow prompting."
+      MESSAGE             = "Disallow prompting."
+      VARS_PROMPT_MESSAGE = "Play uses vars_prompt"
 
       # Upstream compares `__ansible_module_original__`, the name as it
       # was written, so these two spellings are the only ones that match:
@@ -35,18 +43,45 @@ module Krikri
       end
 
       # Task-oriented: violations belong to an enclosing task, so a
-      # `# noqa:` anywhere in that task's body suppresses them.
+      # `# noqa:` anywhere in that task's body suppresses them. A
+      # play-level vars_prompt violation lies before the play's tasks, so
+      # it falls back to a noqa on its own line.
       def task_scoped? : Bool
         true
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
+        check_plays(file, violations)
         TaskWalker.each_task(file) do |task|
           next unless PAUSE_MODULES.includes?(action_module(task))
           next if param_truthy?(task, "minutes") || param_truthy?(task, "seconds")
           violations << Violation.new(file.path, task.line, 0, id, severity,
             MESSAGE, task.line)
         end
+      end
+
+      private def check_plays(file : PositionedFile,
+                              violations : Array(Violation)) : Nil
+        return unless TaskWalker.playbook_root?(file)
+        list = file.root.as?(YAML::Nodes::Sequence) || return
+        list.nodes.each do |item|
+          play = item.as?(YAML::Nodes::Mapping) || next
+          entry = NodeUtil.entry(play, "vars_prompt") || next
+          prompts = entry[1].as?(YAML::Nodes::Sequence) || next
+          anchor = first_entry_key(prompts) || next
+          violations << Violation.new(file.path, NodeUtil.line(anchor),
+            NodeUtil.column(anchor), id, severity, VARS_PROMPT_MESSAGE)
+        end
+      end
+
+      # The first entry's first mapping key, which is where upstream's
+      # match data lands. A non-mapping entry (rejected by upstream's
+      # schema check) points at the entry itself.
+      private def first_entry_key(prompts : YAML::Nodes::Sequence) : YAML::Nodes::Node?
+        first = prompts.nodes.first?
+        return nil unless first
+        mapping = first.as?(YAML::Nodes::Mapping)
+        (mapping && mapping.nodes.first?) || first
       end
 
       # An `action:`/`local_action:` directive names its module inside the

@@ -114,6 +114,106 @@ module Krikri::Lint
       v.first.line.must_equal(1)
     end
 
+    it "flags a play vars_prompt at the first entry's first key" do
+      v = lint_yaml(rule, <<-YAML, FileType::PLAYBOOK)
+        ---
+        - name: Play using vars_prompt
+          hosts: localhost
+          connection: local
+          gather_facts: false
+          vars_prompt:
+            - name: deploy_env
+              prompt: "Which environment?"
+              private: false
+          tasks:
+            - name: Show the chosen environment
+              ansible.builtin.debug:
+                msg: "{{ deploy_env }}"
+        YAML
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("no-prompting")
+      v.first.line.must_equal(7)
+      v.first.column.must_equal(7)
+      v.first.message.must_equal("Play uses vars_prompt")
+    end
+
+    it "reports only the first entry of a multi-entry vars_prompt" do
+      v = lint_yaml(rule, <<-YAML, FileType::PLAYBOOK)
+        ---
+        - name: Two prompts
+          hosts: all
+          vars_prompt:
+            - name: first
+              prompt: "First?"
+            - name: second
+              prompt: "Second?"
+          tasks:
+            - name: Noop
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      v.size.must_equal(1)
+      v.first.line.must_equal(5)
+      v.first.column.must_equal(7)
+    end
+
+    # The position is the first entry's mapping key, whatever key comes
+    # first, not the `vars_prompt:` key.
+    it "anchors on the entry's first key when prompt precedes name" do
+      v = lint_yaml(rule, <<-YAML, FileType::PLAYBOOK)
+        ---
+        - name: Prompt first
+          hosts: all
+          vars_prompt:
+            - prompt: "Env?"
+              name: deploy_env
+          tasks:
+            - name: Noop
+              ansible.builtin.debug:
+                msg: "{{ deploy_env }}"
+        YAML
+      v.size.must_equal(1)
+      v.first.line.must_equal(5)
+      v.first.column.must_equal(7)
+    end
+
+    it "reports nothing for an empty vars_prompt list" do
+      v = lint_yaml(rule, <<-YAML, FileType::PLAYBOOK)
+        ---
+        - name: Empty prompts
+          hosts: all
+          vars_prompt: []
+          tasks:
+            - name: Noop
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      v.must_be_empty
+    end
+
+    it "reports nothing for a play without vars_prompt" do
+      v = lint_yaml(rule, <<-YAML, FileType::PLAYBOOK)
+        ---
+        - name: Plain play
+          hosts: all
+          tasks:
+            - name: Noop
+              ansible.builtin.debug:
+                msg: hi
+        YAML
+      v.must_be_empty
+    end
+
+    it "reports no vars_prompt on a tasks file" do
+      v = lint_yaml(rule, <<-YAML, FileType::TASKS)
+        ---
+        - name: Noop
+          ansible.builtin.debug:
+            msg: hi
+        YAML
+      v.must_be_empty
+    end
+
     it "is off by default and runs only when --enable-list names it" do
       yaml = playbook(
         "    - name: Wait\n" \
