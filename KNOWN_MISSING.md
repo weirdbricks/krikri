@@ -844,7 +844,10 @@ later in this file.
   ships a `vars_plugins/monkeypatch.py` that patches `ActionBase._configure_module` for an older
   ansible-core return shape, so ansible-core 2.21.6 dies at Gathering Facts with "not enough values
   to unpack (expected 4, got 2)" while this engine runs the play; with that plugin file removed real
-  ansible's output is byte-identical to this engine's (issue #1844).
+  ansible's output is byte-identical to this engine's (issue #1844). Reproduced in-process against
+  that role over a local connection for issue #1908, the same divergence re-filed: there is nothing
+  to match, because the crash comes from a plugin patching ansible's own controller classes at an
+  arity this engine does not have.
 - **Arbitrary-Python-module support is scoped to role-private `library/*.py` sources** (plus the
   playbook-adjacent `library/`): a module with a resolvable source RUNS on the target with the
   target's own python3 through the py_module plugin. Still cut: a module reference with NO library

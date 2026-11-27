@@ -1,0 +1,8 @@
+---
+# The task krikri-role-tester extracted from itdoginfo.domain_routing_openwrt; only the play is adapted
+# to run it against localhost (the round ran it against its testhost inventory).
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Gathering Facts

@@ -317,4 +317,48 @@ describe "configured plugin dirs resolve custom plugins (issue #793)" do
   ensure
     FileUtils.rm_r(root) if root
   end
+
+  # issue #1908: the round behind it ran a play with gather_facts on for a host
+  # whose roles include gekmihesg.openwrt, whose vars_plugins/monkeypatch.py
+  # patches ansible's controller at import time and so aborts real ansible
+  # during fact gathering. The same shape must leave this engine's fact
+  # gathering untouched: a plugin file that is imported writes its marker, and
+  # the play then reports a gathered host plus the role's guarded task skipped.
+  it "gathers facts for a role shipping a vars_plugins/ file that patches ansible" do
+    root = PluginSpecHelper.tmp_path("configured-plugins-vars-role-facts")
+    role = File.join(root, "roles", "gadget")
+    Dir.mkdir_p(File.join(role, "vars_plugins"))
+    Dir.mkdir_p(File.join(role, "tasks"))
+    marker = File.join(role, "vars_plugins", "imported.marker")
+    File.write(File.join(role, "vars_plugins", "monkeypatch.py"), <<-PYTHON)
+      import os
+
+      with open(os.path.join(os.path.dirname(__file__), "imported.marker"), "w") as handle:
+          handle.write("imported")
+      PYTHON
+    File.write(File.join(role, "tasks", "main.yml"), <<-YAML)
+      - name: pin defaults
+        debug:
+          msg: "{{ role_plugin_var | default('UNDEF') }}"
+        when: "'gadget' in group_names"
+      YAML
+    File.write(File.join(root, "inv.ini"), <<-INI)
+      [all]
+      localhost ansible_connection=local
+      INI
+    File.write(File.join(root, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: true
+        roles:
+          - gadget
+      YAML
+
+    output, status = ps_run_vars(root, {} of String => String)
+    status.success?.must_equal(true)
+    (output.includes?("ok=1")).must_equal(true)
+    (output.includes?("skipping: [localhost]")).must_equal(true)
+    File.exists?(marker).must_equal(false)
+  ensure
+    FileUtils.rm_r(root) if root
+  end
 end
