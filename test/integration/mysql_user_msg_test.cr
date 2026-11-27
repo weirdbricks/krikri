@@ -17,11 +17,7 @@ private HOST = "127.0.0.1"
 private PORT = 13306
 
 private def daemon_reachable?(host : String, port : Int32) : Bool
-  sock = TCPSocket.new(host, port, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.mysql_server_at?(host, port)
 end
 
 describe "mysql_user create-vs-update msg" do

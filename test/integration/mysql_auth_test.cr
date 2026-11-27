@@ -27,11 +27,7 @@ private MYSQL_HOST = "127.0.0.1"
 private MYSQL_PORT = 33306
 
 private def mysql_reachable? : Bool
-  sock = TCPSocket.new(MYSQL_HOST, MYSQL_PORT, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.mysql_server_at?(MYSQL_HOST, MYSQL_PORT)
 end
 
 private def mysql_login_args(indent : Int32 = 0) : String

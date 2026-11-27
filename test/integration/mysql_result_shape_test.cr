@@ -55,11 +55,7 @@ private MARIADB_PORT = 33307
 private USER_PORT = 33308
 
 private def mysql_reachable?(port : Int32 = MYSQL_PORT) : Bool
-  sock = TCPSocket.new(MYSQL_HOST, port, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.mysql_server_at?(MYSQL_HOST, port)
 end
 
 # The login_* block, with every line after the first carrying *indent*

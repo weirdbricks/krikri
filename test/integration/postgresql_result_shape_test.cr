@@ -26,11 +26,7 @@ require "socket"
 # shape - {failed, msg, changed, exception} - which is what the shared
 # argument-spec path now emits.
 private def shape_postgres_reachable? : Bool
-  sock = TCPSocket.new("127.0.0.1", 35432, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.postgres_server_at?("127.0.0.1", 35432)
 end
 
 private SHAPE_LOGIN = {

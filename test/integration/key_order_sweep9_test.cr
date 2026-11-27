@@ -58,11 +58,7 @@ private MARIADB_PORT = 33307
 # 127.0.0.1:33306:3306 docker.io/library/mysql:8.4. Every play below
 # skips when its own server isn't running.
 private def mysql_reachable?(port : Int32 = MYSQL_PORT) : Bool
-  sock = TCPSocket.new(MYSQL_HOST, port, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.mysql_server_at?(MYSQL_HOST, port)
 end
 
 # Runs a playbook whose final task copies `{{ r | to_json }}` into a

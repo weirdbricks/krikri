@@ -2,6 +2,7 @@ require "./temp_cleanup"
 require "minitest/autorun"
 require "file_utils"
 require "json"
+require "socket"
 require "../src/krikri/bigint_json"
 require "colorize"
 require "yaml"
@@ -559,6 +560,46 @@ module PluginSpecHelper
   # `requests`, where every SDK-module spec would otherwise fail at the
   # gate instead of exercising daemon behaviour - they check this first
   # and skip.
+  # Whether a MySQL/MariaDB server (not just any listener) answers on
+  # host:port. The live-DB ports (33306-33308, 35432-35434) sit inside
+  # the kernel's ephemeral range (32768-60999), so a concurrent test's
+  # port-0 listener can land on one; a bare TCP connect then reads as
+  # "server up" and the spec dials a stranger (#1963). The server speaks
+  # first: its first packet (3-byte length, sequence id 0) is a
+  # HandshakeV10 (0x0a) or, for a refused host, an ERR packet (0xff).
+  def self.mysql_server_at?(host : String, port : Int32) : Bool
+    sock = TCPSocket.new(host, port, connect_timeout: 1)
+    begin
+      sock.read_timeout = 2.seconds
+      header = Bytes.new(5)
+      sock.read_fully(header)
+      header[3] == 0 && (header[4] == 0x0a || header[4] == 0xff)
+    ensure
+      sock.close
+    end
+  rescue
+    false
+  end
+
+  # Whether a PostgreSQL server answers on host:port (see
+  # mysql_server_at? for why a bare connect is not enough). Sends an
+  # SSLRequest (length 8, code 80877103); a server replies with the
+  # single byte 'S' or 'N' and no stray listener does.
+  def self.postgres_server_at?(host : String, port : Int32) : Bool
+    sock = TCPSocket.new(host, port, connect_timeout: 1)
+    begin
+      sock.read_timeout = 2.seconds
+      sock.write(Bytes[0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f])
+      sock.flush
+      reply = sock.read_byte
+      reply == 'S'.ord || reply == 'N'.ord
+    ensure
+      sock.close
+    end
+  rescue
+    false
+  end
+
   def self.docker_sdk_importable? : Bool
     result = run("docker_network", {
       "name"        => "krikri-sdk-probe-#{Process.pid}",

@@ -44,11 +44,7 @@ require "socket"
 # carries no gai code). Likewise the strerror strings above are
 # libc's, so a non-glibc host prints this host's own translations.
 private def pg2_reachable? : Bool
-  sock = TCPSocket.new("127.0.0.1", 35433, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.postgres_server_at?("127.0.0.1", 35433)
 end
 
 private CONN_LOGIN = {

@@ -98,15 +98,8 @@ end
 # The daemon-dependent smoke tests need real daemons the dev box may or
 # may not have running; where they're absent the spec can't exercise
 # anything, so it pendings instead of failing (matches the
-# "requires a real ..." in the titles).
-private def daemon_reachable?(host : String, port : Int32) : Bool
-  sock = TCPSocket.new(host, port, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
-end
-
+# "requires a real ..." in the titles). The DB ones probe the wire
+# protocol through PluginSpecHelper.mysql_server_at?/postgres_server_at?.
 private def docker_daemon_ready? : Bool
   # The docker CLI honors DOCKER_HOST; with no env override, a reachable
   # /var/run/docker.sock is the usual local-daemon signal.
@@ -2365,7 +2358,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "manages a MySQL/MariaDB database and user (with privilege diffing) end to end (requires a real server at 127.0.0.1:13306)" do
-    skip "no MySQL/MariaDB server at 127.0.0.1:13306" unless daemon_reachable?("127.0.0.1", 13306)
+    skip "no MySQL/MariaDB server at 127.0.0.1:13306" unless PluginSpecHelper.mysql_server_at?("127.0.0.1", 13306)
     status, output = run_playbook(
       "test-mysql-quick.yml",
       [] of String,
@@ -2393,7 +2386,7 @@ describe "krikri-playbook CLI (--check mode)" do
   # root/rootpass - the same credentials test-mysql-quick.yml expects, so
   # the same local server covers both specs.
   it "runs the ad-hoc mysql_query/mysql_variables/mysql_info plugins against a real server (requires a real server at 127.0.0.1:13306)" do
-    skip "no MySQL/MariaDB server at 127.0.0.1:13306" unless daemon_reachable?("127.0.0.1", 13306)
+    skip "no MySQL/MariaDB server at 127.0.0.1:13306" unless PluginSpecHelper.mysql_server_at?("127.0.0.1", 13306)
 
     adhoc = File.join(PROJECT_ROOT, "bin", "krikri")
     login = "login_host=127.0.0.1 login_port=13306 login_user=root login_password=rootpass"
@@ -2433,7 +2426,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "manages a PostgreSQL database and role (with attribute flag diffing) end to end (requires a real server at 127.0.0.1:15432)" do
-    skip "no PostgreSQL server at 127.0.0.1:15432" unless daemon_reachable?("127.0.0.1", 15432)
+    skip "no PostgreSQL server at 127.0.0.1:15432" unless PluginSpecHelper.postgres_server_at?("127.0.0.1", 15432)
     # Shares one throwaway server and fixed db/role names with the serial! live
     # PostgreSQL describes: take the same process-wide state mutex (reentrant, see
     # test/minitest_helper.cr) so they never run in parallel with this test.

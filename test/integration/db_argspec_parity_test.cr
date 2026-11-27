@@ -42,10 +42,7 @@ ensure
 end
 
 private def pg_up? : Bool
-  TCPSocket.new("127.0.0.1", PG_PORT, connect_timeout: 1).close
-  true
-rescue
-  false
+  PluginSpecHelper.postgres_server_at?("127.0.0.1", PG_PORT)
 end
 
 private def unsupported_for(output : String, mod_name : String) : String?

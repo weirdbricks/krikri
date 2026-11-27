@@ -20,11 +20,7 @@ require "socket"
 #    Ansible diffs the desired password against the stored
 #    pg_authid.rolpassword verifier and no-ops when they match.
 private def postgres_reachable? : Bool
-  sock = TCPSocket.new("127.0.0.1", 15432, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.postgres_server_at?("127.0.0.1", 15432)
 end
 
 POSTGRES_LOGIN = {

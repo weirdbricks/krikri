@@ -27,11 +27,7 @@ require "socket"
 #   "missing required arguments: login_db"), so the warning can never
 #   fire there; krikri keeps that result's key set free of `warnings`.
 private def pg_warn_reachable? : Bool
-  sock = TCPSocket.new("127.0.0.1", 35434, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.postgres_server_at?("127.0.0.1", 35434)
 end
 
 private WARN_LOGIN = {

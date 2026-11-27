@@ -15,11 +15,7 @@ require "socket"
 # Now every identifier is quoted injection-safely instead of allow-listed,
 # so hyphens, spaces, quotes and friends all work.
 private def privs_postgres_reachable? : Bool
-  sock = TCPSocket.new("127.0.0.1", 15432, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.postgres_server_at?("127.0.0.1", 15432)
 end
 
 PRIVS_POSTGRES_LOGIN = {

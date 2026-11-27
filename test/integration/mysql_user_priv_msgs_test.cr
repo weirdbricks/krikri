@@ -20,11 +20,7 @@ private SERVERS = [
 ]
 
 private def daemon_reachable?(host : String, port : Int32) : Bool
-  sock = TCPSocket.new(host, port, connect_timeout: 1)
-  sock.close
-  true
-rescue
-  false
+  PluginSpecHelper.mysql_server_at?(host, port)
 end
 
 private def login_args(server : NamedTuple(host: String, port: Int32, password: String)) : Hash(String, String)
