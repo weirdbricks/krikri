@@ -5,6 +5,8 @@
 
 # Broken-pipe stdio behavior on Crystal 1.22+ (see the file for why):
 require "./src/krikri/stdio_pipe_guard"
+# ETXTBSY fork/exec race retry for every Process spawn (see the file).
+require "./src/krikri/process_spawn_retry"
 
 # Must be required first: redefines top-level puts/print to route
 # through Krikri::OutputRouting, which --forks's per-host fan-out

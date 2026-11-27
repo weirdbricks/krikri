@@ -26,6 +26,7 @@
 
 # Same Crystal 1.22 broken-pipe stdio fix as krikri-playbook.cr.
 require "./src/krikri/stdio_pipe_guard"
+require "./src/krikri/process_spawn_retry"
 
 require "option_parser"
 require "colorize"

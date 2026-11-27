@@ -4,6 +4,9 @@ require "file_utils"
 require "json"
 require "socket"
 require "../src/krikri/bigint_json"
+# The suite constantly spawns executables it just wrote; give every spec the
+# same ETXTBSY fork/exec retry the shipped binaries use.
+require "../src/krikri/process_spawn_retry"
 require "colorize"
 require "yaml"
 

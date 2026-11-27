@@ -1,3 +1,4 @@
+require "./src/krikri/process_spawn_retry"
 require "./src/krikri/divergence_transcript"
 require "file_utils"
 require "random/secure"

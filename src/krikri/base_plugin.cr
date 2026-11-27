@@ -22,6 +22,9 @@ require "./plugin_helpers/ansible_splitlines"
 # Every plugin binary writes its result JSON to stdout once; keep a closed
 # pipe a catchable IO::Error on Crystal 1.22+ (see the file for why).
 require "./stdio_pipe_guard"
+# The same ETXTBSY fork/exec race retry the controller uses, for every
+# Process spawn a plugin makes on the target (see the file).
+require "./process_spawn_retry"
 
 module Krikri
   # LibC::Stat's timestamp fields are named differently per libc: glibc
