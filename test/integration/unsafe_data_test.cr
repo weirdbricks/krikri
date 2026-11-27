@@ -980,7 +980,8 @@ private def matrix_section(run : MatrixRun, name : String) : String?
   nil
 end
 
-private MATRIX_RUNS = {} of String => MatrixRun
+private MATRIX_RUNS      = {} of String => MatrixRun
+private MATRIX_RUN_LOCKS = Hash(String, Mutex).new { |hash, scope| hash[scope] = Mutex.new }
 
 private def matrix_sections(output : String) : Hash(String, String)
   sections = Hash(String, String).new("")
@@ -998,7 +999,13 @@ private def matrix_sections(output : String) : Hash(String, String)
   sections
 end
 
+# Per-scope lock: Process.run below yields, and without it a second fiber
+# reaching an unset memo would start its own copy of the same playbook.
 private def matrix_run(scope : String) : MatrixRun
+  MATRIX_RUN_LOCKS[scope].synchronize { matrix_run_unlocked(scope) }
+end
+
+private def matrix_run_unlocked(scope : String) : MatrixRun
   MATRIX_RUNS[scope] ||= begin
     dir = File.tempname("unsafe-matrix-#{scope}")
     Dir.mkdir(dir)
@@ -1095,6 +1102,10 @@ end
   {% scope = scope_pair[0] %}
   {% label = scope_pair[1] %}
   describe "hostile containers in {{ label.id }} are never re-rendered (full matrix vs real-Ansible-verified output)" do
+    # Every test below reads the one memoized matrix_run playbook; keep them
+    # on one shard so the suite runs it once, not once per shard.
+    shard_together!
+
     it "runs the {{ scope.id }}-scope matrix playbook successfully" do
       run = matrix_run({{ scope }})
       run.status.success?.must_equal(true, run.output)

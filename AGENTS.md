@@ -202,6 +202,10 @@ pipes, and nothing else bounds a wedged local plugin).
   setup/body/teardown overlaps it. Costs the process's other worker
   fibers for the window, so it is for genuinely process-visible
   mutations only.
+- A describe whose tests all inspect ONE memoized expensive fixture (a
+  single playbook run, like `unsafe_data_test.cr`'s matrix describes)
+  calls `shard_together!`: full-suite slicing then keeps all its tests on
+  one shard instead of every shard re-running the fixture.
 - `PluginSpecHelper.run`/`run_raw` accept `chdir:`,
   `before_input:` and `umask:` parameters - use them instead of doing it
   yourself: never `Dir.cd` the suite process, never `LibC.umask` the

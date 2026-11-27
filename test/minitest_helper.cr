@@ -94,7 +94,9 @@ module PluginSpecHelper
     getter index : Int32
     getter count : Int32
 
-    def initialize(@index : Int32, @count : Int32, @owned : Set(String), @known : Set(String))
+    def initialize(@index : Int32, @count : Int32, @owned : Set(String), @known : Set(String),
+                   @shard_of : Hash(String, Int32) = {} of String => Int32)
+      @group_slots = {} of String => Int32
     end
 
     # Returns nil (run everything) when this process was not given a slice.
@@ -102,13 +104,27 @@ module PluginSpecHelper
       return nil unless count > 0 && index >= 0 && index < count
       owned = Set(String).new
       known = Set(String).new
+      shard_of = {} of String => Int32
       File.each_line(map_path) do |line|
         name, _, shard = line.rstrip.rpartition('\t')
         next if shard.empty? || name.empty?
         known << name
+        shard_of[name] = shard.to_i
         owned << name if shard.to_i == index
       end
-      Slice.new(index, count, owned, known)
+      Slice.new(index, count, owned, known, shard_of)
+    end
+
+    # A shard_together! group goes wherever the map put its lexicographically
+    # first measured test, or is FNV-hashed by group name when none of its
+    # tests is measured yet. Every shard process reads the same map, so all of
+    # them agree on the one shard that runs the whole group.
+    def group_slot(group : String) : Int32
+      @group_slots[group] ||= begin
+        prefix = "#{group}#"
+        first = @shard_of.keys.select(&.starts_with?(prefix)).min?
+        first ? @shard_of[first] : Slice.slot(group, @count)
+      end
     end
 
     # FNV-1a over the name's bytes: String#hash is seeded per process, so the
@@ -119,7 +135,8 @@ module PluginSpecHelper
       (hash % count).to_i
     end
 
-    def runs?(name : String) : Bool
+    def runs?(name : String, group : String? = nil) : Bool
+      return group_slot(group) == @index if group
       return @owned.includes?(name) if @known.includes?(name)
       Slice.slot(name, @count) == @index
     end
@@ -666,6 +683,11 @@ class Minitest::Spec
     false
   end
 
+  # See shard_together! below - default is sliced per test.
+  def shard_group : String?
+    nil
+  end
+
   macro serial!
     def serial? : Bool
       true
@@ -692,6 +714,18 @@ class Minitest::Spec
     end
   end
 
+  # Describes whose tests all read ONE memoized expensive fixture (a single
+  # playbook run whose output every test inspects) call `shard_together!`:
+  # the full-suite slicer then keeps every test of the describe on one shard
+  # (PluginSpecHelper::Slice#runs?'s group argument). Sliced per test, each
+  # shard that owned any of them re-ran the whole fixture - the 4 unsafe_data
+  # matrix describes ran 24 matrix playbooks per suite instead of 4.
+  macro shard_together!
+    def shard_group : String?
+      self.class.name
+    end
+  end
+
   # The live docker_compose_v2 / docker_container tests bring real compose projects and
   # containers up on podman: ~135s of a ~230s suite, for community.docker modules that are not
   # core. Off by default; KRIKRI_DOCKER_TESTS=1 runs them (krikri-fix-issues sets it when a fix
@@ -706,7 +740,7 @@ class Minitest::Spec
     # Another shard owns this test (see PluginSpecHelper::Slice): returning
     # before super() leaves it unrecorded, so it is neither run nor counted.
     if slice = PluginSpecHelper::SLICE
-      return unless slice.runs?("#{self.class.name}##{name}")
+      return unless slice.runs?("#{self.class.name}##{name}", shard_group)
     end
     # A test filtered out by -n never executes, and recording it as 0.00s would
     # let one filtered run erase the shard balancer's weights.
