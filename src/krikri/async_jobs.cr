@@ -100,6 +100,23 @@ module Krikri
       nil
     end
 
+    # What ansible-core's async_wrapper leaves in the job file when a job
+    # outlives its async: budget: it SIGKILLs the module's whole process
+    # group and then writes this record, so a later async_status: (or the
+    # poll loop's final read) reports the timeout instead of a missing or
+    # still-starting job. Live-verified against 2.21.6: the
+    # ~/.ansible_async file an un-polled `async: 1, poll: 0` job leaves on
+    # the target holds exactly {"msg": "Timeout exceeded", "failed": true,
+    # "child_pid": <module pid>}. Both execution paths write it through
+    # here so the payload can never drift between them.
+    def self.timeout_record(child_pid : Int64) : JSON::Any
+      JSON.parse({
+        "msg"       => "Timeout exceeded",
+        "failed"    => true,
+        "child_pid" => child_pid,
+      }.to_json)
+    end
+
     # Ansible's async jid is "j<random digits>.<pid>" (action plugin
     # makes j<random>, async_wrapper appends the pid), and that exact
     # string shows up in the ASYNC POLL/OK output lines and as the

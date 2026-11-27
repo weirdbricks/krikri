@@ -4361,6 +4361,20 @@ module Krikri
         task.poll_seconds = resolved_poll
       end
 
+      # ansible's async_wrapper gives the module no terminal of its own (a
+      # remote module's only tty is the ssh connection's -tt), and this
+      # engine's synthetic one costs more than parity here: it makes the
+      # plugin call setsid, which moves the module out of the process group
+      # the async budget kill signals, so a job that had to die at its limit
+      # kept running - issue #1899's `async: 1, poll: 0` reboot idiom
+      # rebooted the host under this engine while real ansible had already
+      # killed the shell.
+      if resolved_async && resolved_async != 0 && goes_remote && substituted_params.has_key?("__krikri_remote_tty")
+        substituted_params = substituted_params.dup
+        substituted_params.delete("__krikri_remote_tty")
+        config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become, become_flags: substituted_become_flags)
+      end
+
       # Ansible resolves a python module's interpreter from the PLAYED
       # HOST's vars even when the task itself runs on the controller
       # under a `connection: local` override (module_common's

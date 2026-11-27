@@ -1,0 +1,25 @@
+---
+# AgePartnership.reboot's `Reboot host`, the task the round diverged on: it
+# runs `sleep 2 && shutdown -r now` as `async: 1, poll: 0`, so real ansible's
+# async_wrapper SIGKILLs it before the sleep ends and the host is never
+# rebooted. Only the shutdown is swapped for a marker file, so the case stays
+# runnable (and the difference observable) without rebooting the machine.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Reboot host
+      ansible.builtin.shell: sleep 2 && echo rebooted > "$HOME/poked"
+      async: 1
+      poll: 0
+      ignore_errors: true
+    - name: Let the job outlive its async budget
+      ansible.builtin.pause:
+        seconds: 3
+    - name: Did the killed job reach its command anyway
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/poked"
+      register: poked
+    - name: Report
+      ansible.builtin.debug:
+        msg: "rebooted={{ poked.stat.exists }}"
