@@ -37,8 +37,8 @@ describe "lint parity harness" do
   # then its triples were bucketed as `unimplemented`, which did not touch the
   # exit code (issue #1930, where no-prompting was the id that hid). The
   # catalogue diff has to fail on such an id without any corpus file, and it
-  # must not report the structural internals ansible-lint lists as rules
-  # (parser-error here) as gaps.
+  # must not report an id on the allowance list - one that can never be a
+  # rule's own matches, `warning` here - as a gap.
   it "fails on an upstream rule neither implemented nor on the allowance list" do
     python = Process.find_executable("python3") || Process.find_executable("python")
     skip "no python on this host (the harness is a Python script)" unless python
@@ -52,7 +52,7 @@ describe "lint parity harness" do
       ["name   MEDIUM   idiom"])
     ansible = write_rule_listing_stub(File.join(dir, "ansible-lint"), "-L",
       ["- name Name rule.", "- loop-var-prefix Role loop_var should use configured prefix.",
-       "- parser-error ansible parser fails."])
+       "- warning Other warnings detected during run."])
 
     output = IO::Memory.new
     status = Process.run(
@@ -66,7 +66,7 @@ describe "lint parity harness" do
     output.to_s.must_include("CATALOGUE| upstream=3 krikri=1 allowed=1 missing=1")
     output.to_s.must_include("  missing: loop-var-prefix (not implemented and not in CATALOGUE_ALLOW)")
     output.to_s.wont_include("missing: name")
-    output.to_s.wont_include("missing: parser-error")
+    output.to_s.wont_include("missing: warning")
   end
 end
 
