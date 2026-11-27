@@ -122,15 +122,25 @@ spawned_binaries_stale() {
   [ -n "$(find "$ROOT/src" "$ROOT/lib" "$ROOT/plugins" -name '*.cr' -newer "$main_bin" -print -quit 2>/dev/null)" ]
 }
 
-if spawned_binaries_stale; then
-  echo "test: bin/krikri-playbook is older than src//lib//plugins/ - building it first" >&2
+run_build_sh() {
   if ! (cd "$ROOT" && ./build.sh >&2); then
     echo "test: ./build.sh FAILED - specs that spawn bin/krikri-playbook will run against a stale build" >&2
   fi
+}
+
+# Decided before the suite build starts (which touches nothing under src/,
+# lib/ or plugins/), acted on below: a full-suite run overlaps build.sh with
+# its own compile (build_spawned_and_suite) instead of running them back to
+# back.
+SPAWNED_STALE=0
+if spawned_binaries_stale; then
+  SPAWNED_STALE=1
+  echo "test: bin/krikri-playbook is older than src//lib//plugins/ - building it first" >&2
 fi
 
 # A single explicit test file is run directly; no globbing needed.
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then
+  [ "$SPAWNED_STALE" -eq 1 ] && run_build_sh
   cd "$ROOT"
   crystal run "$@"
   exit 0
@@ -290,8 +300,48 @@ clock_seconds() {
 # reporting the version it was compiled with.
 hash=$(cat "${files[@]}" "${support_files[@]}" "${source_files[@]}" "$ROOT/shard.lock" "$ROOT/shard.yml" | sha256sum | cut -d' ' -f1)
 
+suite_binary_current() {
+  [ -f "$HASHFILE" ] && [ "$(cat "$HASHFILE")" = "$hash" ] && [ -x "$BINARY" ]
+}
+
+# Refreshes stale spawned binaries (build.sh) and builds the suite binary.
+# When both are needed they run CONCURRENTLY: the two are independent
+# compiles (build.sh writes bin/, the suite build writes .minitest_all.*),
+# and back to back they were the longest part of an edit-then-test cycle -
+# measured after a src edit: build.sh 26s + suite build 38s serially, 47s
+# overlapped. Combined peak was ~7.3GB of a 15GB box (min MemAvailable
+# ~5GB), so the overlap only happens with KRIKRI_OVERLAP_MIN_MB (default
+# 10000) available; below that, or with KRIKRI_OVERLAP_BUILD=0, they run in
+# sequence as before. build.sh's output is buffered and printed when it
+# finishes so it does not interleave with the compiler's.
+build_spawned_and_suite() {
+  if [ "$SPAWNED_STALE" -ne 1 ]; then
+    build_test_binary
+    return
+  fi
+  SPAWNED_STALE=0
+  local avail_mb
+  avail_mb=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  if suite_binary_current || [ "${KRIKRI_OVERLAP_BUILD:-1}" = "0" ] ||
+    [ "${avail_mb:-0}" -lt "${KRIKRI_OVERLAP_MIN_MB:-10000}" ]; then
+    run_build_sh
+    build_test_binary
+    return
+  fi
+  echo "test: building bin/ (build.sh) alongside the suite binary (${avail_mb}MB available)" >&2
+  local build_log build_pid suite_rc=0
+  build_log=$(mktemp "${TMPDIR:-/tmp}/krikri-build-sh.XXXXXX")
+  (run_build_sh) > "$build_log" 2>&1 &
+  build_pid=$!
+  build_test_binary || suite_rc=$?
+  wait "$build_pid" || true
+  cat "$build_log" >&2
+  rm -f "$build_log"
+  return "$suite_rc"
+}
+
 build_test_binary() {
-  if [ -f "$HASHFILE" ] && [ "$(cat "$HASHFILE")" = "$hash" ] && [ -x "$BINARY" ]; then
+  if suite_binary_current; then
     return 0
   fi
   tmp_ep="$ENTRYPOINT.tmp"
@@ -454,7 +504,7 @@ watch_shards_for_stalls() {
 # ---- sharded path: N processes, one binary, test-level slices ----
 if [ "$shards" -ge 2 ]; then
   build_start=$(date +%s)
-  build_test_binary || exit 1
+  build_spawned_and_suite || exit 1
   build_s=$(( $(date +%s) - build_start ))
 
   # Assign every MEASURED test to a shard by measured weight (LPT). A test with
@@ -548,7 +598,7 @@ if [ "$shards" -ge 2 ]; then
 fi
 
 # ---- single-process path (shards=1): one entrypoint, one binary ----
-build_test_binary || exit 1
+build_spawned_and_suite || exit 1
 
 # Not exec: the EXIT trap has to run after the suite to remove its TMPDIR.
 rc=0

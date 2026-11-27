@@ -149,6 +149,23 @@ builds and quick suites, which take the same lock) OOM'd the desktop;
 build the same discipline into anything that compiles or runs the suite
 unattended. (A sharded run is one compile, not one per shard.)
 
+**Inside that lock, a full-suite run overlaps `./build.sh` with the suite
+compile** when `bin/` is stale (they write disjoint files): ~47s instead of
+26s + 38s after a src edit, combined peak ~7.3GB. It falls back to running
+them in sequence below `KRIKRI_OVERLAP_MIN_MB` (default 10000) of
+MemAvailable, or with `KRIKRI_OVERLAP_BUILD=0`. The run's `build Ns` figure
+covers both.
+
+**Why some suite builds take ~55s instead of ~38s**: Crystal's incremental
+codegen reuses an object file only if its IR is byte-identical, and every
+type's ID comes from a depth-first numbering of the whole type tree
+(`compiler/crystal/codegen/llvm_id.cr`). A body-only edit in src rewrites 1
+of ~6600 objects; adding an `it` rewrote ~2000 and a new `describe` ~4000
+(a new type, or a new generic instance some test code creates, shifts the ID
+of every later type, and each spec class's object embeds its own). That is a
+compiler limit, not something to chase in this repo; `--threads 16` did not
+speed up the resulting mass recompile either (measured 2026-11-27).
+
 **Live docker tests are off by default**: the `docker_compose_v2` and
 `docker_container published_ports` tests bring real podman/compose projects up (~135s of a
 ~230s suite) and skip unless `KRIKRI_DOCKER_TESTS=1`. CI always sets it;
