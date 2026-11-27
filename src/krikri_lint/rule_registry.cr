@@ -21,6 +21,7 @@ module Krikri
           RoleNameRule.new,
           FqcnActionCoreRule.new,
           OnlyBuiltinsRule.new,
+          NoPromptingRule.new,
           YamlLineLengthRule.new,
           VarNamingRule.new,
           NoHandlerRule.new,
