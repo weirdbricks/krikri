@@ -209,6 +209,32 @@ if [ ! -f "krikri-playbook.cr" ]; then
     exit 1
 fi
 
+# Host compile lock, taken by a build.sh that is about to run crystal (see
+# AGENTS.md, "One compile-or-suite at a time"). Lazy and once per process: the
+# first call takes it, later calls return. launch_bg calls it before it starts
+# any background compile, so an up-to-date no-op build never waits for it.
+# Callers that already hold the lock and run build.sh (scripts/minitest.sh's
+# run_build_sh, krikri-role-tester's gate) set KRIKRI_COMPILE_LOCK_HELD=1 on
+# build.sh's environment only, never exported; this returns at once then, or
+# build.sh would deadlock against its own caller. The lock fd (9) is held until
+# build.sh and the compiles it backgrounds exit.
+take_compile_lock() {
+    [ "${KRIKRI_COMPILE_LOCK_HELD:-}" = 1 ] && return 0
+    [ "${COMPILE_LOCK_TAKEN:-}" = 1 ] && return 0
+    local lock="${KRIKRI_COMPILE_LOCK:-$HOME/.cache/krikri-compile.lock}"
+    mkdir -p "$(dirname "$lock")"
+    exec 9>"$lock"
+    local wait_start=$SECONDS
+    if ! flock -n 9; then
+        echo "build: another compile or suite run holds $lock - waiting ..." >&2
+        flock 9
+    fi
+    COMPILE_LOCK_TAKEN=1
+    local wait=$((SECONDS - wait_start))
+    echo "compile-lock wait: ${wait}s"
+    echo "compile-lock wait: ${wait}s" >&2
+}
+
 # --static-podman: hand the whole build to the Alpine Crystal container.
 # Runs here, after the project-root check (the mount below must be the
 # repo root) but before the host Crystal check - the point of this flag
@@ -243,7 +269,13 @@ if [ "$STATIC_PODMAN" = true ]; then
     # Outer shell must be busybox sh - the bare Alpine Crystal image
     # ships no bash; `apk add bash` below installs it for build.sh
     # itself (which needs bashisms and runs via its own shebang).
-    PODMAN_CMD=(podman run --rm -v "$PWD":/work:Z -w /work -v "$STATIC_CACHE_DIR":/cache -e CRYSTAL_CACHE_DIR=/cache "$PODMAN_IMAGE" sh -c "$CONTAINER_SH")
+    # The inner build compiles in the container, which cannot see the host's
+    # lock file, so the host takes it here (not lazily: this path cannot tell
+    # up-to-date from stale without running the inner build) and the container
+    # is told it is held. fd 9 stays open across exec, so the lock lasts as
+    # long as podman does.
+    take_compile_lock
+    PODMAN_CMD=(podman run --rm -v "$PWD":/work:Z -w /work -v "$STATIC_CACHE_DIR":/cache -e CRYSTAL_CACHE_DIR=/cache -e KRIKRI_COMPILE_LOCK_HELD=1 "$PODMAN_IMAGE" sh -c "$CONTAINER_SH")
     echo -e "${BLUE}🐳 Running:${NC} ${PODMAN_CMD[*]}"
     exec "${PODMAN_CMD[@]}"
 fi
@@ -300,7 +332,8 @@ lib_drift() {
 DRIFTED=$( [ -d lib ] && lib_drift || echo " lib/ missing")
 if [ -n "$DRIFTED" ]; then
     echo -e "${YELLOW}🔄 lib/ out of date:$DRIFTED - running shards install --frozen${NC}"
-    shards_lock="${XDG_CACHE_HOME:-$HOME/.cache}/krikri-shards.lock"
+    # Pinned to $HOME, not XDG_CACHE_HOME (see minitest.sh's compile lock: a launcher's XDG_CACHE_HOME splits host locks).
+    shards_lock="$HOME/.cache/krikri-shards.lock"
     mkdir -p "$(dirname "$shards_lock")"
     if ! flock -w 600 "$shards_lock" shards install --frozen; then
         echo -e "${RED}❌ shards install --frozen failed${NC}"
@@ -499,6 +532,9 @@ strip_release_binary() {
 # keeping at most $PARALLEL_JOBS builds in flight. Polls the running
 # job count instead of using `wait -n`, which macOS's bash 3.2 lacks.
 launch_bg() {
+    # Every crystal compile goes through here. Taking the compile lock before the
+    # backgrounding keeps it in the main shell, so COMPILE_LOCK_TAKEN persists.
+    take_compile_lock
     while [ "$(jobs -rp | wc -l)" -ge "$PARALLEL_JOBS" ]; do
         sleep 0.1
     done
@@ -903,29 +939,37 @@ done
 # with a real hardlinked build: `du` on the directory reports the
 # shared-inode size once, not once per name, and each hardlinked name
 # dispatches correctly via `File.basename(PROGRAM_NAME)`.
+# fat_plugin_needs_build: status 0 when the fat plugin binary must be rebuilt.
+# Split out of build_fat_plugin so the launch site can decide, in the main
+# shell, whether to launch a compile at all (launch_bg takes the compile lock,
+# and an up-to-date fat plugin must not wait for it).
+fat_plugin_needs_build() {
+    local fat_binary="$PLUGINS_DIR/.fat-plugin"
+    if [ "$FORCE_ALL" = true ]; then
+        return 0
+    elif [ ! -f "$fat_binary" ]; then
+        return 0
+    fi
+    for plugin in "${FAT_PLUGINS[@]}"; do
+        if [ "plugins/$plugin.cr" -nt "$fat_binary" ]; then
+            return 0
+        fi
+    done
+    if find src -name '*.cr' -newer "$fat_binary" -print -quit | grep -q .; then
+        return 0
+    fi
+    if [ -d lib ] && find lib -name '*.cr' -newer "$fat_binary" -print -quit | grep -q .; then
+        return 0
+    fi
+    return 1
+}
+
 build_fat_plugin() {
     local fat_binary="$PLUGINS_DIR/.fat-plugin"
     local generated="plugins/.fat_plugin_generated.cr"
 
     local needs_build=false
-    if [ "$FORCE_ALL" = true ]; then
-        needs_build=true
-    elif [ ! -f "$fat_binary" ]; then
-        needs_build=true
-    else
-        for plugin in "${FAT_PLUGINS[@]}"; do
-            if [ "plugins/$plugin.cr" -nt "$fat_binary" ]; then
-                needs_build=true
-                break
-            fi
-        done
-        if [ "$needs_build" = false ] && find src -name '*.cr' -newer "$fat_binary" -print -quit | grep -q .; then
-            needs_build=true
-        fi
-        if [ "$needs_build" = false ] && [ -d lib ] && find lib -name '*.cr' -newer "$fat_binary" -print -quit | grep -q .; then
-            needs_build=true
-        fi
-    fi
+    fat_plugin_needs_build && needs_build=true
 
     if [ "$needs_build" = true ]; then
         echo -e "   ${YELLOW}Building fat plugin binary (${#FAT_PLUGINS[@]} modules)...${NC}"
@@ -1197,7 +1241,14 @@ for task in "${MAIN_BUILDS[@]}"; do
     IFS='|' read -r name source binary <<< "$task"
     launch_bg build_main_exec "$name" "$source" "$binary"
 done
-launch_bg build_fat_plugin
+# The fat plugin is only launched when it is stale: an up-to-date build.sh must
+# never reach launch_bg (which takes the compile lock). The else branch runs the
+# function in the main shell, where it prints "up to date" and does its cheap relink.
+if fat_plugin_needs_build; then
+    launch_bg build_fat_plugin
+else
+    build_fat_plugin
+fi
 if [ "$REBUILT_COUNT" -gt 0 ]; then
     launch_bg build_action_plugin
 fi

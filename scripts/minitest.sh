@@ -122,10 +122,40 @@ spawned_binaries_stale() {
   [ -n "$(find "$ROOT/src" "$ROOT/lib" "$ROOT/plugins" -name '*.cr' -newer "$main_bin" -print -quit 2>/dev/null)" ]
 }
 
+# Every caller of this helper already holds the compile lock (the single-file path,
+# the full-suite build and the overlap path), so build.sh is told not to take it
+# again: KRIKRI_COMPILE_LOCK_HELD=1 goes on build.sh's environment only, never
+# exported, so the test processes do not inherit it.
 run_build_sh() {
-  if ! (cd "$ROOT" && ./build.sh >&2); then
+  if ! (cd "$ROOT" && KRIKRI_COMPILE_LOCK_HELD=1 ./build.sh >&2); then
     echo "test: ./build.sh FAILED - specs that spawn bin/krikri-playbook will run against a stale build" >&2
   fi
+}
+
+# One heavy compile-or-suite activity at a time on this host: the shard builds below
+# spawn one crystal compiler per shard, and a second suite (or fix-issues' build.sh and
+# quick suite, which take the same lock) stacked on top OOM'd / hung the desktop. Held
+# across the builds AND the run; released when the script and the children that
+# inherited fd 9 exit. Single-file runs take it too: `crystal run` of one test file is
+# a full krikri compile, and agent sessions run exactly that while a gate compiles.
+acquire_compile_lock() {
+  # Pinned to $HOME, not XDG_CACHE_HOME: the Ghostty AppImage launcher sets
+  # XDG_CACHE_HOME, and a launcher-specific value split one host lock into two.
+  LOCK="${KRIKRI_COMPILE_LOCK:-$HOME/.cache/krikri-compile.lock}"
+  mkdir -p "$(dirname "$LOCK")"
+  exec 9>"$LOCK"
+  LOCK_WAIT_START=$SECONDS
+  if ! flock -n 9; then
+    echo "test: another compile or suite run holds $LOCK - waiting ..." >&2
+    flock 9
+  fi
+  LOCK_WAIT=$((SECONDS - LOCK_WAIT_START))
+  # The queue time is part of the step's own wall clock: fix-issues parses this line to
+  # record it beside the step's duration (a suite that waited 20 minutes for the lock
+  # otherwise reads as a slow suite), so it goes to both streams like the harness
+  # scripts' inline locks print it.
+  echo "compile-lock wait: ${LOCK_WAIT}s"
+  echo "compile-lock wait: ${LOCK_WAIT}s" >&2
 }
 
 # Decided before the suite build starts (which touches nothing under src/,
@@ -138,34 +168,18 @@ if spawned_binaries_stale; then
   echo "test: bin/krikri-playbook is older than src//lib//plugins/ - building it first" >&2
 fi
 
-# A single explicit test file is run directly; no globbing needed.
+# A single explicit test file is run directly; no globbing needed. It takes the
+# compile lock first (see acquire_compile_lock above).
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then
+  acquire_compile_lock
   [ "$SPAWNED_STALE" -eq 1 ] && run_build_sh
   cd "$ROOT"
   crystal run "$@"
   exit 0
 fi
 
-# One heavy compile-or-suite activity at a time on this host: the shard builds below
-# spawn one crystal compiler per shard, and a second suite (or fix-issues' build.sh and
-# quick suite, which take the same lock) stacked on top OOM'd / hung the desktop. Held
-# across the builds AND the run; released when the script and the children that
-# inherited fd 9 exit. Single-file runs (the early exit above) stay lockless.
-LOCK="${KRIKRI_COMPILE_LOCK:-${XDG_CACHE_HOME:-$HOME/.cache}/krikri-compile.lock}"
-mkdir -p "$(dirname "$LOCK")"
-exec 9>"$LOCK"
-LOCK_WAIT_START=$SECONDS
-if ! flock -n 9; then
-  echo "test: another compile or suite run holds $LOCK - waiting ..." >&2
-  flock 9
-fi
-LOCK_WAIT=$((SECONDS - LOCK_WAIT_START))
-# The queue time is part of the step's own wall clock: fix-issues parses this line to
-# record it beside the step's duration (a suite that waited 20 minutes for the lock
-# otherwise reads as a slow suite), so it goes to both streams like the harness
-# scripts' inline locks print it.
-echo "compile-lock wait: ${LOCK_WAIT}s"
-echo "compile-lock wait: ${LOCK_WAIT}s" >&2
+# Full-suite runs hold the same compile lock for the builds and the run.
+acquire_compile_lock
 
 # The entrypoint has to live inside the project: `crystal run` only resolves
 # relative requires against the entrypoint's own directory, and absolute

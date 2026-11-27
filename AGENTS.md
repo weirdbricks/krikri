@@ -140,10 +140,13 @@ wall/build/failure numbers land in the gitignored `.minitest_runs.tsv`;
 `scripts/minitest_stats.sh --publish` promotes the newest line into
 `test/minitest_runs.tsv` and refreshes `test/minitest_weights.tsv`.
 
-**One compile-or-suite at a time on this host**: full-suite runs (not
-single-file ones) hold the host compile lock
+**One compile-or-suite at a time on this host**: full-suite runs and single-file
+runs (`crystal run` of one test file is a full compile too) hold the host compile lock
 `${KRIKRI_COMPILE_LOCK:-$HOME/.cache/krikri-compile.lock}` across the suite
-build AND the run, waiting for it if something else holds it. Stacked
+build AND the run, waiting for it if something else holds it. `./build.sh` takes that
+lock lazily, just before its first `crystal build` (an up-to-date no-op build never
+waits); a caller that already holds the lock and runs `./build.sh` sets
+`KRIKRI_COMPILE_LOCK_HELD=1` on build.sh's environment only, never exported. Stacked
 crystal compilers (a second suite, or krikri-role-tester's fix-issues
 builds and quick suites, which take the same lock) OOM'd the desktop;
 build the same discipline into anything that compiles or runs the suite
