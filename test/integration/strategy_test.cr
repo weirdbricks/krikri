@@ -10,7 +10,7 @@ require "../minitest_helper"
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 
-private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env : Bool = false,
+private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env : Bool = false, # ameba:disable Metrics/CyclomaticComplexity
                          env : Hash(String, String?) = {} of String => String?,
                          playbook_subdir : String? = nil,
                          relative_plugin_env : Bool = false) : {Int32, Array(String), String}
@@ -29,6 +29,19 @@ private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env 
     File.write(File.join(plugin_dir, "#{plugin_name}.py"), "")
   end
   line = strategy ? "  strategy: #{strategy}\n" : ""
+  # Under free/host_pinned the assertions pin h2 finishing BOTH tasks
+  # before h1 finishes its first. A fixed `sleep 1` on h1 made that a race
+  # the suite lost under load (h2's two tasks took longer than 1s), so h1
+  # instead waits for h2's second task to have run (bounded at 30s). Under
+  # linear the barrier would keep that marker from ever appearing, so the
+  # plain sleep stays there - linear's order never depended on timing.
+  free_like = (strategy || env["ANSIBLE_STRATEGY"]?).in?("free", "host_pinned")
+  h1_wait = if free_like
+              "i=0; while [ ! -f #{dir}/h2-second ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done"
+            else
+              "sleep 1"
+            end
+  second_cmd = free_like ? %(sh -c "touch #{dir}/{{ inventory_hostname }}-second; echo B") : "echo B"
   playbook_rel = playbook_subdir ? File.join(playbook_subdir, "pb.yml") : "pb.yml"
   Dir.mkdir_p(File.dirname(File.join(dir, playbook_rel)))
   File.write(File.join(dir, playbook_rel), <<-YAML)
@@ -37,9 +50,9 @@ private def run_strategy(strategy : String?, plugin : String? = nil, plugin_env 
     #{line.rstrip}
       tasks:
         - name: slow on h1
-          ansible.builtin.command: sh -c "test '{{ inventory_hostname }}' = h1 && sleep 1; echo A"
+          ansible.builtin.command: sh -c "test '{{ inventory_hostname }}' = h1 && { #{h1_wait}; }; echo A"
         - name: second
-          ansible.builtin.command: echo B
+          ansible.builtin.command: #{second_cmd}
     YAML
 
   stdout_io = IO::Memory.new

@@ -136,7 +136,7 @@ end
 
 # Plugin-level wiring, driven through the real plugin binary.
 describe "apt plugin round-1100002 result shapes" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "omits cache_updated on a failed deb: (apt_fail_deb key order)" do
     result = PluginSpecHelper.run("apt", {"deb" => "/var/tmp/kop-nonexistent-keyorder.deb", "state" => "present"})

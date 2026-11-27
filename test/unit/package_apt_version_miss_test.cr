@@ -43,7 +43,7 @@ ensure
 end
 
 describe "package:/apt version-pin miss failure shape" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports no available installation candidate for a pinned name apt can't resolve" do
     with_failing_apt_get_shim(APT_VERSION_MISS_STDERR) do

@@ -159,7 +159,7 @@ describe "AwsModuleArgs: IN8 dict-with-sub-spec _list_no_log_values ordering" do
 end
 
 describe "AwsModuleArgs: boto3 gate interpreter" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   # Real runs an amazon.aws module under the interpreter its own discovery
   # picked (the versioned /usr/bin/python3.X), so the missing_required_lib

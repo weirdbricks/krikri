@@ -38,7 +38,7 @@ private def missing_lib_message(library : String, python : String) : String
 end
 
 describe "python library gate interpreter discovery" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "falls back to the interpreters Ansible's INTERPRETER_PYTHON_FALLBACK would try" do
     Krikri::INTERPRETER_FALLBACK.must_equal([

@@ -46,6 +46,7 @@ def with_fake_pkg_manager(name : String, output : String, &block)
 end
 
 describe "dnf/yum list: query mode" do
+  exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   it "returns a results array for the magic `updates` spec instead of installing it" do
     with_fake_pkg_manager("dnf", FAKE_LIST_OUTPUT) do
       result = PluginSpecHelper.run("dnf", {

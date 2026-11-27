@@ -53,7 +53,7 @@ ensure
 end
 
 describe "package:/apt absent mixed-list removal (installed subset only)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "removes only the installed names and reports changed for a mixed list" do
     with_absent_status_shims(PluginSpecHelper.tmp_path("absent-shims")) do |record|

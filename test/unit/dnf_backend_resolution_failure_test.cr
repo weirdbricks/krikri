@@ -44,6 +44,7 @@ ensure
 end
 
 describe "dnf/yum backend resolution failure (round 5310001)" do
+  exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   it "fails a yum task at the action level with the real tuple on a non-dnf pkg_mgr fact" do
     result = PluginSpecHelper.run("yum",
       {"name" => "epel-release", "state" => "present"},

@@ -86,7 +86,7 @@ private def with_split_gate_shim(first_behavior : String, second_behavior : Stri
 end
 
 describe "docker sdk import gate" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "fails with the exact missing-lib wording when requests cannot import" do
     Krikri::PluginHelpers::DockerClient.reset_sdk_import_gate

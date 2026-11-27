@@ -213,6 +213,7 @@ private def with_package732_pkg_managers(provides : Array(String) = [] of String
 end
 
 describe "package plugin - same-name repo package vs a Provides: match (issue 732)" do
+  exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   it "sends an available-name package to the install batch despite a Provides: match" do
     with_package732_pkg_managers(provides: ["curl"], available: ["curl"]) do |log|
       result = PluginSpecHelper.run("package", {"name" => "curl", "state" => "present", "use" => "dnf"})
@@ -254,6 +255,7 @@ end
 # `dnf -q provides` here is a full dnf CLI startup (~0.6-1.3s) and every
 # one of them pushed the 5s poll loop nearer another boundary.
 describe "package plugin - repo availability probes are check-mode only (issue 1217)" do
+  exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   it "installs an unresolvable name without a per-spec repo probe" do
     with_package732_pkg_managers(available: [] of String) do |log|
       result = PluginSpecHelper.run("package", {"name" => "definitely-not-in-any-repo", "state" => "present", "use" => "dnf"})

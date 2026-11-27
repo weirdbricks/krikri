@@ -8,6 +8,34 @@ require "yaml"
 
 Colorize.enabled = false
 
+# `Process.run/new(..., output: io, error: io)` - the same in-memory IO for
+# both streams, ~870 call sites across the suite - gives the child TWO pipes,
+# each drained by its own fiber into `io`. Under load those fibers interleave
+# in either order, so a stderr `[ERROR]` block and the stdout lines the child
+# printed before it land swapped (seen: a when: error block arriving after
+# PLAY RECAP), and every test asserting their order or an exact transcript
+# fails intermittently. When stderr's target is the very IO stdout's pipe
+# already copies into, reuse that pipe instead, exactly like `2>&1`: the kernel
+# keeps the child's own write order. Hooked at Process#io_to_fd (the stdlib's
+# per-stream pipe+copy-fiber step) because an overload of Process.run itself
+# is not picked over the stdlib's. Test-binary only.
+class Process
+  @merged_stdout_target : IO? = nil
+  @merged_stdout_fd : IO::FileDescriptor? = nil
+
+  private def io_to_fd(stdio : Stdio, for dst_io : IO::FileDescriptor) : IO::FileDescriptor
+    if dst_io == STDERR && (target = @merged_stdout_target) && target.same?(stdio) && (fd = @merged_stdout_fd)
+      return fd
+    end
+    fd = previous_def
+    if dst_io == STDOUT && stdio.is_a?(IO)
+      @merged_stdout_target = stdio
+      @merged_stdout_fd = fd
+    end
+    fd
+  end
+end
+
 # Shared helper for integration-testing individual plugin binaries the same
 # way PluginManager actually invokes them: pipe a JSON config on stdin, read
 # a JSON result off stdout. This exercises the real plugin entrypoint (argv
@@ -52,7 +80,9 @@ module PluginSpecHelper
   # one is deliberately ~4 minutes, so it raises the bar instead of
   # tripping it.
   TEST_STALL_REPORT_SECONDS = begin
-    default = ENV["KRIKRI_SLOW_TESTS"]? ? "600" : "120"
+    # Below scripts/minitest.sh's shard stall kill (180s) so the in-flight
+    # list and lock state are printed before a stuck shard is killed.
+    default = ENV["KRIKRI_SLOW_TESTS"]? ? "600" : "90"
     (ENV["KRIKRI_TEST_STALL_SECONDS"]? || default).to_i
   end
 

@@ -163,14 +163,14 @@ mysql/pg helpers, a driver pin, or the TLS parameters; it fails instead of skipp
 
 **Hang diagnosis on a parallel run**: a shard that stops printing is hung, not
 slow, so `scripts/minitest.sh` follows each shard's log growth and, after
-`KRIKRI_STALL_SECONDS` (default 120; 600 when `KRIKRI_SLOW_TESTS=1`) with no
+`KRIKRI_STALL_SECONDS` (default 180; 600 when `KRIKRI_SLOW_TESTS=1`) with no
 output, dumps that shard's process tree, every OS thread's `wchan` and stacks
 (`eu-stack`, else `gdb`) to `<run dir>-stall-shard_<N>.txt`, then kills the
 shard subtree so the run fails in minutes instead of waiting out
 `MINITEST_TIMEOUT` (600s). The report survives the run's TMPDIR cleanup; check
 there first when a run reports `stalled`. Independently, each test process
 reports every test that has been running longer than
-`KRIKRI_TEST_STALL_SECONDS` (default 120) as `test: still running after Ns
+`KRIKRI_TEST_STALL_SECONDS` (default 90) as `test: still running after Ns
 ...: <describe>#<test>` in its shard log - that names the culprit whenever the
 event loop is still alive. Set `KRIKRI_NO_STALL_WATCHDOG=1` for a run that
 legitimately has no output for minutes. Every playbook the suite spawns is

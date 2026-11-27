@@ -101,7 +101,7 @@ def with_key_file(&)
 end
 
 describe "rpm_key plugin fingerprint param" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "accepts a JSON-array-shaped list (a real YAML list after task-param substitution)" do
     with_rpm_key_shims do

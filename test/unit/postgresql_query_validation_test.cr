@@ -130,7 +130,7 @@ end
 # actually has, so the live-shape test probes the interpreter first; the
 # helper test below is deterministic through a shimmed interpreter.
 describe "postgresql_query psycopg2 library gate" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   def missing_library_message(library : String, python : String) : String
     "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \

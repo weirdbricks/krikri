@@ -680,7 +680,7 @@ end
 # therefore fail with that get_bin_path msg (the searched directory list
 # included, as real does) instead of this engine's "could not exec" error.
 describe "SynchronizeActionPlugin missing rsync" do
-  serial! # PATH is process-global
+  exclusive! # PATH is process-global
 
   it "fails with get_bin_path's searched-paths message, not a spawn error" do
     previous_path = ENV["PATH"]?

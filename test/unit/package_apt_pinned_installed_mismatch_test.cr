@@ -66,7 +66,7 @@ ensure
 end
 
 describe "package:/apt version pin vs installed version mismatch" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "fails an unsatisfied pin instead of reporting the base name installed" do
     with_pinned_mismatch_shims(PluginSpecHelper.tmp_path("pin-mismatch-shims")) do

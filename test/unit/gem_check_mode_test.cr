@@ -13,7 +13,7 @@ require "file_utils"
 # install for real and failed the task.
 describe "gem plugin check mode" do
   # The shim below is found through the process-wide PATH.
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   # `--version` feeds the RubyGems probe (>= 2.5.2 enables --norc), `list`
   # reports whatever the test seeded into the state file, and every

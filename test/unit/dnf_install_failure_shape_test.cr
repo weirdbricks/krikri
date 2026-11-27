@@ -189,7 +189,7 @@ private class DnfFailuresParseHarness
 end
 
 describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "carries the would-transaction results on the missing-spec failure (issue 1038)" do
     with_failing_dnf_shim("No match for argument: no-such-pkg\n", "Error: Unable to find a match: no-such-pkg\n",
@@ -551,7 +551,7 @@ METADATA_404_STDERR = "Errors during downloading metadata for repository 'cfssl'
                       "Error: " + METADATA_404_MSG + "\n"
 
 describe "dnf/yum repo-metadata download failure - ansible's bare msg shape (issue 267)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports just libdnf's metadata text from package: state installed" do
     with_failing_dnf_shim("", METADATA_404_STDERR) do
@@ -675,7 +675,7 @@ ensure
 end
 
 describe "dnf missing-spec + depsolve - ansible's combined depsolve shape (issue 321)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports the depsolve msg with the missing-spec failures from package:" do
     with_two_stage_dnf_shim("libunwind", MISSING_MULTI_STDOUT_321, MISSING_MULTI_STDERR_321, "", DEPSOLVE_RETRY_STDERR_321) do
@@ -803,7 +803,7 @@ ensure
 end
 
 describe "dnf cacheonly download failure - ansible's blanket-handler shape (issues 769, 932)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports the bare download error with no failures key for an update_only transaction" do
     with_cacheonly_dnf_shim(installed: true) do
@@ -873,7 +873,7 @@ end
 # SOLVABLE goal (it aborts before downloading or installing anything),
 # which must stay a clean would-install.
 describe "dnf check-mode resolution probe (issue 1050)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "check mode on a solver-unsatisfiable install fails with the depsolve shape, not changed" do
     with_failing_dnf_shim("", DEPSOLVE_STDERR) do
@@ -933,7 +933,7 @@ end
 # issue's own `package:` loop shape is pinned in
 # package_dnf_check_mode_test.cr.
 describe "dnf-family fill_sack metadata load preempts every verdict (issue 1031)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "check mode state: absent fails with the metadata shape instead of a would-remove plan" do
     with_failing_dnf_shim("", METADATA_404_STDERR) do
@@ -1182,7 +1182,7 @@ describe "dnf/yum check mode - an unresolvable spec fails like the real install 
 end
 
 describe "dnf failed-install results carry the resolved transaction (issue 1020)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports the replayed transaction entries in the fatal results (dnf)" do
     with_failing_dnf_shim_and_probe(MISSING_PKG_STDOUT, MISSING_PKG_STDERR) do
@@ -1233,7 +1233,7 @@ TX_TEST_MSG = "Transaction test error:\n" \
 TX_TEST_STDERR = "Error: #{TX_TEST_MSG}\n"
 
 describe "dnf/yum transaction test failure - libdnf's own error text (issue 1729)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports the CLI block without its Error: prefix (dnf)" do
     with_failing_dnf_shim("", TX_TEST_STDERR) do

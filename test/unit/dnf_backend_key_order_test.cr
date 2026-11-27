@@ -35,7 +35,7 @@ ensure
 end
 
 describe "dnf plugin - per-backend registered key order (round994003)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "uses the dnf4 response-dict order (msg first) when the pkg_mgr fact says dnf" do
     with_fake_dnf do

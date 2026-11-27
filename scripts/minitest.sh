@@ -410,7 +410,11 @@ dump_stall() {
 # on a stall dump what the shard and its threads are doing and kill it, so the
 # run fails in minutes with something to work from.
 watch_shards_for_stalls() {
-  local default_stall=120 stall i pid size now alive
+  # 180, not 120: a shard is legitimately silent while one bounded playbook
+  # runs up to KRIKRI_PLAYBOOK_DEADLINE_SECONDS (120) and an exclusive! test
+  # waits behind it (no other test may start meanwhile), so a 120s kill fired
+  # on a shard that was about to recover.
+  local default_stall=180 stall i pid size now alive
   [ -n "${KRIKRI_SLOW_TESTS:-}" ] && default_stall=600
   stall="${KRIKRI_STALL_SECONDS:-$default_stall}"
   [ "${KRIKRI_NO_STALL_WATCHDOG:-0}" = "1" ] && return 0

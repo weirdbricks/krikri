@@ -68,7 +68,7 @@ end
 # unavailable in the spec sandbox); the shim fails exactly the way real
 # iptables v1.8.7 does for a nonexistent jump target.
 describe "iptables plugin run_command failure shape and raw rule string (probe 1100001)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   private BINARY    = File.expand_path("../../bin/krikri-playbook", __DIR__)
   private INVENTORY = File.expand_path("../fixtures/inventory-explicit-localhost.ini", __DIR__)

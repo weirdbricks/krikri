@@ -24,7 +24,7 @@ require "json"
 # spec seam (never set by real playbooks) forces the absent path on this dev
 # box, which really has the bindings installed.
 describe "package: python3-apt module-start auto-install (issue #433)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "auto-installs python3-apt at module start and reports ok like the respawned module" do
     shim_dir = PluginSpecHelper.tmp_path("fake-python3-apt-autoinstall")

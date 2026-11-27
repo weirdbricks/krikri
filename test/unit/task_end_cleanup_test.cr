@@ -18,6 +18,7 @@ require "../../src/krikri/shell"
 # (no post-result connection attempt ever happened), so the same playbook
 # exited 2 with the play continuing into the role's wait_for task.
 describe "Krikri::PluginManager task_end_cleanup_failure_result (task_end_cleanup_test.cr)" do
+  exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   describe ".task_end_cleanup_failure_result" do
     it "replaces a successful module result with the unreachable shape when the cleanup exec's transport died" do
       module_result = JSON.parse({"changed" => true, "rc" => 0, "stdout" => ""}.to_json)

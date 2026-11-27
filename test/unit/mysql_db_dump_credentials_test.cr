@@ -60,6 +60,7 @@ private def with_shims(&)
 end
 
 describe "mysql_db dump/import credential staging" do
+  exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   it "dump passes login_password via the staged --defaults-extra-file, never argv" do
     with_shims do |capture_dir|
       target = File.tempname("krikri-dump.sql")

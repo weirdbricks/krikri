@@ -64,6 +64,7 @@ ensure
 end
 
 describe "yum: package-group install idempotency" do
+  exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   it "reports changed: false for an already-installed group (empty Transaction Summary)" do
     with_fake_yum(NOOP_GROUP_OUTPUT) do
       result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"}, vars: {"ansible_pkg_mgr" => "dnf"})

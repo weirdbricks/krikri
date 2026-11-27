@@ -119,8 +119,12 @@ describe "profile_tasks callback emulation" do
       end
       slow_row = rows.find! { |row| row.starts_with?("slow task ") }
       slow_row.must_match(/\Aslow task -+ +\d+\.\d{2}s\z/)
-      # The 2-second command task is the slowest row.
-      rows.first.must_equal(slow_row)
+      # Slowest first, asserted as the ordering property itself: every
+      # task here is near-instant ("slow task" is `command: true`), so
+      # WHICH row is slowest is load noise - pinning "slow task" to the top
+      # failed whenever a debug task happened to take longer.
+      seconds = rows.map { |row| row[/(\d+\.\d{2})s\z/, 1].to_f }
+      seconds.must_equal(seconds.sort.reverse!)
     end
 
     it "runs the same path through the --krikri-profile-tasks flag" do

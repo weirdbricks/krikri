@@ -57,7 +57,7 @@ end
 describe "rpm_key plugin result key order (sweep8)" do
   # Puts a stub rpm first on the process-wide PATH: serialize with the
   # other ENV-touching tests (see test/minitest_helper.cr).
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   # Ansible 2.19.11 rpm_key.py has FOUR success exits, all bare
   # exit_json(changed=...) - key imported / already present (state
@@ -235,7 +235,7 @@ describe "gem plugin result key order (sweep8)" do
   # exactly {name, state, changed, failed}). krikri's success paths now
   # echo name/state (+ version when requested) and dropped the borrowed
   # "Gem installed"/"already ..." msgs and the raw gem stdout.
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   GEM_SHIM = <<-'SH'
     #!/bin/sh
@@ -489,7 +489,7 @@ describe "iptables plugin result key order (sweep8)" do
   # kernel netfilter access unprivileged) driving the Ansible module's own
   # code paths, against the real /usr/sbin/iptables' argv shape.
 
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   IPTABLES_SHIM = <<-'SH'
     #!/bin/sh

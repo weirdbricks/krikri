@@ -109,7 +109,7 @@ ensure
 end
 
 describe "package:/apt locate-miss failure shape (issues 194 and 195)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports No package matching for a state: present name apt can't locate" do
     with_failing_apt_get_shim(APT_LOCATE_MISS_STDERR) do
@@ -338,7 +338,7 @@ private def apt_790_cache_script(provider_candidate : String, providing_version 
 end
 
 describe "package:/apt provider-bearing virtual names keep apt-get's own failure (issue 790)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "keeps the raw rc-100 failure when a provider's providing version is its candidate (latest)" do
     with_failing_apt_get_shim(APT_VIRTUAL_790_STDERR, "", apt_cache_script: apt_790_cache_script("2.0-1", "2.0-1")) do
@@ -401,7 +401,7 @@ APT_PLUS_MODIFIER_STDERR = "E: Unable to locate package gcc-c+\n" \
                            "E: Unable to locate package bison-devel\n"
 
 describe "package:/apt plus-modifier name mapping (issue 288)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports the full plus-suffixed name instead of the stripped token or a later list name" do
     with_failing_apt_get_shim(APT_PLUS_MODIFIER_STDERR) do
@@ -472,7 +472,7 @@ ensure
 end
 
 describe "package:/apt check-mode simulate flag ordering (issue 1238)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "fails a boolean-looking name instead of reporting a simulated change (present)" do
     with_simulate_value_apt_get_shim do

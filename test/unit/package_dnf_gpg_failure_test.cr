@@ -49,7 +49,7 @@ ensure
 end
 
 describe "package: unsigned .rpm install - ansible's GPG-validation failure (issue 329)" do
-  serial!
+  exclusive! # PATH is process-wide: a serial! window leaked it to concurrent tests' children
 
   it "reports the bare GPG msg, no stderr or failures key (present)" do
     with_gpg_failing_dnf_shim(PGDG_TABLE_STDOUT, PGDG_KEY_STDERR) do
