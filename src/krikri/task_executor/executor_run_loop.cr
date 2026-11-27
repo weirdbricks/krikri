@@ -4453,24 +4453,23 @@ module Krikri
       end
 
       # An unported module family that imports a client library at MODULE
-      # level (`k8s`/kubernetes.core.k8s, issue #1155; community.vmware.*,
-      # issue #1523; community.libvirt.virt, issue #1742) runs its
-      # synthesized import gate on the target instead of taking the
-      # unavailable-module skip above: on a target without that library
-      # real ansible fails the task with the module's own
-      # missing-library text before touching anything - a failed
-      # task, never a skip. When the gate reports the libraries
-      # importable, the module would go on to talk to a cluster/vCenter
-      # this engine cannot reach either, so the designed
-      # unavailable-module skip applies from here - registration
-      # included, exactly where the skip above would have done it.
+      # level (`k8s`/kubernetes.core.k8s, issue #1155;
+      # community.libvirt.virt, issue #1742) runs its synthesized import
+      # gate on the target instead of taking the unavailable-module skip
+      # above: on a target without that library real ansible fails the
+      # task with the module's own missing-library text before touching
+      # anything - a failed task, never a skip. When the gate reports the
+      # libraries importable, the module would go on to talk to a cluster
+      # this engine cannot reach either, so the designed unavailable-module
+      # skip applies from here - registration included, exactly where the
+      # skip above would have done it.
       if task.unavailable_module && (gate_source = import_gate_source_for(task))
         result = execute_python_module(task, gate_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout, substituted_become_flags, daemon_scope_for(host, exec_host), context_first: exec_host == host)
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
         result = InvocationInjection.strip(result) unless InvocationInjection.enabled?(vars_context)
-        if result.as_h?.try { |gate_result| gate_result.has_key?("_krikri_k8s_lib_present") || gate_result.has_key?("_krikri_vmware_libs_present") || gate_result.has_key?("_krikri_libvirt_libs_present") }
+        if result.as_h?.try { |gate_result| gate_result.has_key?("_krikri_k8s_lib_present") || gate_result.has_key?("_krikri_libvirt_libs_present") }
           register_unavailable_module(task, vars_context)
           # A LOOPED caller (defer_loop_stats) must not print or book-keep
           # here: like the skip above, its "skipping:" line prints from
@@ -5297,14 +5296,6 @@ module Krikri
     # failed task in real, never a skip (issue #1155).
     K8S_IMPORT_GATE_MODULES = Set{"k8s", "kubernetes.core.k8s", "community.kubernetes.k8s"}
 
-    # community.vmware's modules are one family behind one module_utils
-    # (its clients import vmware.py), so every FQCN in the collection
-    # takes the same requests/PyVmomi import gate
-    # (PythonModuleRunner.vmware_import_gate_source) rather than the
-    # unavailable-module skip - the same MODULE-level-library class as
-    # k8s above, under --check too (issue #1523).
-    VMWARE_IMPORT_GATE_PREFIX = "community.vmware."
-
     # community.libvirt's `virt` (domain management) is unported - unlike
     # its virt_net/virt_pool siblings, which this engine implements over
     # the virsh CLI - and real runs it: virt.py imports libvirt/lxml at
@@ -5313,7 +5304,7 @@ module Krikri
     # because it declares supports_check_mode=True. Both spellings a task
     # can carry route to the same gate
     # (PythonModuleRunner.libvirt_import_gate_source), the
-    # MODULE-level-library class of k8s/vmware above (issue #1742:
+    # MODULE-level-library class of k8s above (issue #1742:
     # siavashoutadi.virt_guest's define task, exit 4 against real's 2).
     # Only `virt` is listed: virt_install reaches the same libvirt/lxml
     # gate through the collection's module_utils but makes none of
@@ -5331,7 +5322,6 @@ module Krikri
       name = task.unavailable_module || return nil
       return nil unless python_module_source_for(task).nil?
       return PythonModuleRunner.k8s_import_gate_source if K8S_IMPORT_GATE_MODULES.includes?(name)
-      return PythonModuleRunner.vmware_import_gate_source if name.starts_with?(VMWARE_IMPORT_GATE_PREFIX)
       return PythonModuleRunner.libvirt_import_gate_source if LIBVIRT_IMPORT_GATE_MODULES.includes?(name)
       nil
     end

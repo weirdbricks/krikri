@@ -2388,7 +2388,7 @@ module Krikri
       # supplying your own implementation of a module Ansible removed is a
       # normal reason to build one. Deliberately bare names only - the same
       # narrowing the library/ escape above documents, since real refuses an
-      # FQCN tombstone (`community.vmware.vcenter_folder`, ...) at load no
+      # FQCN tombstone (`community.general.docker_service`, ...) at load no
       # matter what the controller has locally.
       return if !as_written.includes?('.') && RuntimePluginRegistry.registered?(as_written)
 
