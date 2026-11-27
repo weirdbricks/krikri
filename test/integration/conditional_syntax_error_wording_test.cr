@@ -411,6 +411,41 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     output.must_include("Use inline expressions, for example: `when: \"{{ a_var }}\" == 42` becomes `when: a_var == 42`")
   end
 
+  # Ansible appends the delimiter sentence to EVERY expression syntax
+  # error whose raw expression CONTAINS a template start string - its gate
+  # does not skip string literals the way the delimiter pre-reject above
+  # does - so a `when:` that fails to compile for an unrelated reason
+  # still carries it. And its constant-template warning only fires from
+  # the RENDER, which a compile failure never reaches, so no warning
+  # accompanies it (issue #1907:
+  # idealista.prometheus_mysqld_exporter-role's own download-package
+  # clause, verbatim).
+  it "adds the delimiter sentence to a compile error whose raw clause quotes a template, without its constant warning" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          mysqld_exporter_force_reinstall: false
+          mysqld_exporter_version: "0.10.0"
+          mysqld_exporter_check:
+            failed: true
+            stdout: ""
+        tasks:
+          - name: MYSQLD_EXPORTER | Download package
+            get_url:
+              url: "https://example.invalid/mysqld_exporter.tar.gz"
+              dest: /tmp
+            when: 'mysqld_exporter_force_reinstall or mysqld_exporter_check|failed or "mysqld_exporter, version {{ mysqld_exporter_version }}" not in mysqld_exporter_check.stdout'
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: A 'when' expression failed: Syntax error in expression. Template delimiters are not supported in expressions: No filter named 'failed'.")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: A 'when' expression failed: Syntax error in expression. Template delimiters are not supported in expressions: No filter named 'failed'.\"}")
+    output.wont_include("Syntax error in expression: No filter")
+    output.wont_include("Jinja constant strings")
+    output.wont_include("Unhandled exception")
+  end
+
   # Real TEMPLATES a whole-template conditional first, so the fact read
   # inside it deprecates during that render and only the non-string result
   # trips the delimiters deprecation afterwards - both Origin'd at the

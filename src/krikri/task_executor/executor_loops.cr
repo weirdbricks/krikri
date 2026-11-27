@@ -3583,7 +3583,7 @@ module Krikri
                  message = ex.message.to_s
                  message.starts_with?("The filter plugin '") ? message : "Error while evaluating conditional: #{message}"
                elsif ex.is_a?(VariableSubstitutor::FilterEngine::UnknownFilterError) || ex.is_a?(VariableSubstitutor::UnknownTestError)
-                 "Syntax error in expression: #{ex.message}"
+                 ConditionalEvaluator.expression_syntax_error(ex.message.to_s, until_condition || "")
                elsif ex.is_a?(ConditionalEvaluator::ConditionalBooleanError)
                  # Real words the non-boolean class with its own text and no
                  # "Error while evaluating conditional:" wrapper - and

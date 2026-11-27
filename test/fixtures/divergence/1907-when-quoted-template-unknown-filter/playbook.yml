@@ -1,0 +1,24 @@
+---
+# Issue #1907's failing task, copied verbatim from
+# idealista.prometheus_mysqld_exporter-role's tasks/install.yml:35-39. The
+# clause is the role's own spelling of the version check; `|failed` is a
+# TEST, not a filter, so the expression never compiles and the get_url
+# module below is never reached. The play supplies the role defaults that
+# clause reads (defaults/main.yml) plus the registered-shape result of the
+# role's preceding `command: mysqld_exporter -version` check.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    mysqld_exporter_force_reinstall: false
+    mysqld_exporter_version: 0.10.0
+    mysqld_exporter_url: "https://github.com/prometheus/mysqld_exporter/releases/download/v{{ mysqld_exporter_version }}/mysqld_exporter-{{ mysqld_exporter_version }}.linux-amd64.tar.gz"
+    mysqld_exporter_check:
+      failed: true
+      stdout: ""
+  tasks:
+    - name: MYSQLD_EXPORTER | Download package
+      get_url:
+        url: "{{ mysqld_exporter_url }}"
+        dest: /tmp
+      when: 'mysqld_exporter_force_reinstall or mysqld_exporter_check|failed or "mysqld_exporter, version {{ mysqld_exporter_version }}" not in mysqld_exporter_check.stdout'
