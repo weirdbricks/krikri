@@ -23,9 +23,7 @@ require "../../src/krikri/variable_substitutor"
 # filter names, and string literals are all carved out so normal
 # playbooks don't false-positive.
 describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.cr)" do
-  include RaisesAssertion
   describe "strict block-tag undefined scan (round 194 openjdk)" do
-    include RaisesAssertion
     it "raises on undefined bare ref inside {% if %} with strict: true" do
       v = {
         "openjdk_install_dir"    => JSON::Any.new("/usr/local/openjdk"),
@@ -351,7 +349,6 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
   end
 
   describe "strict block-tag missing dict key consumed by a slice (issue #113)" do
-    include RaisesAssertion
 
     # Issue #113: a set_fact arg like
     #   "{% if inventory_hostname in groups['mdm'][::2] %}1{% else %}0{% endif %}"

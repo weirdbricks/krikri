@@ -9,7 +9,6 @@ private def render(source : String, vars : Hash(String, JSON::Any) = {} of Strin
 end
 
 describe Krikri::KrikriJinjaFilters do
-  include RaisesAssertion
   it "registers pytruthy with Python truthiness" do
     render("{{ value | pytruthy }}", {"value" => JSON::Any.new("")}).must_equal("False")
     render("{{ value | pytruthy }}", {"value" => JSON.parse("[]")}).must_equal("False")
@@ -180,7 +179,6 @@ end
 
 # Expected values below were live-verified against ansible-core 2.19.
 describe "Krikri::KrikriJinjaFilters Ansible tests and remaining filters" do
-  include RaisesAssertion
   it "registers the version, regex, and collection tests" do
     render("{{ '8.9p1' is version('8.10', '<') }}").must_equal("True")
     render("{{ 'Port 22' is match('Port') }} {{ 'a Port' is match('Port') }} {{ 'a Port' is search('Port') }}")

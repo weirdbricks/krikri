@@ -10,9 +10,7 @@ require "../../src/krikri/playbook_parser"
 # treats it as "run this module on the controller" - the value parses
 # exactly like `action:` and the task delegates to localhost.
 describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
-  include RaisesAssertion
   describe "legacy local_action: directive" do
-    include RaisesAssertion
     it "rewrites `local_action: <module> k=v` to the module with parsed args" do
       pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: legacy local_action

@@ -11,9 +11,7 @@ private def j(json : String) : JSON::Any
 end
 
 describe "Krikri::VariableSubstitutor::FilterEngine (lists_mergeby_test.cr)" do
-  include RaisesAssertion
   describe "lists_mergeby" do
-    include RaisesAssertion
     it "merges two lists of dicts by a shared key, later list winning on collisions" do
       value = j(%([{"name": "a", "port": 1}, {"name": "b", "port": 2}]))
       result = engine.apply(value, %(lists_mergeby([{"name": "a", "host": "x"}], "name")))

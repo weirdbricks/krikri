@@ -21,7 +21,6 @@ end
 # fails with "Syntax error in expression: No filter named 'success'.",
 # krikri silently skipped the task instead.
 describe "ConditionalEvaluator compile-time filter-name validation" do
-  include RaisesAssertion
   it "raises for an unknown filter buried behind a short-circuited False clause" do
     v = vars({"Y" => "yes"})
     assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError, "No filter named 'success'") do
@@ -96,7 +95,6 @@ describe "ConditionalEvaluator compile-time filter-name validation" do
 end
 
 describe "FilterEngine::KNOWN_FILTER_NAMES registry" do
-  include RaisesAssertion
   it "contains no name the apply() dispatch no longer knows" do
     engine = Krikri::VariableSubstitutor::FilterEngine.new
     Krikri::VariableSubstitutor::FilterEngine::KNOWN_FILTER_NAMES.each do |name|

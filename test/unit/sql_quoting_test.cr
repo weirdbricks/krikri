@@ -6,9 +6,7 @@ require "../../src/krikri/plugin_helpers/sql_quoting"
 # all byte-identical within a dialect - the same drift trap this
 # project has hit with shell_single_quote before).
 describe Krikri::PluginHelpers::SqlQuoting do
-  include RaisesAssertion
   describe ".pg_quote_ident" do
-    include RaisesAssertion
     it "wraps in double quotes and doubles embedded ones" do
       Krikri::PluginHelpers::SqlQuoting.pg_quote_ident("mydb").must_equal("\"mydb\"")
       Krikri::PluginHelpers::SqlQuoting.pg_quote_ident("weird\"db").must_equal("\"weird\"\"db\"")
@@ -27,7 +25,6 @@ describe Krikri::PluginHelpers::SqlQuoting do
   end
 
   describe ".mysql_quote_ident" do
-    include RaisesAssertion
     it "wraps in backticks and doubles embedded ones" do
       Krikri::PluginHelpers::SqlQuoting.mysql_quote_ident("mydb").must_equal("`mydb`")
       Krikri::PluginHelpers::SqlQuoting.mysql_quote_ident("weird`db").must_equal("`weird``db`")
@@ -35,7 +32,6 @@ describe Krikri::PluginHelpers::SqlQuoting do
   end
 
   describe ".quote_str" do
-    include RaisesAssertion
     it "wraps in single quotes and doubles embedded ones (both dialects)" do
       Krikri::PluginHelpers::SqlQuoting.quote_str("plain").must_equal("'plain'")
       Krikri::PluginHelpers::SqlQuoting.quote_str("it's").must_equal("'it''s'")
@@ -49,7 +45,6 @@ describe Krikri::PluginHelpers::SqlQuoting do
   # ~/.the Ansible module under python3 -
   # not hand-derived. This is what pins parity with Ansible.
   describe ".pg_quote_identifier" do
-    include RaisesAssertion
     it "quotes simple identifiers, preserving case" do
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("public", "table").must_equal("\"public\"")
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("mydb", "database").must_equal("\"mydb\"")

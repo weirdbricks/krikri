@@ -6,7 +6,7 @@
 #   scripts/minitest_stats.sh --slices 4 DIR      # write DIR/<map>.tsv for scripts/minitest.sh
 #   scripts/minitest_stats.sh --publish           # refresh the tracked baseline + history
 #
-# Where the numbers come from: run_one in test/minitest_helper.cr appends one
+# Where the numbers come from: our minitest fork (Minitest::Timings) appends one
 # "<seconds>\t<serial|parallel>\t<test>\t<run>" line per test to the file in
 # MINITEST_TIMINGS (.minitest_timings.tsv for a scripts/minitest.sh run).
 #

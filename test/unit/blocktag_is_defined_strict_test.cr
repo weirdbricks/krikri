@@ -14,7 +14,6 @@ require "../../src/krikri/variable_substitutor"
 # block_tag_ref_is_defined_test; the block-tag scan simply never
 # called that helper.
 describe "strict block-tag scan: `is defined` on a plain undefined variable never raises" do
-  include RaisesAssertion
   it "renders the ELSE branch for `{% if undefined_var is defined %}`" do
     sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
 
@@ -77,7 +76,6 @@ describe "strict block-tag scan: `is defined` on a plain undefined variable neve
   # live, ansible-core 2.19.11) short-circuits the entire guarded
   # branch away and never evaluates it at all.
   describe "nesting across SEPARATE {% %} tags (not just within one)" do
-    include RaisesAssertion
     it "buluma.postfix's own real shape: is-defined guard, then the same var reused in a nested {% if %}/{% elif %}/{% for %}" do
       sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
 

@@ -4,9 +4,7 @@ require "../../src/krikri/plugin_helpers/mysql_privileges"
 private alias Grant = Krikri::PluginHelpers::MysqlPrivileges::Grant
 
 describe Krikri::PluginHelpers::MysqlPrivileges do
-  include RaisesAssertion
   describe ".parse_spec" do
-    include RaisesAssertion
     it "parses a single db.table:priv1,priv2 entry" do
       grants = Krikri::PluginHelpers::MysqlPrivileges.parse_spec("testdb.*:SELECT,INSERT")
       grants.must_equal([Grant.new("testdb.*", Set{"SELECT", "INSERT"})])
@@ -40,7 +38,6 @@ describe Krikri::PluginHelpers::MysqlPrivileges do
   # Real `SHOW GRANTS FOR user@host` output, captured from a live MariaDB
   # 11 server - see git log's mysql_user commits.
   describe ".parse_show_grants_line" do
-    include RaisesAssertion
     it "parses the baseline GRANT USAGE identity row as a USAGE grant" do
       # Real community.mysql keeps the baseline row too (privileges_get):
       # the idempotency comparison needs it, since a spec of "*.*:USAGE"
@@ -79,7 +76,6 @@ describe Krikri::PluginHelpers::MysqlPrivileges do
   end
 
   describe ".current_grants / .desired_grants" do
-    include RaisesAssertion
     it "matches a real multi-database SHOW GRANTS result against the equivalent priv: spec" do
       show_grants = [
         "Grants for demo2@%",
@@ -123,7 +119,6 @@ describe Krikri::PluginHelpers::MysqlPrivileges do
   end
 
   describe ".plan_changes" do
-    include RaisesAssertion
     ALIAS = Krikri::PluginHelpers::MysqlPrivileges
 
     it "ignores MariaDB's GRANT PROXY line" do

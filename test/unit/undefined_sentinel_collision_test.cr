@@ -17,7 +17,6 @@ private def sub(vars)
 end
 
 describe "dotted-index 'undefined'-string sentinel collision" do
-  include RaisesAssertion
   it "renders a real 'undefined' string value on a dotted numeric index under strict" do
     vars = {"s2" => JSON.parse(%({"stdout_lines": ["undefined"]}))}
     sub(vars).substitute("{{ s2.stdout_lines.0 }}", strict: true).must_equal("undefined")

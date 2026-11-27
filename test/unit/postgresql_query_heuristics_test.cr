@@ -7,9 +7,7 @@ require "../../src/krikri/plugin_helpers/postgresql_query_heuristics"
 # its source) - the plugin's execution paths need a live PostgreSQL
 # server, these don't.
 describe Krikri::PluginHelpers::PostgresqlQueryHeuristics do
-  include RaisesAssertion
   describe ".leading_keyword" do
-    include RaisesAssertion
     it "reads through leading comments and whitespace" do
       sql = "-- check server\n\nSELECT version();"
       Krikri::PluginHelpers::PostgresqlQueryHeuristics.leading_keyword(sql).must_equal("SELECT")
@@ -26,7 +24,6 @@ describe Krikri::PluginHelpers::PostgresqlQueryHeuristics do
   end
 
   describe ".changed?" do
-    include RaisesAssertion
     it "never reports changed for SELECT/SHOW" do
       Krikri::PluginHelpers::PostgresqlQueryHeuristics.changed?("SELECT", 3).must_equal(false)
       Krikri::PluginHelpers::PostgresqlQueryHeuristics.changed?("SHOW", 1).must_equal(false)
@@ -46,7 +43,6 @@ describe Krikri::PluginHelpers::PostgresqlQueryHeuristics do
   end
 
   describe ".expand_named_args" do
-    include RaisesAssertion
     it "rewrites %(name)s to $N in first-appearance order" do
       sql = "SELECT * FROM t WHERE id = %(id_val)s AND story = %(story_val)s"
       expanded, args = Krikri::PluginHelpers::PostgresqlQueryHeuristics.expand_named_args(

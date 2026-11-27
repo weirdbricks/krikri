@@ -19,9 +19,7 @@ require "file_utils"
 # (Ansible's ImportRole inherits the full Task fattributes and
 # accepts them).
 describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
-  include RaisesAssertion
   describe "include: directive strict attribute allowlist (round 194)" do
-    include RaisesAssertion
     it "rejects become_user: on include_tasks: like Ansible" do
       assert_raises_message(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become_user' is not a valid attribute for a TaskInclude/) do
         Krikri::PlaybookParser.parse_string(<<-YAML)
@@ -182,7 +180,6 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
   end
 
   describe "listen: on a block wrapper is refused (issue #807)" do
-    include RaisesAssertion
     it "rejects listen: on a handlers block like Ansible (Block has no listen attribute)" do
       # Real bug found benchmarking anylinq.systemupdates (issue #807):
       # the role's handlers/main.yml puts `listen:` on the block

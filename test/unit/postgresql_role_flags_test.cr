@@ -2,9 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/postgresql_role_flags"
 
 describe Krikri::PluginHelpers::PostgresqlRoleFlags do
-  include RaisesAssertion
   describe ".parse" do
-    include RaisesAssertion
     it "parses positive flags as true" do
       Krikri::PluginHelpers::PostgresqlRoleFlags.parse("LOGIN,CREATEDB")
         .must_equal({"LOGIN" => true, "CREATEDB" => true})
@@ -28,7 +26,6 @@ describe Krikri::PluginHelpers::PostgresqlRoleFlags do
   end
 
   describe ".to_sql" do
-    include RaisesAssertion
     it "renders a flags hash into a CREATE/ALTER ROLE clause" do
       Krikri::PluginHelpers::PostgresqlRoleFlags.to_sql({"LOGIN" => true, "SUPERUSER" => false})
         .must_equal("LOGIN NOSUPERUSER")
@@ -36,7 +33,6 @@ describe Krikri::PluginHelpers::PostgresqlRoleFlags do
   end
 
   describe ".column_for" do
-    include RaisesAssertion
     it "maps every known flag to a real pg_roles column" do
       Krikri::PluginHelpers::PostgresqlRoleFlags::FLAGS.each do |flag|
         expect(str_starts_with?(Krikri::PluginHelpers::PostgresqlRoleFlags.column_for(flag), "rol")).must_equal(true)

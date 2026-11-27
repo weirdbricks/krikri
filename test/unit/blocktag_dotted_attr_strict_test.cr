@@ -36,9 +36,7 @@ def traefik_vars : Hash(String, JSON::Any)
 end
 
 describe "strict block-tag scan: dotted/bracketed chains resolve by their ROOT" do
-  include RaisesAssertion
   describe "the traefik case itself" do
-    include RaisesAssertion
     it "renders a bare block-tag-valued variable to its real value" do
       sub = Krikri::VarSubstitutor.new(vars: traefik_vars, host_name: "h")
       sub.substitute("{{ traefik_install_ver }}").must_equal("2")
@@ -63,7 +61,6 @@ describe "strict block-tag scan: dotted/bracketed chains resolve by their ROOT" 
   end
 
   describe "attribute access on a DEFINED root is not undefined" do
-    include RaisesAssertion
     it "dotted chain inside {% if %} renders the taken branch (strict)" do
       h = Hash(String, JSON::Any).new
       h["d"] = JSON.parse(%({"attr": "x"}))
@@ -87,7 +84,6 @@ describe "strict block-tag scan: dotted/bracketed chains resolve by their ROOT" 
   end
 
   describe "genuine undefined roots still raise (strictness preserved)" do
-    include RaisesAssertion
     it "raises naming the ROOT for a dotted chain rooted at a missing var" do
       sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
       assert_raises_message(Krikri::UndefinedVariableError, /'nosuch' is undefined/) do
@@ -116,7 +112,6 @@ describe "strict block-tag scan: dotted/bracketed chains resolve by their ROOT" 
   end
 
   describe "the lenient path is unchanged" do
-    include RaisesAssertion
     it "still renders undefined-in-if as falsy (no false negative)" do
       h = Hash(String, JSON::Any).new
       h["openjdk_install_dir"] = JSON::Any.new("/usr/local/openjdk")

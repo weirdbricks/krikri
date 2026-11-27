@@ -30,14 +30,12 @@ private def write_script(path : String, content : String)
 end
 
 describe Krikri::InventoryParser do
-  include RaisesAssertion
   before_each do
     FileUtils.rm_rf(root) if Dir.exists?(root)
     Dir.mkdir_p(root)
   end
 
   describe "INI value parsing" do
-    include RaisesAssertion
     it "parses an unquoted integer as a number" do
       write(File.join(root, "inventory.ini"), <<-INI)
         [web]
@@ -231,7 +229,6 @@ describe Krikri::InventoryParser do
   end
 
   describe "basic INI parsing" do
-    include RaisesAssertion
     it "parses hosts, inline vars, and group membership" do
       write(File.join(root, "inventory.ini"), <<-INI)
         [web]
@@ -263,7 +260,6 @@ describe Krikri::InventoryParser do
   end
 
   describe "host:port entries (issue #1067)" do
-    include RaisesAssertion
 
     it "splits a host:port entry into the hostname and an ansible_port var" do
       write(File.join(root, "inventory.ini"), <<-INI)
@@ -345,7 +341,6 @@ describe Krikri::InventoryParser do
   end
 
   describe "host-pattern wildcard matching (fnmatch semantics)" do
-    include RaisesAssertion
     it "matches a trailing * over literal dots" do
       inventory = build_pattern_inventory
       names = inventory.get_hosts("web*.example.com").map(&.name).sort!
@@ -375,7 +370,6 @@ describe Krikri::InventoryParser do
   end
 
   describe "~regex host-pattern matching (ansible's ~ term)" do
-    include RaisesAssertion
     it "matches host names by regex, anchored at the start only (re.match)" do
       inventory = build_pattern_inventory
       inventory.get_hosts("~^web").map(&.name).sort!.must_equal(["web1.example.com", "web10", "web2.example.com"])
@@ -400,7 +394,6 @@ describe Krikri::InventoryParser do
   end
 
   describe "groups_for memoization" do
-    include RaisesAssertion
     it "reflects membership changes made after a cached call" do
       # Regression guard for the groups_for index: the memo must be
       # invalidated when group membership changes (e.g. meta:
@@ -426,7 +419,6 @@ describe Krikri::InventoryParser do
   end
 
   describe "group_vars/host_vars directory loading" do
-    include RaisesAssertion
     it "applies group_vars/all.yml to every host" do
       write(File.join(root, "inventory.ini"), <<-INI)
         web1
@@ -597,7 +589,6 @@ describe Krikri::InventoryParser do
   end
 
   describe "dynamic (executable script) inventory" do
-    include RaisesAssertion
     it "is detected by the executable bit, not the filename" do
       write_script(File.join(root, "dynamic-inventory"), <<-SH)
         #!/bin/sh
@@ -686,7 +677,6 @@ describe Krikri::InventoryParser do
   end
 
   describe ".validate" do
-    include RaisesAssertion
     it "does not warn about a host with no explicit user - ansible-playbook never emits this warning" do
       # Found round 300-303: this engine printed a spurious "Host 'x' has
       # no user specified" inventory warning that ansible-playbook

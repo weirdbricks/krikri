@@ -5,9 +5,7 @@ require "../../src/krikri/plugin_helpers/docker_resources"
 # (`the Ansible module`'s `SIZE_RANGES`) -
 # binary (1024-based) units despite the non-"i" K/M/G/T/P spelling.
 describe Krikri::PluginHelpers::DockerResources do
-  include RaisesAssertion
   describe ".human_to_bytes" do
-    include RaisesAssertion
     it "parses a bare number with no unit as already-bytes" do
       Krikri::PluginHelpers::DockerResources.human_to_bytes("1024").must_equal(1024_i64)
     end
@@ -40,7 +38,6 @@ describe Krikri::PluginHelpers::DockerResources do
   end
 
   describe ".memory_swap_to_bytes" do
-    include RaisesAssertion
     it "converts 'unlimited' and '-1' to the literal -1 (Ansible's own unlimited-swap convention)" do
       Krikri::PluginHelpers::DockerResources.memory_swap_to_bytes("unlimited").must_equal(-1_i64)
       Krikri::PluginHelpers::DockerResources.memory_swap_to_bytes("-1").must_equal(-1_i64)
@@ -52,7 +49,6 @@ describe Krikri::PluginHelpers::DockerResources do
   end
 
   describe ".cpus_to_nano_cpus" do
-    include RaisesAssertion
     it "converts a float CPU count to nanocpus (cpus * 1e9)" do
       Krikri::PluginHelpers::DockerResources.cpus_to_nano_cpus(1.5).must_equal(1_500_000_000_i64)
     end

@@ -9,7 +9,6 @@ require "krikri-xml"
 describe Krikri::PluginHelpers::IamApi do
   serial! # mutates process-global state (ENV / engine settings)
 
-  include RaisesAssertion
   after_each do
     Krikri::PluginHelpers::IamApi.transport = nil
   end

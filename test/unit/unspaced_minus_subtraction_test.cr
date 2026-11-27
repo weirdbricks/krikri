@@ -10,7 +10,6 @@ require "../../src/krikri/krikri_jinja_filters"
 # text "undefined" both into a debug msg and, worse, as an apt package
 # name. Ansible observed live against ansible-core 2.19.11.
 describe "unspaced-minus binary subtraction (issue #338)" do
-  include RaisesAssertion
 
   it "strict task-param render of {{ python3-pkgs }} fails the way ansible does" do
     sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new)

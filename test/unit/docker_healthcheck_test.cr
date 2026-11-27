@@ -7,9 +7,7 @@ require "../../src/krikri/plugin_helpers/docker_healthcheck"
 # plugins/the Ansible module) - see plugins/docker_container.cr's own
 # doc comment.
 describe Krikri::PluginHelpers::DockerHealthcheck do
-  include RaisesAssertion
   describe ".duration_to_ns" do
-    include RaisesAssertion
     it "parses a plain seconds duration" do
       Krikri::PluginHelpers::DockerHealthcheck.duration_to_ns("10s").must_equal(10_000_000_000_i64)
     end
@@ -35,7 +33,6 @@ describe Krikri::PluginHelpers::DockerHealthcheck do
   end
 
   describe ".normalize_test" do
-    include RaisesAssertion
     it "passes a list test straight through as strings" do
       test = JSON.parse(%(["CMD", "curl", "--fail", "http://localhost"]))
       Krikri::PluginHelpers::DockerHealthcheck.normalize_test(test).must_equal(["CMD", "curl", "--fail", "http://localhost"])
@@ -48,7 +45,6 @@ describe Krikri::PluginHelpers::DockerHealthcheck do
   end
 
   describe ".parse" do
-    include RaisesAssertion
     it "parses a full healthcheck dict" do
       json = %({"test": ["CMD", "curl", "--fail", "http://localhost"], "interval": "1m30s", "timeout": "10s", "retries": 3, "start_period": "30s"})
       parsed = (Krikri::PluginHelpers::DockerHealthcheck.parse(json) || raise "unexpected nil")

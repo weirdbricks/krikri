@@ -2,9 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/docker_ports"
 
 describe Krikri::PluginHelpers::DockerPorts do
-  include RaisesAssertion
   describe ".parse" do
-    include RaisesAssertion
     it "parses a bare container port" do
       m = Krikri::PluginHelpers::DockerPorts.parse("80")
       m.host_ip.must_be_nil

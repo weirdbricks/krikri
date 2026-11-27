@@ -22,9 +22,7 @@ require "../../src/krikri/conditional_evaluator"
 # Every expectation below was verified against ansible-core 2.19.4
 # running the equivalent playbook, not assumed.
 describe "nested undefined chains" do
-  include RaisesAssertion
   describe "strict substitution follows the chain" do
-    include RaisesAssertion
     it "raises naming the INNERMOST missing variable, not the one referenced" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
       sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
@@ -95,7 +93,6 @@ describe "nested undefined chains" do
   end
 
   describe "the Crinja side treats such a chain as really Undefined" do
-    include RaisesAssertion
     it "lets default() fire, instead of returning the sentinel text" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
       sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
@@ -119,7 +116,6 @@ describe "nested undefined chains" do
   end
 
   describe "ConditionalEvaluator agrees with the Crinja side" do
-    include RaisesAssertion
     # The two Jinja evaluators in this codebase share no implementation
     # (see AGENTS.md), so this same bug class has to be fixed - and
     # regression-tested - independently in each.

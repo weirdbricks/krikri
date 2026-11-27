@@ -23,7 +23,6 @@ private def with_timing(&)
 end
 
 describe Krikri::TimingProfile do
-  include RaisesAssertion
 
   it "is a bare yield when disabled - nothing is recorded" do
     with_timing do

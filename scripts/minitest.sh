@@ -23,7 +23,7 @@
 # process the fibers share a single OS thread, so CPU-bound work (process
 # spawns, parsing) serializes. The processes no longer each need their own
 # compile: every shard runs the SAME .minitest_all.bin and takes its share of
-# the tests through MINITEST_SLICE_MAP (PluginSpecHelper::Slice), so a source
+# the tests through MINITEST_SLICE_MAP (Minitest::Slice in our minitest fork), so a source
 # change costs one compile no matter the shard count.
 #
 # Which tests a shard takes is decided per TEST, not per file, by
@@ -43,7 +43,7 @@
 # The tests must then be parallel-safe both within a shard and across shard
 # processes: per-test tmp state comes from PluginSpecHelper.tmp_path (scoped
 # by the run_one hook in test/minitest_helper.cr), ENV/global-state tests
-# serialize on PluginSpecHelper::ENV_MUTEX / ::STATE_MUTEX within their
+# serialize on Minitest::Gate::STATE_MUTEX (serial!/exclusive!) within their
 # process, and there is no shared mutable suite state across processes by
 # construction (each shard gets its own TMPDIR subtree). The workers stay on
 # ONE OS thread per shard (CRYSTAL_WORKERS=1): spread over multiple threads
@@ -229,7 +229,7 @@ if [ ${#shard_args[@]} -gt 0 ] && [ "${shard_args[0]}" = "--" ]; then
 fi
 set -- ${shard_args[@]+"${shard_args[@]}"}
 
-# Per-test wall-clock timings, recorded by run_one in test/minitest_helper.cr
+# Per-test wall-clock timings, recorded by our minitest fork (Minitest::Timings)
 # and read back by scripts/minitest_stats.sh to decide what runs where. One
 # line per test per run: "<seconds>\t<serial|parallel>\t<test>\t<run>".
 MINITEST_TIMINGS_PATH="${MINITEST_TIMINGS:-$ROOT/.minitest_timings.tsv}"
@@ -281,7 +281,7 @@ clock_seconds() {
 # The whole suite in ONE binary: minitest registers its tests in-process, so a
 # single entrypoint has to require every test file. Every shard runs this same
 # binary and picks its own tests (MINITEST_SLICE_MAP, see
-# PluginSpecHelper::Slice). Per-shard binaries meant N ~2.4GB crystal builds at
+# Minitest::Slice). Per-shard binaries meant N ~2.4GB crystal builds at
 # once, which is what made a shard count above two unpalatable on the 16GB dev
 # box, and they still could not balance (see scripts/minitest_stats.sh).
 # shard.yml is baked into the binary as well (src/krikri/version.cr reads it

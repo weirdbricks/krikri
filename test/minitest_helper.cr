@@ -66,144 +66,23 @@ module PluginSpecHelper
   @@tmp_mutex = Mutex.new
   @@tmp_dir_by_fiber = {} of Fiber => String
 
-  # Which test each worker fiber is running, and since when. A shard that
-  # stops printing is otherwise a blank hang (issue #1189: 470s at 0.2% CPU
-  # with nothing in the log); naming the test in flight turns the next one
-  # into a report instead of a mystery. Report-only - a fiber cannot be
-  # killed from outside, and the shell runner's own stall watchdog is what
-  # bounds the run.
-  @@test_by_fiber = {} of Fiber => {String, Time::Instant}
-  @@reported_stalls = Set(String).new
-  @@stall_watchdog_started = false
+  # The suite's stall threshold for minitest's watchdog (Minitest::Watchdog: a
+  # test still running after this many seconds is named on STDERR with the
+  # scope locks' holders). The suite's slowest ordinary test is ~10s; the
+  # opt-in KRIKRI_SLOW_TESTS one is deliberately ~4 minutes. Below
+  # scripts/minitest.sh's shard stall kill (180s) so the report is printed
+  # before a stuck shard is killed.
+  Minitest.options.stall_seconds = (ENV["KRIKRI_TEST_STALL_SECONDS"]? || (ENV["KRIKRI_SLOW_TESTS"]? ? "600" : "90")).to_i
 
-  # A test longer than this with no sibling finishing is reported. The
-  # suite's slowest ordinary test is ~10s; the opt-in KRIKRI_SLOW_TESTS
-  # one is deliberately ~4 minutes, so it raises the bar instead of
-  # tripping it.
-  TEST_STALL_REPORT_SECONDS = begin
-    # Below scripts/minitest.sh's shard stall kill (180s) so the in-flight
-    # list and lock state are printed before a stuck shard is killed.
-    default = ENV["KRIKRI_SLOW_TESTS"]? ? "600" : "90"
-    (ENV["KRIKRI_TEST_STALL_SECONDS"]? || default).to_i
-  end
-
-  # MINITEST_TIMINGS=<file> appends one "<seconds>\t<serial|parallel>\t<test>\t<run>" line per
-  # test as it finishes (appended, not written at exit: minitest's own at_exit hook runs the
-  # tests, so a hook registered here would fire before them). Serial tests are timed inside
-  # STATE_MUTEX, so waiting for the lock is not counted. Each test is recorded several times per
-  # run (only one of those records has the real time) and a loaded run inflates the tests that ran
-  # alongside a CPU-hogging fiber, so scripts/minitest_stats.sh takes the MAX within a run and the
-  # MIN across the last few runs.
-  TIMINGS_PATH  = ENV["MINITEST_TIMINGS"]?
-  TIMINGS_MUTEX = Mutex.new
-
-  # One id for every shard process of a run, so the balancer can group records per run. The
-  # fallback only matters for a hand-run binary outside scripts/minitest.sh.
-  RUN_ID = ENV["MINITEST_RUN_ID"]? || "#{Time.utc.to_unix}-#{Process.pid}"
-
-  def self.record_timing(test : String, serial : Bool, elapsed : Time::Span) : Nil
-    return unless path = TIMINGS_PATH
-    TIMINGS_MUTEX.synchronize do
-      File.open(path, "a") { |file| file.puts "#{elapsed.total_seconds.round(2)}\t#{serial ? "serial" : "parallel"}\t#{test}\t#{RUN_ID}" }
-    end
-  end
-
-  # Test-level slicing for full-suite sharding (scripts/minitest.sh --shard N).
-  #
-  # The suite used to be split by FILE, with one compiled binary per shard. That
-  # needed N ~2.4GB crystal builds at once and still could not balance: a file's
-  # tests all land on one shard, and test/integration/diff_mode_test.cr alone
-  # outweighed a sixth of the suite's measured time. Now every shard runs the
-  # SAME binary and this gate decides which tests it takes, so the split is per
-  # test and changing the shard count costs no compile at all.
-  #
-  # MINITEST_SLICE_MAP lists "<Class#test_name>\t<shard index>" for every test
-  # the balancer measured; MINITEST_SLICE_INDEX/COUNT identify this process. A
-  # name the map does not know (a test added since the last publish) is hashed
-  # onto a shard instead of being skipped, so nothing is ever silently dropped.
-  struct Slice
-    getter index : Int32
-    getter count : Int32
-
-    def initialize(@index : Int32, @count : Int32, @owned : Set(String), @known : Set(String),
-                   @shard_of : Hash(String, Int32) = {} of String => Int32)
-      @group_slots = {} of String => Int32
-    end
-
-    # Returns nil (run everything) when this process was not given a slice.
-    def self.load(map_path : String, index : Int32, count : Int32) : Slice?
-      return nil unless count > 0 && index >= 0 && index < count
-      owned = Set(String).new
-      known = Set(String).new
-      shard_of = {} of String => Int32
-      File.each_line(map_path) do |line|
-        name, _, shard = line.rstrip.rpartition('\t')
-        next if shard.empty? || name.empty?
-        known << name
-        shard_of[name] = shard.to_i
-        owned << name if shard.to_i == index
-      end
-      Slice.new(index, count, owned, known, shard_of)
-    end
-
-    # A shard_together! group goes wherever the map put its lexicographically
-    # first measured test, or is FNV-hashed by group name when none of its
-    # tests is measured yet. Every shard process reads the same map, so all of
-    # them agree on the one shard that runs the whole group.
-    def group_slot(group : String) : Int32
-      @group_slots[group] ||= begin
-        prefix = "#{group}#"
-        first = @shard_of.keys.select(&.starts_with?(prefix)).min?
-        first ? @shard_of[first] : Slice.slot(group, @count)
-      end
-    end
-
-    # FNV-1a over the name's bytes: String#hash is seeded per process, so the
-    # shards would disagree about where an unmeasured test belongs.
-    def self.slot(name : String, count : Int32) : Int32
-      hash = 0xcbf29ce484222325_u64
-      name.each_byte { |byte| hash = (hash ^ byte) &* 0x100000001b3_u64 }
-      (hash % count).to_i
-    end
-
-    def runs?(name : String, group : String? = nil) : Bool
-      return group_slot(group) == @index if group
-      return @owned.includes?(name) if @known.includes?(name)
-      Slice.slot(name, @count) == @index
-    end
-  end
-
-  SLICE = begin
-    map, index, count = ENV["MINITEST_SLICE_MAP"]?, ENV["MINITEST_SLICE_INDEX"]?, ENV["MINITEST_SLICE_COUNT"]?
-    if map && index && count
-      begin
-        Slice.load(map, index.to_i, count.to_i)
-      rescue ex : File::Error | ArgumentError
-        STDERR.puts "minitest: ignoring unusable slice (#{map}): #{ex.message}"
-        nil
-      end
-    end
-  end
-
-  def self.begin_test_tmp(name : String) : Nil
+  def self.begin_test_tmp : Nil
     dir = File.join(TEST_TMP_BASE, "p", Random::Secure.hex(8))
     FileUtils.rm_rf(dir)
     FileUtils.mkdir_p(dir)
-    @@tmp_mutex.synchronize do
-      @@tmp_dir_by_fiber[Fiber.current] = dir
-      @@test_by_fiber[Fiber.current] = {name, Time.instant}
-      unless @@stall_watchdog_started
-        @@stall_watchdog_started = true
-        spawn { stall_watchdog }
-      end
-    end
+    @@tmp_mutex.synchronize { @@tmp_dir_by_fiber[Fiber.current] = dir }
   end
 
   def self.end_test_tmp : Nil
-    dir = @@tmp_mutex.synchronize do
-      @@test_by_fiber.delete(Fiber.current)
-      @@tmp_dir_by_fiber.delete(Fiber.current)
-    end
+    dir = @@tmp_mutex.synchronize { @@tmp_dir_by_fiber.delete(Fiber.current) }
     force_rm_rf(dir) if dir
   end
 
@@ -227,44 +106,6 @@ module PluginSpecHelper
   rescue File::Error
   end
 
-  private def self.stall_watchdog : Nil
-    loop do
-      sleep 5.seconds
-      next if TEST_STALL_REPORT_SECONDS <= 0
-      now = Time.instant
-      stalled = [] of {String, Int32, Int32}
-      @@tmp_mutex.synchronize do
-        in_flight = @@test_by_fiber.size
-        @@test_by_fiber.each do |_fiber, (name, started)|
-          elapsed = (now - started).total_seconds
-          next if elapsed < TEST_STALL_REPORT_SECONDS
-          next if @@reported_stalls.includes?(name)
-          @@reported_stalls << name
-          stalled << {name, elapsed.to_i, in_flight}
-        end
-      end
-      stalled.each do |(name, elapsed, in_flight)|
-        STDERR.puts "test: still running after #{elapsed}s with #{in_flight} test(s) in flight: #{name}"
-      end
-      report_lock_state unless stalled.empty?
-    end
-  end
-
-  # Who holds the suite's two test-scheduling locks, printed with every
-  # stall report: the test the watchdog names is the OLDEST in flight, which
-  # is often only a victim queued behind the real holder.
-  class_property excl_holder : String? = nil
-  class_property state_holder : String? = nil
-
-  private def self.report_lock_state : Nil
-    now = Time.instant
-    lines = @@tmp_mutex.synchronize do
-      @@test_by_fiber.map { |_fiber, (name, started)| "test:   #{(now - started).total_seconds.to_i}s #{name}" }
-    end
-    STDERR.puts "test: locks: active_parallel=#{@@active_parallel} exclusive_waiting=#{@@exclusive_waiting} EXCL_MUTEX held by #{@@excl_holder || "-"}; STATE_MUTEX (test-level) held by #{@@state_holder || "-"}; in flight:"
-    lines.each { |line| STDERR.puts line }
-  end
-
   def self.tmp_path(*parts : String) : String
     dir = @@tmp_mutex.synchronize { @@tmp_dir_by_fiber[Fiber.current]? }
     dir ||= begin
@@ -278,94 +119,11 @@ module PluginSpecHelper
   # ONE lock for all process-global mutable state: ENV (PATH, HOME,
   # AWS_*, ANSIBLE_* ...) and engine-level class settings (Ec2Api/IamApi
   # transports, poll intervals, CliOptions, Vault, TimingProfile, daemon
-  # caches). Under -p N one test's override - or its teardown's restore -
-  # would otherwise land in the middle of another test's run at any IO
-  # yield point. Reentrant, so a `serial!` test can still call helpers
-  # (with_vault, the ENV shims) that take it again. ENV_MUTEX is the same
-  # lock: a test can touch ENV and engine state together, and a single lock
-  # has no lock-ordering deadlocks.
-  STATE_MUTEX = Mutex.new(:reentrant)
+  # caches). It is minitest's serial-scope lock (Minitest::Gate, our fork):
+  # `serial!`/`exclusive!` tests hold it, and helpers touching the same
+  # state take it too. Reentrant. ENV_MUTEX is the same lock.
+  STATE_MUTEX = Minitest::Gate::STATE_MUTEX
   ENV_MUTEX   = STATE_MUTEX
-
-  # Exclusive-scope gate (a readers-writer lock over the process's test
-  # fibers): parallel tests are "readers" (any number may run at once),
-  # exclusive tests are the "writer" (runs alone - no other test's
-  # setup/body/teardown overlaps it, and it waits for the in-flight ones
-  # to finish first). serial! alone cannot provide this: it serializes
-  # serial-vs-serial on STATE_MUTEX, but a CONCURRENT non-serial test
-  # keeps running right through a serial test's window - fine for the
-  # usual ENV-poking specs, which only disturb other tests that also
-  # opt in, but not for a spec that re-points ANSIBLE_COLLECTIONS_PATH
-  # while ~140 other unit files' in-process parses read that same env
-  # through a process-wide memo (the retired CollectionIndex fixture
-  # scan did exactly that, and the flaky tombstone/local-action failures
-  # it caused are why this gate exists; nothing in the engine scans
-  # installed collections any more, so today's remaining users are the
-  # specs that memoize their own ENV-derived state). The busy-wait sleeps
-  # yield the fiber scheduler, and a parallel test's worst-case tail is
-  # bounded by the plugin watchdog, so the wait is bounded. Lock order is
-  # EXCL_MUTEX before STATE_MUTEX everywhere.
-  #
-  # EXCL_MUTEX is HELD ACROSS the whole exclusive window, not borrowed to
-  # flip a flag: an exclusive ticket granted while another exclusive test
-  # still held the window used to let the second test's body start AFTER
-  # the first had cleared the flag - so its blank window ran with parallel
-  # tests freely in flight (issue #706: two exclusive `it`s of one describe
-  # dispatched to two workers, the second blanked PATH with
-  # active_parallel already climbing from 1 to 3, and a parallel test read
-  # the blanked value and died on KeyError). Holding the lock itself makes
-  # the handoff real: the next exclusive waits on EXCL_MUTEX until the
-  # previous one unlocks in exit_exclusive, and enter_parallel/exit_parallel
-  # block on the same mutex instead of racing a flag.
-  #
-  # Writer preference: while any exclusive test is waiting, no NEW parallel
-  # test may start (@@exclusive_waiting). Without it the gate starved its
-  # writers: an exclusive test polls every 1ms for @@active_parallel == 0,
-  # but each worker fiber finishing a parallel test starts the next one
-  # without yielding, so the count was almost never 0 at a poll. Exclusive
-  # tests piled up one per fiber until a shard sat for minutes with every
-  # fiber but one parked in enter_exclusive and the stall watchdog killed
-  # it (58 stall reports, more likely at higher shard counts).
-  EXCL_MUTEX = Mutex.new
-  @@active_parallel = 0
-  @@exclusive_waiting = 0
-
-  # Returns with EXCL_MUTEX still held (exit_exclusive releases it).
-  def self.enter_exclusive : Nil
-    EXCL_MUTEX.synchronize { @@exclusive_waiting += 1 }
-    loop do
-      EXCL_MUTEX.lock
-      if @@active_parallel == 0
-        @@exclusive_waiting -= 1
-        return
-      end
-      EXCL_MUTEX.unlock
-      sleep 1.millisecond
-    end
-  end
-
-  def self.exit_exclusive : Nil
-    EXCL_MUTEX.unlock
-  end
-
-  def self.enter_parallel : Nil
-    loop do
-      EXCL_MUTEX.lock
-      if @@exclusive_waiting == 0
-        @@active_parallel += 1
-        EXCL_MUTEX.unlock
-        return
-      end
-      EXCL_MUTEX.unlock
-      sleep 1.millisecond
-    end
-  end
-
-  def self.exit_parallel : Nil
-    EXCL_MUTEX.lock
-    @@active_parallel -= 1
-    EXCL_MUTEX.unlock
-  end
 
   # Runs `binary` with `config_json` on stdin, streaming stdout into
   # `output`. Crystal 1.21's Process.run has no timeout parameter anymore,
@@ -759,101 +517,11 @@ def str_ends_with?(actual, suffix) : Bool
   actual.ends_with?(suffix)
 end
 
-# crystal spec's `expect_raises(Klass, expected_message_or_regex)` has no direct
-# minitest equivalent: `assert_raises` takes only a class. Converted specs call
-# this instead, which also checks the message the way the spec did.
-module RaisesAssertion
-  def assert_raises_message(klass, expected, &block : ->)
-    ex = assert_raises(klass, &block)
-    text = ex.message || ""
-    case expected
-    when Regex  then assert_match(expected, text)
-    when String then assert_includes(text, expected)
-    end
-  end
-end
-
-# Every describe-generated Spec class inherits this, so converted specs can
-# call assert_raises_message without repeating `include RaisesAssertion` per
-# describe (the per-describe includes some converted files carry stay legal).
+# Strict `it` names, serial!/exclusive!/shard_together!, per-test slicing
+# (MINITEST_SLICE_MAP), MINITEST_TIMINGS, the stall watchdog, chaining
+# before_each/after_each and assert_raises_message all live in our minitest
+# fork (weirdbricks/minitest.cr); see its README. Only krikri's own pieces stay.
 class Minitest::Spec
-  include RaisesAssertion
-
-  # minitest's own `it` names a bare `it { }` test_anonymous and turns any
-  # name into a method, so two unnamed examples - or two whose names
-  # sanitize to the same method - silently overwrite each other and the
-  # suite quietly runs fewer tests (found converting spec/lint: 4 unnamed
-  # fixer examples collapsed into 1). Same method-naming as minitest's
-  # macro, but both cases are compile errors here.
-  macro it(name = nil, &block)
-    {% raise "every `it` needs a name (minitest names a bare `it { }` test_anonymous, silently overwriting its siblings)" if name.is_a?(NilLiteral) %}
-    {% meth = "test_" + name.strip.gsub(/[^\p{L}\p{N}]+/, "_") %}
-    {% if @type.methods.any? { |m| m.name.stringify == meth } %}
-      {% raise "duplicate test name in #{@type}: #{meth} (a second `it` with this name would silently replace the first)" %}
-    {% end %}
-    def {{ meth.id }}
-      {{ yield }}
-    end
-  end
-
-  # Describes whose tests mutate process-global state (ENV, engine class
-  # settings) call `serial!` in their body: every test in that describe -
-  # and in its nested describes, which minitest generates as subclasses -
-  # then holds STATE_MUTEX across setup, body AND teardown, so
-  # before_each/after_each ENV pinning is covered too. Only serial tests
-  # wait on each other; the rest of the suite keeps running concurrently.
-  def serial? : Bool
-    false
-  end
-
-  # See exclusive! below - default is an ordinary parallel test.
-  def exclusive? : Bool
-    false
-  end
-
-  # See shard_together! below - default is sliced per test.
-  def shard_group : String?
-    nil
-  end
-
-  macro serial!
-    def serial? : Bool
-      true
-    end
-  end
-
-  # Describes that must run with the WHOLE process quiesced - every
-  # concurrently-running test finished and none started - call
-  # `exclusive!` in their body (implies serial!). Only for specs whose
-  # window of disturbed global state is visible to tests that do not
-  # opt in themselves (the retired CollectionIndex fixture scan used to
-  # be the example: it re-pointed ANSIBLE_COLLECTIONS_PATH and reset a
-  # memo every in-process parse read; krikri no longer scans installed
-  # collections, so no engine-side scan is left to disturb). The plain
-  # serial! scope stays the default for ENV/engine-state poking, because
-  # exclusive tests idle the process's other worker fibers.
-  macro exclusive!
-    def serial? : Bool
-      true
-    end
-
-    def exclusive? : Bool
-      true
-    end
-  end
-
-  # Describes whose tests all read ONE memoized expensive fixture (a single
-  # playbook run whose output every test inspects) call `shard_together!`:
-  # the full-suite slicer then keeps every test of the describe on one shard
-  # (PluginSpecHelper::Slice#runs?'s group argument). Sliced per test, each
-  # shard that owned any of them re-ran the whole fixture - the 4 unsafe_data
-  # matrix describes ran 24 matrix playbooks per suite instead of 4.
-  macro shard_together!
-    def shard_group : String?
-      self.class.name
-    end
-  end
-
   # The live docker_compose_v2 / docker_container tests bring real compose projects and
   # containers up on podman: ~135s of a ~230s suite, for community.docker modules that are not
   # core. Off by default; KRIKRI_DOCKER_TESTS=1 runs them (krikri-fix-issues sets it when a fix
@@ -862,72 +530,17 @@ class Minitest::Spec
     skip("live docker/podman tests are off by default; set KRIKRI_DOCKER_TESTS=1") unless ENV["KRIKRI_DOCKER_TESTS"]? == "1"
   end
 
-  # One tmp scope per test: setup, body and teardown all run inside run_one
-  # on the same worker fiber, so begin/end here bracket exactly one test.
+  # One tmp scope per test (PluginSpecHelper.tmp_path): opened before the
+  # scope's locks are taken and closed after teardown, on the test's own
+  # worker fiber. Tests another shard owns never get here (minitest slices at
+  # collection time).
   def run_one(name : String, proc : Test ->) : Nil
-    # Another shard owns this test (see PluginSpecHelper::Slice): returning
-    # before super() leaves it unrecorded, so it is neither run nor counted.
-    if slice = PluginSpecHelper::SLICE
-      return unless slice.runs?("#{self.class.name}##{name}", shard_group)
+    PluginSpecHelper.begin_test_tmp
+    begin
+      super
+    ensure
+      PluginSpecHelper.end_test_tmp
     end
-    # A test filtered out by -n never executes, and recording it as 0.00s would
-    # let one filtered run erase the shard balancer's weights.
-    return unless should_run?(name)
-    PluginSpecHelper.begin_test_tmp("#{self.class.name}##{name}")
-    if exclusive?
-      PluginSpecHelper.enter_exclusive
-      PluginSpecHelper.excl_holder = "#{self.class.name}##{name}"
-      begin
-        PluginSpecHelper::STATE_MUTEX.synchronize do
-          PluginSpecHelper.state_holder = "#{self.class.name}##{name}"
-          started = Time.instant
-          super
-          PluginSpecHelper.record_timing("#{self.class.name}##{name}", true, Time.instant - started)
-        ensure
-          PluginSpecHelper.state_holder = nil
-        end
-      ensure
-        PluginSpecHelper.excl_holder = nil
-        PluginSpecHelper.exit_exclusive
-      end
-    elsif serial?
-      PluginSpecHelper::STATE_MUTEX.synchronize do
-        PluginSpecHelper.state_holder = "#{self.class.name}##{name}"
-        started = Time.instant
-        super
-        PluginSpecHelper.record_timing("#{self.class.name}##{name}", true, Time.instant - started)
-      ensure
-        PluginSpecHelper.state_holder = nil
-      end
-    else
-      PluginSpecHelper.enter_parallel
-      begin
-        started = Time.instant
-        super
-        PluginSpecHelper.record_timing("#{self.class.name}##{name}", false, Time.instant - started)
-      ensure
-        PluginSpecHelper.exit_parallel
-      end
-    end
-  ensure
-    PluginSpecHelper.end_test_tmp
-  end
-end
-
-# crystal spec's before_each/after_each have no minitest equivalent. Minitest's
-# `before`/`after` macros replace `setup`/`teardown` wholesale instead of
-# chaining, so these are macros that call `super` and can be stacked.
-macro before_each(&block)
-  def setup
-    super()
-    {{ yield }}
-  end
-end
-
-macro after_each(&block)
-  def teardown
-    {{ yield }}
-    super()
   end
 end
 

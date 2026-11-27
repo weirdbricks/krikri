@@ -13,7 +13,6 @@ require "../../src/krikri/role_loader"
 describe "RoleLoader meta/main.yml RoleMetadata key validation (issue 81)" do
   serial! # mutates process-global state (ENV / engine settings)
 
-  include RaisesAssertion
 
   @roles_root : String = PluginSpecHelper.tmp_path("role_meta_unknown_keys_spec")
 

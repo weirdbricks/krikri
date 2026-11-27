@@ -43,7 +43,6 @@ module DockerHealthWaitSpecHelpers
 end
 
 describe Krikri::PluginHelpers::DockerHealthWait do
-  include RaisesAssertion
 
   describe ".wait_for_healthy" do
     it "returns the inspect JSON immediately when there is no healthcheck (None = healthy)" do

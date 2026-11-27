@@ -36,7 +36,6 @@ private def guard_vars : Hash(String, JSON::Any)
 end
 
 describe "block-tag-valued variable resolves through every lookup path" do
-  include RaisesAssertion
 
   # crystal spec's `it` can be generated from a loop (it expands to a class,
   # not a def); minitest's expands to `def`, which Crystal cannot declare

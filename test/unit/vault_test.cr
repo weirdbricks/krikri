@@ -21,9 +21,7 @@ private REAL_ANSIBLE_VAULT_FIXTURE = <<-VAULT
 private REAL_ANSIBLE_VAULT_PASSWORD = "vaultpassword"
 
 describe Krikri::Vault do
-  include RaisesAssertion
   describe ".encrypted?" do
-    include RaisesAssertion
     it "recognizes the vault header" do
       with_vault do
         Krikri::Vault.encrypted?(REAL_ANSIBLE_VAULT_FIXTURE).must_equal(true)
@@ -38,7 +36,6 @@ describe Krikri::Vault do
   end
 
   describe ".decrypt" do
-    include RaisesAssertion
     it "decrypts a Ansible-vault-encrypted fixture with the correct password" do
       with_vault do
         Krikri::Vault.decrypt(REAL_ANSIBLE_VAULT_FIXTURE, REAL_ANSIBLE_VAULT_PASSWORD).must_equal("hello vault world")
@@ -71,7 +68,6 @@ describe Krikri::Vault do
   end
 
   describe ".encrypt / .decrypt round trip" do
-    include RaisesAssertion
     it "decrypts what it just encrypted" do
       with_vault do
         plaintext = "a secret value with spaces and\nnewlines\n"
@@ -132,7 +128,6 @@ describe Krikri::Vault do
   end
 
   describe ".maybe_decrypt_json" do
-    include RaisesAssertion
     it "decrypts a vault-encrypted string value" do
       with_vault do
         Krikri::Vault.password = "pw"

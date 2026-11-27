@@ -18,7 +18,6 @@ private def jv(raw : Int64) : JSON::Any
 end
 
 describe Krikri::IpAddrCore do
-  include RaisesAssertion
   # ---- ipaddr: parse-or-false core behavior ----
 
   it "returns the bare address for an empty query" do

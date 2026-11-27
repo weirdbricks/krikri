@@ -13,7 +13,6 @@ require "../../src/krikri/variable_substitutor"
 # user-defined `{% macro %}`) just fine once actually rendered; this
 # strict pre-check crashed before Crinja ever got the chance.
 describe "strict block-tag scan: a called identifier is never a bare variable ref" do
-  include RaisesAssertion
   it "does not flag namespace(...) as an undefined variable inside {% set %}" do
     sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
 

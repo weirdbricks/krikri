@@ -17,7 +17,6 @@ require "../../src/krikri/conditional_evaluator"
 # the undefined source to JSON null before the mandatory filter could be
 # blamed.
 describe "nested mandatory-chain var read through the vars lookup" do
-  include RaisesAssertion
 
   it "raises the mandatory filter-plugin wording for a strict nested read" do
     vars = {"_x" => JSON::Any.new("{{ x | mandatory }}")}

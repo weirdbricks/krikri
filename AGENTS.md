@@ -81,7 +81,7 @@ library shards (krikri-jinja, krikri-xml, ...) stay MIT; GPL krikri may use them
 scripts/minitest.sh                 # the full minitest suite under test/ (6 shard
                                      #   processes by default, 8 fibers each, one shared
                                      #   binary; --shard N / KRIKRI_TEST_SHARDS to change it;
-                                     #   parallel-safety rules in test/minitest_helper.cr)
+                                     #   parallel-safety rules below)
 scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers per shard
 scripts/minitest.sh test/unit/foo_test.cr   # one file
 scripts/minitest.sh -- -n /pattern/ # a subset by test-name regex
@@ -126,8 +126,8 @@ script runs that file directly, and anything after `--` goes to
 
 **Full-suite sharding is per TEST, on one shared binary**: every shard process
 runs the same `.minitest_all.bin` and takes its share through
-`MINITEST_SLICE_MAP` (see `PluginSpecHelper::Slice` in
-`test/minitest_helper.cr`), so changing the shard count costs no compile. The
+`MINITEST_SLICE_MAP` (`Minitest::Slice` in our minitest fork,
+applied when tests are collected), so changing the shard count costs no compile. The
 assignment comes from `scripts/minitest_stats.sh` using measured per-test
 seconds; a test it has never measured is hashed onto a shard rather than
 skipped. Splitting by FILE (the old scheme, one compiled binary per shard) could
@@ -181,14 +181,20 @@ spec fails with the playbook named instead of freezing the shard (a spec's
 `Process.run` waits for the child AND for every holder of its captured
 pipes, and nothing else bounds a wedged local plugin).
 
-**Parallel-safety rules** (required for `-- -p N`; full detail in
-`test/minitest_helper.cr`):
+**Parallel-safety rules** (required for `-- -p N`). The generic test-runner
+machinery lives in our minitest fork, `weirdbricks/minitest.cr` (`serial!`,
+`exclusive!`, `shard_together!`, slicing, `MINITEST_TIMINGS`, the stall
+watchdog, strict `it` names, chaining `before_each`/`after_each`,
+`assert_raises_message`; see its README): change it there, tag, and bump the
+`tag:` in `shard.yml`. `test/minitest_helper.cr` keeps only krikri's own
+helpers. The rules:
 - Per-test scratch space comes from `PluginSpecHelper.tmp_path` - a
   private subtree under `test/tmp/p/<nonce>`, scoped by the `run_one`
   hook to the running test's fiber.
 - Tests that touch `ENV` or other process-wide state call `serial!` in
   their `describe` body: they then serialize on
-  `PluginSpecHelper::STATE_MUTEX` across setup, body AND teardown, and
+  `Minitest::Gate::STATE_MUTEX` (aliased as `PluginSpecHelper::STATE_MUTEX`)
+  across setup, body AND teardown, and
   before_each/after_each ENV pinning is covered too. Helpers that need
   the same guarantee take that mutex themselves (it is reentrant).
 - `serial!` only serializes serial-vs-serial: a concurrently running
@@ -201,7 +207,7 @@ pipes, and nothing else bounds a wedged local plugin).
   it runs with the whole process quiesced - no other test's
   setup/body/teardown overlaps it. Costs the process's other worker
   fibers for the window, so it is for genuinely process-visible
-  mutations only.
+  mutations only. Exclusive suites are scheduled before everything else.
 - A describe whose tests all inspect ONE memoized expensive fixture (a
   single playbook run, like `unsafe_data_test.cr`'s matrix describes)
   calls `shard_together!`: full-suite slicing then keeps all its tests on
@@ -220,8 +226,7 @@ pipes, and nothing else bounds a wedged local plugin).
 - Every `it` needs a name unique within its `describe` (and top-level
   `describe` subjects must be unique across `test/`): minitest turns
   names into methods, so a bare `it { }` or a duplicate would silently
-  replace a sibling - `test/minitest_helper.cr` makes both a compile
-  error.
+  replace a sibling - the fork makes both a compile error.
 
 **Always run `./build.sh`**, never a bare `crystal build krikri-playbook.cr` alone, before trusting a
 "still broken" result against a real host - plugin binaries compile separately from the main
