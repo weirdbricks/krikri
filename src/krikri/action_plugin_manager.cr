@@ -183,16 +183,13 @@ module Krikri
       # Templar), so the param's own source position has to be registered
       # here for a deprecation that read trips to carry the Origin real
       # prints - the task-param substitution sites that normally provide
-      # it have already been popped by this point. A literal `var:` value
-      # rides along as the site's TEXT because a read's Origin is only
-      # claimed for a site whose template NAMES the read variable
-      # (VarSubstitutor#deprecation_site_names?): without it a `var:`
-      # naming a top-level fact printed no INJECT_FACTS_AS_VARS block at
-      # all, while real warns at the `var:` value token (publicarray
-      # .unbound, issue #1770, live-verified against 2.21.6).
-      var_site_text = debug_var_site_text(task_raw_params)
+      # it have already been popped by this point. The site's TEXT always
+      # names the variable the read resolved, because a read's Origin is
+      # only claimed for a site whose template NAMES it
+      # (VarSubstitutor#deprecation_site_names?) - see #debug_var_site.
+      var_site = debug_var_site(task_raw_params, params, vars, host, task_source_file, task_source_line)
       result = if debug_var_param?(module_name, params) && task_source_file
-                 VarSubstitutor.set_current_task_param(task_source_file, task_source_line, "var", var_site_text)
+                 VarSubstitutor.set_current_task_param(task_source_file, task_source_line, "var", var_site.text, var_site.origin)
                  begin
                    action_plugin.execute
                  ensure
@@ -211,18 +208,55 @@ module Krikri
       !var.nil? && !var.empty?
     end
 
-    # The `var:` argument AS WRITTEN, for the source position a fact read
-    # inside it is blamed on - nil when it is itself a template
-    # (`var: "{{ item }}"`). Real reads such an argument's fact at whatever
-    # named the template (a loop item read pins the block at the item's own
-    # scalar, live-verified against 2.21.6), so claiming this param's token
-    # for it would mislabel the Origin; those reads keep their existing
-    # (silent) attribution instead.
-    private def self.debug_var_site_text(raw_params : Hash(String, String)?) : String?
+    # The site a top-level fact read inside debug's `var:` is blamed on.
+    record DebugVarSite, text : String? = nil, origin : String? = nil
+
+    # debug:'s `var:` argument is read as a VALUE, not as a template that
+    # names the variable: real hands the argument's resolved value to
+    # evaluate_expression (action/debug.py), so the deprecation is Origin'd
+    # at that value's own defining position.
+    #
+    # A literal argument IS the value, and its token in the task is that
+    # position (publicarray.unbound's `var: ansible_service_mgr`, issue
+    # #1770, live-verified against 2.21.6). A TEMPLATED argument passes the
+    # stored value through, so the block lands where THAT value is defined:
+    # a `{{ name }}` on name's declaration, a loop item's `{{ item }}` on
+    # the item's own YAML scalar (eendroroy.rbenv's with_items list of fact
+    # names, issue #1904, live-verified against 2.21.6). A template that
+    # BUILDS the name instead (`var: "ansible_{{ 'os_family' }}"`) makes
+    # real fail the task outright ("Encountered untrusted template or
+    # expression"), so those stay silent rather than mislabel the Origin.
+    private def self.debug_var_site(
+      raw_params : Hash(String, String)?,
+      params : Hash(String, String),
+      vars : Hash(String, JSON::Any),
+      host : Host,
+      task_source_file : String?,
+      task_source_line : Int32,
+    ) : DebugVarSite
       raw = raw_params.try(&.["var"]?)
-      return nil unless raw
-      return nil if raw.includes?("{{") || raw.includes?("{%")
-      raw
+      return DebugVarSite.new unless raw
+      unless raw.includes?("{{") || raw.includes?("{%")
+        return DebugVarSite.new(raw, nil)
+      end
+      rendered = params["var"]?
+      return DebugVarSite.new unless rendered
+      origin = templated_var_value_origin(raw, rendered, vars, host, task_source_file, task_source_line)
+      origin ? DebugVarSite.new(rendered, origin) : DebugVarSite.new
+    end
+
+    # The Origin of the stored value a templated `var:` passed through.
+    # Only a bare variable access can be placed: the value it resolved to
+    # has to BE the text the argument rendered, and both possible sources
+    # name their own defining position - a declared variable its
+    # declaration, a loop variable the item's YAML scalar.
+    private def self.templated_var_value_origin(raw : String, rendered : String, vars : Hash(String, JSON::Any), host : Host, task_source_file : String?, task_source_line : Int32) : String?
+      match = raw.strip.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\z/)
+      return nil unless match
+      name = match[1]
+      return nil unless (value = vars[name]?) && (text = value.as_s?) && text == rendered
+      VarSubstitutor.published_var_origin(host.name, name) ||
+        ResultDisplay.loop_item_scalar_origin(task_source_file, task_source_line, rendered)
     end
 
     # A controller-side action plugin standing in for a module real ansible

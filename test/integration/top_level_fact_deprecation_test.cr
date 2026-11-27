@@ -857,6 +857,64 @@ describe "INJECT_FACTS_AS_VARS deprecation" do
     stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
   end
 
+  it "attributes a debug var: loop item's fact read to the item's own scalar" do
+    # Issue #1904, eendroroy.rbenv: `debug: var: "{{ item }}"` over a
+    # with_items list of fact NAMES. Real hands the argument's RESOLVED
+    # value to evaluate_expression, so the read is blamed at the defining
+    # position of the value the item passed through - the item's own YAML
+    # scalar - and every item is its own templating operation, so each
+    # fact item prints its own block (live-verified against 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: Show information
+            debug:
+              var: "{{ item }}"
+            with_items:
+              - ansible_os_family
+              - "ansible_distribution"
+      PLAYBOOK
+
+    stdout.must_include("TASK [Show information]")
+    stdout.wont_include("FAILED")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(2)
+    # Unquoted item: the scalar's own start (the dash offset).
+    stderr.must_include(":9:11\n")
+    stderr.must_include("9         - ansible_os_family\n")
+    stderr.must_include("^ column 11")
+    # Quoted item: the OPENING QUOTE is the scalar's start.
+    stderr.must_include(":10:11\n")
+    stderr.must_include("10         - \"ansible_distribution\"\n")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
+  it "attributes a debug var: read through another variable to its declaration" do
+    # Same shape as #1904's non-loop half: `var: "{{ fact_name_var }}"` -
+    # the template passes the stored value through, so real blames the
+    # read at that VALUE's declaration, not at the `var:` token
+    # (live-verified against 2.21.6).
+    stdout, stderr = run(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        vars:
+          which_fact: ansible_os_family
+        tasks:
+          - name: Show information
+            debug:
+              var: "{{ which_fact }}"
+      PLAYBOOK
+
+    stdout.wont_include("FAILED")
+    stderr.scan(/DEPRECATION WARNING\]: #{Regex.escape(FACT_DEPRECATION_TEXT)}/).size.must_equal(1)
+    stderr.must_include(":5:17\n")
+    stderr.must_include("5     which_fact: ansible_os_family\n")
+    stderr.must_include("^ column 17")
+    stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
+  end
+
   it "attributes an unnamed role task's dash-line include_vars read to the role's own file" do
     # Issue #1194, capitanh.rapiddeploy_ansible_role: its roles/.../
     # tasks/main.yml line 3 is `- include_vars: "{{ansible_os_family}}-vars.yml"`,
