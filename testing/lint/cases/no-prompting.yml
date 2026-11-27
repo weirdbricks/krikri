@@ -1,0 +1,27 @@
+---
+# Parity fixture for the no-prompting rule. Opt-in upstream (tags
+# opt-in), so it is only reachable with `--enable-list no-prompting`;
+# every pause is skipped so the play stays safe to run unattended.
+- name: No prompting triage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Zero minutes still blocks on a prompt
+      ansible.builtin.pause:
+        minutes: 0
+      when: false
+
+    - name: A prompt with no duration blocks too
+      ansible.builtin.pause:
+        prompt: "Press enter to continue"
+      when: false
+
+    - name: A bare pause blocks on a prompt
+      ansible.builtin.pause:
+      when: false
+
+    - name: A real duration is unattended
+      ansible.builtin.pause:
+        seconds: 1
+      when: false
