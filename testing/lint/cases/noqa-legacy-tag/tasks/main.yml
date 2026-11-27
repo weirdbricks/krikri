@@ -1,0 +1,4 @@
+---
+- name: Run something  # noqa: 301
+  ansible.builtin.shell:
+    cmd: echo hi
