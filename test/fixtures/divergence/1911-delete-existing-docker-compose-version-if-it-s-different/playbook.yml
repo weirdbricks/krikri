@@ -1,0 +1,35 @@
+---
+# Issue #1911's failing task, replayed in-process. srikalyan.docker 6.0.1's
+# tasks/docker-compose.yml probes the docker-compose binary, turns a missing
+# one into a null `docker_compose_current_version` (regex_search over an
+# empty stdout), then gates its delete on `... not in
+# docker_compose_current_version` - which real ansible fails with Python's
+# "argument of type 'NoneType' is not iterable" while krikri answered false
+# and ran the file task. The role's own docker_compose_path might exist on a
+# developer box, which would make the probe find a version; the path here
+# cannot exist anywhere, so the probe's stdout stays empty on every host.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    docker_compose_path: /nonexistent-krikri-1911/docker-compose
+    docker_compose_version: "v2.11.1"
+  tasks:
+    - name: Check current docker-compose version.
+      command: "{{ docker_compose_path }} --version"
+      register: docker_compose_vsn
+      check_mode: false
+      changed_when: false
+      failed_when: false
+
+    - set_fact:
+        docker_compose_current_version: "{{ docker_compose_vsn.stdout | regex_search('(\\d+(\\.\\d+)+)') }}"
+      when: docker_compose_vsn.stdout is defined
+
+    - name: Delete existing docker-compose version if it's different.
+      file:
+        path: "{{ docker_compose_path }}"
+        state: absent
+      when: >
+        docker_compose_current_version is defined
+        and (docker_compose_version | regex_replace('v', '')) not in docker_compose_current_version

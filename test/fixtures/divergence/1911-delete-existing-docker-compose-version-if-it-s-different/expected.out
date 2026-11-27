@@ -1,0 +1,35 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Check current docker-compose version.] ***********************************
+ok: [localhost]
+
+TASK [set_fact] ****************************************************************
+ok: [localhost]
+
+TASK [Delete existing docker-compose version if it's different.] ***************
+[ERROR]: Task failed: A 'when' expression failed: Error rendering expression: argument of type 'NoneType' is not iterable
+
+Task failed.
+Origin: <WORK>/playbook.yml:29:7
+
+27       when: docker_compose_vsn.stdout is defined
+28
+29     - name: Delete existing docker-compose version if it's different.
+         ^ column 7
+
+<<< caused by >>>
+
+A 'when' expression failed: Error rendering expression: argument of type 'NoneType' is not iterable
+Origin: <WORK>/playbook.yml:33:13
+
+31         path: "{{ docker_compose_path }}"
+32         state: absent
+33       when: >
+               ^ column 13
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Error rendering expression: argument of type 'NoneType' is not iterable"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
