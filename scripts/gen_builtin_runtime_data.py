@@ -21,7 +21,6 @@ Usage:
 import base64
 import glob
 import gzip
-import json
 import os
 import re
 import subprocess
@@ -38,7 +37,6 @@ BASE64_WIDTH = 96
 
 HEADER = '''require "base64"
 require "compress/gzip"
-require "json"
 
 module Krikri
   # The ansible-core {version} builtin bare-name sets ({count} module names:
@@ -57,28 +55,50 @@ module Krikri
 '''
 
 FOOTER = '''  private def self.decode_data(gz : String) : String
-    Compress::Gzip::Reader.open(IO::Memory.new(Base64.decode(gz.gsub(/\\s/, "")))) do |reader|
+    # Base64.decode skips the heredoc's line breaks itself.
+    Compress::Gzip::Reader.open(IO::Memory.new(Base64.decode(gz))) do |reader|
       reader.gets_to_end
     end
   end
 
+  # Splits on one ASCII byte via memchr (String#byte_index): String#split
+  # walks the string char by char, which dominated this decode in a debug
+  # build. Splitting on an ASCII byte keeps every piece valid UTF-8.
+  private def self.split_bytes(text : String, byte : Char) : Array(String)
+    parts = [] of String
+    return parts if text.empty?
+    start = 0
+    while stop = text.byte_index(byte.ord, start)
+      parts << String.new(text.to_unsafe + start, stop - start)
+      start = stop + 1
+    end
+    parts << String.new(text.to_unsafe + start, text.bytesize - start)
+    parts
+  end
+
+  # The blobs are plain newline-separated text (redirect lines are
+  # `kind<TAB>name<TAB>target`), not JSON: every krikri-playbook process
+  # decodes them, and splitting lines is several times cheaper than
+  # JSON.parse on ~300KB.
   def self.builtin_module_names : Array(String)
-    Array(String).from_json(decode_data(BUILTIN_DATA_GZ))
+    split_bytes(decode_data(BUILTIN_DATA_GZ), '\\n')
   end
 
   def self.builtin_lookup_names : Array(String)
-    Array(String).from_json(decode_data(LOOKUP_NAMES_DATA_GZ))
+    split_bytes(decode_data(LOOKUP_NAMES_DATA_GZ), '\\n')
   end
 
   def self.builtin_runtime_redirects : {Hash(String, String), Hash(String, String), Hash(String, String)}
-    data = JSON.parse(decode_data(REDIRECTS_DATA_GZ))
     mods = Hash(String, String).new
-    data["modules"].as_h.each { |k, v| mods[k] = v.as_s }
     acts = Hash(String, String).new
-    data["action"].as_h.each { |k, v| acts[k] = v.as_s }
     lookups = Hash(String, String).new
-    if lookup_table = data["lookup"]?.try(&.as_h?)
-      lookup_table.each { |k, v| lookups[k] = v.as_s }
+    split_bytes(decode_data(REDIRECTS_DATA_GZ), '\\n').each do |line|
+      kind, name, target = split_bytes(line, '\\t')
+      case kind
+      when "modules" then mods[name] = target
+      when "action"  then acts[name] = target
+      when "lookup"  then lookups[name] = target
+      end
     end
     {mods, acts, lookups}
   end
@@ -151,9 +171,41 @@ def collect(pkg: str):
     return names, {"modules": modules, "action": action, "lookup": lookup}, sorted(lookups)
 
 
-def encode(value) -> str:
-    raw = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
-    return base64.b64encode(gzip.compress(raw, compresslevel=9, mtime=0)).decode()
+REDIRECT_KINDS = ("modules", "action", "lookup")
+
+
+def encode(text: str) -> str:
+    return base64.b64encode(gzip.compress(text.encode(), compresslevel=9, mtime=0)).decode()
+
+
+def checked(value: str) -> str:
+    if "\n" in value or "\t" in value:
+        sys.exit("%r cannot be baked into the line format" % value)
+    return value
+
+
+def lines_text(values) -> str:
+    return "\n".join(checked(value) for value in values)
+
+
+# One `kind<TAB>name<TAB>target` line per redirect, kinds in REDIRECT_KINDS
+# order: the Crystal side splits lines instead of parsing JSON (it runs in
+# every krikri-playbook process).
+def redirects_text(redirects) -> str:
+    if set(redirects) != set(REDIRECT_KINDS):
+        sys.exit("unexpected redirect kinds %r" % sorted(redirects))
+    return "\n".join("\t".join((kind, checked(name), checked(target)))
+                     for kind in REDIRECT_KINDS
+                     for name, target in redirects[kind].items())
+
+
+def parse_redirects(text: str):
+    table = {kind: {} for kind in REDIRECT_KINDS}
+    for line in text.split("\n"):
+        if line:
+            kind, name, target = line.split("\t", 2)
+            table[kind][name] = target
+    return table
 
 
 def wrap(blob: str) -> str:
@@ -163,11 +215,11 @@ def wrap(blob: str) -> str:
 
 def render(version: str, names, redirects, lookup_names) -> str:
     return (HEADER.format(version=version, count=len(names), lookup_count=len(lookup_names))
-            + wrap(encode(names)) + "\n    GZB64\n\n"
+            + wrap(encode(lines_text(names))) + "\n    GZB64\n\n"
             + "  private REDIRECTS_DATA_GZ = <<-GZB64\n"
-            + wrap(encode(redirects)) + "\n    GZB64\n\n"
+            + wrap(encode(redirects_text(redirects))) + "\n    GZB64\n\n"
             + "  private LOOKUP_NAMES_DATA_GZ = <<-GZB64\n"
-            + wrap(encode(lookup_names)) + "\n    GZB64\n\n"
+            + wrap(encode(lines_text(lookup_names))) + "\n    GZB64\n\n"
             + FOOTER)
 
 
@@ -175,9 +227,10 @@ def decode_blobs(source: str):
     blobs = re.findall(r"<<-GZB64\n(.*?)\n\s*GZB64", source, re.S)
     if len(blobs) != 3:
         sys.exit("expected 3 embedded blobs in %s, found %d" % (OUT, len(blobs)))
-    decoded = [gzip.decompress(base64.b64decode(re.sub(r"\s", "", blob)))
+    decoded = [gzip.decompress(base64.b64decode(re.sub(r"\s", "", blob))).decode()
                for blob in blobs]
-    return json.loads(decoded[0]), json.loads(decoded[1]), json.loads(decoded[2])
+    return ([n for n in decoded[0].split("\n") if n], parse_redirects(decoded[1]),
+            [n for n in decoded[2].split("\n") if n])
 
 
 def main() -> int:

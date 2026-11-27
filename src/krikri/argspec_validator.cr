@@ -99,8 +99,6 @@ module Krikri
       end
     end
 
-    @@table : Hash(String, JSON::Any)? = nil
-
     # Params the sweep environment's collections mark removed_in_version:
     # passing one deprecates at module bootstrap (the general
     # "Param 'x' is deprecated. ... removed from collection 'C' version N"
@@ -111,38 +109,111 @@ module Krikri
       "community.crypto.openssl_pkcs12" => {"maciter_size" => "4.0.0"},
     }
 
-    private def table : Hash(String, JSON::Any)
-      @@table ||= JSON.parse({{ read_file("#{__DIR__}/../../data/argspecs.json") }}).as_h
+    ARGSPECS_JSON = {{ read_file("#{__DIR__}/../../data/argspecs.json") }}
+
+    # module name => {byte offset, byte size} of its entry's JSON object
+    # inside ARGSPECS_JSON.
+    @@entry_spans : Hash(String, {Int32, Int32})? = nil
+    @@entries = Hash(String, JSON::Any).new
+    @@option_orders = Hash(String, Array(String)).new
+
+    # The spec table, parsed one module at a time on first use: every
+    # krikri-playbook process that runs a task consults it, and decoding
+    # all ~200KB of it (twice, with the declaration-order pass) was most of
+    # a short run's startup in a debug build. Only the modules a run
+    # actually touches are ever JSON-parsed.
+    private struct LazyTable
+      def []?(module_name : String) : JSON::Any?
+        ArgspecValidator.entry(module_name)
+      end
+
+      def [](module_name : String) : JSON::Any
+        self[module_name]? || raise KeyError.new("Missing argspec entry: #{module_name}")
+      end
     end
 
-    @@option_order : Hash(String, Array(String))? = nil
+    private def table : LazyTable
+      LazyTable.new
+    end
 
-    # Each module's option names in Ansible's argument_spec DECLARATION order
-    # (data/argspecs.json preserves it; Crystal's JSON object decode does
-    # not). Ansible's validation walks the spec dict in declaration order, so
-    # the first failing option - not the hash-decoded order - decides which
-    # type/choices error wins. Re-read through a pull parser because the
-    # table itself was decoded order-less above.
-    private def option_order_table : Hash(String, Array(String))
-      @@option_order ||= begin
-        order = Hash(String, Array(String)).new
-        pull = JSON::PullParser.new({{ read_file("#{__DIR__}/../../data/argspecs.json") }})
-        pull.read_object do |module_name|
-          names = [] of String
-          pull.read_object do |key|
-            if key == "options"
-              pull.read_object do |option_name|
-                names << option_name
-                pull.skip
-              end
-            else
-              pull.skip
-            end
-          end
-          order[module_name] = names
-        end
-        order
+    # :nodoc:
+    def entry(module_name : String) : JSON::Any?
+      if cached = @@entries[module_name]?
+        return cached
       end
+      span = entry_spans[module_name]? || return
+      @@entries[module_name] = JSON.parse(String.new(ARGSPECS_JSON.to_unsafe + span[0], span[1]))
+    end
+
+    # Indexes data/argspecs.json without parsing it, relying on the shape
+    # every writer of the file produces (json.dump(indent=1): gen_argspecs.py,
+    # fix_argspec_required_by_order.py): each top-level module key sits on
+    # its own line as ` "<name>": {`, and its object runs until the next such
+    # line (or the closing `}`). `argspec_table_index_test.cr` checks the
+    # index against a full parse, so a writer changing the layout fails
+    # the suite instead of silently dropping modules.
+    # :nodoc:
+    def entry_spans : Hash(String, {Int32, Int32})
+      @@entry_spans ||= begin
+        spans = Hash(String, {Int32, Int32}).new
+        text = ARGSPECS_JSON
+        bytes = text.to_slice
+        current = nil.as(String?)
+        value_start = 0
+        pos = 0
+        while nl = text.byte_index('\n'.ord, pos)
+          line = nl + 1
+          pos = line
+          next unless line + 2 < bytes.size && bytes[line] == ' '.ord && bytes[line + 1] == '"'.ord
+          if name = current
+            spans[name] = {value_start, value_end(bytes, line)}
+          end
+          close = text.byte_index('"'.ord, line + 2) || break
+          current = String.new(bytes[line + 2, close - line - 2])
+          value_start = close + 3 # past `": `
+        end
+        if name = current
+          last = text.rindex('}') || bytes.size
+          spans[name] = {value_start, value_end(bytes, last)}
+        end
+        spans.transform_values { |(start, stop)| {start, stop - start} }
+      end
+    end
+
+    # The end of the value that precedes the next key line starting at
+    # `limit`: back over the line break, trailing whitespace and comma.
+    private def value_end(bytes : Bytes, limit : Int32) : Int32
+      stop = limit
+      while stop > 0 && (bytes[stop - 1] == '\n'.ord || bytes[stop - 1] == ' '.ord ||
+            bytes[stop - 1] == ','.ord || bytes[stop - 1] == '\r'.ord)
+        stop -= 1
+      end
+      stop
+    end
+
+    # Each module's option names in Ansible's argument_spec DECLARATION
+    # order, read straight off the entry's JSON text with a pull parser so
+    # the order is the file's own (Ansible's validation walks the spec dict
+    # in declaration order, so the first failing option - not some other
+    # order - decides which type/choices error wins).
+    private def option_order(module_name : String) : Array(String)?
+      if cached = @@option_orders[module_name]?
+        return cached
+      end
+      span = entry_spans[module_name]? || return
+      names = [] of String
+      pull = JSON::PullParser.new(String.new(ARGSPECS_JSON.to_unsafe + span[0], span[1]))
+      pull.read_object do |key|
+        if key == "options"
+          pull.read_object do |option_name|
+            names << option_name
+            pull.skip
+          end
+        else
+          pull.skip
+        end
+      end
+      @@option_orders[module_name] = names
     end
 
     # The options map as (name, spec) pairs in declaration order; names
@@ -1061,7 +1132,7 @@ module Krikri
       # only happens later, for options WITHOUT suboptions (which the
       # walk never descends into). Specs regenerated with nested
       # "options"/"elements" keys make this check data-driven.
-      order = option_order_table[spec_owner]?
+      order = option_order(spec_owner)
       if msg = check_no_log_walk(options, provided, order)
         return msg
       end

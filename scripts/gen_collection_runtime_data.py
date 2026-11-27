@@ -58,7 +58,6 @@ BASE64_WIDTH = 96
 
 HEADER = '''require "base64"
 require "compress/gzip"
-require "json"
 require "set"
 
 module Krikri
@@ -80,10 +79,26 @@ module Krikri
   private RUNTIME_DATA_GZ = <<-GZB64
 '''
 
-FOOTER = '''  private def self.decode_data(gz : String) : String
-    Compress::Gzip::Reader.open(IO::Memory.new(Base64.decode(gz.gsub(/\\s/, "")))) do |reader|
+FOOTER = """  private def self.decode_data(gz : String) : String
+    # Base64.decode skips the heredoc's line breaks itself.
+    Compress::Gzip::Reader.open(IO::Memory.new(Base64.decode(gz))) do |reader|
       reader.gets_to_end
     end
+  end
+
+  # Splits on one ASCII byte via memchr (String#byte_index): String#split
+  # walks the string char by char, which dominated this decode in a debug
+  # build. Splitting on an ASCII byte keeps every piece valid UTF-8.
+  private def self.split_bytes(text : String, byte : Char) : Array(String)
+    parts = [] of String
+    return parts if text.empty?
+    start = 0
+    while stop = text.byte_index(byte.ord, start)
+      parts << String.new(text.to_unsafe + start, stop - start)
+      start = stop + 1
+    end
+    parts << String.new(text.to_unsafe + start, text.bytesize - start)
+    parts
   end
 
   private struct Collection
@@ -99,49 +114,69 @@ FOOTER = '''  private def self.decode_data(gz : String) : String
     end
   end
 
-  @@data : JSON::Any?
-  @@collections : Hash(String, Collection)?
-  @@action_plugins : Hash(String, Hash(String, Array(Tuple(String, String))))?
-  @@module_versions : Hash(String, {String, String})?
-  @@module_deprecations : Hash(String, Array(Tuple(String, String)))?
-  @@known_collections : Set(String)?
-  @@lookup_providers : Set(String)?
+  @@loaded = false
+  @@collections = Hash(String, Collection).new
+  @@action_plugins = Hash(String, Hash(String, Array(Tuple(String, String)))).new
+  @@module_versions = Hash(String, {String, String}).new
+  @@module_deprecations = Hash(String, Array(Tuple(String, String))).new
+  @@known_collections = Set(String).new
+  @@lookup_providers = Set(String).new
+  @@ansible_core_version = ""
 
-  private def self.data : JSON::Any
-    @@data ||= JSON.parse(decode_data(RUNTIME_DATA_GZ))
+  # The blob is tab-separated records, one per line, not JSON: every
+  # krikri-playbook process decodes it, and splitting lines is several
+  # times cheaper than JSON.parse on ~250KB. Record tags (written by
+  # scripts/gen_collection_runtime_data.py, which documents them):
+  #   V core-version | K fq | L lookup | C fq has-paths [version]
+  #   E fq kind name target | G fq group n-members members... extends...
+  #   p fq path | A fq | a fq plugin events... | M module collection version
+  #   D module events...    (events: flattened (helper, function) pairs)
+  private def self.load : Nil
+    return if @@loaded
+    @@loaded = true
+    split_bytes(decode_data(RUNTIME_DATA_GZ), '\\n').each do |line|
+      f = split_bytes(line, '\\t')
+      case f[0]
+      when "V" then @@ansible_core_version = f[1]
+      when "K" then @@known_collections << f[1]
+      when "L" then @@lookup_providers << f[1]
+      when "A" then @@action_plugins[f[1]] = Hash(String, Array(Tuple(String, String))).new
+      when "a" then @@action_plugins[f[1]][f[2]] = events(f, 3)
+      when "M" then @@module_versions[f[1]] = {f[2], f[3]}
+      when "D" then @@module_deprecations[f[1]] = events(f, 2)
+      else          load_collection_record(f)
+      end
+    end
   end
 
-  private def self.events(raw : JSON::Any) : Array(Tuple(String, String))
-    raw.as_a.map { |entry| {entry[0].as_s, entry[1].as_s} }
+  # The C/E/G/p records: one collection and its redirects, action groups
+  # and plugin paths (a collection's own records follow its C line).
+  private def self.load_collection_record(f : Array(String)) : Nil
+    case f[0]
+    when "C"
+      redirects = Hash(String, Hash(String, String)).new
+      {"action", "lookup", "modules"}.each { |kind| redirects[kind] = Hash(String, String).new }
+      @@collections[f[1]] = Collection.new(f[3]?, redirects,
+        Hash(String, {Array(String), Array(String)}).new, f[2] == "1" ? Set(String).new : nil)
+    when "E" then @@collections[f[1]].redirects[f[2]][f[3]] = f[4]
+    when "G"
+      split = 4 + f[3].to_i
+      @@collections[f[1]].action_groups[f[2]] = {f[4...split], f[split..]}
+    when "p"
+      if paths = @@collections[f[1]].paths
+        paths << f[2]
+      end
+    end
+  end
+
+  private def self.events(fields : Array(String), from : Int32) : Array(Tuple(String, String))
+    (from...fields.size).step(2).map { |i| {fields[i], fields[i + 1]} }.to_a
   end
 
   # "ns.coll" => what the capture saw for it.
   def self.collections : Hash(String, Collection)
-    @@collections ||= begin
-      map = Hash(String, Collection).new
-      data["collections"].as_h.each do |fq, entry|
-        redirects = Hash(String, Hash(String, String)).new
-        if raw = entry["redirects"]?.try(&.as_h?)
-          raw.each do |kind, table|
-            per_kind = Hash(String, String).new
-            table.as_h.each { |name, target| per_kind[name] = target.as_s }
-            redirects[kind] = per_kind
-          end
-        end
-        groups = Hash(String, {Array(String), Array(String)}).new
-        if raw = entry["action_groups"]?.try(&.as_h?)
-          raw.each do |name, group|
-            members = group["members"]?.try { |list| list.as_a.map(&.as_s) } || [] of String
-            extends = group["extends"]?.try { |list| list.as_a.map(&.as_s) } || [] of String
-            groups[name] = {members, extends}
-          end
-        end
-        paths = entry["paths"]?.try { |raw_paths| raw_paths.as_a.map(&.as_s).to_set }
-        version = entry["version"]?.try(&.as_s?)
-        map[fq] = Collection.new(version, redirects, groups, paths)
-      end
-      map
-    end
+    load
+    @@collections
   end
 
   def self.collection(fq : String) : Collection?
@@ -151,32 +186,21 @@ FOOTER = '''  private def self.decode_data(gz : String) : String
   # Every collection the capture environment's search order could see, for
   # names krikri has no file tree for (its routing/version data alone).
   def self.known_collections : Set(String)
-    @@known_collections ||= data["known_collections"].as_a.map(&.as_s).to_set
+    load
+    @@known_collections
   end
 
   # "ns.coll" => (bare action plugin name => its deprecated import events).
   def self.action_plugins : Hash(String, Hash(String, Array(Tuple(String, String))))
-    @@action_plugins ||= begin
-      map = Hash(String, Hash(String, Array(Tuple(String, String)))).new
-      data["action_plugins"].as_h.each do |fq, entries|
-        per_collection = Hash(String, Array(Tuple(String, String))).new
-        entries.as_h.each { |name, events| per_collection[name] = self.events(events) }
-        map[fq] = per_collection
-      end
-      map
-    end
+    load
+    @@action_plugins
   end
 
   # The module FQCN krikri runs => the pinned (collection, release) whose
   # module source real's loader would execute for it.
   def self.module_versions : Hash(String, {String, String})
-    @@module_versions ||= begin
-      map = Hash(String, {String, String}).new
-      data["module_versions"].as_h.each do |name, entry|
-        map[name] = {entry["collection"].as_s, entry["version"].as_s}
-      end
-      map
-    end
+    load
+    @@module_versions
   end
 
   # The module FQCN krikri runs => the deprecated ansible.module_utils
@@ -184,26 +208,25 @@ FOOTER = '''  private def self.decode_data(gz : String) : String
   # whose captured payload does not exist (krikri's modeled fallback tables
   # answer there).
   def self.module_deprecations : Hash(String, Array(Tuple(String, String)))
-    @@module_deprecations ||= begin
-      map = Hash(String, Array(Tuple(String, String))).new
-      data["module_deprecations"].as_h.each { |name, events| map[name] = self.events(events) }
-      map
-    end
+    load
+    @@module_deprecations
   end
 
   # Bare lookup plugin names the captured collections provide (their
   # plugins/lookup files plus their own lookup routing redirects).
   def self.lookup_providers : Set(String)
-    @@lookup_providers ||= data["lookup_providers"].as_a.map(&.as_s).to_set
+    load
+    @@lookup_providers
   end
 
   # The ansible-core release the tables were captured against.
   def self.ansible_core_version : String
-    data["ansible_core_version"].as_s
+    load
+    @@ansible_core_version
   end
   end
 end
-'''
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -727,8 +750,122 @@ def collect(pkg, ansible_version):
     return data
 
 
-def encode(value):
-    raw = json.dumps(value, separators=(",", ":"), sort_keys=True, ensure_ascii=False).encode()
+REDIRECT_KINDS = ("action", "lookup", "modules")
+
+
+def _field(value):
+    if not isinstance(value, str) or "\t" in value or "\n" in value:
+        sys.exit("%r cannot be baked into the record format" % (value,))
+    return value
+
+
+def _record(*fields):
+    return "\t".join(_field(f) for f in fields)
+
+
+def _flat_events(events):
+    out = []
+    for event in events:
+        if len(event) != 2:
+            sys.exit("event %r is not a (helper, function) pair" % (event,))
+        out.extend(event)
+    return out
+
+
+# The Crystal side reads one tab-separated record per line (it runs in every
+# krikri-playbook process, and splitting lines is far cheaper than parsing
+# JSON there). Dict keys are emitted sorted, matching the old sort_keys JSON
+# blob, so Crystal's insertion-ordered hashes iterate the same way.
+#   V core-version            K known-collection     L lookup-provider
+#   C fq has-paths(0/1) [version]   (no version field = null)
+#   E fq kind name target     (redirect; every collection has all REDIRECT_KINDS)
+#   G fq group n-members members... extends...
+#   p fq path                 A fq (action plugin collection)
+#   a fq plugin events...     M module collection version
+#   D module events...        (events: flattened (helper, function) pairs)
+def records(data):
+    out = [_record("V", data["ansible_core_version"])]
+    out += [_record("K", fq) for fq in data["known_collections"]]
+    out += [_record("L", name) for name in data["lookup_providers"]]
+    for fq in sorted(data["collections"]):
+        entry = data["collections"][fq]
+        if set(entry) - {"version", "redirects", "action_groups", "paths"}:
+            sys.exit("collection %s has unknown keys %r" % (fq, sorted(entry)))
+        if set(entry["redirects"]) != set(REDIRECT_KINDS):
+            sys.exit("collection %s has redirect kinds %r" % (fq, sorted(entry["redirects"])))
+        head = ["C", fq, "1" if "paths" in entry else "0"]
+        if entry["version"] is not None:
+            head.append(entry["version"])
+        out.append(_record(*head))
+        for kind in REDIRECT_KINDS:
+            for name in sorted(entry["redirects"][kind]):
+                out.append(_record("E", fq, kind, name, entry["redirects"][kind][name]))
+        for name in sorted(entry["action_groups"]):
+            group = entry["action_groups"][name]
+            if set(group) != {"members", "extends"}:
+                sys.exit("action group %s/%s has keys %r" % (fq, name, sorted(group)))
+            out.append(_record("G", fq, name, str(len(group["members"])),
+                               *group["members"], *group["extends"]))
+        out += [_record("p", fq, path) for path in entry.get("paths") or []]
+    for fq in sorted(data["action_plugins"]):
+        out.append(_record("A", fq))
+        for name in sorted(data["action_plugins"][fq]):
+            out.append(_record("a", fq, name, *_flat_events(data["action_plugins"][fq][name])))
+    for name in sorted(data["module_versions"]):
+        entry = data["module_versions"][name]
+        if set(entry) != {"collection", "version"}:
+            sys.exit("module_versions %s has keys %r" % (name, sorted(entry)))
+        out.append(_record("M", name, entry["collection"], entry["version"]))
+    for name in sorted(data["module_deprecations"]):
+        out.append(_record("D", name, *_flat_events(data["module_deprecations"][name])))
+    return "\n".join(out)
+
+
+def _pairs(fields):
+    return [[fields[i], fields[i + 1]] for i in range(0, len(fields), 2)]
+
+
+def parse_records(text):
+    data = {"action_plugins": {}, "collections": {}, "known_collections": [],
+            "lookup_providers": [], "module_deprecations": {}, "module_versions": {}}
+    for line in text.split("\n"):
+        f = line.split("\t")
+        tag = f[0]
+        if tag == "V":
+            data["ansible_core_version"] = f[1]
+        elif tag == "K":
+            data["known_collections"].append(f[1])
+        elif tag == "L":
+            data["lookup_providers"].append(f[1])
+        elif tag == "C":
+            entry = {"version": f[3] if len(f) > 3 else None,
+                     "redirects": {kind: {} for kind in REDIRECT_KINDS}, "action_groups": {}}
+            if f[2] == "1":
+                entry["paths"] = []
+            data["collections"][f[1]] = entry
+        elif tag == "E":
+            data["collections"][f[1]]["redirects"][f[2]][f[3]] = f[4]
+        elif tag == "G":
+            split = 4 + int(f[3])
+            data["collections"][f[1]]["action_groups"][f[2]] = {"members": f[4:split],
+                                                                "extends": f[split:]}
+        elif tag == "p":
+            data["collections"][f[1]]["paths"].append(f[2])
+        elif tag == "A":
+            data["action_plugins"][f[1]] = {}
+        elif tag == "a":
+            data["action_plugins"][f[1]][f[2]] = _pairs(f[3:])
+        elif tag == "M":
+            data["module_versions"][f[1]] = {"collection": f[2], "version": f[3]}
+        elif tag == "D":
+            data["module_deprecations"][f[1]] = _pairs(f[2:])
+        else:
+            sys.exit("unknown record %r" % line)
+    return data
+
+
+def encode(data):
+    raw = records(data).encode()
     return base64.b64encode(gzip.compress(raw, compresslevel=9, mtime=0)).decode()
 
 
@@ -746,7 +883,7 @@ def decode_blob(source):
     blobs = re.findall(r"<<-GZB64\n(.*?)\n\s*GZB64", source, re.S)
     if len(blobs) != 1:
         sys.exit("expected 1 embedded blob in %s, found %d" % (OUT, len(blobs)))
-    return json.loads(gzip.decompress(base64.b64decode(re.sub(r"\s", "", blobs[0]))))
+    return parse_records(gzip.decompress(base64.b64decode(re.sub(r"\s", "", blobs[0]))).decode())
 
 
 def main():
