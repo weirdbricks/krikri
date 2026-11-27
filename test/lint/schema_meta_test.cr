@@ -95,6 +95,21 @@ module Krikri::Lint
       v.first.message.must_equal("$.galaxy_info 'description' is a required property. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies")
     end
 
+    it "flags a galaxy_info.role_name that breaks the Galaxy name pattern" do
+      v = meta_violations("---\ngalaxy_info:\n  author: me\n  description: d\n  license: MIT\n  min_ansible_version: '2.9'\n  role_name: Bad-Role-Name\n")
+      v.size.must_equal(1)
+      v.first.rule_id.must_equal("schema[meta]")
+      v.first.message.must_equal("$.galaxy_info.role_name 'Bad-Role-Name' does not match '^[a-z][a-z0-9_]+$'. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies")
+    end
+
+    # minLength is declared before pattern upstream, and both fail here, so
+    # jsonschema reports the short value rather than the pattern mismatch.
+    it "flags a too-short galaxy_info.role_name" do
+      v = meta_violations("---\ngalaxy_info:\n  author: me\n  description: d\n  license: MIT\n  min_ansible_version: '2.9'\n  role_name: a\n")
+      v.size.must_equal(1)
+      v.first.message.must_equal("$.galaxy_info.role_name 'a' is too short. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies")
+    end
+
     it "accepts a complete standalone galaxy_info" do
       v = meta_violations("---\ngalaxy_info:\n  author: me\n  description: d\n  license: MIT\n  min_ansible_version: '2.9'\n")
       v.must_be_empty

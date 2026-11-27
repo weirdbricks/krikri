@@ -33,28 +33,28 @@ module Krikri
         end
 
         def formatted_clause : String
-          python_repr(clause)
+          JsonSchema.python_repr(clause)
         end
+      end
 
-        # Upstream formats the failing clause with Python dict/list repr
-        # (single quotes), not JSON.
-        private def python_repr(node : JSON::Any) : String
-          case node.raw
-          when Hash
-            inner = node.as_h.map { |k, v| "'#{k}': #{python_repr(v)}" }
-            "{#{inner.join(", ")}}"
-          when Array
-            inner = node.as_a.map { |v| python_repr(v) }
-            "[#{inner.join(", ")}]"
-          when String
-            "'#{node.as_s}'"
-          when Bool
-            node.as_bool ? "True" : "False"
-          when Nil
-            "None"
-          else
-            node.to_s
-          end
+      # Upstream formats the failing clause with Python dict/list repr
+      # (single quotes), not JSON.
+      def self.python_repr(node : JSON::Any) : String
+        case node.raw
+        when Hash
+          inner = node.as_h.map { |k, v| "'#{k}': #{python_repr(v)}" }
+          "{#{inner.join(", ")}}"
+        when Array
+          inner = node.as_a.map { |v| python_repr(v) }
+          "[#{inner.join(", ")}]"
+        when String
+          "'#{node.as_s}'"
+        when Bool
+          node.as_bool ? "True" : "False"
+        when Nil
+          "None"
+        else
+          node.to_s
         end
       end
 
@@ -204,15 +204,20 @@ module Krikri
             end
           end
         when String
+          # jsonschema yields errors in schema keyword order and best_match
+          # keeps the first one at equal depth, so minLength (declared before
+          # pattern in our meta schema) decides a value that fails both.
+          if (min_length = obj["minLength"]?)
+            if instance.as_s.size < min_length.as_i
+              errors << Error.new(path, instance, schema, "minLength",
+                "#{python_repr(instance)} is too short")
+            end
+          end
           if (pattern = obj["pattern"]?)
             value = instance.as_s
             unless Regex.new(pattern.as_s).matches?(value)
-              errors << Error.new(path, instance, schema, "pattern", "does not match pattern")
-            end
-          end
-          if (min_length = obj["minLength"]?)
-            if instance.as_s.size < min_length.as_i
-              errors << Error.new(path, instance, schema, "minLength", "is too short")
+              errors << Error.new(path, instance, schema, "pattern",
+                "#{python_repr(instance)} does not match #{python_repr(pattern)}")
             end
           end
         end

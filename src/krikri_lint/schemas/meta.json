@@ -27,7 +27,12 @@
         "license": {"type": "string"},
         "min_ansible_version": {"type": ["string", "number"]},
         "namespace": {"type": "string"},
-        "role_name": {"type": "string"},
+        "role_name": {
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9_]+$",
+          "title": "Role Name",
+          "type": "string"
+        },
         "standalone": {"type": "boolean"},
         "galaxy_tags": {"type": "array", "items": {"type": "string"}},
         "platforms": {
