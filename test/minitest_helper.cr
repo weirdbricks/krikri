@@ -204,7 +204,27 @@ module PluginSpecHelper
       @@test_by_fiber.delete(Fiber.current)
       @@tmp_dir_by_fiber.delete(Fiber.current)
     end
-    FileUtils.rm_rf(dir) if dir
+    force_rm_rf(dir) if dir
+  end
+
+  # FileUtils.rm_rf silently leaves a tree behind when a test made a
+  # directory in it unsearchable or unwritable (the unarchive permission
+  # cases, #1818/#1830, leave mode-0 dirs), and those leaked dirs then made
+  # every grep over test/ fail. Restore owner rwx on the leftovers and retry.
+  def self.force_rm_rf(path : String) : Nil
+    FileUtils.rm_rf(path)
+    return unless File.exists?(path) && !File.symlink?(path)
+    restore_owner_perms(path)
+    FileUtils.rm_rf(path)
+  end
+
+  private def self.restore_owner_perms(path : String) : Nil
+    File.chmod(path, 0o700)
+    Dir.each_child(path) do |child|
+      full = File.join(path, child)
+      restore_owner_perms(full) if File.directory?(full) && !File.symlink?(full)
+    end
+  rescue File::Error
   end
 
   private def self.stall_watchdog : Nil
