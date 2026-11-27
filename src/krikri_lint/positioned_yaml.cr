@@ -10,6 +10,13 @@ module Krikri
       getter file_type : FileType
       getter root : YAML::Nodes::Node?
       getter parse_error : ParseErrorInfo?
+      # Whether this file was a lintable of the run itself (a target, or a
+      # file found by walking a target directory) rather than a child the
+      # run reached through a play's imports or roles. Upstream parses an
+      # explicit lintable before any rule runs but parses a child lazily
+      # inside the first rule's matchlines walk, which shows up in a
+      # warning[outdated-tag] match's line (see OutdatedTagRule).
+      property? explicit : Bool = true
 
       struct ParseErrorInfo
         getter line : Int32

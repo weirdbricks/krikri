@@ -21,6 +21,7 @@ module Krikri
         String.build do |io|
           unless colored
             io << v.rule_id << ": " << v.message
+            io << "[/]" if bracketed?(v.message)
             io << " (warning)" if v.level == "warning"
             io << '\n' << v.path << ':' << v.position
             if v.details != ""
@@ -32,25 +33,15 @@ module Krikri
           end
           io << level << Console.link(rule_url(v), v.rule_id)
           io << Console::DIM << ':' << Console::RESET
-          io << ' ' << level << v.message << Console::RESET
+          io << ' ' << level << v.message << message_close(v.message)
           io << ' ' << Console::DIM << level << "(warning)" << Console::RESET if v.level == "warning"
           io << '\n'
           io << Console::MAGENTA << v.path << Console::RESET << ':' << v.position
           if v.details != ""
-            io << ' ' << Console::DIM << v.details
-            # Upstream renders the text as markup, so a `[word]` inside it
-            # (schema[meta]'s blurb quotes `schema[playbook]`) opens a tag
-            # it does not know: the closing `[/]` is then emitted
-            # literally and the dim reset moves to the end of the block.
-            io << (bracketed?(v.details) ? "[/]" : Console::RESET)
+            io << ' ' << Console::DIM << v.details << message_close(v.details)
           end
           io << '\n'
-          # Upstream's markup leaves one level tag unclosed for an error
-          # and two for a warning; the renderer closes them at the end,
-          # after the final newline.
-          resets = v.level == "warning" ? 2 : 1
-          resets += 1 if v.details != "" && bracketed?(v.details)
-          io << (Console::RESET * resets)
+          io << (Console::RESET * trailing_resets(v))
         end
       end
 
@@ -60,10 +51,30 @@ module Krikri
         text.matches?(BRACKETED)
       end
 
+      # The end of a message or task description. A `[word]` in it is
+      # markup to upstream's renderer too (the outdated-tag message quotes
+      # the renamed tag, e.g. `latest[hg]`), so the `[/]` that would close
+      # the level tag is printed literally instead of rendered as a reset.
+      private def self.message_close(text : String) : String
+        bracketed?(text) ? "[/]" : Console::RESET
+      end
+
+      # The tags upstream's markup leaves unbalanced, which its renderer
+      # closes after the final newline: one level tag for an error and two
+      # for a warning, plus one each for a task description and a message
+      # that is itself markup.
+      private def self.trailing_resets(v : Violation) : Int32
+        resets = v.level == "warning" ? 2 : 1
+        resets += 1 if v.details != "" && bracketed?(v.details)
+        resets += 1 if bracketed?(v.message)
+        resets
+      end
+
       # Upstream's ParseableFormatter (aka `-p`).
       def self.parseable(v : Violation, colored : Bool) : String
         unless colored
           line = "#{v.path}:#{v.position}: #{rule_id(v)}: #{v.message}"
+          line += "[/]" if bracketed?(v.message)
           line += " (warning)" if v.level == "warning"
           return line
         end
@@ -77,16 +88,30 @@ module Krikri
           # bold tag and prints it literally just before the `]`.
           io << (sub_tagged?(v.rule_id) ? literal_sub_tag(v.rule_id) : v.rule_id)
           io << Console::RESET unless sub_tagged?(v.rule_id)
-          io << ": #{v.message}" << Console::RESET
+          io << ": #{v.message}" << message_close(v.message)
           io << Console::RESET if sub_tagged?(v.rule_id)
-          # ParseableFormatter appends " [dim][warning](warning)[/][/]" to
-          # every non-error match; the markup renderer turns [warning]
-          # into its yellow style and the unbalanced [/] pairs leave one
-          # more reset than the dim+yellow pair alone explains.
-          if v.level == "warning"
+          io << parseable_tail(v)
+        end
+      end
+
+      # ParseableFormatter appends " [dim][warning](warning)[/][/]" to every
+      # non-error match; the markup renderer turns [warning] into its yellow
+      # style, and the unbalanced [/] pairs leave one more reset than the
+      # dim+yellow pair alone explains.
+      private def self.parseable_tail(v : Violation) : String
+        if v.level == "warning"
+          resets = sub_tagged?(v.rule_id) ? 3 : 2
+          resets += 1 if bracketed?(v.message)
+          String.build do |io|
             io << ' ' << Console::DIM << Console::YELLOW << "(warning)"
-            io << Console::RESET * (sub_tagged?(v.rule_id) ? 3 : 2)
+            io << Console::RESET * resets
           end
+        elsif bracketed?(v.message)
+          # The literal `[/]` above closed the unknown message tag, so the
+          # level tag itself is still open when the markup ends.
+          Console::RESET
+        else
+          ""
         end
       end
 

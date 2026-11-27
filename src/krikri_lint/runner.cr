@@ -9,7 +9,8 @@ module Krikri
       end
 
       def run(paths : Array(String), targets : Array(String) = paths,
-              role_dirs : Array(String) = [] of String) : Array(Violation)
+              role_dirs : Array(String) = [] of String,
+              explicit : Set(String)? = nil) : Array(Violation)
         rules = active_rules
         return [] of Violation if rules.empty?
 
@@ -26,6 +27,7 @@ module Krikri
           next if excluded?(path)
           next if syntax_check.suppressed?(path)
           file = PositionedFile.load(path, @config.kinds)
+          mark_explicit(file, explicit)
           if (match = syntax_match(file, syntax_check))
             violations << match
             next
@@ -73,6 +75,14 @@ module Krikri
       # upstream, the syntax check included.
       private def syntax_match(file : PositionedFile, syntax_check : SyntaxCheck) : Violation?
         file.file_type.unknown? ? nil : syntax_check.violation(file)
+      end
+
+      # Whether the run was pointed at this file itself (a target, or a
+      # file a walked target directory yielded) rather than reaching it
+      # through another lintable's imports or roles.
+      private def mark_explicit(file : PositionedFile, explicit : Set(String)?) : Nil
+        return if explicit.nil?
+        file.explicit = explicit.includes?(file.path)
       end
 
       # Collected once per file, on first need: the enclosing-task spans a
@@ -130,6 +140,12 @@ module Krikri
                               noqa_maps : Hash(String, Hash(Int32, Noqa::Entry)),
                               task_spans : Hash(String, Array({Int32, Int32}))) : Bool
         family = v.rule_id.split("[").first
+        # Upstream's final pass drops every match whose exact tag is in
+        # the skip list, internal (unskippable) rules included, so this
+        # check has to come before the unsuppressible short-circuit.
+        return true if @config.skip_list.includes?(v.rule_id)
+        rule = @registry.rules.find { |reg_rule| reg_rule.id == family }
+        return false if rule && !rule.suppressible?
         return true if list_matches?(@config.skip_list, v)
         map = noqa_maps[v.path]? || {} of Int32 => Noqa::Entry
         # A task-scoped rule's violations belong to an enclosing task, so
@@ -181,6 +197,7 @@ module Krikri
       private def active_rules : Array(Rule)
         @registry.rules.select do |rule|
           next true if @config.enable_list.includes?(rule.id)
+          next true if rule.unloadable?
           next false if rule.opt_in?
           next false unless Profile.includes?(@config.profile, rule.id)
           next true if @config.tags.empty?

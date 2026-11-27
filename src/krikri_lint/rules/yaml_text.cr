@@ -40,6 +40,49 @@ module Krikri
         lines.pop if !lines.empty? && lines.last.empty? && content.ends_with?('\n')
         lines
       end
+
+      # Index of the first '#' that starts a comment (line start, after
+      # whitespace, or directly after a closed quote), or line.size when
+      # the line holds no comment. A '#' inside a quoted scalar is not a
+      # comment; a scalar left open at the end of the line (the first
+      # line of a multi-line quoted scalar) hides the rest of the line.
+      def comment_start(line : String) : Int32
+        in_single = false
+        in_double = false
+        escaped = false
+        quote_closed_at = -1
+        i = 0
+        while i < line.size
+          ch = line[i]
+          if in_single
+            if ch == '\''
+              in_single = false
+              quote_closed_at = i
+            end
+          elsif in_double
+            if escaped
+              escaped = false
+            elsif ch == '\\'
+              escaped = true
+            elsif ch == '"'
+              in_double = false
+              quote_closed_at = i
+            end
+          elsif ch == '\''
+            in_single = true
+          elsif ch == '"'
+            in_double = true
+          elsif ch == '#' && comment_boundary?(line, i, quote_closed_at)
+            break
+          end
+          i += 1
+        end
+        i
+      end
+
+      private def comment_boundary?(line : String, i : Int32, quote_closed_at : Int32) : Bool
+        i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t' || quote_closed_at == i - 1
+      end
     end
   end
 end
