@@ -957,7 +957,7 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks[0].unavailable_module.must_be_nil
     end
 
-    it "keeps a module from a collection with zero krikri modules as unavailable_module, no longer raising (0.9.1050)" do
+    it "keeps a module from a capture-recognized collection as unavailable_module, no longer raising (0.9.1050)" do
       # Round 811000 reversed 0.9.903's unconditional parse-time
       # hard-stop for plain unimplemented modules: kubernetes.core is a
       # real collection ansible-playbook resolves and runs fine, and
@@ -966,10 +966,10 @@ describe Krikri::PlaybookParser do
       # unavailable_module set and takes the runtime reachability-tracked
       # skip path instead of aborting the whole load.
       #
-      # No machine-state split any more: krikri resolves module names from
-      # its own baked tables and never refuses a playbook over a name it
-      # cannot resolve, so the task parses with unavailable_module set on
-      # every controller.
+      # A collection the capture RECOGNIZED is undecidable, not a miss: the
+      # controller real runs on has it installed, so the task parses with
+      # unavailable_module set there too. Only a collection the capture
+      # never saw at all is a definitive miss (issue #1909, below).
       task = Krikri::PlaybookParser.parse_string(<<-YAML
         - hosts: all
           tasks:
@@ -979,18 +979,48 @@ describe Krikri::PlaybookParser do
         YAML
       ).plays[0].tasks[0]
       task.unavailable_module.must_equal("kubernetes.core.helm_repository")
+    end
 
-      # And the same for a collection krikri's capture never saw at all -
-      # an unresolvable name is the executor's business, not the parser's.
-      task = Krikri::PlaybookParser.parse_string(<<-YAML
+    # Issue #1909: an FQCN under a collection the captured environment never
+    # saw at all is a definitive miss - real's loader finds no such
+    # installed collection and refuses the whole playbook at load time
+    # (rc=4, no PLAY output, the couldn't-resolve line plus the task's
+    # Origin), even though the role leaves the task's `name:` argument
+    # templating an undefined variable. Live-verified vs 2.21.6 on
+    # jedimt.nebulon_manage_volumes.
+    it "refuses an FQCN under a collection the capture never saw, before arg templating (issue #1909)" do
+      error = assert_raises(Krikri::UnresolvedModuleError) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
-              - name: niche collection, not installed on the controller
-                bodsch.scm.github_latest:
-                  repo: foo
+              - name: Retrieve nPod by name
+                nebulon.nebulon_on.neb_npod_info:
+                  name: "{{ npod_name }}"
+          YAML
+        )
+      end
+      error.message.to_s.must_equal(
+        "couldn't resolve module/action 'nebulon.nebulon_on.neb_npod_info'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.")
+    end
+
+    it "does not refuse an FQCN the playbook-adjacent collections tree provides (issue #1909)" do
+      # The layout a round's installed role dependencies land in: the
+      # adjacent tree is play input, so real resolves the FQCN there.
+      dir = PluginSpecHelper.tmp_path("parser-adjacent-fqcn")
+      FileUtils.mkdir_p(File.join(dir, "collections", "ansible_collections", "nebulon", "nebulon_on"))
+      playbook = File.join(dir, "playbook.yml")
+      File.write(playbook, <<-YAML)
+        - hosts: all
+          tasks:
+            - name: Retrieve nPod by name
+              nebulon.nebulon_on.neb_npod_info:
+                name: "{{ npod_name }}"
         YAML
-      ).plays[0].tasks[0]
-      task.unavailable_module.must_equal("bodsch.scm.github_latest")
+      task = Krikri::PlaybookParser.parse(playbook).plays[0].tasks[0]
+      task.unavailable_module.must_equal("nebulon.nebulon_on.neb_npod_info")
+    ensure
+      FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
     end
 
     it "keeps a not-yet-implemented module from a RECOGNIZED collection as unavailable_module too (0.9.1050)" do

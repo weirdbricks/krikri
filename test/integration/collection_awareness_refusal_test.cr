@@ -1,14 +1,15 @@
 require "../minitest_helper"
 require "file_utils"
 
-# A module name krikri cannot resolve no longer refuses the WHOLE playbook
-# at load, and nothing about it depends on what this controller has
-# installed. krikri resolves module names from its OWN baked tables
-# (CollectionIndex: the pinned ansible-core name/redirect tables and the
-# captured collections' file trees) and leaves an unresolvable name to the
-# executor's unavailable-module flow: a `when:`-gated task skips cleanly
-# (round 811000), a genuinely reached one is reported and the run exit(4)s
-# at the end.
+# A module name krikri cannot resolve inside a collection its captured tables
+# DID see no longer refuses the WHOLE playbook at load, and nothing about it
+# depends on what this controller has installed. krikri resolves module names
+# from its OWN baked tables (CollectionIndex: the pinned ansible-core
+# name/redirect tables and the captured collections' file trees) and leaves
+# such a name to the executor's unavailable-module flow: a `when:`-gated task
+# skips cleanly (round 811000), a genuinely reached one is reported and the
+# run exit(4)s at the end. Only an FQCN under a collection the capture never
+# saw at all is a load-time refusal, like real's own (issue #1909).
 #
 # The earlier "controller collection-set awareness" refused the whole run
 # (rc=4, zero tasks) whenever real's installed set would have, which made
@@ -45,7 +46,12 @@ ensure
 end
 
 describe "unresolvable module names never refuse the whole playbook" do
-  it "runs the other tasks and reports a missing-collection FQCN as unimplemented (exit 4)" do
+  it "runs the other tasks and reports an unimplemented FQCN from a captured collection as unimplemented (exit 4)" do
+    # kubernetes.core is one of the collections krikri's capture saw, so the
+    # controller real runs on has it installed and the FQCN resolves there;
+    # krikri just has not ported helm_repository (issue #1909 narrowed the
+    # old FQCN-blind rule: an FQCN under a collection the capture never saw
+    # is a load-time refusal instead).
     status, stdout, stderr = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -53,15 +59,15 @@ describe "unresolvable module names never refuse the whole playbook" do
         tasks:
           - name: normal
             ansible.builtin.debug: msg=hi
-          - name: missing coll
-            freeipa.ansible_freeipa.ipaclient_setup_nis:
-              state: present
+          - name: unported coll module
+            kubernetes.core.helm_repository:
+              repo_name: foo
       YAML
     status.exit_code.must_equal(4, "stderr:\n#{stderr}")
     stdout.must_include("TASK [normal]")
-    stdout.must_include("TASK [missing coll]")
+    stdout.must_include("TASK [unported coll module]")
     stdout.must_include("PLAY RECAP")
-    stdout.must_include("uses unimplemented plugin: freeipa.ansible_freeipa.ipaclient_setup_nis")
+    stdout.must_include("uses unimplemented plugin: kubernetes.core.helm_repository")
     stderr.wont_include("couldn't resolve module/action")
     stderr.wont_include("Error loading plugin")
   end

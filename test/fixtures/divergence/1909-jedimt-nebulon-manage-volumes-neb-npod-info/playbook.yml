@@ -1,0 +1,10 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  # Real refuses the whole playbook at LOAD time on the role's first task
+  # (an FQCN under nebulon.nebulon_on, a collection the role never declares
+  # and ansible-galaxy never installed), before the task's `name:` argument
+  # templates the deliberately undefined npod_name.
+  roles:
+    - jedimt.nebulon_manage_volumes
