@@ -178,7 +178,7 @@ module Krikri
         # A `{% do %}` tag inside a variable the `that:` item reads is a
         # compile-time syntax error in ansible: the task fails cleanly
         # with that message instead of the process dying (issue #322).
-        return that_index_error("Task failed: #{ex.message}", current_index)
+        return that_index_error("Task failed: #{render_error_detail(ex)}", current_index)
       rescue ex : FilterPluginError | TestPluginError
         # A test/filter plugin's RUNTIME failure inside a `that:` item
         # (the version test's "Version comparison failed: ..." among
@@ -215,6 +215,21 @@ module Krikri
       end
 
       failing ? failure_result(failing, failing_idx) : nil
+    end
+
+    # A RenderExpressionError may arrive with the "Error rendering
+    # expression: " prefix already attached (the operand/ordering arms of
+    # evaluate_that add it); the conditional evaluator's own raises carry
+    # the bare Python TypeError text, which real assert prefixes the same
+    # way as when: does (live-verified vs 2.21.6: `that: "'x' in
+    # my_none"` -> "Task failed: Error rendering expression: argument of
+    # type 'NoneType' is not iterable").
+    private def render_error_detail(ex : Exception) : String
+      if ex.is_a?(RenderExpressionError) && !ex.message.to_s.starts_with?("Error rendering expression: ")
+        "Error rendering expression: #{ex.message}"
+      else
+        ex.message || ""
+      end
     end
 
     # A condition that begins and ends with template delimiters but is not

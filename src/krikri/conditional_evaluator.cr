@@ -3796,6 +3796,24 @@ module Krikri
 
       container = evaluate_value(container_expr, vars, raise_undefined)
 
+      # A container Python cannot iterate at all raises TypeError instead
+      # of answering: real ansible fails the clause with "Error rendering
+      # expression: argument of type 'NoneType' is not iterable"
+      # (live-verified vs 2.21.6 for null, int, float, bool variables and
+      # a `none` literal). The `false` arm below answered instead, which
+      # turned `not in` into a silent true and ran a task real dies on:
+      # issue #1911, srikalyan.docker's `regex_search` over an empty
+      # stdout stores null, then `... not in docker_compose_current_version`
+      # ran where ansible's clause failed. Only strict (task-level
+      # when:/assert:/changed_when:/failed_when:) callers raise; the
+      # lenient ternary/inventory-filter fallbacks keep their
+      # long-standing false, the same split as
+      # #raise_consumed_undefined!.
+      if raise_undefined && !iterable_container?(container)
+        raise RenderExpressionError.new(
+          "argument of type '#{container_type_name(container_expr, vars, container)}' is not iterable")
+      end
+
       # Check if item is in container (string or array). Every array
       # value this evaluator ever produces - whether from a literal
       # `[0, 3, 4]` or a real variable - is Array(String), since
@@ -3847,6 +3865,38 @@ module Krikri
         end
       else
         false
+      end
+    end
+
+    # Python's `in` calls the container's __contains__, so only a str,
+    # list, tuple, dict (or other sequence/mapping) answers at all;
+    # None/int/float/bool raise TypeError before any comparison happens.
+    private def self.iterable_container?(container : String | Int64 | Float64 | Bool | Nil | Array(String)) : Bool
+      container.is_a?(String) || container.is_a?(Array)
+    end
+
+    # The type name Python's TypeError prints for a non-iterable `in`
+    # container. Ansible's yaml loader tags the scalars it read from a
+    # file (`_AnsibleTaggedInt`/`_AnsibleTaggedFloat`), while a literal
+    # in the clause and a gathered fact arrive untagged (plain
+    # `int`/`float`) - live-verified vs 2.21.6 across all four, so the
+    # name comes from the container's own stored value when the operand
+    # is a plain reference and from the evaluated type otherwise.
+    private def self.container_type_name(container_expr : String,
+                                         vars : Hash(String, JSON::Any),
+                                         container : String | Int64 | Float64 | Bool | Nil | Array(String)) : String
+      if (resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(container_expr))
+        case raw = resolved.raw
+        when Nil, Bool, Int64, Float64
+          return Krikri.python_scalar_type_name(JSON::Any.new(raw))
+        end
+      end
+      case container
+      when Nil     then "NoneType"
+      when Bool    then "bool"
+      when Int64   then "int"
+      when Float64 then "float"
+      else              "object"
       end
     end
 
