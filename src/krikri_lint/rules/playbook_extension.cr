@@ -10,10 +10,10 @@ module Krikri
     #
     # Upstream's default kind patterns only make *.yml/*.yaml playbooks,
     # so firing needs a `.ansible-lint` kinds entry mapping another
-    # extension to playbook (what the fixture pins). krikri never reads
-    # kinds: and its FileType falls back to PLAYBOOK for any target that
-    # is not role content, so an explicitly named demo.play already
-    # carries the classification that entry gives it upstream.
+    # extension to playbook (what the fixture pins). Upstream's rule
+    # overrides matchyaml without the base-kind check the inherited one
+    # performs, so the explicit kind alone decides - a playbook kind on a
+    # name without a yaml extension reaches it.
     class PlaybookExtensionRule < Rule
       MESSAGE = %(Use ".yml" or ".yaml" playbook extension.)
 
@@ -31,6 +31,11 @@ module Krikri
 
       def applies_to : Array(FileType)
         [FileType::PLAYBOOK]
+      end
+
+      # Upstream's matchyaml override skips the base-kind gate.
+      def base_kind_gated? : Bool
+        false
       end
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil

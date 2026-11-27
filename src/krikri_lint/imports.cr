@@ -66,7 +66,7 @@ module Krikri
       # Paths are reported relative to the working directory when they
       # live under it, the way upstream's Lintable normalizes them, so
       # both tools print the same file names.
-      def self.expand(paths : Array(String)) : Array(String)
+      def self.expand(paths : Array(String), kinds : Array(KindPattern) = [] of KindPattern) : Array(String)
         seen = Set(String).new
         result = [] of String
         queue = paths.dup
@@ -81,7 +81,7 @@ module Krikri
           seen << path
           next unless File.exists?(path)
           result << path
-          queue.concat(children(path))
+          queue.concat(children(path, kinds))
         end
         result
       end
@@ -98,8 +98,8 @@ module Krikri
       end
 
       # Files reachable from one playbook or task file.
-      def self.children(path : String) : Array(String)
-        file = PositionedFile.load(path)
+      def self.children(path : String, kinds : Array(KindPattern) = [] of KindPattern) : Array(String)
+        file = PositionedFile.load(path, kinds)
         return [] of String unless root = file.root
         # Only playbooks and task files are walked upstream; handlers,
         # vars and defaults files are leaves.
@@ -115,8 +115,8 @@ module Krikri
       # inclusions resolve at run time and never enter the check. Used
       # by SyntaxCheck to decide which files upstream's failed-file gate
       # silences after a check failure.
-      def self.static_children(path : String) : Array(String)
-        file = PositionedFile.load(path)
+      def self.static_children(path : String, kinds : Array(KindPattern) = [] of KindPattern) : Array(String)
+        file = PositionedFile.load(path, kinds)
         return [] of String unless root = file.root
         found = [] of String
         static_walk(root, File.dirname(File.expand_path(path)), found)

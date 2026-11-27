@@ -23,8 +23,16 @@ module Krikri
       def initialize(@path, @file_type, @root, @parse_error)
       end
 
-      def self.load(path : String) : PositionedFile
-        type = FileType.from_path(path)
+      # Upstream's base kind, which decides whether the yaml/task rules
+      # dispatch at all: assigned from the file name alone, independently
+      # of the explicit kind a `kinds:` pattern gives the file. A custom
+      # kind on a non-yaml file therefore runs no yaml rules upstream.
+      def base_yaml? : Bool
+        FileType.text_yaml_name?(@path)
+      end
+
+      def self.load(path : String, kinds : Array(KindPattern) = [] of KindPattern) : PositionedFile
+        type = FileType.from_path(path, kinds)
         source = File.read(path)
         # A sanity ignore file is plain text, which upstream never loads
         # as YAML: parsing it here would report a load-failure for a file

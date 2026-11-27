@@ -21,12 +21,12 @@ module Krikri
         # A file whose playbook syntax check failed gets only the
         # syntax-check match upstream has for it; anything the failed
         # check never loaded is not linted at all (see SyntaxCheck).
-        syntax_check = @syntax_check || SyntaxCheck.new(paths, targets)
+        syntax_check = @syntax_check || SyntaxCheck.new(paths, targets, @config.kinds)
         paths.each do |path|
           next if excluded?(path)
           next if syntax_check.suppressed?(path)
-          file = PositionedFile.load(path)
-          if (match = syntax_check.violation(file))
+          file = PositionedFile.load(path, @config.kinds)
+          if (match = syntax_match(file, syntax_check))
             violations << match
             next
           end
@@ -66,6 +66,13 @@ module Krikri
             rule.check(file, violations)
           end
         end
+      end
+
+      # The match upstream's syntax check has for this file, unless the
+      # path matched no kind pattern: such a lintable runs no rule
+      # upstream, the syntax check included.
+      private def syntax_match(file : PositionedFile, syntax_check : SyntaxCheck) : Violation?
+        file.file_type.unknown? ? nil : syntax_check.violation(file)
       end
 
       # Collected once per file, on first need: the enclosing-task spans a

@@ -1,5 +1,11 @@
 module Krikri
   module Lint
+    # One entry from a project's `kinds:` config: a kind name and the
+    # glob ansible-lint resolves it with. Upstream prepends these to its
+    # own defaults ("append default kinds to the custom list"), so a
+    # project pattern wins over every default assignment.
+    record KindPattern, kind : String, pattern : String
+
     enum FileType
       PLAYBOOK
       TASKS
@@ -11,18 +17,29 @@ module Krikri
       YAML
       # A collection's tests/sanity/ignore-*.txt. Plain text, never YAML.
       SANITY_IGNORE
+      # Upstream's kind_from_path returns an empty kind for a path no
+      # pattern matches, and a lintable with no kind runs no rules at
+      # all. That is observable through an explicitly named file target:
+      # ansible-lint lints an extensionless playbook without reporting
+      # anything about it.
+      UNKNOWN
 
       def playbook? : Bool
         self == PLAYBOOK
       end
 
-      # Upstream's Lintable.base_kind gate: only a text/yaml lintable
-      # reaches the generic matchyaml dispatch. A sanity ignore file is
-      # plain text and a role directory is kind "role" with no yaml base
-      # kind, so each reaches only a rule that opts in
-      # (Rule#non_yaml_lintable? / Rule#applies?).
+      def unknown? : Bool
+        self == UNKNOWN
+      end
+
+      # A kind krikri can dispatch yaml rules for. Upstream additionally
+      # gates them on the lintable's base kind (see
+      # PositionedFile#base_yaml?): a sanity ignore file is plain text, a
+      # role directory is kind "role" with no yaml base kind, and an
+      # unmatched path has no kind at all, so each reaches only a rule
+      # that opts in (Rule#non_yaml_lintable? / Rule#applies?).
       def yaml_lintable? : Bool
-        self != SANITY_IGNORE && self != ROLE
+        self != SANITY_IGNORE && self != ROLE && self != UNKNOWN
       end
 
       # Upstream's kind_from_path glob **/tests/sanity/ignore-*.txt.
@@ -34,7 +51,26 @@ module Krikri
           name.starts_with?("ignore-") && name.ends_with?(".txt")
       end
 
-      def self.from_path(path : String) : FileType
+      # Upstream's BASE_KINDS assign text/yaml from the name alone: the
+      # yaml extensions plus the two config-file names. The base kind,
+      # not the kind, decides whether yaml/task rules run.
+      def self.text_yaml_name?(path : String) : Bool
+        name = File.basename(path)
+        yaml_extension?(name) || name == ".ansible-lint" || name == ".yamllint"
+      end
+
+      def self.yaml_extension?(name : String) : Bool
+        name.ends_with?(".yml") || name.ends_with?(".yaml")
+      end
+
+      def self.from_path(path : String, kinds : Array(KindPattern) = [] of KindPattern) : FileType
+        # Upstream resolves the path before globbing it, and its patterns
+        # are absolute (`**/`-prefixed).
+        absolute = File.exists?(path) ? File.realpath(path) : File.expand_path(path)
+        # Project kinds come first, then the defaults below.
+        kinds.each do |entry|
+          return from_kind_name(entry.kind) if File.match?(entry.pattern, absolute)
+        end
         return SANITY_IGNORE if sanity_ignore_path?(path)
         parts = path.split('/')
         # Files under a role's well-known subdirectories classify by the
@@ -45,6 +81,24 @@ module Krikri
           return type if type
         end
         main_file_type(parts)
+      end
+
+      # A kind name krikri has no dedicated rules for (upstream's text,
+      # python, inventory, galaxy, ... kinds, or a project's own name)
+      # runs nothing here: every rule distinguishes those kinds from the
+      # ones above, and krikri does not implement any of them.
+      private def self.from_kind_name(name : String) : FileType
+        case name
+        when "playbook"           then PLAYBOOK
+        when "tasks"              then TASKS
+        when "handlers"           then HANDLERS
+        when "vars"               then VARS
+        when "meta"               then META
+        when "role"               then ROLE
+        when "yaml"               then YAML
+        when "sanity-ignore-file" then SANITY_IGNORE
+        else                           UNKNOWN
+        end
       end
 
       private def self.role_subdir_type(dir : String) : FileType?
@@ -65,7 +119,12 @@ module Krikri
             return type if type
           end
         end
-        PLAYBOOK
+        # Upstream's default `**/*.{yaml,yml}` assignment keeps a yaml
+        # file lintable when no more specific pattern names it; krikri
+        # folds that generic kind into PLAYBOOK, whose rules are the
+        # ones that then apply. Anything else matches no default pattern
+        # and is unknown upstream.
+        yaml_extension?(parts.last) ? PLAYBOOK : UNKNOWN
       end
     end
   end

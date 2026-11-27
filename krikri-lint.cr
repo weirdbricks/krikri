@@ -186,7 +186,7 @@ module Krikri::Lint
       end
       config = LintConfig.new(config.skip_list, config.warn_list,
         config.enable_list, config.tags, config.exclude_paths, p,
-        config.config_dir, config.file_warn_list)
+        config.config_dir, config.file_warn_list, config.kinds)
     end
     # Upstream's merge_config: a --warn-list on the command line extends
     # the config file's own list; with no file list, the CLI list
@@ -198,7 +198,8 @@ module Krikri::Lint
                 end
     config = LintConfig.new(config.skip_list + cli_skip, warn_list,
       config.enable_list + cli_enable, config.tags + cli_tags,
-      config.exclude_paths, config.profile, config.config_dir)
+      config.exclude_paths, config.profile, config.config_dir,
+      config.file_warn_list, config.kinds)
 
     if (write_list = cli_fix) && (unknown = unknown_fix_tags(registry, write_list))
       STDERR.puts "krikri-lint: Found invalid value(s) (#{unknown}) for --fix arguments, must be one of: all, none, #{(registry.rules.flat_map(&.tags) + registry.rules.map(&.id)).uniq.join(", ")}"
@@ -208,13 +209,13 @@ module Krikri::Lint
     # ansible-lint walks each target's import graph before linting,
     # so imported task files and playbooks are linted too and counted in
     # the "on N files" summary.
-    files = Imports.expand(FileDiscovery.discover(targets))
+    files = Imports.expand(FileDiscovery.discover(targets), config.kinds)
       .reject { |path| config.excluded?(path) }
     missing = FileDiscovery.missing_targets(targets)
     # A role directory target is a lintable of its own (upstream kind
     # "role"); it is never excluded, because an explicit target is not.
     role_dirs = FileDiscovery.role_targets(targets)
-    syntax_check = SyntaxCheck.new(files, targets)
+    syntax_check = SyntaxCheck.new(files, targets, config.kinds)
     # A directory target is walked but yields no matches; upstream still
     # counts it, so the summary's file total has to include it. Missing
     # targets count too - they lint as load-failure matches. Files only a
