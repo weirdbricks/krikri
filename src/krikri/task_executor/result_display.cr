@@ -2803,8 +2803,16 @@ module Krikri
         break if val_indent < key_indent
         break if val_indent == key_indent && !val_stripped.starts_with?("- ")
         next unless val_stripped.starts_with?("- ")
-        clause_hit ||= {val_idx, val_indent} if clause && item_scalar_equals?(val_stripped, clause)
-        name_hit ||= {val_idx, val_indent} if name && val_line.includes?(name)
+        # YAML folds a wrapped item's continuation lines into ONE scalar,
+        # and real templates that whole value as the item's own operation,
+        # anchoring the Origin at the item's first line - a wrap-split
+        # clause never equals its first line alone, and a fact named only
+        # on a continuation line was invisible to the name match, so both
+        # fell through to the `when:` key line (issue #1965:
+        # RedHatOfficial.rhel8_anssi_bp28_high's multi-line bullet).
+        item_text = folded_list_item_text(lines, val_idx, val_indent)
+        clause_hit ||= {val_idx, val_indent} if clause && item_scalar_equals?(item_text, clause)
+        name_hit ||= {val_idx, val_indent} if name && item_text.includes?(name)
         items << {val_idx, val_indent}
       end
       if hit = clause_hit || name_hit
@@ -2814,13 +2822,30 @@ module Krikri
       param_value_origin(path, source_line, key, text: text)
     end
 
-    # Whether a block-sequence ITEM's own scalar is exactly *clause* - the
-    # text real templated while the read fired. YAML quoting is stripped
-    # from the item (a single-quoted scalar doubles its internal quotes);
-    # a folded/literal or escape-laden shape never matches and falls back
-    # to the name-based pick.
-    private def self.item_scalar_equals?(val_stripped : String, clause : String) : Bool
-      scalar = val_stripped[2..].strip
+    # The scalar a block-sequence item carries as YAML reads it: the `- `
+    # line's own text plus every continuation line indented deeper than the
+    # item's dash, joined the way YAML folds a plain scalar. A one-line item
+    # comes back unchanged.
+    private def self.folded_list_item_text(lines : Array(String), item_idx : Int32, item_indent : Int32) : String
+      pieces = [lines[item_idx].strip[2..].strip]
+      ((item_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        # Anything at the item's own indent or shallower ends its scalar (a
+        # blank line sits at indent 0); a comment line is not content.
+        break if (line.size - line.lstrip.size) <= item_indent
+        break if stripped.starts_with?("#")
+        pieces << stripped
+      end
+      pieces.join(" ")
+    end
+
+    # Whether a block-sequence ITEM's own scalar - already folded across
+    # its wrapped lines - is exactly *clause*, the text real templated
+    # while the read fired. YAML quoting is stripped from the item (a
+    # single-quoted scalar doubles its internal quotes);
+    private def self.item_scalar_equals?(item_text : String, clause : String) : Bool
+      scalar = item_text.strip
       if scalar.size >= 2 && scalar.starts_with?('\'') && scalar.ends_with?('\'')
         scalar = scalar[1...-1].gsub("''", "'")
       elsif scalar.size >= 2 && scalar.starts_with?('"') && scalar.ends_with?('"')

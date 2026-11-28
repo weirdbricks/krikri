@@ -669,6 +669,37 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.to_s.includes?(":8:10").must_equal(false)
   end
 
+  # YAML folds a block-sequence item's wrapped continuation lines into ONE
+  # scalar, and real templates that whole item, so the fact read on its
+  # second physical line still belongs to the item's own token. Matching
+  # only each item's first line missed both the evaluated clause and the
+  # fact name and fell through to the `when:` key's value token (issue
+  # #1965: RedHatOfficial.rhel8_anssi_bp28_high's multi-line bullet).
+  # Live-verified vs ansible-core 2.21.6.
+  it "pins a wrapped block-sequence when: item's read at the item's own token" do
+    stderr = run_playbook(<<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: wrapped gate
+            debug:
+              msg: hi
+            when:
+              - ansible_os_family | length > 0
+              - ( "unused" in ["notused"] ) or ( "true" == "true" and
+                ansible_virtualization_type | length > 0 )
+      PLAYBOOK
+
+    stderr.scan(/DEPRECATION WARNING\]: INJECT_FACTS_AS_VARS/).size.must_equal(2)
+    stderr.must_include(":9:11\n")
+    stderr.must_include("9         - ansible_os_family | length > 0\n")
+    stderr.must_include(":10:11\n")
+    stderr.must_include("10         - ( \"unused\" in [\"notused\"] ) or ( \"true\" == \"true\" and\n")
+    stderr.must_include("^ column 11")
+    stderr.includes?(":8:12\n").must_equal(false)
+  end
+
   # A dynamic include's loaded tasks inherit the enclosing BLOCK's when:
   # through real's parent chain, so the block's fact read is reported after
   # the first included task's banner, Origin'd at the block's own clause
