@@ -255,6 +255,53 @@ describe Krikri::ArgspecValidator do
       "\"1.5\" cannot be converted to an int")
   end
 
+  # A YAML int past Int64 is a native Python int to real, so every NON-int
+  # type error names the class "int" and prints its bare digits instead of
+  # the wire marker and "str" (issue #1980; live-verified vs 2.21.6 for
+  # bool, str_no_conversion, choices and dict).
+  it "names a marked bigint's class int and prints its digits in non-int messages" do
+    bigint = Krikri.bigint_sentinel("999999999999999999999999")
+
+    failure = Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"name" => "x", "update_cache" => bigint}, vars)
+    failure.as(Failure).msg.wont_include("bigint:")
+    failure.as(Failure).msg.starts_with?(
+      "argument 'update_cache' is of type int and we were unable to convert to bool: " \
+      "The value '999999999999999999999999' is not a valid boolean. ").must_equal(true)
+
+    failure = Krikri::ArgspecValidator.validate(
+      "debug", "ansible.builtin.debug", {"var" => bigint}, vars)
+    failure.as(Failure).msg.must_equal(
+      "argument 'var' is of type int and we were unable to convert to _check_type_str_no_conversion: " \
+      "'999999999999999999999999' is not a string and conversion is not allowed")
+
+    failure = Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"name" => "x", "state" => bigint}, vars)
+    failure.as(Failure).msg.must_equal(
+      "value of state must be one of: absent, build-dep, fixed, latest, present, " \
+      "got: 999999999999999999999999")
+
+    failure = Krikri::ArgspecValidator.validate(
+      "uri", "ansible.builtin.uri",
+      {"url" => "http://127.0.0.1:1/", "headers" => bigint}, vars)
+    failure.as(Failure).msg.must_equal(
+      "argument 'headers' is of type int and we were unable to convert to dict: " \
+      "<class 'int'> cannot be converted to a dict")
+  end
+
+  # The same native-int reading has to keep the types that DO accept a
+  # Python int passing: int itself, and list (real's check_type_list wraps
+  # an int as [str(int)], so apt's name list accepts it).
+  it "accepts a marked bigint for int and list typed options" do
+    bigint = Krikri.bigint_sentinel("999999999999999999999999")
+    Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt", {"name" => bigint}, vars).must_be_nil
+    Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt", {"name" => "x", "lock_timeout" => bigint}, vars).must_be_nil
+  end
+
   it "emits Ansible's exact invalid-choices wording, in the spec's own order" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",

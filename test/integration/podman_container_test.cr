@@ -99,6 +99,26 @@ describe "podman_container plugin argument validation" do
       "Failed to find required executable \"krikri-no-such-podman-binary\" in paths: ").must_equal(true)
   end
 
+  # A YAML int past Int64 is a native Python int to real, and
+  # containers.podman's check_type_int is Decimal-based, so validation
+  # passes and the value reaches podman's own flag parsing - which rejects
+  # the out-of-range value itself. krikri's private bare-regex copy rejected
+  # the marked value instead (issue #1980). The probe below runs only after
+  # every spec check, so reaching it proves the type check passed.
+  it "accepts a marked bigint cpu_shares and reaches the executable probe (issue #1980)" do
+    result = PluginSpecHelper.run("podman_container", {
+      "name"       => "krikri",
+      "image"      => "docker.io/gitea/act_runner:latest",
+      "cpu_shares" => Krikri.bigint_sentinel("999999999999999999999999"),
+      "executable" => "krikri-no-such-podman-binary",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.wont_include("unable to convert")
+    str_starts_with?(result["msg"].as_s,
+      "Failed to find required executable \"krikri-no-such-podman-binary\" in paths: ").must_equal(true)
+  end
+
   it "accepts the gitea_runner task's own parameter set (aliases included)" do
     # The role's task passes rm through its auto_remove alias and
     # volume through volumes - real converts both. With a deliberately

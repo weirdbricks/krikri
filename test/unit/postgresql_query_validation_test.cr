@@ -84,6 +84,23 @@ describe "postgresql_query plugin argument validation" do
       "\"'notaport'\" cannot be converted to an int")
   end
 
+  # AnsibleModule's int conversion is Decimal-based, so an integral float
+  # port reaches the module as the int 13399 - never a plugin-side Int32
+  # parse failure, and every libpq text quotes the digits (issue #1980).
+  # The port is chosen to have no listener (the state-validation specs use
+  # the same one), so the failure is the connection itself.
+  it "reads an integral float login_port as the int Ansible converts it to" do
+    result = PluginSpecHelper.run("postgresql_query", {
+      "query"      => "SELECT 1",
+      "login_host" => "127.0.0.1",
+      "login_port" => "13399.0",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.wont_include("Invalid Int32")
+    result["msg"].as_s.must_include("port 13399 failed")
+  end
+
   it "fails a non-boolean autocommit" do
     result = PluginSpecHelper.run("postgresql_query", {
       "query"      => "SELECT 1",

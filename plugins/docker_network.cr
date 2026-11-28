@@ -727,7 +727,7 @@ module Krikri
     private def validate_types : PluginResult?
       INT_PARAMS.each do |param|
         next unless raw = @params[param]?
-        next if raw.to_i32?
+        next if int_convertible?(raw)
         return int_type_error(param, raw)
       end
       BOOL_PARAMS.each do |param|
