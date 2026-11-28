@@ -50,6 +50,7 @@ module Krikri
         "no-free-form"                  => "basic",
         "playbook-extension"            => "basic",
         "schema[meta]"                  => "basic",
+        "schema[galaxy]"                => "basic",
       }
 
       def self.list : Array(String)
