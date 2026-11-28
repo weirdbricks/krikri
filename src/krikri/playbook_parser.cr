@@ -9070,6 +9070,19 @@ module Krikri
             # (and the argspec checks) still sees the previous plain JSON
             # text (issue #1489).
             params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
+          elsif module_name.split('.').last == "copy" && key.to_s == "content" && (value.as_h? || value.as_a?)
+            # ansible-core's copy ACTION plugin json.dumps'es a dict/list
+            # content before anything writes it (copy.py's `isinstance(
+            # content, dict) or isinstance(content, list)` branch), so the
+            # file gets json's default ", "/": " separators and no trailing
+            # newline. The generic wire below flattens a mapping to compact
+            # JSON text and a scalar list to "a,b" - the same text a
+            # user-authored STRING content arrives as, so the plugin could
+            # not tell a container from a string.
+            # NON_STRING_PARAM_PREFIX keeps it reachable for
+            # plugins/copy.cr while the argspec checks still see the
+            # previous plain text (issue #1959).
+            params[key.to_s] = Krikri::NON_STRING_PARAM_PREFIX + value.to_json
           elsif (module_name == "ansible.builtin.set_stats" || module_name == "set_stats") && key.to_s == "data" && value.as_h?
             # set_stats is a controller-side ACTION plugin, and its `data`
             # is templated natively before the dict-shape check: a YAML

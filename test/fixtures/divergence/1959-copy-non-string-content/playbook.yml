@@ -1,0 +1,30 @@
+# Issue #1959: ansible-core's copy ACTION json.dumps'es a dict/list
+# `content:` before writing it (`", "` / `": "` separators, no trailing
+# newline). Found while building the repro for #1874; ansible-lint's
+# `avoid-implicit` flags exactly this task shape. Dest paths are relative so
+# the case only writes inside its own scratch directory.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Write a mapping via copy content
+      ansible.builtin.copy:
+        content:
+          a: b
+          n: 1
+        dest: mapping.txt
+
+    - name: Write a list via copy content
+      ansible.builtin.copy:
+        content:
+          - a
+          - b
+        dest: list.txt
+
+    - name: Show the mapping file
+      ansible.builtin.debug:
+        msg: "{{ lookup('file', 'mapping.txt') }}"
+
+    - name: Show the list file
+      ansible.builtin.debug:
+        msg: "{{ lookup('file', 'list.txt') }}"

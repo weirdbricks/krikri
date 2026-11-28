@@ -5,6 +5,7 @@ require "digest/md5"
 require "digest/sha1"
 require "file_utils"
 require "../src/krikri/base_plugin"
+require "../src/krikri/py_dump"
 
 module Krikri
   # Copy plugin - copies files to destinations
@@ -199,6 +200,23 @@ module Krikri
       #   null var, or a bare `content:`), which rides NONE_SENTINEL and
       #   is restored to nil below via #explicit_null_param?.
       content = @params["content"]?
+      # ansible-core's copy ACTION json.dumps'es a dict/list content before
+      # anything writes it (copy.py's `isinstance(content, dict) or
+      # isinstance(content, list)` branch): json's default ", "/": "
+      # separators and no trailing newline, so `{a: b, n: 1}` is written
+      # `{"a": "b", "n": 1}` instead of the wire's compact JSON, and a
+      # list `[a, b]` becomes `["a", "b"]` instead of `a,b`. The parser
+      # keeps the container's provenance (NON_STRING_PARAM_PREFIX, see
+      # parse_module_params) because the flat wire text alone cannot tell
+      # it apart from a user-authored JSON STRING, which Ansible writes
+      # verbatim. A str content (plain or templated) is never marked, so
+      # it stays byte-identical.
+      if native_content = non_string_param("content")
+        case native_content.raw
+        when Hash, Array
+          content = Krikri::PyDump.json(native_content)
+        end
+      end
       # An explicit None content (`content:` with no value, or a
       # whole-span `{{ expr }}` that natively resolved to Python null)
       # rode the wire as NONE_SENTINEL and BasePlugin demoted it to ""

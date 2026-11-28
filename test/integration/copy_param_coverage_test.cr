@@ -479,4 +479,55 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       File.delete(dest) if dest && File.exists?(dest)
     end
   end
+
+  describe "content: (non-string JSON serialization)" do
+    it "json-encodes a dict/list content the way ansible's copy action does, leaving string content verbatim" do
+      # issue #1959: ansible-core's copy ACTION json.dumps'es a dict/list
+      # content before anything writes it - json's default ", "/": "
+      # separators and no trailing newline - and templates each mapping
+      # value first (live-verified vs 2.21.6, the issue's own playbook).
+      # A str content is written verbatim, including one that merely looks
+      # like JSON.
+      inventory = File.join(PluginSpecHelper::PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+      mapping_path = PluginSpecHelper.tmp_path("copy-content-mapping.txt")
+      list_path = PluginSpecHelper.tmp_path("copy-content-list.txt")
+      templated_path = PluginSpecHelper.tmp_path("copy-content-templated.txt")
+      verbatim_path = PluginSpecHelper.tmp_path("copy-content-verbatim.txt")
+      playbook = PluginSpecHelper.tmp_path("copy-content.yml")
+      File.write(playbook, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          vars:
+            n: 7
+            m: {a: b, n: 1}
+          tasks:
+            - ansible.builtin.copy:
+                content: {a: b, n: 1}
+                dest: #{mapping_path}
+            - ansible.builtin.copy:
+                content: [a, b]
+                dest: #{list_path}
+            - ansible.builtin.copy:
+                content: "{{ m }}"
+                dest: #{templated_path}
+            - ansible.builtin.copy:
+                content: '{"a":1}'
+                dest: #{verbatim_path}
+        YAML
+
+      output = IO::Memory.new
+      status = Process.run(File.join(PluginSpecHelper::PROJECT_ROOT, "bin", "krikri-playbook"),
+        ["-i", inventory, playbook], output: output, error: output)
+      status.success?.must_equal(true)
+      File.read(mapping_path).must_equal(%({"a": "b", "n": 1}))
+      File.read(list_path).must_equal(%(["a", "b"]))
+      File.read(templated_path).must_equal(%({"a": "b", "n": 1}))
+      File.read(verbatim_path).must_equal(%({"a":1}))
+    ensure
+      [mapping_path, list_path, templated_path, verbatim_path, playbook].each do |path|
+        File.delete(path) if path && File.exists?(path)
+      end
+    end
+  end
 end

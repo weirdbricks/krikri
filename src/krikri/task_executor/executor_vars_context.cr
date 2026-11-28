@@ -3381,13 +3381,13 @@ module Krikri
       native_typed_container_value(substitutor, stripped_value[Krikri::NATIVE_TYPED_PREFIX.size..])
     end
 
-    # The JSON container a uri body wire value carries: a parse-time
-    # literal mapping/list (NON_STRING_PARAM_PREFIX, see
-    # parse_module_params) or the NATIVE_TYPED_PREFIX-marked result of a
-    # whole-span template. nil for every other shape - in particular a
-    # whole-span STRING body, which uri.py sends verbatim (a str body is
-    # never json.dumps'd).
-    private def uri_body_container(value : String) : JSON::Any?
+    # The JSON container a wire value carries: a parse-time literal
+    # mapping/list (NON_STRING_PARAM_PREFIX, see parse_module_params) or
+    # the NATIVE_TYPED_PREFIX-marked result of a whole-span template. nil
+    # for every other shape - in particular a whole-span STRING, which
+    # both consumers take verbatim (uri.py never json.dumps'es a str body,
+    # and copy.py only json.dumps'es a dict/list content).
+    private def marked_json_container(value : String) : JSON::Any?
       text = value.strip
       payload = if text.starts_with?(Krikri::NON_STRING_PARAM_PREFIX)
                   text[Krikri::NON_STRING_PARAM_PREFIX.size..]
@@ -3404,13 +3404,14 @@ module Krikri
       parsed.raw.is_a?(Hash) || parsed.raw.is_a?(Array) ? parsed : nil
     end
 
-    # The wire form for a native uri body container: leaves rendered the
-    # way Ansible templates each mapping value (a whole-span int leaf is
+    # The wire form for a native JSON container argument: leaves rendered
+    # the way Ansible templates each mapping value (a whole-span int leaf is
     # an unquoted JSON number in json.dumps' output), re-marked as a
     # NON-STRING param so BasePlugin demotes it to plain JSON text for
-    # every body_format that is not json.
-    private def uri_body_container_wire(substitutor : VarSubstitutor, value : String) : String?
-      container = uri_body_container(value)
+    # every consumer that never asks (uri's non-json body formats, ...)
+    # while the plugin that owns the json.dumps can still reach it.
+    private def json_container_param_wire(substitutor : VarSubstitutor, value : String) : String?
+      container = marked_json_container(value)
       return nil unless container
       wire = Krikri::NON_STRING_PARAM_PREFIX + render_json_container_leaves(substitutor, container).to_json
       # The per-leaf structured evaluation above can return a value that
@@ -3536,6 +3537,13 @@ module Krikri
       # (issue #1489; see parse_module_params' uri branch and
       # plugins/uri.cr's json serialization).
       uri_body_module = module_name.try(&.split('.').last) == "uri"
+      # copy's `content:` gets the same treatment: copy.py json.dumps'es a
+      # dict/list content before it writes the file, so the container has
+      # to stay distinguishable from a user-authored JSON STRING while
+      # its templated leaves are rendered (issue #1959; see
+      # parse_module_params' copy branch and plugins/copy.cr's
+      # serialization).
+      copy_content_module = module_name.try(&.split('.').last) == "copy"
       params.keys.sort! do |a, b|
         (a == "cmd" && raw_command_module ? "_raw_params" : a) <=>
           (b == "cmd" && raw_command_module ? "_raw_params" : b)
@@ -3675,8 +3683,12 @@ module Krikri
         # uri's `body:` is the same shape: Ansible's templating keeps a
         # whole-span container native, and uri.py's json.dumps (not the
         # param wire's compact text) decides the bytes for body_format:
-        # json - see #uri_body_container_wire (issue #1489).
+        # json - see #json_container_param_wire (issue #1489).
         uri_body_param = uri_body_module && key == "body"
+        # copy.py's own `isinstance(content, dict) or isinstance(content,
+        # list)` branch serializes a whole-span container content the same
+        # way (issue #1959).
+        copy_content_param = copy_content_module && key == "content"
         begin
           # A literal mapping/list uri body: Ansible templates each
           # mapping value natively before json.dumps, so a whole-span int
@@ -3685,8 +3697,16 @@ module Krikri
           # plugins/uri.cr apply json.dumps' own spacing/ensure_ascii
           # escaping; every other body_format still sees the previous
           # plain JSON text (BasePlugin demotes the marker) - issue #1489.
-          if uri_body_param && (body_wire = uri_body_container_wire(substitutor, stripped_value))
+          if uri_body_param && (body_wire = json_container_param_wire(substitutor, stripped_value))
             result[key] = body_wire
+            next
+          end
+          # A literal mapping/list copy content takes the same per-leaf
+          # rendering: ansible templates each mapping value before
+          # copy.py's json.dumps, so `{{ n }}` stays an unquoted JSON
+          # number (issue #1959).
+          if copy_content_param && (content_wire = json_container_param_wire(substitutor, stripped_value))
+            result[key] = content_wire
             next
           end
           # inside the begin: native_typed_value's strict-undefined check must
@@ -3703,7 +3723,7 @@ module Krikri
                            # same rescue chain as every other msg shape.
                            render_debug_msg_container(substitutor, msg_container)
                          else
-                           (native_containers || native_msg_param || set_stats_data_param || uri_body_param) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+                           (native_containers || native_msg_param || set_stats_data_param || uri_body_param || copy_content_param) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
                          end
           unless native_typed
             # A set_fact param whose parse-time wire is a JSON container
@@ -3733,7 +3753,15 @@ module Krikri
           # a str in Ansible (uri.py takes it verbatim), so it drops here
           # and takes the ordinary substitution.
           if uri_body_param && native_typed
-            native_typed = uri_body_container_wire(substitutor, native_typed)
+            native_typed = json_container_param_wire(substitutor, native_typed)
+          end
+          # Same for a whole-span copy content: only a CONTAINER keeps the
+          # marker. A str/None/bool result drops out here (nil) and takes
+          # the ordinary substitution, so copy.py's str verbatim rule and
+          # the explicit-null NONE_SENTINEL flow stay exactly as they were
+          # (issue #1959).
+          if copy_content_param && native_typed
+            native_typed = json_container_param_wire(substitutor, native_typed)
           end
           # A MIXED value (literal text around the span) under
           # native_containers still renders to TEXT in real ansible-core -
