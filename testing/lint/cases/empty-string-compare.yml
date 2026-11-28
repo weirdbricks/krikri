@@ -1,0 +1,31 @@
+---
+# Parity fixture for the empty-string-compare rule. Opt-in upstream (tags
+# idiom,opt-in), so it only fires under `--enable-list empty-string-compare`;
+# ansible-playbook itself runs this play unchanged.
+- name: Empty string compare probe
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    my_var: "x"
+  tasks:
+    - name: Compare var to empty string
+      ansible.builtin.debug:
+        msg: empty
+      when: my_var == ""
+
+    - name: Compare var not to empty string
+      ansible.builtin.debug:
+        msg: not empty
+      when: my_var != ""
+
+    - name: Single quoted empty string in a list
+      ansible.builtin.debug:
+        msg: list
+      when:
+        - my_var == ''
+
+    - name: A real comparison stays quiet
+      ansible.builtin.debug:
+        msg: quiet
+      when: my_var == "x"

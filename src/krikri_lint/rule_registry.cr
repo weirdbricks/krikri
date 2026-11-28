@@ -40,6 +40,7 @@ module Krikri
           MetaRuntimeRule.new,
           KeyOrderRule.new,
           LiteralCompareRule.new,
+          EmptyStringCompareRule.new,
           YamlTrailingSpacesRule.new,
           YamlTruthyRule.new,
           YamlCommentsRule.new,
