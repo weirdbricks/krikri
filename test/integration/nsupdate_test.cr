@@ -5,10 +5,10 @@ require "../../src/krikri/plugin_helpers/nsupdate_message"
 # UPDATE exactly where Bind9 does (a zone section without ZTYPE/ZCLASS, an
 # owner name outside the zone, a class-IN or class-NONE RR with an empty
 # rdata) with the same rcode the real server returns, answers the existence
-# probe with NOERROR, and answers the TTL query with the record - so a
-# spec's expected result only holds when the message layout dnspython
-# produces is what goes on the wire.
-private def start_nsupdate_server(zone : String, host : String, ttl : Int32, value_present : Bool = true) : {TCPServer, Int32}
+# probe with NOERROR (or NXRRSET when the stand-in's zone has no such record),
+# and answers the TTL query with the record - so a spec's expected result only
+# holds when the message layout dnspython produces is what goes on the wire.
+private def start_nsupdate_server(zone : String, host : String, ttl : Int32, value_present : Bool = true, exists : Bool = true) : {TCPServer, Int32}
   listener = TCPServer.new("127.0.0.1", 0)
   port = listener.local_address.port
   spawn do
@@ -19,7 +19,7 @@ private def start_nsupdate_server(zone : String, host : String, ttl : Int32, val
           length = connection.read_bytes(UInt16, IO::ByteFormat::NetworkEndian)
           message = Bytes.new(length)
           connection.read_fully(message)
-          response = nsupdate_test_response(message, zone, host, ttl, value_present)
+          response = nsupdate_test_response(message, zone, host, ttl, value_present, exists)
           connection.write_bytes(response.size.to_u16, IO::ByteFormat::NetworkEndian)
           connection.write(response)
           connection.flush
@@ -41,15 +41,16 @@ end
 
 # Bind9's rcode for one UPDATE message: 0 when it is valid, 1 (FORMERR) for
 # a malformed section, 10 (NOTZONE) for an out-of-zone owner name and 8
-# (NXRRSET) for the specific-value prerequisite when the stand-in does not
+# (NXRRSET) for a prerequisite the stand-in cannot satisfy - the RRSET-exists
+# form when the record is missing, the specific-value form when it does not
 # have that rdata, so the modify path gets exercised.
-private def nsupdate_test_update_rcode(message : Bytes, zone : String, value_present : Bool) : Int32
+private def nsupdate_test_update_rcode(message : Bytes, zone : String, value_present : Bool, exists : Bool) : Int32
   section_rcode, pos = nsupdate_test_zone_section_rcode(message, zone)
   return section_rcode unless section_rcode == 0
 
   prerequisites = nsupdate_test_u16(message, 6)
   (prerequisites + nsupdate_test_u16(message, 8)).times do |index|
-    rcode, pos = nsupdate_test_rr_rcode(message, pos, zone, index < prerequisites, value_present)
+    rcode, pos = nsupdate_test_rr_rcode(message, pos, zone, index < prerequisites, value_present, exists)
     return rcode unless rcode == 0
   end
   0
@@ -66,24 +67,25 @@ private def nsupdate_test_zone_section_rcode(message : Bytes, zone : String) : {
 end
 
 private def nsupdate_test_rr_rcode(message : Bytes, pos : Int32, zone : String,
-                                   prerequisite : Bool, value_present : Bool) : {Int32, Int32}
+                                   prerequisite : Bool, value_present : Bool, exists : Bool) : {Int32, Int32}
   name, pos = Krikri::PluginHelpers::NsupdateMessage.decode_name(message, pos)
   return {10, pos} unless Krikri::PluginHelpers::NsupdateMessage.subdomain_of?(name, zone)
   return {1, pos} if pos + 10 > message.size
   class_code = nsupdate_test_u16(message, pos + 2)
   rdlength = nsupdate_test_u16(message, pos + 8)
   return {1, pos} if rdlength == 0 && (class_code == 1 || class_code == 254)
+  return {8, pos} if prerequisite && class_code == 255 && !exists
   return {8, pos} if prerequisite && class_code == 1 && !value_present
   {0, pos + 10 + rdlength}
 end
 
-private def nsupdate_test_response(message : Bytes, zone : String, host : String, ttl : Int32, value_present : Bool) : Bytes
+private def nsupdate_test_response(message : Bytes, zone : String, host : String, ttl : Int32, value_present : Bool, exists : Bool) : Bytes
   io = IO::Memory.new
   flags = ((message[2].to_u16 << 8) | message[3].to_u16) & 0x7800
   opcode = (flags >> 11).to_i32
 
   if opcode == 5
-    rcode = nsupdate_test_update_rcode(message, zone, value_present)
+    rcode = nsupdate_test_update_rcode(message, zone, value_present, exists)
     io.write(message[0, 2])
     io.write_bytes((flags | 0x8000 | rcode.to_u16), IO::ByteFormat::NetworkEndian)
     io.write(Bytes.new(8, 0))
@@ -218,6 +220,28 @@ describe "nsupdate plugin" do
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("DNS server error")
+  end
+
+  it "reports a malformed value when the existence probe finds no record" do
+    # The probe answering NXRRSET sends the module to create_record, whose
+    # first add() raises SyntaxError before the update is sent - so the bad
+    # A value fails as "Invalid/malformed value", not with the probe's
+    # rcode (kpg issue 1964: the generated playbook pointed at a server
+    # that answered NXRRSET).
+    listener, port = start_nsupdate_server("example.com.", "host", 68, exists: false)
+    begin
+      result = PluginSpecHelper.run("nsupdate", {
+        "server" => "127.0.0.1", "port" => port.to_s,
+        "record" => "host", "zone" => "example.com.",
+        "type" => "A", "value" => "not-an-ip-address",
+      })
+    ensure
+      listener.close rescue nil
+    end
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Invalid/malformed value")
+    result["dns_rc"]?.must_be_nil
   end
 
   it "reports no change needed when the server accepts the update layout" do

@@ -567,6 +567,7 @@ module Krikri
             msg: "value needed when state=present")
         end
         rcode = create_record(port, protocol, zone, record, type_code, ttl, values.not_nil!)
+        return rcode if rcode.is_a?(PluginResult)
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to create DNS record (rc: #{@dns_rc})",
           dns_rc: @dns_rc, dns_rc_str: PluginHelpers::NsupdateMessage.rcode_to_text(@dns_rc)) if rcode != 0
@@ -576,6 +577,7 @@ module Krikri
             msg: "value needed when state=present")
         end
         rcode = modify_record(port, protocol, zone, record, type_code, ttl, values.not_nil!)
+        return rcode if rcode.is_a?(PluginResult)
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to update DNS record (rc: #{@dns_rc})",
           dns_rc: @dns_rc, dns_rc_str: PluginHelpers::NsupdateMessage.rcode_to_text(@dns_rc)) if rcode != 0
@@ -600,14 +602,18 @@ module Krikri
 
     private def create_record(port : Int32, protocol : String,
                               zone : String, record : String, type_code : Int32,
-                              ttl : Int32, values : Array(String)) : Int32
+                              ttl : Int32, values : Array(String)) : (Int32 | PluginResult)
       if values.empty?
         @dns_rc = 5
         return 5
       end
 
+      # an unparseable value fails the task where it is encoded: the
+      # module's create_record turns dnspython's add() SyntaxError into
+      # "Invalid/malformed value" before it sends the update, so the
+      # existence probe's rcode must not be reported instead
       rrs = encode_values(record, type_code, ttl, values)
-      return 1 if rrs.is_a?(PluginResult)
+      return rrs if rrs.is_a?(PluginResult)
 
       send_update(port, protocol, zone, [] of PluginHelpers::NsupdateMessage::RR, rrs.as(Array(PluginHelpers::NsupdateMessage::RR)))
 
@@ -616,7 +622,7 @@ module Krikri
 
     private def modify_record(port : Int32, protocol : String,
                               zone : String, record : String, type_code : Int32,
-                              ttl : Int32, values : Array(String)) : Int32
+                              ttl : Int32, values : Array(String)) : (Int32 | PluginResult)
       type = (@params["type"]? || "A").upcase
       updates = [] of PluginHelpers::NsupdateMessage::RR
 
@@ -626,8 +632,8 @@ module Krikri
         # afterwards (see the Ansible module's modify_record).
         id = new_id
         message = PluginHelpers::NsupdateMessage.build_query(id, record, type_code, @tsig)
-        if do_query(port, protocol, message)
-          return 1
+        if (failure = do_query(port, protocol, message))
+          return failure
         end
 
         lookup = @last_response.not_nil!
@@ -637,7 +643,7 @@ module Krikri
         end.reject { |entry| values.includes?(entry) }
 
         rrs = encode_values(record, type_code, ttl, values)
-        return 1 if rrs.is_a?(PluginResult)
+        return rrs if rrs.is_a?(PluginResult)
         updates += rrs.as(Array(PluginHelpers::NsupdateMessage::RR))
         stale.each do |entry|
           begin
@@ -651,7 +657,7 @@ module Krikri
       else
         updates << PluginHelpers::NsupdateMessage.update_delete(record, type_code)
         rrs = encode_values(record, type_code, ttl, values)
-        return 1 if rrs.is_a?(PluginResult)
+        return rrs if rrs.is_a?(PluginResult)
         updates += rrs.as(Array(PluginHelpers::NsupdateMessage::RR))
       end
 
