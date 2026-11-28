@@ -17,6 +17,7 @@ module Krikri
           CommandInsteadOfModuleRule.new,
           InlineEnvVarRule.new,
           NoChangedWhenRule.new,
+          AvoidImplicitRule.new,
           RiskyFilePermissionsRule.new,
           RiskyOctalRule.new,
           NameRule.new,

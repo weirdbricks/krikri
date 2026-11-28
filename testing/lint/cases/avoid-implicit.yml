@@ -1,0 +1,10 @@
+- name: Avoid implicit behaviors fixture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Write a mapping with copy content
+      ansible.builtin.copy:
+        content:
+          a: b
+        dest: /tmp/krikri-triage-1874/gap1/out.txt
+        mode: "0644"

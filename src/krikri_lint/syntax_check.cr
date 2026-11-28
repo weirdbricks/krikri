@@ -75,14 +75,10 @@ module Krikri
       INT_CLASS    = "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
       FLOAT_CLASS  = "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
       LIST_CLASS   = "ansible.module_utils._internal._datatag._AnsibleTaggedList"
-      NULL_SCALARS = Set{"", "~", "null", "Null", "NULL"}
-      BOOL_SCALARS = Set{
-        "yes", "Yes", "YES", "no", "No", "NO",
-        "true", "True", "TRUE", "false", "False", "FALSE",
-        "on", "On", "ON", "off", "Off", "OFF",
-      }
-      INT_SCALAR   = /\A[-+]?(0b[0-1_]+|0x[0-9a-fA-F_]+|0[0-7_]+|0|[1-9][0-9_]*)(:[0-5]?[0-9])*\z/
-      FLOAT_SCALAR = /\A([-+]?[0-9][0-9_]*\.[0-9_]*([eE][-+][0-9]+)?|[-+]?\.[0-9_]+([eE][-+][0-9]+)?|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))\z/
+      NULL_SCALARS = NodeUtil::PY_NULL_SCALARS
+      BOOL_SCALARS = NodeUtil::PY_BOOL_SCALARS
+      INT_SCALAR   = NodeUtil::PY_INT_SCALAR
+      FLOAT_SCALAR = NodeUtil::PY_FLOAT_SCALAR
 
       def initialize(files : Array(String), targets : Array(String),
                      @kinds : Array(KindPattern) = [] of KindPattern)
