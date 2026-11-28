@@ -1,0 +1,32 @@
+---
+# Trimmed from RedHatOfficial.rhel8_anssi_bp28_high 0.1.82's
+# tasks/main.yml: the failing task verbatim, preceded by the package_facts
+# gathering its `when:` needs. The task asks `debug` instead of
+# `ansible.builtin.package` (which needs a root dnf host); the divergence
+# is the conditional's deprecation Origin only, so that adaptation does not
+# change the trigger. The role's remaining package tasks all mutate the
+# machine and are left out.
+- name: Gather package facts
+  ansible.builtin.package_facts:
+
+- name: Ensure dnf-automatic is installed
+  ansible.builtin.debug:
+    msg: dnf-automatic
+  when:
+  - enable_strategy | bool
+  - low_complexity | bool
+  - low_disruption | bool
+  - medium_severity | bool
+  - no_reboot_needed | bool
+  - package_dnf_automatic_installed | bool
+  - ( not ( "kernel-core" in ansible_facts.packages and "bootc" in ansible_facts.packages and not "openshift-kubelet" in ansible_facts.packages
+    and "ostree" in ansible_proc_cmdline ) and not ( ansible_virtualization_type in ["docker", "lxc", "openvz", "podman",
+    "container"] ) )
+  tags:
+  - CCE-82985-3
+  - enable_strategy
+  - low_complexity
+  - low_disruption
+  - medium_severity
+  - no_reboot_needed
+  - package_dnf-automatic_installed

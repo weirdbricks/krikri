@@ -1,0 +1,9 @@
+---
+# The five gates the failing task's `when:` list reads, verbatim from
+# RedHatOfficial.rhel8_anssi_bp28_high 0.1.82's defaults/main.yml.
+enable_strategy: true
+low_complexity: true
+low_disruption: true
+medium_severity: true
+no_reboot_needed: true
+package_dnf_automatic_installed: true

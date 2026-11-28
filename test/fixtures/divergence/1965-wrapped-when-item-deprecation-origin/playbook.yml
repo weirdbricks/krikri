@@ -1,0 +1,5 @@
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - RedHatOfficial.rhel8_anssi_bp28_high
