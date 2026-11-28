@@ -13,6 +13,10 @@ module Krikri
       DEFAULTS
       VARS
       META
+      # Upstream's kind_from_path maps **/meta/runtime.{yaml,yml} to the
+      # dedicated "meta-runtime" kind, so that rule sees it instead of
+      # whatever a role's meta/ dir would give any other file.
+      META_RUNTIME
       ROLE
       YAML
       # A collection's tests/sanity/ignore-*.txt. Plain text, never YAML.
@@ -51,6 +55,15 @@ module Krikri
           name.starts_with?("ignore-") && name.ends_with?(".txt")
       end
 
+      # Upstream's `**/meta/runtime.{yaml,yml}` default pattern, which
+      # wins over the generic role/ yaml assignment.
+      def self.meta_runtime_path?(path : String) : Bool
+        parts = path.split('/')
+        return false if parts.size < 2
+        name = parts[-1]
+        (name == "runtime.yml" || name == "runtime.yaml") && parts[-2] == "meta"
+      end
+
       # Upstream's BASE_KINDS assign text/yaml from the name alone: the
       # yaml extensions plus the two config-file names. The base kind,
       # not the kind, decides whether yaml/task rules run.
@@ -72,6 +85,7 @@ module Krikri
           return from_kind_name(entry.kind) if File.match?(entry.pattern, absolute)
         end
         return SANITY_IGNORE if sanity_ignore_path?(path)
+        return META_RUNTIME if meta_runtime_path?(path)
         parts = path.split('/')
         # Files under a role's well-known subdirectories classify by the
         # subdirectory, whatever the file name (upstream lints every
@@ -94,6 +108,7 @@ module Krikri
         when "handlers"           then HANDLERS
         when "vars"               then VARS
         when "meta"               then META
+        when "meta-runtime"       then META_RUNTIME
         when "role"               then ROLE
         when "yaml"               then YAML
         when "sanity-ignore-file" then SANITY_IGNORE
