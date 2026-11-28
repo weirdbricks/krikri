@@ -1,0 +1,22 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Write a mapping via copy content] ****************************************
+changed: [localhost]
+
+TASK [Write a list via copy content] *******************************************
+changed: [localhost]
+
+TASK [Show the mapping file] ***************************************************
+ok: [localhost] => {
+    "msg": "{\"a\": \"b\", \"n\": 1}"
+}
+
+TASK [Show the list file] ******************************************************
+ok: [localhost] => {
+    "msg": "[\"a\", \"b\"]"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
