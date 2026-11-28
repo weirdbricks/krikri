@@ -32,6 +32,7 @@ module Krikri
           PlaybookExtensionRule.new,
           JinjaRule.new,
           SchemaMetaRule.new,
+          MetaIncorrectRule.new,
           MetaNoTagsRule.new,
           MetaVideoLinksRule.new,
           MetaRuntimeRule.new,
