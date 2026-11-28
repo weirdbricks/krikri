@@ -1302,11 +1302,12 @@ module Krikri
 
     # apt.py's fnmatch target: python-apt's cache keys. `apt-cache
     # pkgnames` is the same cache's name listing, in the cache's own
-    # (sorted) order, and `--all-names` keeps the purely virtual names
-    # python-apt's iteration also yields. Real excludes every
-    # arch-qualified name (`pkg:arch`) unless the pattern itself carries
-    # a `:arch`, so `apt*` can only select native packages while
-    # `apt*:i386` still works.
+    # (sorted) order, and `--all-names` widens it to every name the
+    # cache otherwise only references - which real's iteration never
+    # yields (see the filter below). Real also keeps an arch-qualified
+    # name (`pkg:arch`) out of its fnmatch cache unless the pattern
+    # itself carries a `:arch`, so `apt*` can only select native
+    # packages while a pattern that names one keeps them.
     private def apt_cache_names_matching(pattern : String) : Array(String)
       probe = remote_exec("apt-cache pkgnames --all-names")
       return [] of String if probe[:exit_code] != 0
@@ -1318,7 +1319,35 @@ module Krikri
         next if !pattern.includes?(':') && name.includes?(':')
         names << name if name.matches?(regex)
       end
-      names
+      apt_cache_packages_only(names)
+    end
+
+    # python-apt's cache iteration - what real's fnmatch actually runs
+    # over - only yields packages the cache holds at least one version
+    # of. `apt-cache pkgnames --all-names` also lists names that exist
+    # only as a dependency reference or a Provides: target: trixie's
+    # vim-gnome has no versions at all, it survives only in gtimelog's
+    # `Depends: vim-gnome`. Expanding `name: vim-g*` to that name made
+    # this engine fail "No package matching 'vim-gnome' is available" in
+    # check mode, one task before real ansible - which never selects the
+    # name and installs vim-gtk3 and friends - ever fails (issue #1974,
+    # kevinmagni.zabbix_agent2's `zabbix-agent2-plugin-*` install).
+    # `apt-cache policy` tells the two apart in ONE batched probe: a
+    # name's own stanza carries a Version table only when the cache has
+    # versions for it (a dpkg-status-only package's own version is a row
+    # there too, and the exact-stanza rule keeps the regex fallback's
+    # foreign stanzas out).
+    private def apt_cache_packages_only(names : Array(String)) : Array(String)
+      return names if names.empty?
+      probe = remote_exec("apt-cache policy #{names.map { |name| shell_single_quote(name) }.join(" ")} 2>/dev/null")
+      output = probe[:stdout].to_s
+      names.select { |name| apt_policy_stanza_has_versions?(output, name) }
+    end
+
+    private def apt_policy_stanza_has_versions?(output : String, name : String) : Bool
+      stanza = exact_policy_stanza(output, name)
+      start = stanza.index(&.includes?("Version table:")) || return false
+      stanza[(start + 1)..].any? { |line| !line.strip.empty? }
     end
 
     # Python fnmatch.translate for the apt name match: `*`, `?` and a

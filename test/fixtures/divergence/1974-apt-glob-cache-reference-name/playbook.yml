@@ -1,0 +1,25 @@
+---
+# Issue #1974: kevinmagni.zabbix_agent2's "Install Zabbix Agent 2 and
+# plugins" task (tasks/ubuntu.yml:38) run in check mode. Its
+# `zabbix-agent2-plugin-*` wildcard expands to whatever the configured
+# zabbix repo carries, which no capture box has, so the wildcard's
+# failure shape is pinned the way the 1971 case pinned the install: a
+# bracket class over the bash every Debian host already has, next to a
+# pattern whose only apt-cache name is purely virtual. `vim-gnome` is
+# exactly that on trixie - no versions of its own, it survives only as
+# gtimelog's `Depends: vim-gnome` - and real apt.py fnmatches over
+# python-apt's cache, which never yields such a name, so the pattern is
+# a no-match and apt.py fails it with the plural wording. This engine
+# expanded it to the virtual name and failed with the singular "No
+# package matching 'vim-gnome' is available" instead, one task before
+# the role's own next failure.
+- name: Install Zabbix Agent 2 and plugins
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Install Zabbix Agent 2 and plugins
+      ansible.builtin.apt:
+        name:
+          - "[b]ash"
+          - vim-gnome*
+        state: present
