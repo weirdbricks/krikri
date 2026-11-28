@@ -558,3 +558,174 @@ end
 # derive uniqueness from, so every TOP-LEVEL describe subject must be
 # unique TEXT across the whole suite - colliding files hand-suffix their
 # subject with their own filename (nested describes need nothing).
+
+# A one-client MySQL server for the specs whose dump/import path must get
+# past the connection real makes before its state branches (issue #1976).
+# Speaks just enough of the wire protocol for crystal-mysql: HandshakeV10
+# (mysql_native_password), an OK for the auth response, then a one-column,
+# one-row result for the next statement (the plugin's SELECT VERSION()).
+# crystal-db prepares statements, so both the COM_STMT_PREPARE/EXECUTE
+# exchange and a plain COM_QUERY are answered. The received statement is
+# available as #query.
+class FakeMySqlServer
+  getter port : Int32
+  getter query : String?
+  @failure : Exception?
+  @done : Channel(Nil)
+
+  def initialize(@version : String = "8.0.0")
+    @server = TCPServer.new("127.0.0.1", 0)
+    @port = @server.local_address.port
+    @done = Channel(Nil).new(1)
+    @query = nil
+    spawn { serve }
+  end
+
+  def close : Nil
+    @server.close
+  rescue
+  end
+
+  # Waits for the single client to finish, surfacing a protocol error
+  # instead of letting the spec fail on an unexplained plugin error.
+  def wait(timeout : Time::Span = 10.seconds) : Nil
+    select
+    when @done.receive
+    when timeout(timeout)
+      raise "fake MySQL server saw no client within #{timeout}"
+    end
+    if failure = @failure
+      raise failure
+    end
+  end
+
+  private def serve
+    client = @server.accept
+    begin
+      client.read_timeout = 10.seconds
+      client.write_timeout = 10.seconds
+      write_packet(client, 0) { |packet| write_handshake(packet) }
+      read_packet(client) # HandshakeResponse41: the auth answer is not checked
+      write_packet(client, 2) { |packet| write_ok(packet) }
+      command = read_packet(client)
+      case command[0]
+      when 0x16u8 # COM_STMT_PREPARE (crystal-db uses prepared statements)
+        @query = String.new(command[1..]) if command.size > 1
+        write_packet(client, 1) { |packet| write_prepare_ok(packet) }
+        write_packet(client, 2) { |packet| write_column_definition(packet) }
+        write_packet(client, 3) { |packet| write_eof(packet) }
+        read_packet(client) # COM_STMT_EXECUTE
+        write_packet(client, 1) { |packet| packet.write_byte 1u8 }
+        write_packet(client, 2) { |packet| write_column_definition(packet) }
+        write_packet(client, 3) { |packet| write_eof(packet) }
+        write_packet(client, 4) { |packet| write_binary_row(packet) }
+        write_packet(client, 5) { |packet| write_eof(packet) }
+      when 0x03u8 # COM_QUERY
+        @query = String.new(command[1..]) if command.size > 1
+        write_packet(client, 1) { |packet| packet.write_byte 1u8 }
+        write_packet(client, 2) { |packet| write_column_definition(packet) }
+        write_packet(client, 3) { |packet| write_eof(packet) }
+        write_packet(client, 4) { |packet| write_lenenc_string(packet, @version) }
+        write_packet(client, 5) { |packet| write_eof(packet) }
+      else
+        raise "fake MySQL server: unexpected command #{command[0]?}"
+      end
+    rescue ex
+      @failure = ex
+    ensure
+      client.close rescue nil
+      @done.send(nil)
+    end
+  rescue
+    # The listener was closed before any client dialed.
+  end
+
+  private def write_packet(io : IO, seq : Int32, &)
+    payload = IO::Memory.new
+    yield payload
+    bytes = payload.to_s.to_slice
+    length = bytes.size
+    io.write_byte length.to_u8
+    io.write_byte (length >> 8).to_u8
+    io.write_byte (length >> 16).to_u8
+    io.write_byte seq.to_u8
+    io.write(bytes)
+  end
+
+  private def read_packet(io : IO) : Bytes
+    header = Bytes.new(4)
+    io.read_fully(header)
+    length = header[0].to_i | (header[1].to_i << 8) | (header[2].to_i << 16)
+    payload = Bytes.new(length)
+    io.read_fully(payload)
+    payload
+  end
+
+  private def write_lenenc_string(io : IO, text : String)
+    io.write_byte text.bytesize.to_u8
+    io << text
+  end
+
+  private def write_prepare_ok(io : IO)
+    io.write_byte 0x00u8                                # OK
+    io.write(Bytes[0x01_u8, 0x00_u8, 0x00_u8, 0x00_u8]) # statement id 1
+    io.write(Bytes[0x01_u8, 0x00_u8])                   # one result column
+    io.write(Bytes[0x00_u8, 0x00_u8])                   # no parameters
+    io.write_byte 0x00u8                                # reserved
+    io.write(Bytes[0x00_u8, 0x00_u8])                   # warning count
+  end
+
+  private def write_binary_row(io : IO)
+    io.write_byte 0x00u8 # binary-row header
+    io.write_byte 0x00u8 # null bitmap (one column -> one byte)
+    write_lenenc_string(io, @version)
+  end
+
+  private def write_ok(io : IO)
+    io.write_byte 0x00u8
+    io.write_byte 0x00u8
+    io.write_byte 0x00u8
+    io.write(Bytes[0x02_u8, 0x00_u8, 0x00_u8, 0x00_u8])
+  end
+
+  private def write_eof(io : IO)
+    io.write_byte 0xfeu8
+    io.write(Bytes[0x00_u8, 0x00_u8, 0x02_u8, 0x00_u8])
+  end
+
+  private def write_column_definition(io : IO)
+    write_lenenc_string(io, "def")
+    write_lenenc_string(io, "")
+    write_lenenc_string(io, "")
+    write_lenenc_string(io, "")
+    write_lenenc_string(io, "VERSION()")
+    write_lenenc_string(io, "VERSION()")
+    io.write_byte 0x0cu8                                # fixed-field length
+    io.write(Bytes[0x21_u8, 0x00_u8])                   # charset: utf8_general_ci
+    io.write(Bytes[0x00_u8, 0x00_u8, 0x00_u8, 0x00_u8]) # column length
+    io.write_byte 0xfdu8                                # type: VAR_STRING
+    io.write(Bytes[0x00_u8, 0x00_u8])                   # flags
+    io.write_byte 0x00u8                                # decimals
+    io.write(Bytes[0x00_u8, 0x00_u8])                   # filler
+  end
+
+  private def write_handshake(io : IO)
+    nonce = "12345678abcdefghijkl".to_slice
+    io.write_byte 0x0au8
+    io << "8.0.0"
+    io.write_byte 0u8
+    io.write(Bytes[0x01_u8, 0x00_u8, 0x00_u8, 0x00_u8]) # thread id
+    io.write(nonce[0, 8])
+    io.write_byte 0u8
+    io.write(Bytes[0x0f_u8, 0xa2_u8]) # capabilities low (0xa20f)
+    io.write_byte 0x21u8              # charset: utf8_general_ci
+    io.write(Bytes[0x02_u8, 0x00_u8]) # status flags
+    io.write(Bytes[0x28_u8, 0x00_u8]) # capabilities high (0x28 << 16: plugin auth)
+    io.write_byte 21u8                # auth plugin data length
+    io.write(Bytes.new(10))           # reserved
+    io.write(nonce[8, 12])
+    io.write_byte 0u8
+    io << "mysql_native_password"
+    io.write_byte 0u8
+  end
+end

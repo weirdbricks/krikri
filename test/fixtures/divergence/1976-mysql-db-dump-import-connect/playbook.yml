@@ -1,0 +1,46 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1976: real mysql_db.py calls mysql_connect() before any state
+  # branch, so state=dump/import (and their check-mode exit) fail at
+  # connect_timeout against a host whose SYN is blackholed (192.0.2.1, RFC
+  # 5737 TEST-NET-1). krikri's dump/import path shelled out to
+  # mysqldump/mysql without connecting, so it hung for the CLI's own
+  # OS-level connect timeout instead. Every task fails in the connect, so
+  # no mysqldump/mysql mutation can happen.
+  tasks:
+    - name: mysql_db dump against a blackholed host
+      mysql_db:
+        login_host: 192.0.2.1
+        login_port: 3306
+        login_user: dbuser
+        login_password: s3cretpass
+        connect_timeout: 1
+        name: krikri_db
+        state: dump
+        target: /tmp/krikri-1976-dump.sql
+      ignore_errors: true
+
+    - name: mysql_db import against a blackholed host
+      mysql_db:
+        login_host: 192.0.2.1
+        login_port: 3306
+        login_user: dbuser
+        login_password: s3cretpass
+        connect_timeout: 1
+        name: krikri_db
+        state: import
+        target: /tmp/krikri-1976-import.sql
+      ignore_errors: true
+
+    - name: mysql_db dump check mode against a blackholed host
+      mysql_db:
+        login_host: 192.0.2.1
+        login_port: 3306
+        login_user: dbuser
+        login_password: s3cretpass
+        connect_timeout: 1
+        name: krikri_db
+        state: dump
+        target: /tmp/krikri-1976-check.sql
+      check_mode: true
+      ignore_errors: true
