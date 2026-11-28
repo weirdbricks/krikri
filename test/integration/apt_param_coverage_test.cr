@@ -215,18 +215,15 @@ describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
   # JSON (see substitute_task_params's whole-single-span comment).
   it "treats a repr-looking name string as raw comma-split names, never re-parsing it into a list" do
     with_apt_param_shims("un") do |env, log|
-      PluginSpecHelper.run("apt", {"name" => "['krikri-fake-pkg', 'krikri-fake-pkg2']", "state" => "present", "_environment" => env})
-      call = install_call(log) || ""
-      call.wont_equal("")
-      # The RAW comma-split garbage tokens (bracket remnants verbatim),
-      # NOT the repaired/re-parsed clean name pair Ansible never
-      # sees. Real apt.py wraps each spec in naive `'%s'` quoting with no
-      # shell escaping, so the shim's log (which records argv after the
-      # shell has dequoted it) shows the bracket remnants unquoted - each
-      # token still carrying the candidate version install() resolved onto
-      # it.
-      call.must_include("[krikri-fake-pkg=1.0-1")
-      call.must_include("krikri-fake-pkg2]=1.0-1")
+      result = PluginSpecHelper.run("apt", {"name" => "['krikri-fake-pkg', 'krikri-fake-pkg2']", "state" => "present", "_environment" => env})
+      # Each raw comma-split token still carries its bracket remnant, so
+      # apt.py's fnmatch expansion (a `[` makes it a glob name) finds no
+      # cache match and fails the task - live-verified vs
+      # ansible-playbook 2.21.6. A re-parsed clean pair would have
+      # reached apt-get and installed instead.
+      truthy?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["msg"].as_s.must_equal("No package(s) matching '['krikri-fake-pkg'' available")
+      install_call(log).must_be_nil
     end
   end
 end
