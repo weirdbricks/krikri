@@ -136,6 +136,40 @@ describe "INJECT_FACTS_AS_VARS deprecation from a when: clause" do
     stderr.must_include("Use `ansible_facts[\"fact_name\"]` (no `ansible_` prefix) instead.")
   end
 
+  # Jinja resolves a template's filter and test NAMES while compiling it, so a
+  # clause naming one nothing implements fails before a single variable is
+  # resolved, and real prints no block for the fact it would have read.
+  # dotstrap.sensible's `when: ansible_user_shell | match(...)` is exactly
+  # that shape: ansible-core 2.21.6 has a `match` TEST but no `match` FILTER,
+  # so both engines fail the task with "No filter named 'match'." while
+  # krikri used to add an INJECT_FACTS_AS_VARS block first (issue #1967,
+  # live-verified against 2.21.6: the error, no deprecation).
+  it "prints no block for a clause whose filter name does not resolve" do
+    dir = PluginSpecHelper.tmp_path("inject-facts-#{Random::Secure.hex(4)}")
+    FileUtils.mkdir_p(dir)
+    playbook = File.join(dir, "play.yml")
+    File.write(playbook, <<-PLAYBOOK)
+      - hosts: localhost
+        connection: local
+        gather_facts: true
+        tasks:
+          - name: gated by a filter nothing implements
+            debug:
+              msg: hi
+            when: ansible_user_shell | match(".*(bash|zsh)")
+      PLAYBOOK
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", "localhost,", playbook], output: stdout, error: stderr, chdir: dir)
+
+    # The failed task's [ERROR] block is play output (stdout); the deprecation
+    # block, were there one, would be on stderr.
+    stdout.to_s.must_include("Syntax error in expression: No filter named 'match'.")
+    stdout.to_s.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+    stderr.to_s.includes?("INJECT_FACTS_AS_VARS").must_equal(false)
+  end
+
   # Real evaluates the task's conditional BEFORE it re-raises an undefined
   # loop source, so the clause's fact read still warns - and does so as its
   # OWN templating operation, not as part of the loop source. brentwg.docker's

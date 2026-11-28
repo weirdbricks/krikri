@@ -1,0 +1,32 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [dotstrap.sensible : bash/zsh | configure | aliases] **********************
+[ERROR]: Task failed: A 'when' expression failed: Syntax error in expression: No filter named 'match'.
+
+Task failed.
+Origin: <WORK>/roles/dotstrap.sensible/tasks/main.yml:3:5
+
+1 ---
+2 - block:
+3   - name: bash/zsh | configure | aliases
+      ^ column 5
+
+<<< caused by >>>
+
+A 'when' expression failed: Syntax error in expression: No filter named 'match'.
+Origin: <WORK>/roles/dotstrap.sensible/tasks/main.yml:11:9
+
+ 9       marker: "{{ sensible_marker }}"
+10       block: "{{ sensible_config_block }}"
+11   when: ansible_user_shell | match(".*\/(bash|zsh)")
+           ^ column 9
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: A 'when' expression failed: Syntax error in expression: No filter named 'match'."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

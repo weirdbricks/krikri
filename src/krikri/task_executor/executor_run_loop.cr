@@ -1756,9 +1756,20 @@ module Krikri
         # INJECT_FACTS_AS_VARS block (issue #1225). A whole `is defined`
         # test is already covered by maybe_fact_alias_defined_deprecation,
         # whose Origin must win.
+        #
+        # Those reads happen only once the clause COMPILES: jinja2 resolves
+        # filter/test names while compiling the expression, so a clause
+        # naming one nothing implements fails with the Syntax error before a
+        # single name is resolved, and real prints no INJECT_FACTS_AS_VARS
+        # block for it (dotstrap.sensible's
+        # `when: ansible_user_shell | match(...)`; no `match` filter exists
+        # in ansible-core 2.21.6, issue #1967, live-verified: only the
+        # error, no deprecation).
         unless ConditionalEvaluator.whole_condition_is_defined_test?(when_condition)
-          VarSubstitutor.emit_condition_fact_deprecations(substituted_condition, vars_context,
-            VariableSubstitutor::JinjaVarResolver.new(vars_context, sub))
+          unless ConditionalEvaluator.compile_time_name_error?(substituted_condition, vars_context)
+            VarSubstitutor.emit_condition_fact_deprecations(substituted_condition, vars_context,
+              VariableSubstitutor::JinjaVarResolver.new(vars_context, sub))
+          end
         end
         emit_conditional_delimiters_deprecation(pending_delimiters_deprecation)
 
