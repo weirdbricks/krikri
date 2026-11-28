@@ -1,0 +1,15 @@
+# A collection tree, not a playbook: only the galaxy rule family reads it.
+# It is schema-valid on purpose and has no changelogs/ or meta/runtime.yml,
+# so the three matches below are the whole upstream report.
+namespace: acme
+name: demo
+version: 1.0.0
+readme: README.md
+authors:
+  - Acme
+description: Minimal collection
+repository: https://example.invalid/acme/demo
+license:
+  - GPL-3.0-or-later
+tags:
+  - mytag

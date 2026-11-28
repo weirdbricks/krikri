@@ -69,9 +69,6 @@ ENABLE_OPT_IN = [arg for rule in OPT_IN_RULES for arg in ("--enable-list", rule)
 CATALOGUE_ALLOW = {
     "parser-error": "ansible-lint's AnsibleParserError wrapper, not a rule with matches",
     "warning": "other warnings ansible-lint prints during a run, not a rule with matches",
-    "galaxy": "collection metadata: galaxy-version-incorrect is the only galaxy "
-              "rule krikri-lint implements; the galaxy family's tags/no-changelog/"
-              "version-missing/no-runtime checks are still missing",
 }
 
 # ansible-lint -L line: `- <id> <description>`. A rule family is listed once
