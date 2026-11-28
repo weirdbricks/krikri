@@ -54,6 +54,21 @@ module Krikri::Lint
       buffer.replace_span(5, 1, 4, "b: 3").must_equal(true)
       buffer.result.must_equal("a: 1\n\n\nb: 3\n")
     end
+
+    it "queues whole lines to insert after an original line" do
+      buffer = FixBuffer.new("a: 1\nb: 2\n")
+      buffer.insert_after(1, "inserted: true").must_equal(true)
+      # A later fix still addresses the original line numbers.
+      buffer.replace_span(2, 1, 1, "B").must_equal(true)
+      buffer.result.must_equal("a: 1\ninserted: true\nB: 2\n")
+    end
+
+    it "rejects an insertion anchor outside the file" do
+      buffer = FixBuffer.new("a: 1\n")
+      buffer.insert_after(0, "x").must_equal(false)
+      buffer.insert_after(2, "x").must_equal(false)
+      buffer.changed?.must_equal(false)
+    end
   end
 
   describe FixSpan do
