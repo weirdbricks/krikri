@@ -1,0 +1,5 @@
+# loop-var-prefix is disabled unless a project opts in with this regex,
+# so the fixture has to carry its own config and be linted explicitly
+# (the harness passes the nearest .ansible-lint as -c):
+#   testing/lint/parity.py testing/lint/cases/loop-var-prefix/roles
+loop_var_prefix: "^(__|{role}_)"

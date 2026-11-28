@@ -6,6 +6,7 @@ module Krikri
 
       def initialize(@registry, @config = LintConfig.new,
                      @syntax_check : SyntaxCheck? = nil)
+        @registry.rules.each { |rule| rule.config = @config }
       end
 
       def run(paths : Array(String), targets : Array(String) = paths,

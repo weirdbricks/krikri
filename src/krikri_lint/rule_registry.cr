@@ -25,6 +25,7 @@ module Krikri
           NoPromptingRule.new,
           YamlLineLengthRule.new,
           VarNamingRule.new,
+          LoopVarPrefixRule.new,
           NoHandlerRule.new,
           NoRelativePathsRule.new,
           NoJinjaWhenRule.new,
