@@ -1,0 +1,6 @@
+---
+# The real role's tasks/main.yml runs variables.yml first; that file only
+# sets internal percona_* facts the two tasks below never read, and its
+# first_found picks an OS-specific vars file that would need a real distro.
+- name: IPs assertions
+  ansible.builtin.include_tasks: ip.yml

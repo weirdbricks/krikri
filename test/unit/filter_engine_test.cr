@@ -1276,6 +1276,24 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
+  it "extract leaves a getitem miss unwrapped, unlike a filter that raises" do
+    # ansible's extract answers a miss with the undefined marker, so the
+    # error surfaces when the marker is later consumed (join, argument
+    # finalization), outside the filter plugin's own wrapper - the task
+    # names just the getitem miss (live-verified vs 2.21.6, issue #1966:
+    # `map('extract', hostvars, ['percona_cluster', 'ip_address']) |
+    # join(',')` fails without the usual plugin-failure prefix). A
+    # filter that genuinely raises keeps that wrapper, so this pins that
+    # #apply's generic rescue leaves extract's miss alone.
+    v = Hash(String, JSON::Any).new
+    v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    error = assert_raises(Exception) do
+      vars_engine.apply(JSON::Any.new("host-a"), "extract(hostvars, 'ansible_host')")
+    end
+    error.message.to_s.must_equal("object of type 'HostVarsVars' has no attribute 'ansible_host'")
+  end
+
   it "extract reports an undefined variable in morekeys before a container miss" do
     # ansible-core 2.19.11: `extract(hostvars, ['apps', app.value.a])` with
     # `app` undefined fails "'app' is undefined", not the 'apps' miss.

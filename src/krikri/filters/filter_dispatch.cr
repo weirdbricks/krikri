@@ -1518,7 +1518,23 @@ module Krikri
               morekeys.as_a? ? keys.concat(morekeys.as_a) : keys << morekeys
             end
           end
-          extracted = FilterCore.extract(container, keys, hostvars_label)
+          # Ansible's extract answers a getitem miss with the undefined
+          # MARKER rather than raising: the failure surfaces only when
+          # the marker is consumed later (join, argument finalization),
+          # outside the filter's own plugin wrapper, so real names just
+          # the getitem miss (live-verified vs 2.21.6:
+          # `map('extract', hostvars, ['missing', 'ip']) | join(',')`
+          # fails "Error while resolving value for 'all_ips': object of
+          # type 'HostVarsVars' has no attribute 'missing'", never with
+          # a "The filter plugin 'ansible.builtin.extract' failed: "
+          # prefix - issue #1966). Raising an already-final
+          # FilterFailureError keeps the bare wording past #apply's
+          # generic filter-failure rescue.
+          extracted = begin
+            FilterCore.extract(container, keys, hostvars_label)
+          rescue ex
+            raise FilterFailureError.new(ex.message.to_s)
+          end
           # The container is the hostvars magic: the walked value belongs
           # to the host named by the FIRST key (`map('extract', hostvars,
           # 'who')` over a host-name list, `x | extract(hostvars, 'attr')`)
