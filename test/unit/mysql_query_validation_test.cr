@@ -121,4 +121,19 @@ describe "mysql_query plugin argument validation" do
     result["skipped"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("remote module (community.mysql.mysql_query) does not support check mode")
   end
+
+  it "wraps a connection refusal in the shared mysql_* credentials message" do
+    # mysql_query.py has no os.path.exists(config_file) branch (unlike
+    # mysql_db/mysql_variables) and does not name the connector (unlike
+    # mysql_info); it used to print "or login_unix_socket password is empty"
+    # with an empty exception tail (issue #1962).
+    result = PluginSpecHelper.run("mysql_query", {
+      "query"             => "SELECT 1",
+      "login_unix_socket" => "/run/krikri-no-such-mysql.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(
+      /\Aunable to connect to database, check login_user and login_password are correct or #{Regex.escape(File.join(ENV["HOME"]? || "", ".my.cnf"))} has the credentials\. Exception message: \(\d{4}, "Can't connect to (local )?MySQL server/)
+  end
 end

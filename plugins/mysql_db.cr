@@ -168,11 +168,14 @@ module Krikri
         PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
         PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
       end
-    rescue ex : DB::ConnectionRefused
+    rescue DB::ConnectionRefused
       # The connector warn fires inside mysql_connect, before the driver's
       # own connect raises, so a refused connection's fail_json carries it
-      # in real too.
-      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.connection_failed(ex, "MySQL"))
+      # in real too. mysql_db.py also branches on
+      # os.path.exists(config_file), naming the missing option file instead
+      # of the credentials.
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end

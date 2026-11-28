@@ -118,4 +118,39 @@ describe "mysql_variables plugin argument validation" do
     result["skipped"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("remote module (community.mysql.mysql_variables) does not support check mode")
   end
+
+  it "names the option file it looked for when config_file does not exist" do
+    # mysql_variables.py branches on os.path.exists(config_file) in its
+    # except clause (issue #1962), so a task pointing at an absent option
+    # file gets the "unable to find ..." wording instead of the credentials
+    # one.
+    missing = File.join(PluginSpecHelper.tmp_path("mysql-variables-missing-cnf"), "no-such.cnf")
+    Dir.mkdir_p(File.dirname(missing))
+
+    result = PluginSpecHelper.run("mysql_variables", {
+      "variable"          => "max_connections",
+      "config_file"       => missing,
+      "login_unix_socket" => "/run/krikri-no-such-mysql.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(
+      /\Aunable to find #{Regex.escape(missing)}\. Exception message: \(\d{4}, "Can't connect to (local )?MySQL server/)
+  end
+
+  it "blames the credentials when the option file exists" do
+    path = File.join(PluginSpecHelper.tmp_path("mysql-variables-existing-cnf"), "my.cnf")
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, "")
+
+    result = PluginSpecHelper.run("mysql_variables", {
+      "variable"          => "max_connections",
+      "config_file"       => path,
+      "login_unix_socket" => "/run/krikri-no-such-mysql.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(
+      /\Aunable to connect to database, check login_user and login_password are correct or #{Regex.escape(path)} has the credentials\. Exception message: /)
+  end
 end

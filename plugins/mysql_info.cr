@@ -152,16 +152,17 @@ module Krikri
       wanted = resolve_filter(filters.reject { |entry| unknown.includes?(entry) })
 
       engine_name = "MySQL"
+      # Real names the PYTHON connector it actually used (its own
+      # get_connector_* helpers, called before the connection attempt): this
+      # engine talks to the server with its own MySQL wire implementation,
+      # but the identity callers see - in the registered result and in the
+      # connection-failure message - must be the one real would report on
+      # this host, so it comes from that host's interpreter.
+      connector = PluginHelpers::MysqlConnection.connector_identity(@vars)
       result = PluginResult.new(changed: false, failed: false, msg: "",
-        # Real names the PYTHON connector it actually used (its own
-        # get_connector_* helpers): pymysql and pymysql.__version__. This
-        # engine talks to the server with its own MySQL wire implementation,
-        # but the registered result's connector identity is what callers
-        # see, so it mirrors Ansible's driver identity instead of "Unknown" -
-        # connector_version carries a pymysql 1.1.x version string.
         server_engine: engine_name,
-        connector_name: "pymysql",
-        connector_version: "1.1.1",
+        connector_name: connector.name,
+        connector_version: connector.version,
         key_order: SUCCESS_KEY_ORDER)
 
       # Upstream's mysql_connect warns about the MySQLdb connector before
@@ -192,12 +193,13 @@ module Krikri
       end
 
       result
-    rescue ex : DB::ConnectionRefused
+    rescue DB::ConnectionRefused
       # mysql_info.py builds its "unable to connect" fail_json after
       # mysql_connect raised, so the connector warn (already recorded by
       # module.warn inside mysql_connect) rides this failure result there.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
-        PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
+        PluginHelpers::MysqlConnection.info_connection_failed_result(@params, @vars,
+          PluginHelpers::MysqlConnection.connector_identity(@vars)))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end

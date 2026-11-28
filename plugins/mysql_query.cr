@@ -222,9 +222,12 @@ module Krikri
       # mysql_connect, so even a refused connection's result carries it.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
       PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
-    rescue ex : DB::ConnectionRefused
+    rescue DB::ConnectionRefused
+      # mysql_query.py's own connection-failure wrapper (no option-file
+      # existence branch, unlike mysql_db/mysql_variables), with the driver's
+      # exception repr as its tail.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
-        PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars))
     rescue ex : MySql::Connection::PacketError
       # A statement failing after the connect still carries both warns real
       # recorded before it ran (get_server_implementation's MariaDB notice

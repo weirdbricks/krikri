@@ -1,0 +1,42 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_query against a refused port] **************************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, "Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)")
+Origin: <WORK>/playbook.yml:12:7
+
+10   # Its wording is pinned by the plugin specs instead.
+11   tasks:
+12     - name: mysql_query against a refused port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, \"Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)\")"}
+...ignoring
+
+TASK [mysql_db against a refused port] *****************************************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)")
+Origin: <WORK>/playbook.yml:21:7
+
+19       ignore_errors: true
+20
+21     - name: mysql_db against a refused port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)\")"}
+...ignoring
+
+TASK [mysql_variables against a refused port] **********************************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)")
+Origin: <WORK>/playbook.yml:31:7
+
+29       ignore_errors: true
+30
+31     - name: mysql_variables against a refused port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)\")"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=3   
+

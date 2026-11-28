@@ -146,8 +146,10 @@ module Krikri
         PluginResult.new(changed: false, failed: true, msg: ex.message || ""))
     rescue DB::ConnectionRefused
       # community.mysql's own connection-failure wrapper, with the driver's
-      # own exception repr as its tail (see #connection_failed_result).
-      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(connection_failed_result)
+      # own exception repr as its tail (see
+      # MysqlConnection.connection_failed_result).
+      PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
@@ -204,40 +206,6 @@ module Krikri
           msg: "value of state must be one of: absent, present, got: #{params.state}")
       end
       nil
-    end
-
-    # The config_file path as real's module shows it in the
-    # connection-failure wrapper: os.path.expanduser'd before the msg is
-    # built (so the default "~/.my.cnf" renders as $HOME/.my.cnf).
-    private def option_file_display : String
-      raw = @params["config_file"]? || PluginHelpers::MysqlConnection::DEFAULT_OPTION_FILE
-      raw.starts_with?("~") ? raw.sub("~", ENV["HOME"]? || raw) : raw
-    end
-
-    # community.mysql's own connection-failure wrapper (live-verified
-    # against bookworm's community.mysql 3.x via the W9 harness case, where
-    # this engine printed the generic DbErrors shape). The config_file
-    # position is os.path.expanduser'd by the module before the msg is
-    # built, so ~ renders as the connecting user's home, not the literal
-    # "/root/.my.cnf" this used to hardcode.
-    #
-    # The "Exception message:" tail is real's `to_native(e)` over the
-    # driver's own exception, so its wording follows the transport and
-    # connector that failed (see MysqlConnection.connect_error_detail);
-    # crystal-mysql's DB::ConnectionRefused carries no message of its own,
-    # which is why this used to end at the colon (issue #1563).
-    # mysql_db/mysql_info/mysql_variables keep DbErrors's generic shape
-    # until their own harness cases say otherwise.
-    private def connection_failed_result : PluginResult
-      detail = PluginHelpers::MysqlConnection.connect_error_detail(
-        login_host: @params["login_host"]?,
-        login_port: @params["login_port"]?,
-        login_unix_socket: @params["login_unix_socket"]?,
-        config_file: @params["config_file"]? || PluginHelpers::MysqlConnection::DEFAULT_OPTION_FILE,
-        os_family: @vars.try(&.["ansible_os_family"]?).try(&.as_s?),
-      ) || ""
-      PluginResult.new(changed: false, failed: true,
-        msg: "unable to connect to database, check login_user and login_password are correct or #{option_file_display} has the credentials. Exception message: #{detail}")
     end
 
     # Re-emits a result with Ansible's registered keys attached. Only the
