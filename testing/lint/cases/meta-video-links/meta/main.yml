@@ -8,4 +8,8 @@ galaxy_info:
       title: Not a shared link
     - url: www.acme.com/vid
       title: Not a URL at all
+    - https://youtu.be/aWmRepTSFKs
+    - url: https://youtu.be/aWmRepTSFKs
+      title: Extra key
+      description: not allowed here
 dependencies: []

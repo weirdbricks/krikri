@@ -1,0 +1,12 @@
+---
+# Parity fixture for meta-video-links: the issue's repro playbook. Both
+# engines run this debug task identically - the linter-only divergence is in
+# what they report for meta/main.yml's video_links.
+- name: Meta video links repro
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Touch nothing, just prove the fixture role runs
+      ansible.builtin.debug:
+        msg: gap2 ok

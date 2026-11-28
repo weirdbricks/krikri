@@ -29,6 +29,9 @@ module Krikri::Lint
       FileUtils.rm_rf(dir) if dir
     end
 
+    GALAXY_HEADER = "---\ngalaxy_info:\n  author: me\n  description: d\n" \
+                    "  license: MIT\n  min_ansible_version: '2.9'\n  video_links:\n"
+
     it "flags each bad URL at the url value's line and column" do
       v = meta_violations(
         "galaxy_info:\n  author: triage\n" \
@@ -68,9 +71,68 @@ module Krikri::Lint
         "    - url: https://youtu.be/aWmRepTSFKs?t=42\n").must_be_empty
     end
 
+    it "reports a non-dictionary entry at the entry and skips its url check" do
+      v = meta_violations(GALAXY_HEADER + "    - https://youtu.be/aWmRepTSFKs\n")
+      v.map(&.message).must_equal(["Expected item in 'video_links' to be a dictionary"])
+      v[0].rule_id.must_equal("meta-video-links")
+      v[0].line.must_equal(8)
+      v[0].column.must_equal(7)
+    end
+
+    it "reports an entry with extra keys at its first key" do
+      v = meta_violations(GALAXY_HEADER +
+                          "    - url: https://youtu.be/aWmRepTSFKs\n" \
+                          "      title: Extra key\n" \
+                          "      description: not allowed here\n")
+      v.map(&.message).must_equal([
+        "Expected item in 'video_links' to contain only keys 'url' and 'title'",
+      ])
+      v[0].line.must_equal(8)
+      v[0].column.must_equal(7)
+    end
+
+    # Upstream reports the shape and `continue`s, so an entry it already
+    # rejected never also gets a URL-format violation.
+    it "reports only the shape for rejected entries with unrecognized urls" do
+      v = meta_violations(GALAXY_HEADER +
+                          "    - www.acme.com/vid\n" \
+                          "    - url: www.acme.com/vid\n" \
+                          "      title: t\n" \
+                          "      extra: not allowed here\n")
+      v.map(&.message).must_equal([
+        "Expected item in 'video_links' to be a dictionary",
+        "Expected item in 'video_links' to contain only keys 'url' and 'title'",
+      ])
+      v.map(&.line).must_equal([8, 9])
+    end
+
+    it "reports one violation per offending entry" do
+      v = meta_violations(GALAXY_HEADER +
+                          "    - https://youtu.be/aWmRepTSFKs\n" \
+                          "    - url: https://youtu.be/aWmRepTSFKs\n" \
+                          "      title: Extra key\n" \
+                          "      description: not allowed here\n")
+      v.map(&.line).must_equal([8, 9])
+      v.map(&.column).must_equal([7, 7])
+    end
+
+    it "accepts entries carrying only url and title" do
+      meta_violations(GALAXY_HEADER +
+                      "    - url: https://youtu.be/aWmRepTSFKs\n" \
+                      "      title: Shared link\n").must_be_empty
+    end
+
+    # Upstream never flags a missing url: an entry with only `title` is
+    # silent, so a krikri check for it would be krikri-only.
+    it "accepts an entry with only a title" do
+      meta_violations(GALAXY_HEADER + "    - title: No url here\n").must_be_empty
+    end
+
     it "ignores an empty or missing video_links" do
+      meta_violations(GALAXY_HEADER + "    []\n").must_be_empty
       meta_violations("galaxy_info:\n  video_links: []\n").must_be_empty
       meta_violations("galaxy_info:\n  author: me\n").must_be_empty
+      meta_violations("---\ngalaxy_info: {}\n").must_be_empty
     end
 
     it "ignores a non-list video_links" do
@@ -79,6 +141,8 @@ module Krikri::Lint
 
     it "ignores files that are not meta/main.yml" do
       meta_violations("galaxy_info:\n  video_links:\n    - url: www.acme.com/vid\n",
+        path: "/tmp/role/meta/other.yml").must_be_empty
+      meta_violations(GALAXY_HEADER + "    - https://youtu.be/aWmRepTSFKs\n",
         path: "/tmp/role/meta/other.yml").must_be_empty
     end
 
