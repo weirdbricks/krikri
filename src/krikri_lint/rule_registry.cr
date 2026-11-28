@@ -33,6 +33,7 @@ module Krikri
           JinjaRule.new,
           SchemaMetaRule.new,
           MetaNoTagsRule.new,
+          MetaVideoLinksRule.new,
           KeyOrderRule.new,
           LiteralCompareRule.new,
           YamlTrailingSpacesRule.new,
