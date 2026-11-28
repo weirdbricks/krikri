@@ -1,0 +1,14 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    my_list:
+      - name: alice
+        keys:
+          - a
+  tasks:
+    - name: Subelements loop with a bare variable
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      with_subelements:
+        - my_list
+        - keys

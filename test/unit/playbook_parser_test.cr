@@ -3426,6 +3426,39 @@ describe Krikri::PlaybookParser do
       task.loop_subelements_key.must_equal("pin")
     end
 
+    it "keeps a with_subelements: inline list first term as its parsed container" do
+      # A first term with no template syntax is handed to the subelements
+      # lookup unchanged, and a list/dict is legal input there (issue
+      # #1957); the string form alone cannot carry that shape.
+      task = single_task(<<-YAML)
+        - ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_subelements:
+            - - name: alice
+                keys:
+                  - a
+            - keys
+        YAML
+
+      task.loop_subelements_key.must_equal("keys")
+      entries = task.loop_subelements_literal.as(JSON::Any).as_a
+      entries.size.must_equal(1)
+      entries.first.as_h["name"].as_s.must_equal("alice")
+    end
+
+    it "leaves a bare scalar with_subelements: first term unparsed as a container" do
+      task = single_task(<<-YAML)
+        - ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_subelements:
+            - my_list
+            - keys
+        YAML
+
+      task.loop_subelements_list.must_equal("my_list")
+      task.loop_subelements_literal.must_be_nil
+    end
+
     it "does not recurse into the included file's tasks at parse time (dynamic, unlike import_tasks)" do
       task = single_task(<<-YAML)
         - include_tasks: does_not_exist_yet.yml
