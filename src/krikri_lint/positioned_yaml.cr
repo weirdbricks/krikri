@@ -79,6 +79,46 @@ module Krikri
         node.as?(YAML::Nodes::Scalar).try(&.value)
       end
 
+      # PyYAML's YAML 1.1 implicit resolvers, as far as they decide the
+      # Python type an unquoted scalar loads as. Ansible sees the loaded
+      # objects, not the text, so rules that care about a value being a
+      # str have to resolve these the same way.
+      PY_NULL_SCALARS = Set{"", "~", "null", "Null", "NULL"}
+      PY_BOOL_SCALARS = Set{
+        "yes", "Yes", "YES", "no", "No", "NO",
+        "true", "True", "TRUE", "false", "False", "FALSE",
+        "on", "On", "ON", "off", "Off", "OFF",
+      }
+      PY_INT_SCALAR   = /\A(?:[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+|[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+)\z/
+      PY_FLOAT_SCALAR = /\A(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?|\.[0-9_]+(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))\z/
+      # Tags whose constructed value is not a Python str (binary gives
+      # bytes, timestamp a date). str, !vault and !unsafe all construct
+      # str subclasses, so those stay strings.
+      PY_NON_STR_TAGS = Set{
+        "tag:yaml.org,2002:null", "tag:yaml.org,2002:bool",
+        "tag:yaml.org,2002:int", "tag:yaml.org,2002:float",
+        "tag:yaml.org,2002:binary", "tag:yaml.org,2002:timestamp",
+      }
+      PY_STR_TAGS = Set{
+        "tag:yaml.org,2002:str", "!vault", "!unsafe",
+      }
+
+      # Whether the loader hands Python a str for this node. A mapping, a
+      # sequence, null, a bool or a number all are not strings; quoted
+      # and otherwise unresolved plain scalars are.
+      def python_str?(node : YAML::Nodes::Node) : Bool
+        scalar = node.as?(YAML::Nodes::Scalar) || return false
+        if tag = scalar.tag
+          return false if PY_NON_STR_TAGS.includes?(tag)
+          return true if PY_STR_TAGS.includes?(tag)
+        end
+        return true unless scalar.style.plain?
+        value = scalar.value
+        return false if PY_NULL_SCALARS.includes?(value)
+        return false if PY_BOOL_SCALARS.includes?(value)
+        !value.matches?(PY_INT_SCALAR) && !value.matches?(PY_FLOAT_SCALAR)
+      end
+
       # Iterate a mapping's flat [k1, v1, k2, v2, ...] node list as pairs.
       def each_entry(mapping : YAML::Nodes::Mapping, &)
         nodes = mapping.nodes

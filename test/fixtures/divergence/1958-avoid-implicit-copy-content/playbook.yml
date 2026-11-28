@@ -1,0 +1,16 @@
+---
+# Issue #1958's playbook: the divergence it reports is in the LINT tools
+# only (avoid-implicit flags `copy` with a mapping content), so this case
+# pins the runtime half - ansible-playbook and krikri-playbook print the
+# same transcript for the task. Only dest moves into the case's scratch
+# directory, so the replay writes nothing outside it.
+- name: Avoid implicit behaviors fixture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Write a mapping with copy content
+      ansible.builtin.copy:
+        content:
+          a: b
+        dest: '{{ playbook_dir }}/out.txt'
+        mode: "0644"
