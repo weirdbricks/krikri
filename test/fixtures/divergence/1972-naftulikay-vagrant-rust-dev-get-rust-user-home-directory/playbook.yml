@@ -1,0 +1,19 @@
+---
+# naftulikay.rust-dev's tasks/include/00-facts.yml:2, verbatim: the task the
+# round diverged on. Only the play around it is adapted, so it runs against
+# localhost; `rust_user: vagrant` is naftulikay.vagrant-rust-dev's
+# vars/main.yml:2, the value the role handed it in the round.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    rust_user: vagrant
+  tasks:
+    - name: get rust user home directory
+      command: "bash -ls"
+      args:
+        stdin: "cd && pwd"
+      become: true
+      become_user: "{{ rust_user }}"
+      changed_when: false
+      register: rust_user_home_check

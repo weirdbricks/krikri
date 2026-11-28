@@ -1,0 +1,20 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [localhost]
+
+TASK [get rust user home directory] ********************************************
+[ERROR]: Task failed: Failed to change ownership of the temporary files Ansible (via chmod nor setfacl) needs to create despite connecting as a privileged user. Unprivileged become user would be unable to read the file.
+Origin: <WORK>/playbook.yml:12:7
+
+10     rust_user: vagrant
+11   tasks:
+12     - name: get rust user home directory
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Failed to change ownership of the temporary files Ansible (via chmod nor setfacl) needs to create despite connecting as a privileged user. Unprivileged become user would be unable to read the file."}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

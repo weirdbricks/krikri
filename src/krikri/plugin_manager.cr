@@ -1547,7 +1547,8 @@ module Krikri
         # configured for itself - unrelated to the actual remote target).
         execute_local_plugin(plugin_name, config, host, false, nil, nil, task_timeout, nil, daemon_scope)
       else
-        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host), task_timeout, become_flags, daemon_scope)
+        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host), task_timeout, become_flags, daemon_scope,
+          AdminUsers.resolve(vars, host.vars))
       end
     end
 
@@ -1571,7 +1572,8 @@ module Krikri
         # See the other execute_plugin overload's own comment.
         execute_local_plugin(plugin_name, config.to_json, host, false, nil)
       else
-        execute_local_plugin(plugin_name, config.to_json, host, become, become_user, Passwords.become(vars, host), nil, become_flags)
+        execute_local_plugin(plugin_name, config.to_json, host, become, become_user, Passwords.become(vars, host), nil, become_flags, nil,
+          AdminUsers.resolve(vars, host.vars))
       end
     end
 
@@ -1589,7 +1591,15 @@ module Krikri
     end
 
     # Execute plugin locally
-    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil, become_flags : String? = nil, daemon_scope : String? = nil) : JSON::Any
+    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil, become_flags : String? = nil, daemon_scope : String? = nil, admin_users : Array(String) = AdminUsers::DEFAULT) : JSON::Any
+      # ansible fails the task inside its action plugin, before the module
+      # payload is even copied, when the escalation it would need cannot be
+      # set up (see become_chown_failure_local); nothing may be dispatched
+      # to the local daemon for such a task either, or the daemon would
+      # report the plugin's own failure instead.
+      if failure = become_chown_failure_local(become, become_user, admin_users)
+        return failure
+      end
       # The local persistent daemon (the ansible_connection=local analogue
       # of the ssh daemon - see LocalPluginDaemon's own header) is tried
       # first when enabled and eligible; on any failure that means the
@@ -1818,7 +1828,7 @@ module Krikri
       }.to_json)
     end
 
-    # ansible-core 2.19, connection user an admin (root is in the default
+    # ansible-core, connection user an admin (root is in the default
     # admin_users) and become_user absent on the target: _fixup_perms2
     # (ansible/plugins/action/__init__.py:698-710) fails the task itself
     # ("Task failed: Failed to change ownership of the temporary files ...")
@@ -1826,11 +1836,17 @@ module Krikri
     # surface. Krikri reaches the same state as sudo printing
     # "sudo: unknown user <user>" and exiting nonzero, which
     # interpret_remote_result alone would word as a generic plugin failure.
-    def self.become_chown_failure_result(exit_code : Int32, stderr : String, become_user : String?, remote_user : String?) : JSON::Any?
+    #
+    # sudo spells that line differently across builds, and the wording is
+    # the only thing this can key on: sudo 1.9.16 (Ubuntu 24.04) says
+    # "sudo: unknown user vagrant", the 1.9.5 on the round's Rocky target
+    # "sudo: unknown user: vagrant" (issue #1972), and sudo-rs
+    # "sudo: user 'vagrant' not found".
+    def self.become_chown_failure_result(exit_code : Int32, stderr : String, become_user : String?, remote_user : String?, admin_users : Array(String) = AdminUsers::DEFAULT) : JSON::Any?
       return nil if exit_code == 0
-      return nil unless remote_user == "root"
+      return nil unless AdminUsers.admin?(admin_users, remote_user)
       return nil unless become_user && !become_user.empty?
-      return nil unless stderr.lines.any? { |line| line.strip == "sudo: unknown user #{become_user}" }
+      return nil unless unknown_become_user_stderr?(stderr, become_user)
       # ansible-core 2.19 attaches an ErrorSummary-derived `exception` to
       # every controller-fatal task result; with tracebacks disabled (the
       # default) it projects into registered vars/debug output as the
@@ -1848,6 +1864,17 @@ module Krikri
       }.to_json)
     end
 
+    # The three spellings sudo builds use for a become_user that is not in
+    # the target's user database (see become_chown_failure_result).
+    private def self.unknown_become_user_stderr?(stderr : String, become_user : String) : Bool
+      stderr.lines.any? do |line|
+        text = line.strip
+        text == "sudo: unknown user #{become_user}" ||
+          text == "sudo: unknown user: #{become_user}" ||
+          text == "sudo: user '#{become_user}' not found"
+      end
+    end
+
     @@chown_probe_cache = {} of String => Bool
     @@chown_probe_mutex = Mutex.new
 
@@ -1861,20 +1888,32 @@ module Krikri
       "t=$(mktemp) && chown #{q} \"$t\" 2>/dev/null; rc=$?; rm -f \"$t\"; exit $rc"
     end
 
+    # chown's own refusal - a user that does not exist is refused exactly
+    # like an ownership change it may not make, and _fixup_perms2 raises
+    # for both, so the probe treats them alike. 255 is ssh's, not chown's.
+    def self.become_chown_refused?(exit_code : Int32) : Bool
+      exit_code == 1
+    end
+
     # nil when the escalation is fine (or the probe cannot run); the
-    # ansible-worded failure when root cannot chown to an existing
-    # become_user. A nonexistent user is left to sudo's own error path.
+    # ansible-worded failure when an admin connection user cannot chown to
+    # the become_user. A user that does not EXIST is booked here too: chown
+    # refuses it exactly like a refused ownership change, and _fixup_perms2
+    # raises the same failure for both (issue #1972's round - the previous
+    # "leave a nonexistent user to sudo's own error" split was invisible
+    # until a target's sudo wording did not match, and it also let a whole
+    # module run under an escalation ansible never starts).
     def self.become_chown_probe_failure(conn : ConnectionSettings, become : Bool, become_user : String?) : JSON::Any?
       return nil unless become_user && !become_user.empty?
-      return nil unless conn.user == "root" && become_needed?(become, become_user, conn.become_baseline_user)
+      return nil unless AdminUsers.admin?(conn.admin_users, conn.become_baseline_user) &&
+                        become_needed?(become, become_user, conn.become_baseline_user)
       key = "#{conn.conn_host}|#{conn.port}|#{conn.user}|#{become_user}"
       ok = @@chown_probe_mutex.synchronize { @@chown_probe_cache[key]? }
       if ok.nil?
         ok = begin
           r = SSHManager.exec_script(conn.conn_host, conn.user, chown_probe_script(become_user), conn.port,
             timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable, connection: conn)
-          # Only a refused chown on a user that exists counts; 255 is ssh.
-          r[:exit_code] != 1 || !user_exists_remote?(conn, become_user)
+          !become_chown_refused?(r[:exit_code])
         rescue
           true
         end
@@ -1902,10 +1941,38 @@ module Krikri
       }.to_json)
     end
 
-    private def self.user_exists_remote?(conn : ConnectionSettings, user : String) : Bool
-      r = SSHManager.exec_script(conn.conn_host, conn.user, "getent passwd #{Shell.quote_arg(user)} >/dev/null", conn.port,
-        timeout: 60, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options, ssh_executable: conn.ssh_executable, connection: conn)
-      r[:exit_code] == 0
+    # ansible's _fixup_perms2 runs on a controller-local connection too: a
+    # become to an unprivileged user makes it chown the module payload to
+    # that user as the INVOKING user, so one that does not exist on the
+    # controller fails the task before any module runs - with the
+    # privileged-user wording whenever the invoking user is an admin user
+    # (issue #1972's round: the role's `rust_user: vagrant` on a Rocky
+    # target reached as root). Krikri's local leg instead spawned
+    # `sudo -u vagrant` and reported sudo's own wording as a premature
+    # become end.
+    #
+    # Only the missing-user case is booked: with the user present,
+    # _fixup_perms2 may still succeed through its file-mode/ACL ladder
+    # (setfacl, or the world-readable temp dir), so failing there would
+    # claim a refusal ansible never makes.
+    def self.become_chown_failure_local(become : Bool, become_user : String?, admin_users : Array(String) = AdminUsers::DEFAULT) : JSON::Any?
+      return nil unless become_user && !become_user.empty?
+      return nil unless AdminUsers.admin?(admin_users, local_username)
+      return nil unless become_needed?(become, become_user, local_username)
+      return nil if local_user_exists?(become_user)
+      become_chown_failure_json
+    end
+
+    private def self.local_user_exists?(user : String) : Bool
+      # System::User's id lookup reads a non-numeric string as uid 0, so a
+      # name never reaches it as an id.
+      if user.matches?(/\A\d+\z/)
+        !System::User.find_by?(id: user).nil?
+      else
+        !System::User.find_by?(name: user).nil?
+      end
+    rescue
+      false
     end
 
     private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil, become_flags : String? = nil) : JSON::Any
@@ -2441,7 +2508,7 @@ module Krikri
       # the become_user does not exist (see become_chown_failure_result);
       # mirror that wording before the generic parse gets a look in.
       if become_needed?(become, become_user, conn.become_baseline_user) &&
-         (failure = become_chown_failure_result(result[:exit_code], result[:stderr], become_user, conn.become_baseline_user))
+         (failure = become_chown_failure_result(result[:exit_code], result[:stderr], become_user, conn.become_baseline_user, conn.admin_users))
         return failure
       end
 
@@ -2489,7 +2556,7 @@ module Krikri
         )
         return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, retry_result)
         if become_needed?(become, become_user, conn.become_baseline_user) &&
-           (failure = become_chown_failure_result(retry_result[:exit_code], retry_result[:stderr], become_user, conn.become_baseline_user))
+           (failure = become_chown_failure_result(retry_result[:exit_code], retry_result[:stderr], become_user, conn.become_baseline_user, conn.admin_users))
           return failure
         end
         return interpret_remote_result(retry_result[:exit_code], retry_result[:stdout], retry_result[:stderr])
