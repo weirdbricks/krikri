@@ -11,13 +11,18 @@ module Krikri
       getter module_name : String
       # The module's parameters node (mapping or scalar)
       getter action_node : YAML::Nodes::Node
-      # The module-name key node; upstream matchtask rules report
-      # violations at this key's line/column.
+      # The node upstream's matchtask rules report violations at: the
+      # module key for a normal task, the alias value for
+      # `action:`/`local_action:` (ansible-lint pins fqcn at 6:17 for a
+      # mapping's `module: debug` and at the string value's own start).
       getter action_key_node : YAML::Nodes::Node
       getter? handlers_section : Bool
+      # True when the action was written as `action:`/`local_action:`,
+      # which Ansible's ModuleArgsParser resolves to the module it names.
+      getter? alias_action : Bool
 
       def initialize(@node, @file, @module_name, @action_node, @action_key_node,
-                     @handlers_section = false)
+                     @handlers_section = false, @alias_action = false)
       end
 
       def action_line : Int32
@@ -98,10 +103,12 @@ module Krikri
 
       # The task's arguments as upstream's Task.__str__ renders them for
       # an unnamed task: free-form arguments verbatim, a mapping action
-      # as `key=value` pairs.
+      # as `key=value` pairs. An alias's value begins with the module
+      # token (and a mapping form carries its `module:` key), neither of
+      # which upstream counts as an argument.
       private def action_args : String
         if (free_form = NodeUtil.scalar_value(action_node))
-          return free_form
+          return alias_action? ? (free_form.lstrip.split(/\s+/, 2)[1]? || "") : free_form
         end
         return "" unless mapping = action_node.as?(YAML::Nodes::Mapping)
         pairs = [] of String
@@ -109,6 +116,7 @@ module Krikri
           key = NodeUtil.scalar_value(key_node)
           value = NodeUtil.scalar_value(value_node)
           next unless key && value
+          next if alias_action? && key == "module"
           pairs << "#{key}=#{value}"
         end
         pairs.join(' ')
@@ -163,7 +171,9 @@ module Krikri
     module TaskKeywords
       # Task-level keywords that are not module actions. Modeled on
       # Ansible's TASK_KEYWORDS + loop keywords; anything else is
-      # treated as a module name.
+      # treated as a module name. `action`/`local_action` are here
+      # because ModuleArgsParser adds them to a task's attributes: they
+      # name an action rather than being one themselves.
       SET = %w[
         name when become become_user become_method become_flags
         tags register ignore_errors ignore_unreachable changed_when
@@ -177,6 +187,7 @@ module Krikri
         any_errors_fatal remote_user sudo sudo_user su su_user
         connection port ansible_user ansible_connection ansible_port
         collections module_defaults rescue always block debugger
+        action local_action
         vars_files fact_path gather_facts hosts tasks pre_tasks
         post_tasks handlers roles become_exe become_prompts
       ]
@@ -417,23 +428,66 @@ module Krikri
           end
           if (task = from_mapping(node, file))
             tasks << LintTask.new(task.node, task.file, task.module_name,
-              task.action_node, task.action_key_node, in_handlers)
+              task.action_node, task.action_key_node, in_handlers,
+              task.alias_action?)
           end
         end
       end
 
+      # Ansible's legacy action directives: the value names the module to
+      # run, so the directive keyword itself is never a module name.
+      ALIAS_KEYS = %w[action local_action]
+
+      # The action a task statement runs, as ModuleArgsParser resolves it.
+      private record ActionEntry,
+        module_name : String,
+        action_node : YAML::Nodes::Node,
+        key_node : YAML::Nodes::Node,
+        alias_action : Bool = false
+
       def self.from_mapping(node : YAML::Nodes::Mapping, file : PositionedFile) : LintTask?
         return nil unless NodeUtil.entry(node, "block").nil?
-        action_entry = nil
+        entry = nil
         NodeUtil.each_entry(node) do |k, v|
-          next unless action_entry.nil?
-          if (key = k.as?(YAML::Nodes::Scalar)) && key.value &&
-             !modifier?(key.value)
-            action_entry = {key.value, v, k}
+          next unless entry.nil?
+          key = k.as?(YAML::Nodes::Scalar).try(&.value) || next
+          entry =
+            if ALIAS_KEYS.includes?(key)
+              alias_entry(key, v)
+            elsif modifier?(key)
+              nil
+            else
+              ActionEntry.new(key, v, k)
+            end
+        end
+        action = entry || return nil
+        LintTask.new(node, file, action.module_name, action.action_node,
+          action.key_node, alias_action: action.alias_action)
+      end
+
+      # `action:`/`local_action:` names its module in the mapping's
+      # `module:` value or in the string's first token, and every other
+      # key/token is that module's argument (ModuleArgsParser's
+      # _normalize_old_style_args). The value node itself stays the
+      # violation position: ansible-lint reports the resolved action
+      # there (6:17 for a mapping's `module: debug`, the string value's
+      # own column for `local_action: debug msg=hi`).
+      private def self.alias_entry(key : String, value : YAML::Nodes::Node) : ActionEntry
+        if mapping = value.as?(YAML::Nodes::Mapping)
+          if (module_entry = NodeUtil.entry(mapping, "module")) &&
+             (name = NodeUtil.scalar_value(module_entry[1])) && !name.empty?
+            return ActionEntry.new(name, mapping, module_entry[1], true)
+          end
+        elsif scalar = value.as?(YAML::Nodes::Scalar)
+          if (name = scalar.value.lstrip.split(/\s+/, 2).first?) && !name.empty?
+            return ActionEntry.new(name, scalar, scalar, true)
           end
         end
-        return nil unless entry = action_entry
-        LintTask.new(node, file, entry[0], entry[1], entry[2])
+        # A malformed alias (no module named) keeps the keyword as the
+        # action, the way this model saw the task before aliases existed:
+        # Ansible refuses to load it, and parsing that failure is the
+        # syntax-check rule's job, not the task model's.
+        ActionEntry.new(key, value, value, true)
       end
     end
   end

@@ -48,10 +48,23 @@ module Krikri
         task = find_task(file, violation)
         return false unless task
         return false if CIS_RULE.overrides?(task)
-        return false unless buffer.line_text(violation.line)
+        line = buffer.line_text(violation.line) || return false
         replacement = resolved_name(task.module_name) || return false
-        buffer.replace_span(violation.line, violation.column,
+        buffer.replace_span(violation.line, token_column(line, task, violation),
           task.module_name.size, replacement)
+      end
+
+      # An alias value sits at the violation column, and a quoted one
+      # starts with its opening quote there (`local_action: "debug ..."`,
+      # ansible-lint reports column 21), so the module token is one
+      # column further in. A normal task's key IS the reported token.
+      private def token_column(line : String, task : LintTask, violation : Violation) : Int32
+        column = violation.column
+        return column unless task.alias_action?
+        case line[column - 1]?
+        when '"', '\'' then column + 1
+        else                column
+        end
       end
 
       private def resolved_name(module_name : String) : String?

@@ -81,5 +81,14 @@ module Krikri::Lint
                           "    - name: t\n      ansible.builtin.ping:\n")
       v.must_be_empty
     end
+
+    # Upstream looks the free form up in the raw task under the RESOLVED
+    # action name, so an action:/local_action: value is never reported.
+    it "exempts the action and local_action aliases" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n" \
+                          "    - name: t\n      local_action: debug msg=hi\n" \
+                          "    - name: u\n      action: get_url url=http://x/ mode=0644\n")
+      v.must_be_empty
+    end
   end
 end
