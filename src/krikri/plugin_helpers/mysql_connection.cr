@@ -538,16 +538,27 @@ module Krikri
       # value instead (no socket timeout at all), which would hang for the
       # OS's own connect timeout - the very hang issue #1961 is about - so
       # the plugins short-circuit here first. A NON-INTEGER value is out of
-      # this check's scope: the module's own argument spec (type='int')
-      # rejects it with a different failure, which the plugins that carry
-      # argument validation already produce (mysql_db/mysql_user, which
-      # validate nothing, are a separate known gap).
+      # this check's scope: the module's own argument spec (type='int') fails
+      # it before the plugin runs, which the baked argspec validator
+      # reproduces for every module that carries one (issue #1975).
       CONNECT_TIMEOUT_RANGE_MSG = "connect_timeout should be >0 and <=31536000"
+
+      # Python's int() has no width, so `connect_timeout: 99999999999999` is a
+      # valid integer to the module's argument spec and PyMySQL's own range
+      # check is what rejects it. Crystal's #to_i? stops at Int32, which made
+      # such a value look non-integer and let it reach the shard's silent drop
+      # (the unbounded connect this check exists to prevent) where real fails
+      # with the range message; a value past Int64 is out of range for the
+      # same reason (issue #1975). mysql_db's own login_port range check reads
+      # the same shape of value, so it shares this pattern.
+      INTEGER_TEXT = /\A[+-]?\d+\z/
 
       def self.connect_timeout_out_of_range?(params : Hash(String, String)) : Bool
         raw = params["connect_timeout"]? || return false
-        seconds = raw.to_i?
-        return false if seconds.nil?
+        value = raw.strip
+        return false unless value.matches?(INTEGER_TEXT)
+        seconds = value.to_i64?
+        return true if seconds.nil?
         seconds < 1 || seconds > 31536000
       end
 

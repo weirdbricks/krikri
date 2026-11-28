@@ -1,0 +1,39 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1975: mysql_db.py:665-667 validates login_port against 0-65535 in
+  # its own main() - after the empty-name exit, before the chdir, the state
+  # branches and any connect. krikri carried no such check, so a negative
+  # port crashed its URI builder ("Plugin execution failed: Invalid URI: bad
+  # port") and a port above 65535 fell through to a connection attempt (or,
+  # past Int64, to "Plugin execution failed: Invalid Int32"). No task here
+  # needs a server: real fails every one of them from the range check alone.
+  tasks:
+    - name: mysql_db with a login_port above the port range
+      mysql_db:
+        name: krikri_db
+        state: present
+        login_port: 70000
+      ignore_errors: true
+
+    - name: mysql_db with a negative login_port
+      mysql_db:
+        name: krikri_db
+        state: present
+        login_port: -5
+      ignore_errors: true
+
+    - name: mysql_db with a login_port past I64
+      mysql_db:
+        name: krikri_db
+        state: present
+        login_port: 99999999999999
+      ignore_errors: true
+
+    # The range check runs before the state branches, so a dump run fails on
+    # the port rather than on the missing target:.
+    - name: mysql_db dump with a bad port and no target
+      mysql_db:
+        name: krikri_db
+        state: dump
+        login_port: 70000
+      ignore_errors: true
