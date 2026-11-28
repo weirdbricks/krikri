@@ -1,0 +1,13 @@
+---
+- name: Play using vars_prompt
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_prompt:
+    - name: deploy_env
+      prompt: "Which environment?"
+      private: false
+  tasks:
+    - name: Show the chosen environment
+      ansible.builtin.debug:
+        msg: "{{ deploy_env }}"
