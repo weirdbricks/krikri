@@ -1,0 +1,19 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [postgresql_db with a BIGINT login_port] **********************************
+[ERROR]: Task failed: Module failed: unable to connect to database: invalid integer value "999999999999999999999999" for connection option "port"
+
+Origin: <WORK>/playbook.yml:10:7
+
+ 8   # \"port\"" wording - host independent, no socket is ever touched.
+ 9   tasks:
+10     - name: postgresql_db with a BIGINT login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database: invalid integer value \"999999999999999999999999\" for connection option \"port\"\n"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   
+
