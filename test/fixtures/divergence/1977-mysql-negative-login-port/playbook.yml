@@ -1,0 +1,40 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1977: the modules that carry no login_port range check of their own
+  # (mysql_user/mysql_query/mysql_variables) hand the converted int to PyMySQL.
+  # A negative port never reaches a socket - getaddrinfo refuses the service
+  # with EAI_SERVICE - so the connection-failure wrapper real prints is host
+  # independent. krikri crashed its URI builder instead ("Plugin execution
+  # failed: Invalid URI: bad port"). mysql_info is left out (its wrapper names
+  # the connector version PyMySQL reports, which is not pinned here), and so
+  # are ports that do dial (70000, "1_000": their errno depends on what
+  # listens on the truncated port), which the plain regression test in
+  # test/integration/mysql_login_port_text_test.cr covers.
+  tasks:
+    - name: mysql_user with a negative login_port
+      mysql_user:
+        name: krikri_user
+        state: present
+        login_port: -5
+      ignore_errors: true
+
+    - name: mysql_query with a negative login_port
+      mysql_query:
+        query: SELECT 1
+        login_port: -5
+      ignore_errors: true
+
+    - name: mysql_variables with a negative login_port
+      mysql_variables:
+        variable: max_connections
+        login_port: -5
+      ignore_errors: true
+
+    # The argument-spec conversion is decimal-based, so the underscored form
+    # converts to -10 and still lands on mysql_db's own range check.
+    - name: mysql_db with an underscored negative login_port
+      mysql_db:
+        name: krikri_db
+        state: present
+        login_port: "-1_0"
+      ignore_errors: true
