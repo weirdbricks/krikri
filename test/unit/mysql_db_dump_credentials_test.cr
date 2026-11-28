@@ -44,14 +44,20 @@ private def with_shims(&)
     File.chmod(path, 0o755)
   end
 
+  # The plugin connects before it shells out (issue #1976), so the
+  # credential-staging run needs a server to connect to. The fake one
+  # answers the connect and the version read, then lets the shim capture
+  # the CLI's argv.
+  server = FakeMySqlServer.new
   PluginSpecHelper::ENV_MUTEX.synchronize do
     old_path = ENV["PATH"]?
     old_capture = ENV["CAPTURE_DIR"]?
     ENV["CAPTURE_DIR"] = capture_dir
     ENV["PATH"] = "#{shim_dir}:#{old_path}"
     begin
-      yield capture_dir
+      yield capture_dir, server
     ensure
+      server.close
       old_path ? (ENV["PATH"] = old_path) : (ENV.delete("PATH"))
       old_capture ? (ENV["CAPTURE_DIR"] = old_capture) : (ENV.delete("CAPTURE_DIR"))
     end
@@ -62,10 +68,12 @@ end
 describe "mysql_db dump/import credential staging" do
   exclusive! # PATH is process-wide: a concurrent test's child would inherit the shim
   it "dump passes login_password via the staged --defaults-extra-file, never argv" do
-    with_shims do |capture_dir|
+    with_shims do |capture_dir, server|
       target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
+          "login_host"     => "127.0.0.1",
+          "login_port"     => server.port.to_s,
           "name"           => "mydb",
           "state"          => "dump",
           "target"         => target,
@@ -73,6 +81,7 @@ describe "mysql_db dump/import credential staging" do
           "login_password" => "s3cret'pw!",
         })
 
+        server.wait
         result["changed"].as_bool.must_equal(true)
         argv = File.read(File.join(capture_dir, "argv"))
         argv.must_include("--defaults-extra-file=")
@@ -91,11 +100,13 @@ describe "mysql_db dump/import credential staging" do
   end
 
   it "import passes login_password via the staged --defaults-extra-file, never argv" do
-    with_shims do |capture_dir|
+    with_shims do |capture_dir, server|
       target = File.tempname("krikri-import.sql")
       File.write(target, "CREATE TABLE t (id int);")
       begin
         result = PluginSpecHelper.run("mysql_db", {
+          "login_host"     => "127.0.0.1",
+          "login_port"     => server.port.to_s,
           "name"           => "mydb",
           "state"          => "import",
           "target"         => target,
@@ -103,6 +114,7 @@ describe "mysql_db dump/import credential staging" do
           "login_password" => "s3cret'pw!",
         })
 
+        server.wait
         result["changed"].as_bool.must_equal(true)
         argv = File.read(File.join(capture_dir, "argv"))
         argv.must_include("--defaults-extra-file=")
@@ -117,10 +129,12 @@ describe "mysql_db dump/import credential staging" do
   end
 
   it "dump with config_file + login_password stages the password, never --password= on argv" do
-    with_shims do |capture_dir|
+    with_shims do |capture_dir, server|
       target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
+          "login_host"     => "127.0.0.1",
+          "login_port"     => server.port.to_s,
           "name"           => "mydb",
           "state"          => "dump",
           "target"         => target,
@@ -129,6 +143,7 @@ describe "mysql_db dump/import credential staging" do
           "login_password" => "s3cret'pw!",
         })
 
+        server.wait
         result["changed"].as_bool.must_equal(true)
         argv = File.read(File.join(capture_dir, "argv"))
         argv.must_include("--defaults-extra-file=")
@@ -148,11 +163,13 @@ describe "mysql_db dump/import credential staging" do
   end
 
   it "import with config_file + login_password stages the password, never --password= on argv" do
-    with_shims do |capture_dir|
+    with_shims do |capture_dir, server|
       target = File.tempname("krikri-import.sql")
       File.write(target, "CREATE TABLE t (id int);")
       begin
         result = PluginSpecHelper.run("mysql_db", {
+          "login_host"     => "127.0.0.1",
+          "login_port"     => server.port.to_s,
           "name"           => "mydb",
           "state"          => "import",
           "target"         => target,
@@ -161,6 +178,7 @@ describe "mysql_db dump/import credential staging" do
           "login_password" => "s3cret'pw!",
         })
 
+        server.wait
         result["changed"].as_bool.must_equal(true)
         argv = File.read(File.join(capture_dir, "argv"))
         argv.must_include("--defaults-extra-file=")
@@ -175,10 +193,12 @@ describe "mysql_db dump/import credential staging" do
   end
 
   it "restrict_config_file with config_file + login_password stages the merged file as --defaults-file=" do
-    with_shims do |capture_dir|
+    with_shims do |capture_dir, server|
       target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
+          "login_host"           => "127.0.0.1",
+          "login_port"           => server.port.to_s,
           "name"                 => "mydb",
           "state"                => "dump",
           "target"               => target,
@@ -188,6 +208,7 @@ describe "mysql_db dump/import credential staging" do
           "login_password"       => "s3cret'pw!",
         })
 
+        server.wait
         result["changed"].as_bool.must_equal(true)
         argv = File.read(File.join(capture_dir, "argv"))
         argv.must_include("--defaults-file=")
@@ -208,10 +229,12 @@ describe "mysql_db dump/import credential staging" do
   end
 
   it "config_file without login_password is still passed straight through as --defaults-extra-file=" do
-    with_shims do |capture_dir|
+    with_shims do |capture_dir, server|
       target = File.tempname("krikri-dump.sql")
       begin
         result = PluginSpecHelper.run("mysql_db", {
+          "login_host"  => "127.0.0.1",
+          "login_port"  => server.port.to_s,
           "name"        => "mydb",
           "state"       => "dump",
           "target"      => target,
@@ -219,6 +242,7 @@ describe "mysql_db dump/import credential staging" do
           "login_user"  => "dbadmin",
         })
 
+        server.wait
         result["changed"].as_bool.must_equal(true)
         argv = File.read(File.join(capture_dir, "argv"))
         argv.must_include("--defaults-extra-file=/etc/my.cnf")

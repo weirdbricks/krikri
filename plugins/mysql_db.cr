@@ -136,16 +136,7 @@ module Krikri
       json_db = JSON::Any.new(db_name)
       json_db_list = json_strings(db_list)
 
-      uri = PluginHelpers::MysqlConnection.build_uri(
-        host: @params["login_host"]?,
-        port: @params["login_port"]?,
-        user: @params["login_user"]?,
-        password: @params["login_password"]?,
-        unix_socket: @params["login_unix_socket"]?,
-        config_file: @params["config_file"]? || "~/.my.cnf",
-        tls: PluginHelpers::MysqlConnection.tls_options(@params),
-        connect_timeout: @params["connect_timeout"]?,
-      )
+      uri = connection_uri
 
       DB.open(uri) do |dbcon|
         server_version = dbcon.query_one("SELECT VERSION()", as: String)
@@ -297,9 +288,46 @@ module Krikri
       JSON::Any.new(list.map { |item| JSON::Any.new(item) })
     end
 
+    # The connection every state opens: real's mysql_connect takes the same
+    # task params (no initial database), and connect_timeout bounds the
+    # socket connect (issue #1961).
+    private def connection_uri : String
+      PluginHelpers::MysqlConnection.build_uri(
+        host: @params["login_host"]?,
+        port: @params["login_port"]?,
+        user: @params["login_user"]?,
+        password: @params["login_password"]?,
+        unix_socket: @params["login_unix_socket"]?,
+        config_file: @params["config_file"]? || "~/.my.cnf",
+        tls: PluginHelpers::MysqlConnection.tls_options(@params),
+        connect_timeout: @params["connect_timeout"]?,
+      )
+    end
+
     private def run_dump_or_import(state : String, name : String) : PluginResult
       target = @params["target"]?
       return PluginResult.new(changed: false, failed: true, msg: "target is required when state is dump or import") unless target
+
+      # mysql_db.py's mysql_connect runs before EVERY state branch, so a
+      # dump/import task (its check-mode exit included) fails at
+      # connect_timeout against an unreachable or unauthorized server
+      # exactly like present/absent. Without this the mysqldump/mysql CLI's
+      # own OS-level connect timeout governs the task, which is far longer
+      # than the task's connect_timeout (issue #1976). Real queries the
+      # server right after connecting (get_server_implementation), so the
+      # version read is part of the same check.
+      begin
+        DB.open(connection_uri) do |dbcon|
+          dbcon.query_one("SELECT VERSION()", as: String)
+        end
+      rescue ex : DB::ConnectionRefused
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true,
+            connect_timed_out: ex.cause.is_a?(IO::TimeoutError)))
+      rescue ex : MySql::Connection::PacketError
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
+      end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
       if check_mode

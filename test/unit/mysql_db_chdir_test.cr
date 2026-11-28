@@ -90,14 +90,26 @@ describe "mysql_db chdir" do
     task_dir = PluginSpecHelper.tmp_path("taskdir")
     Dir.mkdir_p(task_dir)
 
-    result = PluginSpecHelper.run("mysql_db", {
-      "name"   => "krikri_probe",
-      "state"  => "dump",
-      "target" => "out.sql",
-      "chdir"  => task_dir,
-    }, chdir: work_dir, env: {"PATH" => "#{shim_dir}:#{ENV["PATH"]?}"})
+    # The connect precedes the state branch (issue #1976), so a fake
+    # server answers it and the version read; the CLI shim then runs in
+    # the chdir.
+    server = FakeMySqlServer.new
+    begin
+      result = PluginSpecHelper.run("mysql_db", {
+        "name"       => "krikri_probe",
+        "state"      => "dump",
+        "target"     => "out.sql",
+        "chdir"      => task_dir,
+        "login_host" => "127.0.0.1",
+        "login_port" => server.port.to_s,
+      }, chdir: work_dir, env: {"PATH" => "#{shim_dir}:#{ENV["PATH"]?}"})
 
-    result["changed"].as_bool.must_equal(true)
+      server.wait
+      server.query.must_equal("SELECT VERSION()")
+      result["changed"].as_bool.must_equal(true)
+    ensure
+      server.close
+    end
     File.exists?(File.join(task_dir, "out.sql")).must_equal(true)
     File.exists?(File.join(work_dir, "out.sql")).must_equal(false)
   end

@@ -1,0 +1,42 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_db dump against a blackholed host] *********************************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")
+Origin: <WORK>/playbook.yml:11:7
+
+ 9   # no mysqldump/mysql mutation can happen.
+10   tasks:
+11     - name: mysql_db dump against a blackholed host
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on '192.0.2.1' (timed out)\")"}
+...ignoring
+
+TASK [mysql_db import against a blackholed host] *******************************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")
+Origin: <WORK>/playbook.yml:23:7
+
+21       ignore_errors: true
+22
+23     - name: mysql_db import against a blackholed host
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on '192.0.2.1' (timed out)\")"}
+...ignoring
+
+TASK [mysql_db dump check mode against a blackholed host] **********************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")
+Origin: <WORK>/playbook.yml:35:7
+
+33       ignore_errors: true
+34
+35     - name: mysql_db dump check mode against a blackholed host
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on '192.0.2.1' (timed out)\")"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=3   
+
