@@ -1,3 +1,4 @@
+require "big"
 require "json"
 require "uri"
 require "../base_plugin"
@@ -435,20 +436,32 @@ module Krikri
         exists.call(socket) ? Errno::ECONNREFUSED.value : Errno::ENOENT.value
       end
 
-      # The kernel errno of a fresh connect, or -2 (Python's EAI_NONAME
-      # gaierror value) when the host does not resolve, or nil when the
-      # probe learned nothing (the target blackholed the SYN).
+      # Python's getaddrinfo errno values that have no libc errno of their
+      # own: EAI_NONAME (the host does not resolve) and EAI_SERVICE (the
+      # service is not a usable port). Both reach the message tail as
+      # "[Errno -N] <gai_strerror text>".
+      EAI_NONAME_ERRNO  = -2
+      EAI_SERVICE_ERRNO = -8
+
+      # The kernel errno of a fresh connect, or EAI_NONAME when the host does
+      # not resolve, or nil when the probe learned nothing (the target
+      # blackholed the SYN). A negative login_port never reaches a socket in
+      # Python: getaddrinfo refuses the service, so EAI_SERVICE is reported
+      # without a dial (issue #1977).
       private def self.tcp_connect_errno(host : String, port : String) : Int32?
+        return EAI_SERVICE_ERRNO if (value = python_int(port)) && value < 0
+        dial = wire_port(port)
         begin
-          Socket::Addrinfo.tcp(host, port.to_i)
+          Socket::Addrinfo.tcp(host, dial)
         rescue
-          return -2
+          return EAI_NONAME_ERRNO
         end
-        SocketConnect.probe_errno(host, port, 3.seconds).try(&.value)
+        SocketConnect.probe_errno(host, dial.to_s, 3.seconds).try(&.value)
       end
 
       private def self.python_errno_text(errno : Int32) : String
-        return "[Errno #{errno}] Name or service not known" if errno == -2
+        return "[Errno #{errno}] Name or service not known" if errno == EAI_NONAME_ERRNO
+        return "[Errno #{errno}] Servname not supported for ai_socktype" if errno == EAI_SERVICE_ERRNO
         SocketConnect.python_error_text(Errno.new(errno))
       end
 
@@ -543,22 +556,55 @@ module Krikri
       # reproduces for every module that carries one (issue #1975).
       CONNECT_TIMEOUT_RANGE_MSG = "connect_timeout should be >0 and <=31536000"
 
-      # Python's int() has no width, so `connect_timeout: 99999999999999` is a
-      # valid integer to the module's argument spec and PyMySQL's own range
-      # check is what rejects it. Crystal's #to_i? stops at Int32, which made
-      # such a value look non-integer and let it reach the shard's silent drop
-      # (the unbounded connect this check exists to prevent) where real fails
-      # with the range message; a value past Int64 is out of range for the
-      # same reason (issue #1975). mysql_db's own login_port range check reads
-      # the same shape of value, so it shares this pattern.
-      INTEGER_TEXT = /\A[+-]?\d+\z/
+      # AnsibleModule's type='int' conversion is decimal.Decimal-based
+      # (ansible-core's check_type_int parses the text with Decimal and
+      # requires it to equal its own integer truncation), not Python's int():
+      # "1_000" is 1000, and so are the looser "_1"/"1__0"/"1.0"/"1e3"
+      # spellings, while Crystal's #to_i reads none of them. A login_port or
+      # connect_timeout spelled that way used to crash the plugin (Invalid
+      # URI/Int32) or drop the timeout silently (issue #1977). Real's
+      # conversion has no width, so an integral value past Int64 is still
+      # accepted; this returns nil only for text Decimal cannot read
+      # (`inf` included - real dies with an unhandled OverflowError there,
+      # which is not worth reproducing).
+      private def self.integer_value(raw : String) : BigInt?
+        bd = BigDecimal.new(raw.strip)
+        value = bd.to_big_i
+        bd == BigDecimal.new(value) ? value : nil
+      rescue
+        nil
+      end
+
+      # The value as an Int64, saturating past its ends: its callers all
+      # compare against a small range (a timeout bound, the sign of a port).
+      def self.python_int(raw : String) : Int64?
+        value = integer_value(raw) || return nil
+        return Int64::MAX if value > Int64::MAX
+        return Int64::MIN if value < Int64::MIN
+        value.to_i64
+      end
+
+      # The port a dial actually reaches. PyMySQL hands the converted int to
+      # getaddrinfo, which truncates a non-negative service to the 16 bits
+      # sockaddr_in carries - 70000 dials 4464, and a value past Int64 wraps
+      # by its true residue - while Crystal's own getaddrinfo rejects a
+      # number outside 0-65535, so the number has to be reduced here for the
+      # dial (and the errno it fails with) to match real. The reduction runs
+      # on the BigInt, never on the saturated Int64. A negative port is
+      # getaddrinfo's EAI_SERVICE and never reaches a listener: a connect to
+      # port 0 is always refused (bind(0) picks an ephemeral port instead),
+      # so the placeholder fails the dial immediately while
+      # #tcp_connect_errno reports the getaddrinfo errno real shows (issue
+      # #1977).
+      def self.wire_port(raw : String?) : Int32
+        value = raw.try { |text| integer_value(text) } || return 3306
+        return 0 if value < 0
+        (value % 65536).to_i32
+      end
 
       def self.connect_timeout_out_of_range?(params : Hash(String, String)) : Bool
         raw = params["connect_timeout"]? || return false
-        value = raw.strip
-        return false unless value.matches?(INTEGER_TEXT)
-        seconds = value.to_i64?
-        return true if seconds.nil?
+        seconds = python_int(raw) || return false
         seconds < 1 || seconds > 31536000
       end
 
@@ -566,7 +612,7 @@ module Krikri
         if socket
           URI.new(scheme: "mysql", path: socket)
         else
-          URI.new(scheme: "mysql", host: host || "localhost", port: (port || "3306").to_i)
+          URI.new(scheme: "mysql", host: host || "localhost", port: wire_port(port))
         end
       end
 
@@ -683,7 +729,7 @@ module Krikri
       # task's raw param and real defaults it inside the module.
       private def self.append_connect_timeout(query_params : URI::Params, connect_timeout : String?)
         raw = connect_timeout || DEFAULT_CONNECT_TIMEOUT
-        if (seconds = raw.to_i?) && seconds > 0
+        if (seconds = python_int(raw)) && seconds > 0
           query_params["connect_timeout"] = seconds.to_s
         end
       end

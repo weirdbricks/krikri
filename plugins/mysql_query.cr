@@ -414,7 +414,7 @@ module Krikri
       SPEC.each_key do |param|
         value = @params[param]?
         next unless value
-        if INT_PARAMS.includes?(param) && !value.strip.matches?(/^[+-]?\d+$/)
+        if INT_PARAMS.includes?(param) && !int_convertible?(value)
           return int_type_error(param, value)
         end
         if BOOL_PARAMS.includes?(param) && !bool_convertible?(value)

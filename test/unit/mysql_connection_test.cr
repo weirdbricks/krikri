@@ -775,4 +775,81 @@ describe Krikri::PluginHelpers::MysqlConnection do
       end
     end
   end
+
+  describe "Ansible's int conversion for login_port and connect_timeout (issue #1977)" do
+    it "reads the text decimal.Decimal does, not Crystal's #to_i" do
+      parse = ->(text : String) { Krikri::PluginHelpers::MysqlConnection.python_int(text) }
+      parse.call("1_000").must_equal(1000_i64)
+      parse.call(" 42 ").must_equal(42_i64)
+      parse.call("-1_0").must_equal(-10_i64)
+      parse.call("+7").must_equal(7_i64)
+      # ansible-core's check_type_int parses with Decimal and requires the
+      # value to equal its own truncation, so these all convert too.
+      parse.call("1__0").must_equal(10_i64)
+      parse.call("_1").must_equal(1_i64)
+      parse.call("1.0").must_equal(1_i64)
+      parse.call("1e3").must_equal(1000_i64)
+      # Decimal rejects these, so the argument spec would have failed first.
+      # `inf` is a deliberate difference: real's conversion computes
+      # int(Decimal('Infinity')) and dies with an unhandled OverflowError
+      # instead of an argument error, which is not worth reproducing.
+      ["1.5", "abc", "", "0x10", "inf", "-inf", "nan"].each do |text|
+        parse.call(text).must_be_nil(text)
+      end
+      # Past Int64 the value saturates: every caller compares a range.
+      parse.call("999999999999999999999").must_equal(Int64::MAX)
+      parse.call("-999999999999999999999").must_equal(Int64::MIN)
+    end
+
+    it "reduces an out-of-range login_port to the port real's getaddrinfo dials" do
+      wire = ->(text : String?) { Krikri::PluginHelpers::MysqlConnection.wire_port(text) }
+      wire.call("3307").must_equal(3307)
+      wire.call("1_000").must_equal(1000)
+      wire.call("1__0").must_equal(10)
+      # Real hands the converted int to getaddrinfo, which truncates it to
+      # the 16 bits sockaddr_in holds - 70000 dials 4464, larger values wrap
+      # the same way (99999999999999 is 16383). Checked against Python's own
+      # socket module: it connected to a listener bound on the truncated port.
+      wire.call("70000").must_equal(4464)
+      wire.call("99999999999999").must_equal(16383)
+      # The residue is taken on the BigInt: a value past Int64 must not be
+      # saturated first (real's conversion has no width), or the dial would
+      # land on Int64::MAX % 65536.
+      wire.call("999999999999999999998").must_equal(65534)
+      # A negative port is never dialled (getaddrinfo's EAI_SERVICE); 0 is
+      # the placeholder no socket ever accepts.
+      wire.call("-5").must_equal(0)
+      wire.call(nil).must_equal(3306)
+    end
+
+    it "builds a URI from the reduced port and threads underscore timeouts" do
+      build = ->(port : String?, connect_timeout : String?) do
+        Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", port: port,
+          user: "root", connect_timeout: connect_timeout)
+      end
+      build.call("1_000", nil).must_include("db.example.com:1000")
+      build.call("70000", nil).must_include("db.example.com:4464")
+      # `connect_timeout: "1_000"` is 1000 to Python's int(), so the shard
+      # must bound the connect where a bare #to_i dropped the timeout.
+      build.call(nil, "1_000").must_include("connect_timeout=1000")
+    end
+
+    it "flags underscore integer connect_timeouts outside PyMySQL's range" do
+      Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
+        {"connect_timeout" => "1_000"}).must_equal(false)
+      Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
+        {"connect_timeout" => "31_536_001"}).must_equal(true)
+      Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
+        {"connect_timeout" => "0_0"}).must_equal(true)
+    end
+
+    it "reports a negative login_port with getaddrinfo's EAI_SERVICE wording" do
+      # Live-verified vs ansible-core 2.21.6 / ansible.mysql 5.2.0:
+      # (2003, "Can't connect to MySQL server on 'localhost' ([Errno -8]
+      # Servname not supported for ai_socktype)").
+      detail = Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "localhost", login_port: "-5", mysqldb: false)
+      detail.must_equal(%((2003, "Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)")))
+    end
+  end
 end

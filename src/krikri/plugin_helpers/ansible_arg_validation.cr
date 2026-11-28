@@ -1,3 +1,4 @@
+require "big"
 require "json"
 require "../base_plugin"
 
@@ -24,6 +25,18 @@ module Krikri
       # (PYTHONHASHSEED); this fixed order is one of the orders real emits, and
       # only the wording shape is deterministic.
       BOOLEANS_REPR = %w['y' 'yes' 'on' '1' 'true' 't' 1 'n' 'no' 'off' '0' 'false' 'f' 0]
+
+      # parameters.py's _check_type_int conversion parses the text with
+      # decimal.Decimal and requires it to equal its own integer truncation,
+      # so "1_000" is 1000 (and so are the looser "_1"/"1__0"/"1.0"
+      # spellings) where a bare /[+-]?\d+/ spelling check rejects it
+      # (issue #1977).
+      def int_convertible?(raw : String) : Bool
+        bd = BigDecimal.new(raw.strip)
+        bd == BigDecimal.new(bd.to_big_i)
+      rescue
+        false
+      end
 
       def bool_convertible?(raw : String) : Bool
         normalized = raw.downcase.strip

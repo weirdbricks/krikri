@@ -576,15 +576,14 @@ module Krikri
     end
 
     # mysql_db.py:665-667's range check. `login_port:` reaches the module as
-    # an int (the argument spec's type conversion), so this only ever sees
+    # an int (the argument spec's type conversion is decimal-based, so it
+    # reads underscores and integral decimals too), so this only ever sees
     # integer text: a non-integer spelling is rejected by the argument-spec
     # validator before the plugin starts.
     private def login_port_range_error : PluginResult?
       raw = @params["login_port"]? || return nil
-      value = raw.strip
-      return nil unless value.matches?(PluginHelpers::MysqlConnection::INTEGER_TEXT)
-      port = value.to_i64?
-      return nil if port && port >= 0 && port <= 65535
+      port = PluginHelpers::MysqlConnection.python_int(raw) || return nil
+      return nil if port >= 0 && port <= 65535
       PluginResult.new(changed: false, failed: true,
         msg: "login_port must be a valid unix port number (0-65535)")
     end

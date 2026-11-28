@@ -1,0 +1,54 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_user with a negative login_port] ***********************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, "Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)")
+Origin: <WORK>/playbook.yml:14:7
+
+12   # test/integration/mysql_login_port_text_test.cr covers.
+13   tasks:
+14     - name: mysql_user with a negative login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, \"Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)\")"}
+...ignoring
+
+TASK [mysql_query with a negative login_port] **********************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, "Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)")
+Origin: <WORK>/playbook.yml:21:7
+
+19       ignore_errors: true
+20
+21     - name: mysql_query with a negative login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, \"Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)\")"}
+...ignoring
+
+TASK [mysql_variables with a negative login_port] ******************************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)")
+Origin: <WORK>/playbook.yml:27:7
+
+25       ignore_errors: true
+26
+27     - name: mysql_variables with a negative login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)\")"}
+...ignoring
+
+TASK [mysql_db with an underscored negative login_port] ************************
+[ERROR]: Task failed: Module failed: login_port must be a valid unix port number (0-65535)
+Origin: <WORK>/playbook.yml:35:7
+
+33     # The argument-spec conversion is decimal-based, so the underscored form
+34     # converts to -10 and still lands on mysql_db's own range check.
+35     - name: mysql_db with an underscored negative login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "login_port must be a valid unix port number (0-65535)"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=4   
+

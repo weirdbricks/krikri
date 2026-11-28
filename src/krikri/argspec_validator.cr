@@ -2109,12 +2109,16 @@ module Krikri
     end
 
     # decimal.Decimal-compatible integer shape: the value must equal its
-    # own integer truncation ("1.0" passes, "1.5" and "abc" fail).
+    # own integer truncation ("1.0" passes, "1.5" and "abc" fail). The
+    # truncation goes through BigInt because Decimal has no width - real's
+    # check_type_int accepts any magnitude, so `login_port: 99999999999999`
+    # must reach the module (and its own range check) instead of failing
+    # the type conversion here (issue #1977).
     private def int_like?(raw : String) : Bool
       s = raw.strip
       begin
         bd = BigDecimal.new(s)
-        (bd - BigDecimal.new(bd.to_i)) == BigDecimal.new(0)
+        bd == BigDecimal.new(bd.to_big_i)
       rescue
         false
       end
