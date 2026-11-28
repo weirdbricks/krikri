@@ -53,7 +53,9 @@ module Krikri
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         check_plays(file, violations)
         TaskWalker.each_task(file) do |task|
-          next unless PAUSE_MODULES.includes?(action_module(task))
+          # LintTask already names the module an `action:`/`local_action:`
+          # directive points at, as upstream's normalization does.
+          next unless PAUSE_MODULES.includes?(task.module_name)
           next if param_truthy?(task, "minutes") || param_truthy?(task, "seconds")
           violations << Violation.new(file.path, task.line, 0, id, severity,
             MESSAGE, task.line)
@@ -82,23 +84,6 @@ module Krikri
         return nil unless first
         mapping = first.as?(YAML::Nodes::Mapping)
         (mapping && mapping.nodes.first?) || first
-      end
-
-      # An `action:`/`local_action:` directive names its module inside the
-      # value, and upstream resolves it before either rule sees the task.
-      private def action_module(task : LintTask) : String
-        name = task.module_name
-        return name unless name == "action" || name == "local_action"
-        if free_form = NodeUtil.scalar_value(task.action_node)
-          return free_form.split(' ', 2).first? || name
-        end
-        if mapping = task.action_node.as?(YAML::Nodes::Mapping)
-          if (entry = NodeUtil.entry(mapping, "module")) &&
-             (value = NodeUtil.scalar_value(entry[1]))
-            return value
-          end
-        end
-        name
       end
 
       # Upstream tests the merged action dict, where a task-level `args:`

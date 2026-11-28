@@ -195,4 +195,43 @@ module Krikri::Lint
       registered.tags.must_equal(["idiom", "opt-in"])
     end
   end
+
+  describe DeprecatedLocalActionRule do
+    private def rule
+      DeprecatedLocalActionRule.new
+    end
+
+    it "flags both written forms once per task, at the task line" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n" \
+                          "    - name: mapping form\n      local_action:\n" \
+                          "        module: debug\n        msg: hi\n" \
+                          "    - name: string form\n      local_action: debug msg=hi\n")
+      v.map { |x| {x.line, x.column} }.must_equal([{4, 0}, {8, 0}])
+      v.first.message.must_equal(
+        "Do not use 'local_action', use 'delegate_to: localhost'.")
+    end
+
+    it "leaves the newer action directive alone" do
+      v = lint_yaml(rule, "---\n- hosts: all\n  tasks:\n" \
+                          "    - name: t\n      action: debug msg=hi\n")
+      v.must_be_empty
+    end
+
+    it "declares upstream's severity, tags and autofix support" do
+      rule.severity.must_equal(Severity::MEDIUM)
+      rule.tags.must_equal(["autofix", "deprecations"])
+      rule.task_scoped?.must_equal(true)
+      rule.fixable?.must_equal(true)
+      v = Violation.new("p.yml", 1, 0, rule.id, rule.severity,
+        DeprecatedLocalActionRule::MESSAGE)
+      rule.marks_fixed?(v).must_equal(true)
+    end
+
+    it "is registered for --list-rules" do
+      registered = RuleRegistry.default.find("deprecated-local-action")
+      raise "deprecated-local-action is not registered" unless registered
+      registered.severity.must_equal(Severity::MEDIUM)
+      registered.tags.must_equal(["autofix", "deprecations"])
+    end
+  end
 end

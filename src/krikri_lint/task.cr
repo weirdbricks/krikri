@@ -107,8 +107,9 @@ module Krikri
       # token (and a mapping form carries its `module:` key), neither of
       # which upstream counts as an argument.
       private def action_args : String
+        return alias_arguments if alias_action?
         if (free_form = NodeUtil.scalar_value(action_node))
-          return alias_action? ? (free_form.lstrip.split(/\s+/, 2)[1]? || "") : free_form
+          return free_form
         end
         return "" unless mapping = action_node.as?(YAML::Nodes::Mapping)
         pairs = [] of String
@@ -116,7 +117,27 @@ module Krikri
           key = NodeUtil.scalar_value(key_node)
           value = NodeUtil.scalar_value(value_node)
           next unless key && value
-          next if alias_action? && key == "module"
+          pairs << "#{key}=#{value}"
+        end
+        pairs.join(' ')
+      end
+
+      # An alias's arguments as upstream's normalized action dict holds
+      # them: the string form's tail past the module token, the mapping
+      # form's entries without the `module:` key that names the module.
+      # Rules that read free-form arguments need this rather than the raw
+      # value, which still starts with the module token an alias adds.
+      def alias_arguments : String
+        if (free_form = NodeUtil.scalar_value(action_node))
+          return free_form.lstrip.split(/\s+/, 2)[1]? || ""
+        end
+        return "" unless mapping = action_node.as?(YAML::Nodes::Mapping)
+        pairs = [] of String
+        NodeUtil.each_entry(mapping) do |key_node, value_node|
+          key = NodeUtil.scalar_value(key_node)
+          value = NodeUtil.scalar_value(value_node)
+          next unless key && value
+          next if key == "module"
           pairs << "#{key}=#{value}"
         end
         pairs.join(' ')

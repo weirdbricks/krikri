@@ -23,6 +23,10 @@ module Krikri
           NameRule.new,
           RoleNameRule.new,
           FqcnActionCoreRule.new,
+          # Registered after fqcn so a --fix pass rewrites a directive's
+          # module token to its FQCN before deprecated-local-action copies
+          # it into the module key, the order upstream's transforms take.
+          DeprecatedLocalActionRule.new,
           OnlyBuiltinsRule.new,
           NoPromptingRule.new,
           YamlLineLengthRule.new,

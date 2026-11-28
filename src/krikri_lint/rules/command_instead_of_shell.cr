@@ -85,6 +85,7 @@ module Krikri
         parts = [] of String
         action = task.action_node
         if action.is_a?(YAML::Nodes::Scalar)
+          return task.alias_arguments if task.alias_action?
           return action.value.to_s
         end
         NodeUtil.each_entry(task.node) do |k, v|

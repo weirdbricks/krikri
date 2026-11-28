@@ -86,10 +86,12 @@ module Krikri
       end
 
       # Free-form action form: `command: echo hi` (scalar) or the first
-      # string in a list form.
+      # string in a list form. A directive's scalar names its module
+      # first, and upstream's command args never include that name.
       private def free_form_text(task : LintTask) : String?
         action = task.action_node
         if action.is_a?(YAML::Nodes::Scalar)
+          return task.alias_arguments if task.alias_action?
           return action.value
         end
         if action.is_a?(YAML::Nodes::Sequence)
