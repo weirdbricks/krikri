@@ -322,5 +322,43 @@ module Krikri::Lint
     it "does not touch yaml[truthy] values (upstream leaves them too)" do
       fix_plain_yaml("foo: yes\n", YamlTruthyRule.new).must_equal("foo: yes\n")
     end
+
+    it "deprecated-local-action rewrites both forms as upstream does" do
+      fixed = fix_plain_yaml(
+        "---\n- name: p\n  hosts: all\n  tasks:\n" \
+        "    - name: mapping form\n      local_action:\n" \
+        "        module: debug\n        msg: hi\n" \
+        "    - name: string form\n      local_action: debug msg=hi\n" \
+        "      when: true\n",
+        DeprecatedLocalActionRule.new
+      )
+      fixed.must_equal(
+        "---\n- name: p\n  hosts: all\n  tasks:\n" \
+        "    - name: mapping form\n      debug:\n" \
+        "      delegate_to: localhost\n" \
+        "    - name: string form\n      debug: msg=hi\n" \
+        "      delegate_to: localhost\n" \
+        "      when: true\n")
+    end
+
+    # Upstream's transforms run fqcn before deprecated-local-action, so the
+    # module key this rule writes carries the FQCN. Applying both fixes
+    # against one buffer used to leave the fqcn edit inside the arguments
+    # of the rewritten string form (issue #1952).
+    it "carries an fqcn-rewritten module into the directive's replacement" do
+      fixed = fix_yaml(
+        "---\n- name: p\n  hosts: all\n  tasks:\n" \
+        "    - name: mapping form\n      local_action:\n" \
+        "        module: debug\n        msg: hi\n" \
+        "    - name: string form\n      local_action: debug msg=hi\n",
+        [FqcnActionCoreRule.new, DeprecatedLocalActionRule.new]
+      )
+      fixed.must_equal(
+        "---\n- name: p\n  hosts: all\n  tasks:\n" \
+        "    - name: mapping form\n      ansible.builtin.debug:\n" \
+        "      delegate_to: localhost\n" \
+        "    - name: string form\n      ansible.builtin.debug: msg=hi\n" \
+        "      delegate_to: localhost\n")
+    end
   end
 end

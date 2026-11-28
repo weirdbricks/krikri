@@ -142,7 +142,7 @@ module Krikri
         when YAML::Nodes::Mapping
           NodeUtil.each_entry(action) do |key, value|
             name = NodeUtil.scalar_value(key) || next
-            next if name == "module" && directive?(task)
+            next if name == "module" && task.alias_action?
             arguments[name] = truthy_node?(value)
           end
         when YAML::Nodes::Scalar
@@ -177,33 +177,11 @@ module Krikri
       end
 
       private def raw_param_module?(task : LintTask) : Bool
-        RAW_PARAM_MODULES.includes?(module_original(task))
+        RAW_PARAM_MODULES.includes?(task.module_name)
       end
 
       private def user_action?(task : LintTask) : Bool
-        module_original(task) == "ansible.builtin.user"
-      end
-
-      # The module upstream's task normalization records, before any FQCN
-      # shortening: the name as written, with an `action:`/`local_action:`
-      # directive resolved to the module it names.
-      private def module_original(task : LintTask) : String
-        name = task.module_name
-        return name unless directive?(task)
-        if free_form = NodeUtil.scalar_value(task.action_node)
-          return free_form.split(' ', 2).first? || name
-        end
-        if mapping = task.action_node.as?(YAML::Nodes::Mapping)
-          if entry = NodeUtil.entry(mapping, "module")
-            return NodeUtil.scalar_value(entry[1]) || name
-          end
-        end
-        name
-      end
-
-      private def directive?(task : LintTask) : Bool
-        bare = task.bare_module
-        bare == "action" || bare == "local_action"
+        task.module_name == "ansible.builtin.user"
       end
 
       # Upstream's has_loop: a `loop:` key or any `with_*` key.

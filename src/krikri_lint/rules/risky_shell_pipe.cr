@@ -54,6 +54,7 @@ module Krikri
 
       private def raw_command_text(task : LintTask) : String?
         if (action = task.action_node).is_a?(YAML::Nodes::Scalar)
+          return task.alias_arguments if task.alias_action?
           return action.value
         end
         task.param("cmd") || task.param("_raw_params")

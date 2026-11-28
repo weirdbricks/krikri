@@ -501,11 +501,11 @@ module Krikri
       # directive resolves its module lazily at run time, so an
       # unresolvable one never fails the load-time check (verified
       # against ansible-lint 25.2.1: a play around `action: unknown x=1`
-      # keeps reporting name[play]); the directive key is not a module
-      # name and must not be resolved as one.
+      # keeps reporting name[play]), even though the linter's own task
+      # view already names the module the directive points at.
       private def action_module_name(task : LintTask) : String?
+        return nil if task.alias_action?
         key = task.module_name
-        return nil if key == "action" || key == "local_action"
         key.empty? ? nil : key
       end
 

@@ -1,0 +1,27 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [say hi locally via dict local_action] ************************************
+ok: [localhost] => {
+    "msg": "hello-dict"
+}
+
+TASK [say hi locally via string local_action] **********************************
+ok: [localhost] => {
+    "msg": "hello-string"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.
+[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.
+Origin: <WORK>/playbook.yml:12:9
+
+10     - name: say hi locally via dict local_action
+11       local_action:
+12         module: debug
+           ^ column 9
+
+Use a string value for `action`.
+

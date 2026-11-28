@@ -87,10 +87,6 @@ module Krikri
       private def task_message(task : LintTask) : {message: String?, crash: Bool}
         none = {message: nil, crash: false}
         name = task.module_name
-        # `action:`/`local_action:` directives are parsed as free-form
-        # module invocations upstream; the linter keeps its historical
-        # skip of them (their "module name" is a directive keyword).
-        return none if directive?(name)
         return none if jinja_string_args?(task)
         return none unless key_entry = ArgSpecs.find(name)
         _key, entry = key_entry
@@ -126,11 +122,6 @@ module Krikri
         {message: message, crash: false}
       end
 
-      private def directive?(name : String) : Bool
-        bare = name.sub("ansible.builtin.", "").sub("ansible.legacy.", "")
-        bare == "action" || bare == "local_action"
-      end
-
       # upstream reports nothing at all for a task whose `args:` is a
       # templated string (args.py, ansible-lint#3199).
       private def jinja_string_args?(task : LintTask) : Bool
@@ -156,10 +147,17 @@ module Krikri
         if mapping = action.as?(YAML::Nodes::Mapping)
           NodeUtil.each_entry(mapping) do |key_node, value_node|
             key = key_node.as?(YAML::Nodes::Scalar).try(&.value) || next
+            # A directive's `module:` key names the module rather than
+            # passing an argument; ModuleArgsParser strips it from the
+            # action dict.
+            next if task.alias_action? && key == "module"
             params[key] = Arg.new(value_node)
           end
         elsif action.is_a?(YAML::Nodes::Scalar)
-          parse_free_form(NodeUtil.scalar_value(action) || "").each do |key, value|
+          # A directive's string form names the module first; the rest
+          # is what parse_kv sees upstream.
+          text = task.alias_action? ? task.alias_arguments : (NodeUtil.scalar_value(action) || "")
+          parse_free_form(text).each do |key, value|
             params[key] = value
           end
         end

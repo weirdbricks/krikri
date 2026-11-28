@@ -48,31 +48,14 @@ module Krikri
 
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
-          module_name = action_module(task)
+          # LintTask already names the module an `action:`/`local_action:`
+          # directive points at, as upstream's normalization does.
+          module_name = task.module_name
           next if ALLOWED_MODULES.includes?(module_name)
           next if ALLOWED_COLLECTIONS.any? { |prefix| module_name.starts_with?("#{prefix}.") }
           violations << Violation.new(file.path, task.line, 0, id, severity,
             "Use only builtin actions.", task.line)
         end
-      end
-
-      # An `action:`/`local_action:` directive names its module inside the
-      # value, and upstream resolves it before the rule sees the task, so
-      # `action: ansible.posix.sysctl ...` is judged as that module rather
-      # than as the directive keyword.
-      private def action_module(task : LintTask) : String
-        name = task.module_name
-        return name unless name == "action" || name == "local_action"
-        if free_form = NodeUtil.scalar_value(task.action_node)
-          return free_form.split(' ', 2).first? || name
-        end
-        if mapping = task.action_node.as?(YAML::Nodes::Mapping)
-          if (entry = NodeUtil.entry(mapping, "module")) &&
-             (value = NodeUtil.scalar_value(entry[1]))
-            return value
-          end
-        end
-        name
       end
     end
   end

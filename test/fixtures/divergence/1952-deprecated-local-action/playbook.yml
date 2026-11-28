@@ -1,0 +1,15 @@
+# Issue #1952's minimal playbook, replayed in-process. Both `local_action`
+# forms run their module locally, so the engine side already matches real
+# ansible byte for byte (same two `ok` tasks and the same deprecation
+# warning); the divergence this issue fixes is ansible-lint's
+# deprecated-local-action rule, replayed by testing/lint/parity.py from
+# testing/lint/cases/deprecated-local-action.yml.
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: say hi locally via dict local_action
+      local_action:
+        module: debug
+        msg: hello-dict
+    - name: say hi locally via string local_action
+      local_action: debug msg=hello-string

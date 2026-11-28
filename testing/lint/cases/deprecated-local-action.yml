@@ -1,0 +1,12 @@
+# Parity fixture for deprecated-local-action: both written forms of the
+# directive are flagged, and both must resolve to the module they name so
+# fqcn[action-core] points inside the value (issue #1952).
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: say hi locally via dict local_action
+      local_action:
+        module: debug
+        msg: hello-dict
+    - name: say hi locally via string local_action
+      local_action: debug msg=hello-string
