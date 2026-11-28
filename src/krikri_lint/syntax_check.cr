@@ -107,7 +107,7 @@ module Krikri
         named_by_check = playbook_kind?(file) ||
                          (!role.nil? && @walked.includes?(Imports.relative(file.path)))
         return nil unless named_by_check
-        first_task_failure(file, role)
+        first_task_failure(file, role) || vars_file_failure(file)
       end
 
       # Whether this file's own playbook syntax check failed on a role no
@@ -292,6 +292,80 @@ module Krikri
           end
         end
         nil
+      end
+
+      # A play's `vars_files:` entry that the loader can find but cannot
+      # read as a file aborts the syntax check after the playbook has
+      # loaded. get_vars reads each entry through
+      # DataLoader#load_from_file, whose read of a directory (or any
+      # unreadable path) raises OSError and becomes an AnsibleParserError
+      # carrying no "Origin:" line - so no OUTPUT_PATTERNS entry matches
+      # and ansible-lint reports its catch-all internal-error instead of a
+      # syntax-check[...] tag, at the playbook's first line. A play whose
+      # role was missing already failed the load itself, before any
+      # vars_files is read, so that verdict wins.
+      private def vars_file_failure(file : PositionedFile) : Violation?
+        return nil unless playbook_kind?(file)
+        return nil if failed?(file)
+        root = file.root.as?(YAML::Nodes::Sequence) || return nil
+        playbook_dir = File.dirname(File.expand_path(file.path))
+        root.nodes.each do |item|
+          play = item.as?(YAML::Nodes::Mapping) || next
+          entry = NodeUtil.entry(play, "vars_files") || next
+          vars_file_entries(entry[1]).each do |name|
+            path = resolve_vars_file(playbook_dir, name) || next
+            reason = vars_file_read_cause(path) || next
+            return InternalErrorRule.read_failure(file, path, reason)
+          end
+        end
+        nil
+      end
+
+      # Every path a `vars_files:` value names: an item is itself a list
+      # of candidates (the conditional include form, like
+      # with_first_found), so a nested sequence contributes its own
+      # entries.
+      private def vars_file_entries(node : YAML::Nodes::Node) : Array(String)
+        case node
+        when YAML::Nodes::Scalar
+          [node.value]
+        when YAML::Nodes::Sequence
+          node.nodes.flat_map { |item| vars_file_entries(item) }
+        else
+          [] of String
+        end
+      end
+
+      # Where the loader resolves one vars_files entry for a play:
+      # DataLoader#path_dwim_relative_stack with the play's own directory
+      # as the search path and "vars" as the dirname, i.e.
+      # `<playbook_dir>/vars/<item>` first (unless the item already names
+      # a vars/ path) and `<playbook_dir>/<item>` last, an absolute path
+      # as-is. Existence alone decides, the way os.path.exists does, so a
+      # directory resolves here exactly as it does there. A templated
+      # entry cannot be resolved statically and stays permissive.
+      private def resolve_vars_file(playbook_dir : String, name : String) : String?
+        return nil if name.empty?
+        return nil if name.includes?("{{") || name.includes?("{%")
+        return File.exists?(name) ? File.expand_path(name) : nil if name.starts_with?('/')
+        candidates = [] of String
+        candidates << File.join(playbook_dir, "vars", name) unless name.split('/').first? == "vars"
+        candidates << File.join(playbook_dir, name)
+        candidates.find { |candidate| File.exists?(candidate) }.try do |path|
+          File.expand_path(path)
+        end
+      end
+
+      # The OSError cause the loader's read hits for a path that exists
+      # but cannot be read as a file, rendered the way Python's OSError
+      # str() does ("[Errno 21] Is a directory: '<path>'"). A directory is
+      # the reachable case: os.path.exists is true for it, so the search
+      # stops there and the read raises IsADirectoryError.
+      private def vars_file_read_cause(path : String) : String?
+        info = File.info?(path) || return nil
+        return "[Errno 21] Is a directory: '#{path}'" if info.directory?
+        return nil if File::Info.readable?(path)
+        "[Errno 13] Permission denied: '#{path}'"
       end
 
       # The match for a task whose shape ansible's ModuleArgsParser

@@ -1193,6 +1193,14 @@ rescue ex : Krikri::VarsFilesVaultError
   # deferred shape for a fact-templated one.
   STDERR.print ex.render
   exit ex.exit_code
+rescue ex : Krikri::VarsFilesUnreadableError
+  # A vars_files entry the loader FOUND but cannot read as a file (a
+  # directory is the reachable case) is ansible's vars-manager refusal
+  # before any PLAY output: the plain "[ERROR]: An error occurred while
+  # trying to read the file ..." line on STDERR with parser-error rc=4
+  # (live-verified vs 2.21.6, issue #1941).
+  STDERR.print ex.render
+  exit 4
 rescue ex : Krikri::YamlSyntaxError
   # Rendered the way ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line
