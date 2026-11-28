@@ -67,6 +67,7 @@ module Krikri
           ComplexityRule.new,
           SanityRule.new,
           GalaxyVersionIncorrectRule.new,
+          DeprecatedModuleRule.new,
         ])
       end
 

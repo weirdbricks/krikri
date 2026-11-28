@@ -1,0 +1,9 @@
+- name: Deprecated module fixture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Start container with deprecated docker module
+      docker:
+        name: web
+        image: nginx
+        state: started

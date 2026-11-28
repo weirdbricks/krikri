@@ -1,0 +1,15 @@
+---
+# Issue #1950's playbook verbatim: the divergence it reports is in the LINT
+# tools only (deprecated-module for the deprecated `docker` module), so this
+# case pins the runtime half - the same playbook, run by ansible-playbook and
+# krikri-playbook, prints the same transcript with the stub module in
+# library/ resolving the deprecated name.
+- name: Deprecated module fixture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Start container with deprecated docker module
+      docker:
+        name: web
+        image: nginx
+        state: started
