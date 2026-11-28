@@ -4312,6 +4312,24 @@ module Krikri
       JSON.parse(value.to_json)
     end
 
+    # The scalar (non-array, non-hash, non-{{ }}) value of the FIRST
+    # matching loop-source keyword as ONE literal lookup TERM - see the
+    # with_nested:/with_together:/with_indexed_items: parse branches.
+    # Ansible's listify_lookup_plugin_terms runs with convert_bare=False,
+    # so a bare `with_indexed_items: my_list` is never a variable
+    # reference: the text itself is the term. nil for every other shape -
+    # the array forms and `{{ ... }}` templates have their own branches.
+    private def self.scalar_loop_source_value(task_hash : Hash(YAML::Any, YAML::Any), keys : Array(String)) : JSON::Any?
+      keys.each do |key|
+        value = task_hash[key]?
+        next unless value
+        next if value.raw.nil? || value.as_a? || value.as_h?
+        next if value.as_s?.try(&.includes?("{{"))
+        return JSON.parse(value.to_json)
+      end
+      nil
+    end
+
     # If task_hash has one of the loop-source keywords set to a scalar
     # string that looks like a Jinja variable reference (rather than a
     # literal inline list/dict), return {keyword, template string}.
@@ -5490,6 +5508,14 @@ module Krikri
           end
           task.loop_items = LoopResolver.with_nested(lists)
         end
+      elsif with_nested_scalar = scalar_loop_source_value(task_hash, ["with_nested"])
+        # A BARE scalar with_nested: source is ONE literal lookup term and
+        # the nested lookup iterates a term as a sequence, so a string
+        # contributes one character per product: `with_nested: cd` yields
+        # item=['c'] then ['d'] (live-verified against ansible-core
+        # 2.21.6). The old parse matched no branch at all, so the task ran
+        # ONCE with `item` unbound.
+        task.loop_items = LoopResolver.with_nested([LoopResolver.source_term_elements(with_nested_scalar)])
       elsif with_together = task_hash["with_together"]?.try(&.as_a?)
         # Same templated-source test as with_nested above: a `{{ var }}`
         # scalar entry is a whole-list SOURCE whose real size (including
@@ -5518,6 +5544,12 @@ module Krikri
           end
           task.loop_items = LoopResolver.with_together(lists)
         end
+      elsif with_together_scalar = scalar_loop_source_value(task_hash, ["with_together"])
+        # Same single-literal-term handling as the with_nested: scalar
+        # branch above: `with_together: cd` zips one character per row,
+        # yielding item=['c'] then ['d'] (live-verified against
+        # ansible-core 2.21.6).
+        task.loop_items = LoopResolver.with_together([LoopResolver.source_term_elements(with_together_scalar)])
       elsif with_sequence = task_hash["with_sequence"]?
         spec = safe_yaml_to_string(with_sequence)
         if spec.includes?("{{")
@@ -5537,6 +5569,13 @@ module Krikri
       elsif with_indexed_items = task_hash["with_indexed_items"]?.try(&.as_a?)
         items = with_indexed_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items = LoopResolver.with_indexed_items(items)
+      elsif with_indexed_scalar = scalar_loop_source_value(task_hash, ["with_indexed_items"])
+        # A BARE scalar with_indexed_items: source is ONE lookup term, so
+        # the indexed_items lookup enumerates that single term and yields
+        # [0, "my_list"] (live-verified against ansible-core 2.21.6) - one
+        # item, not one pair per character. The old parse matched no
+        # branch, so the task ran ONCE with `item` unbound.
+        task.loop_items = LoopResolver.with_indexed_items([with_indexed_scalar])
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)

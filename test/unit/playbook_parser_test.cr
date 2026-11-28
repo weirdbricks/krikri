@@ -1639,6 +1639,46 @@ describe Krikri::PlaybookParser do
       items.map(&.as_a.map(&.raw)).must_equal([[0, "x"], [1, "y"]])
     end
 
+    it "parses a bare scalar with_nested: source as one term iterated per character (issue #1956)" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_nested: cd
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      # One literal lookup term whose characters each form a one-element
+      # product - live-verified against ansible-core 2.21.6.
+      items.map(&.as_a.map(&.as_s)).must_equal([["c"], ["d"]])
+    end
+
+    it "parses a bare scalar with_together: source as one term iterated per character (issue #1956)" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_together: cd
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      items.map(&.as_a.map(&.as_s)).must_equal([["c"], ["d"]])
+    end
+
+    it "parses a bare scalar with_indexed_items: source as one enumerated term (issue #1956)" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_indexed_items: my_list
+        YAML
+
+      items = task.loop_items.as(Array(JSON::Any))
+      # The scalar is ONE term, so enumerate() yields exactly one pair -
+      # live-verified against ansible-core 2.21.6.
+      items.map(&.as_a.map(&.raw)).must_equal([[0, "my_list"]])
+    end
+
     it "parses with_fileglob: into raw patterns (resolved at execution time)" do
       task = single_task(<<-YAML)
         - name: t

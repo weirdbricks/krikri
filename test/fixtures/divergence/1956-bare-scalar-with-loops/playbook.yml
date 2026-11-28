@@ -1,0 +1,20 @@
+- name: with_* bare scalar loop source
+  hosts: localhost
+  gather_facts: false
+  vars:
+    my_list:
+      - one
+      - two
+  tasks:
+    - name: Indexed-items loop with a bare variable
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      with_indexed_items: my_list
+    - name: Nested loop with a bare variable
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      with_nested: my_list
+    - name: Together loop with a bare variable
+      ansible.builtin.debug:
+        msg: "{{ item }}"
+      with_together: my_list
