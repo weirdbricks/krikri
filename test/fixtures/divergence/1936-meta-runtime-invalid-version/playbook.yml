@@ -1,0 +1,8 @@
+# Issue #1936's playbook, verbatim: the role loads and its one task runs;
+# the divergence is lint-only (requires_ansible is a runtime no-op for
+# ansible-playbook), so the engine transcripts match.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - meta_runtime_invalid
