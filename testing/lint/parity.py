@@ -67,8 +67,6 @@ ENABLE_OPT_IN = [arg for rule in OPT_IN_RULES for arg in ("--enable-list", rule)
 # listing it here without a reason would hide it again (issue #1930: no-prompting
 # sat in the `unimplemented` bucket until a corpus file happened to trip it).
 CATALOGUE_ALLOW = {
-    "internal-error": "ansible-lint's own crash reporter when a run raises, "
-                      "not a rule with matches",
     "parser-error": "ansible-lint's AnsibleParserError wrapper, not a rule with matches",
     "warning": "other warnings ansible-lint prints during a run, not a rule with matches",
     "galaxy": "collection metadata: krikri-lint v1 lints playbooks and roles, never "

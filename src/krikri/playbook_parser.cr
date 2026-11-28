@@ -2054,6 +2054,36 @@ module Krikri
   class RoleTasksFromFileError < Exception
   end
 
+  # Raised at PARSE time when a play's literal `vars_files:` entry
+  # resolves to a path the loader FINDS but cannot read as a file.
+  # ansible-core's vars manager loads each entry through
+  # DataLoader.load_from_file, whose read_bytes raises OSError for a
+  # directory (or any unreadable path) and turns into an
+  # AnsibleParserError with no Origin block: parser-error rc=4, printed
+  # before any PLAY output (live-verified vs 2.21.6 in a container with
+  # `vars_files: ['.']`):
+  #
+  #     [ERROR]: An error occurred while trying to read the file
+  #     '/work/demo': [Errno 21] Is a directory: '/work/demo'
+  #
+  # The search itself only tests existence (os.path.exists is true for a
+  # directory), and a MISSING candidate is a separate, tolerated failure:
+  # the vars manager catches that AnsibleFileNotFound and keeps looking,
+  # so only the OSError below refuses the run.
+  class VarsFilesUnreadableError < Exception
+    getter render : String
+
+    def initialize(path : String, ex : IO::Error)
+      errno = ex.os_error
+      reason = errno.try(&.message) || "Unknown error"
+      code = errno.try(&.value)
+      detail = code ? "[Errno #{code}] #{reason}: '#{path}'" : "#{reason}: '#{path}'"
+      message = "An error occurred while trying to read the file '#{path}': #{detail}"
+      @render = "[ERROR]: #{message}\n"
+      super(message)
+    end
+  end
+
   class StaticImportUndefinedError < Exception
     # The full [ERROR] block Ansible prints for this refusal, built at the
     # raise site (it needs the source map). Nil when no source position is
@@ -2851,6 +2881,12 @@ module Krikri
           # (rc=1), not a per-play soft-skip into "Warning: Failed to
           # parse play N". See VarsFilesVaultError's own comment.
           raise ex
+        rescue ex : Krikri::VarsFilesUnreadableError
+          # Same bypass - a vars_files entry the loader found but cannot
+          # read as a file is ansible's whole-run refusal (rc=4), not a
+          # per-play soft-skip into "Warning: Failed to parse play N".
+          # See VarsFilesUnreadableError's own comment.
+          raise ex
         rescue ex : InvalidRegisterError
           # Same bypass - Ansible refuses the whole run for an
           # invalid register: at load time. See that class's own comment.
@@ -3257,7 +3293,7 @@ module Krikri
       # vars_files path be resolved (ansible finalizes vars_files with
       # those vars available). A path still holding `{{ }}` here depends
       # on facts, so TaskExecutor's runtime loader has to check it.
-      check_play_vars_files_vault(play, playbook_dir)
+      check_play_vars_files(play, playbook_dir)
 
       # The map stays on the play: the roles: entries' invocation vars are
       # labeled from it by RoleLoader.load_roles.
@@ -6231,16 +6267,22 @@ module Krikri
       end
     end
 
-    # Ansible's vars manager decrypts a whole vault-armored vars_files
-    # entry while finalizing the play, BEFORE any PLAY output: a file no
-    # supplied vault secret can open refuses the whole run (rc=1,
-    # "Invalid vars_files file '<path>': ...") rather than leaving every
-    # name it defines undefined - which is what silently parsing the
-    # ciphertext as a YAML string used to do (issue #1462). A
-    # fact-templated path cannot be resolved here; TaskExecutor's runtime
-    # loader raises the same error for it.
-    def self.check_vars_file_vault(path : String) : Nil
-      text = File.read(path)
+    # Ansible's vars manager reads a whole vars_files entry while
+    # finalizing the play, BEFORE any PLAY output. An entry it cannot read
+    # as a file (a directory, an unreadable path) is an AnsibleParserError
+    # with no Origin block - parser-error rc=4, refusing the whole run
+    # (see VarsFilesUnreadableError) - and a vault-armored one no supplied
+    # secret can open refuses it too (rc=1, "Invalid vars_files file
+    # '<path>': ...") rather than leaving every name it defines undefined,
+    # which is what silently parsing the ciphertext as a YAML string used
+    # to do (issue #1462). A fact-templated path cannot be resolved here;
+    # TaskExecutor's runtime loader raises the vault error for it.
+    def self.check_vars_file_load(path : String) : Nil
+      text = begin
+        File.read(path)
+      rescue ex : IO::Error
+        raise VarsFilesUnreadableError.new(path, ex)
+      end
       return unless Vault.encrypted?(text)
       begin
         Vault.maybe_decrypt(text)
@@ -6251,8 +6293,11 @@ module Krikri
     end
 
     # Every vars_files candidate resolvable from the play's own vars, in
-    # ansible's first-existing-wins order. See check_vars_file_vault.
-    private def self.check_play_vars_files_vault(play : Play, playbook_dir : String) : Nil
+    # ansible's first-existing-wins order. See check_vars_file_load. The
+    # search is existence-only, as DataLoader.path_dwim_relative_stack's
+    # os.path.exists is: a directory candidate wins and then fails the
+    # read, where skipping non-files here let the play run on.
+    private def self.check_play_vars_files(play : Play, playbook_dir : String) : Nil
       substitutor = VarSubstitutor.new(vars: play.vars)
       play.vars_files.each do |candidates|
         candidates.each do |candidate|
@@ -6263,8 +6308,8 @@ module Krikri
           end
           next if rendered.includes?("{{")
           path = File.expand_path(rendered, playbook_dir)
-          next unless File.file?(path)
-          check_vars_file_vault(path)
+          next unless File.exists?(path)
+          check_vars_file_load(path)
           break
         end
       end

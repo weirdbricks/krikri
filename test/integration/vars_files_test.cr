@@ -108,6 +108,28 @@ describe "vars_files:" do
     output.must_include("RAN")
   end
 
+  # A directory is a different failure from a missing file: the loader's
+  # search finds it (os.path.exists is true), then read_bytes raises
+  # OSError, which ansible turns into an Origin-less AnsibleParserError -
+  # rc=4, before any PLAY output (live-verified vs 2.21.6, issue #1941).
+  # krikri used to skip a non-file candidate and run the play.
+  it "refuses a vars_file that is a directory" do
+    status, output = run_play(<<-YAML, {} of String => String)
+      - hosts: all
+        gather_facts: false
+        vars_files:
+          - .
+        tasks:
+          - name: t
+            ansible.builtin.debug: {msg: "RAN"}
+      YAML
+
+    status.exit_code.must_equal(4)
+    output.must_include("[ERROR]: An error occurred while trying to read the file")
+    output.must_include("[Errno 21] Is a directory")
+    output.wont_include("RAN")
+  end
+
   # The path may be templated, including against a FACT - which means it
   # cannot be resolved until after gathering, and the per-host cache must
   # not be filled in from the pre-facts pass.

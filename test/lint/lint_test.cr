@@ -700,6 +700,78 @@ module Krikri::Lint
       violations = Runner.new(RuleRegistry.default).run([path])
       violations.map(&.rule_id).wont_include("syntax-check[specific]")
     end
+
+    it "reports internal-error at line 1 and gates a playbook whose vars_files cannot be read" do
+      # `vars_files: ['.']` resolves to the playbook's own directory, so
+      # get_vars' read raises IsADirectoryError and `ansible-playbook
+      # --syntax-check` exits 4 with an "An error occurred while trying to
+      # read the file ..." message that carries no Origin line. No
+      # OUTPUT_PATTERNS entry matches it, so ansible-lint 25.2.1 reports
+      # its catch-all internal-error at the file's first line with no
+      # column and runs nothing else on the file - not the name[missing]
+      # or no-changed-when the command task below would otherwise get.
+      dir = PluginSpecHelper.tmp_path("lint_internal_error")
+      FileUtils.mkdir_p(dir)
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - name: Internal error play
+          hosts: localhost
+          connection: local
+          gather_facts: false
+          vars_files:
+            - .
+          tasks:
+            - ansible.builtin.command: /bin/true
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).must_equal(["internal-error"])
+      match = violations.first
+      {match.line, match.column}.must_equal({1, 0})
+      match.level.must_equal("warning")
+      match.warning?.must_equal(false)
+      match.message.must_equal("An error occurred while trying to read the file " \
+                               "'#{File.expand_path(dir)}': [Errno 21] Is a directory: " \
+                               "'#{File.expand_path(dir)}'")
+    end
+
+    it "keeps linting a playbook whose vars_files loads, is missing or is templated" do
+      # Only a vars_files path the loader FINDS but cannot read falls
+      # through to internal-error: a readable file loads, a missing one
+      # raises AnsibleFileNotFound ("Unable to retrieve file contents",
+      # which upstream's missing-file pattern does match) and a templated
+      # entry cannot be resolved statically at all.
+      dir = PluginSpecHelper.tmp_path("lint_vars_files_readable")
+      FileUtils.mkdir_p(File.join(dir, "vars"))
+      File.write(File.join(dir, "vars", "probe.yml"), "---\nprobe: one\n")
+      path = File.join(dir, "play.yml")
+      File.write(path, <<-YAML)
+        ---
+        - name: Play
+          hosts: localhost
+          vars_files:
+            - probe.yml
+            - missing.yml
+            - "{{ lookup('env', 'PROBE') }}"
+            - [ fallback.yml, probe.yml ]
+          tasks:
+            - ansible.builtin.command: /bin/true
+        YAML
+      violations = Runner.new(RuleRegistry.default).run([path])
+      violations.map(&.rule_id).wont_include("internal-error")
+      violations.any? { |v| v.rule_id == "no-changed-when" }.must_equal(true)
+    end
+
+    it "registers the internal-error catch-all for --list-rules and the min profile" do
+      # The runner's syntax-check gate reports the match, but the rule
+      # still has to be registered for --list-rules and the profile/skip
+      # lookups.
+      rule = RuleRegistry.default.find("internal-error")
+      raise "internal-error is not registered" unless rule
+      rule.severity.must_equal(Severity::VERY_HIGH)
+      rule.tags.must_equal(["core"])
+      Profile.of("internal-error").must_equal("min")
+    end
   end
 
   describe "Runner against a collection krikri's tables do not know" do
