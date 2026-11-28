@@ -158,9 +158,12 @@ module Krikri
       # every post-connect outcome here carries it, failures included.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
       PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
-    rescue ex : DB::ConnectionRefused
+    rescue DB::ConnectionRefused
+      # mysql_variables.py branches on os.path.exists(config_file) in its
+      # except clause, so a task with no option file to point at gets the
+      # "unable to find ..." wording instead of the credentials one.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
-        PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}"))
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true))
     rescue ex : MySql::Connection::PacketError
       # A SET GLOBAL failing after the connect still carries both warns real
       # recorded before it ran (get_server_implementation's MariaDB notice

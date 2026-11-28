@@ -194,6 +194,56 @@ module Krikri
         true
       end
 
+      # ansible.mysql's get_connector_name/get_connector_version: the Python
+      # connector its module bootstrap imported (PyMySQL first, MySQLdb only
+      # as the fallback) and the three-number version that connector reports
+      # (pymysql's VERSION[:3], MySQLdb's version_info[:3]). krikri talks the
+      # wire protocol itself, so there is no in-process connector to ask -
+      # the identity real reports on a host comes from that host's
+      # interpreter, so probe the same one the driver gate probes.
+      record ConnectorIdentity, name : String, version : String
+
+      # An interpreter that cannot run, or cannot import either driver,
+      # leaves the identity unobservable. This is the pymysql identity the
+      # registered connector_version has always carried in that case.
+      FALLBACK_CONNECTOR = ConnectorIdentity.new("pymysql", "1.1.1")
+
+      # Upstream's module_utils/mysql.py bootstrap order, printing the name
+      # and version exactly as get_connector_name/get_connector_version join
+      # them.
+      CONNECTOR_IDENTITY_PROGRAM = <<-PY
+        try:
+            import pymysql as connector
+            print(connector.__name__, '.'.join(map(str, connector.VERSION[:3])))
+        except ImportError:
+            import MySQLdb as connector
+            print(connector.__name__, '.'.join(map(str, connector.version_info[:3])))
+        PY
+
+      def self.connector_identity(
+        vars : Hash(String, JSON::Any)? = nil,
+        interpreter : String? = nil,
+      ) : ConnectorIdentity
+        python = interpreter || probe_interpreter(vars)
+        return FALLBACK_CONNECTOR unless python
+
+        probe_connector_identity(python)
+      end
+
+      private def self.probe_connector_identity(python : String) : ConnectorIdentity
+        output = IO::Memory.new
+        status = Process.run(python, {"-c", CONNECTOR_IDENTITY_PROGRAM},
+          output: output, error: Process::Redirect::Close)
+        return FALLBACK_CONNECTOR unless status.success?
+
+        name, separator, version = output.to_s.strip.partition(' ')
+        return FALLBACK_CONNECTOR unless separator == " " && !name.empty? && !version.empty?
+
+        ConnectorIdentity.new(name, version)
+      rescue
+        FALLBACK_CONNECTOR
+      end
+
       # unix_socket, given, takes precedence over host/port (matches
       # Ansible's mysql_db/mysql_user own login_unix_socket precedence).
       #
@@ -377,6 +427,78 @@ module Krikri
       private def self.python_errno_text(errno : Int32) : String
         return "[Errno #{errno}] Name or service not known" if errno == -2
         SocketConnect.python_error_text(Errno.new(errno))
+      end
+
+      # Ansible declares `config_file` with type='path', so AnsibleModule runs
+      # os.path.expanduser over it - the "~/.my.cnf" default included - before
+      # the module body ever sees it: every message real builds from it shows
+      # the expanded path, never a literal "~".
+      def self.option_file_display(config_file : String?) : String
+        raw = config_file || DEFAULT_OPTION_FILE
+        raw.starts_with?("~") ? raw.sub("~", ENV["HOME"]? || raw) : raw
+      end
+
+      # #connect_error_detail fed from a plugin's raw task params - the ones
+      # real hands its driver - plus the target family, which decides whether
+      # a `localhost` login dials a socket (MySQLdb) or TCP (PyMySQL).
+      def self.connect_failure_detail(params : Hash(String, String), vars : Hash(String, JSON::Any)?) : String?
+        connect_error_detail(
+          login_host: params["login_host"]?,
+          login_port: params["login_port"]?,
+          login_unix_socket: params["login_unix_socket"]?,
+          config_file: params["config_file"]? || DEFAULT_OPTION_FILE,
+          os_family: vars.try(&.["ansible_os_family"]?).try(&.as_s?),
+        )
+      end
+
+      # The connection-failure wrapper mysql_db.py, mysql_query.py,
+      # mysql_user.py and mysql_variables.py share; its "Exception message:"
+      # tail is real's `to_native(e)` over the driver's own exception (see
+      # #connect_error_detail), so it follows the transport that failed.
+      def self.connect_failure_message(config_file : String?, detail : String?) : String
+        "unable to connect to database, check login_user and login_password are correct or #{option_file_display(config_file)} has the credentials. Exception message: #{detail || ""}"
+      end
+
+      # mysql_info.py's variant of that wrapper: it names the connector and
+      # version its bootstrap imported instead of the generic lead.
+      def self.connect_failure_message(config_file : String?, detail : String?, connector : ConnectorIdentity) : String
+        "unable to connect to database using #{connector.name} #{connector.version}, check login_user and login_password are correct or #{option_file_display(config_file)} has the credentials. Exception message: #{detail || ""}"
+      end
+
+      # mysql_db.py and mysql_variables.py branch on os.path.exists(config_file)
+      # inside their except clause: with no option file to point at, real
+      # reports the file it looked for instead of login_user/login_password.
+      def self.missing_option_file_message(config_file : String?, detail : String?) : String
+        "unable to find #{option_file_display(config_file)}. Exception message: #{detail || ""}"
+      end
+
+      # The fail_json every mysql_* module but mysql_info returns for a
+      # refused connection. `check_option_file` mirrors the
+      # os.path.exists(config_file) branch mysql_db.py/mysql_variables.py
+      # take; mysql_user.py and mysql_query.py always blame the credentials.
+      def self.connection_failed_result(
+        params : Hash(String, String),
+        vars : Hash(String, JSON::Any)?,
+        check_option_file : Bool = false,
+      ) : PluginResult
+        config_file = params["config_file"]?
+        detail = connect_failure_detail(params, vars)
+        msg = if check_option_file && !File.exists?(option_file_display(config_file))
+                missing_option_file_message(config_file, detail)
+              else
+                connect_failure_message(config_file, detail)
+              end
+        PluginResult.new(changed: false, failed: true, msg: msg)
+      end
+
+      # mysql_info.py's fail_json, which names the connector.
+      def self.info_connection_failed_result(
+        params : Hash(String, String),
+        vars : Hash(String, JSON::Any)?,
+        connector : ConnectorIdentity,
+      ) : PluginResult
+        PluginResult.new(changed: false, failed: true,
+          msg: connect_failure_message(params["config_file"]?, connect_failure_detail(params, vars), connector))
       end
 
       private def self.build_base_uri(socket : String?, host : String?, port : String?) : URI

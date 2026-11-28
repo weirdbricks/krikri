@@ -1,0 +1,38 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1962's repro: each module talks to a port with nothing listening
+  # (127.0.0.1:33399). ignore_errors keeps the play going so every
+  # connection-failure wrapper lands in one transcript.
+  #
+  # mysql_info is not in this case: its wrapper names the connector version
+  # the TARGET's Python has installed ("using pymysql 1.2.3"), so recording
+  # it would pin this box's PyMySQL build and no other host could replay it.
+  # Its wording is pinned by the plugin specs instead.
+  tasks:
+    - name: mysql_query against a refused port
+      mysql_query:
+        login_host: 127.0.0.1
+        login_port: 33399
+        login_user: dbuser
+        login_password: s3cretpass
+        query: SELECT 1
+      ignore_errors: true
+
+    - name: mysql_db against a refused port
+      mysql_db:
+        login_host: 127.0.0.1
+        login_port: 33399
+        login_user: dbuser
+        login_password: s3cretpass
+        name: krikri_db
+        state: present
+      ignore_errors: true
+
+    - name: mysql_variables against a refused port
+      mysql_variables:
+        login_host: 127.0.0.1
+        login_port: 33399
+        login_user: dbuser
+        login_password: s3cretpass
+        variable: max_connections
+      ignore_errors: true

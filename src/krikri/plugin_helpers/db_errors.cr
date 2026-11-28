@@ -10,13 +10,10 @@ module Krikri
     # exception type at each site: DB::ConnectionRefused, PQ::PQError,
     # MySql::Connection::PacketError), but the message shapes were
     # seven hand-copied pairs - a format tweak (adding rc, redacting a
-    # URI) had to land seven times. One implementation now.
+    # URI) had to land seven times. One implementation now. The mysql_*
+    # modules' own connection wrappers live in MysqlConnection, which owns
+    # the connector/option-file wording they branch on.
     module DbErrors
-      # "Could not connect to the PostgreSQL server: ..." shape.
-      def self.connection_failed(ex : DB::ConnectionRefused, server : String) : PluginResult
-        PluginResult.new(changed: false, failed: true, msg: "Could not connect to the #{server} server: #{ex.message}")
-      end
-
       # community.postgresql's connect_to_db() wraps every failed
       # connect in module.fail_json(msg="unable to connect to database:
       # %s"), where the detail is libpq's own connection-error text -

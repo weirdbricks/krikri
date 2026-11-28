@@ -52,8 +52,10 @@ describe "mysql_info connector identity" do
       result = PluginSpecHelper.run("mysql_info", {"filter" => "version"}.merge(login_args(server)))
       failed?(result).must_equal(false)
       result["connector_name"].as_s.must_equal("pymysql")
-      # pymysql's own version string format (three dot-separated numbers).
-      result["connector_version"].as_s.must_match(/^1\.1\.\d+$/)
+      # Real reports the TARGET's pymysql VERSION[:3] (get_connector_version),
+      # so the value follows that host's installed connector rather than a
+      # constant of this engine's.
+      result["connector_version"].as_s.must_match(/^\d+\.\d+\.\d+$/)
     end
   end
 end

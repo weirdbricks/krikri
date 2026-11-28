@@ -72,4 +72,18 @@ describe "mysql_info plugin argument validation" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.wont_include("Unsupported parameters")
   end
+
+  it "wraps a connection refusal in mysql_info's connector-named message" do
+    # mysql_info.py's except clause is the one mysql_* wrapper that names the
+    # connector and version its module bootstrap imported (issue #1962); this
+    # engine used to print "or login_unix_socket password is empty" with an
+    # empty exception tail.
+    result = PluginSpecHelper.run("mysql_info", {
+      "login_unix_socket" => "/run/krikri-no-such-mysql.sock",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(
+      /\Aunable to connect to database using (?:pymysql|MySQLdb) \d+\.\d+\.\d+, check login_user and login_password are correct or #{Regex.escape(File.join(ENV["HOME"]? || "", ".my.cnf"))} has the credentials\. Exception message: \(\d{4}, "Can't connect to (local )?MySQL server/)
+  end
 end

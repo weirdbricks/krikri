@@ -489,6 +489,79 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
   end
 
+  describe ".connector_identity" do
+    it "reports the name and version the target's interpreter prints" do
+      # ansible.mysql's get_connector_name/get_connector_version read the
+      # connector its module bootstrap imported, which is a property of the
+      # target's Python - not of this engine.
+      dir = PluginSpecHelper.tmp_path("mysql-connector-identity")
+      Dir.mkdir_p(dir)
+      interpreter = File.join(dir, "fake-python")
+      File.write(interpreter, "#!/bin/sh\nprintf 'MySQLdb 2.1.1\\n'\n")
+      File.chmod(interpreter, 0o755)
+
+      identity = Krikri::PluginHelpers::MysqlConnection.connector_identity(interpreter: interpreter)
+      identity.name.must_equal("MySQLdb")
+      identity.version.must_equal("2.1.1")
+    end
+
+    it "falls back to the identity this engine always reported when no interpreter answers" do
+      Krikri::PluginHelpers::MysqlConnection
+        .connector_identity(interpreter: "/nonexistent/krikri-python")
+        .must_equal(Krikri::PluginHelpers::MysqlConnection::FALLBACK_CONNECTOR)
+    end
+  end
+
+  describe ".connection_failed_result" do
+    it "wraps a refusal in the shared mysql_* wrapper, blaming the expanded option file" do
+      result = Krikri::PluginHelpers::MysqlConnection.connection_failed_result(
+        {"login_unix_socket" => "/run/krikri-no-such-mysql.sock"}, nil)
+      result.failed?.must_equal(true)
+      # The "Exception message:" tail follows the connector the target
+      # resolves, so only the wrapper's own wording is asserted here.
+      result.msg.must_match(
+        /\Aunable to connect to database, check login_user and login_password are correct or #{Regex.escape(File.join(ENV["HOME"]? || "", ".my.cnf"))} has the credentials\. Exception message: \(\d{4}, "Can't connect to (local )?MySQL server/)
+    end
+
+    it "names the missing option file when the module checks for it (mysql_db/mysql_variables)" do
+      dir = PluginSpecHelper.tmp_path("mysql-missing-cnf")
+      Dir.mkdir_p(dir)
+      missing = File.join(dir, "no-such.cnf")
+
+      result = Krikri::PluginHelpers::MysqlConnection.connection_failed_result(
+        {"login_unix_socket" => "/run/krikri-no-such-mysql.sock", "config_file" => missing},
+        nil, check_option_file: true)
+      result.msg.must_match(/\Aunable to find #{Regex.escape(missing)}\. Exception message: \(/)
+    end
+
+    it "keeps the credentials wording when the option file the module checks does exist" do
+      path = File.join(PluginSpecHelper.tmp_path("mysql-existing-cnf"), "my.cnf")
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, "")
+
+      result = Krikri::PluginHelpers::MysqlConnection.connection_failed_result(
+        {"login_unix_socket" => "/run/krikri-no-such-mysql.sock", "config_file" => path},
+        nil, check_option_file: true)
+      result.msg.starts_with?(
+        "unable to connect to database, check login_user and login_password are correct " \
+        "or #{path} has the credentials. Exception message: ").must_equal(true)
+    end
+  end
+
+  describe ".info_connection_failed_result" do
+    it "leads with the connector and version mysql_info names" do
+      connector = Krikri::PluginHelpers::MysqlConnection::ConnectorIdentity.new("pymysql", "1.2.3")
+      result = Krikri::PluginHelpers::MysqlConnection.info_connection_failed_result(
+        {"login_unix_socket" => "/run/krikri-no-such-mysql.sock"}, nil, connector)
+
+      result.failed?.must_equal(true)
+      result.msg.starts_with?(
+        "unable to connect to database using pymysql 1.2.3, check login_user and login_password " \
+        "are correct or #{File.join(ENV["HOME"]? || "", ".my.cnf")} has the credentials. " \
+        "Exception message: (").must_equal(true)
+    end
+  end
+
   describe "option-file (config_file) fallback" do
     # Writes a throwaway my.cnf-format file and returns its path.
     private def setup(contents : String)
