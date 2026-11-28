@@ -615,6 +615,13 @@ module Krikri
     # exist.
     property loop_subelements_list : String?
     property loop_subelements_key : String?
+    # The first term when it was written as an inline list/dict literal
+    # (`with_subelements: [[{name: a, sub: [x]}], sub]`). Ansible hands an
+    # untemplated term to the lookup unchanged, and a list or dict is legal
+    # input there - only a scalar is refused. The string form above loses
+    # the container shape (safe_yaml_to_string renders it as a repr), so the
+    # parsed value is kept here for the executor to iterate directly.
+    property loop_subelements_literal : JSON::Any?
     # with_community.general.filetree sources - the directories to walk,
     # kept as their raw ({{ }}-unsubstituted) strings since a source is
     # ordinarily `{{ role_path }}/templates/<something>` and can only be
@@ -1196,6 +1203,7 @@ module Krikri
       @loop_flattened = nil
       @loop_subelements_list = nil
       @loop_subelements_key = nil
+      @loop_subelements_literal = nil
       @loop_var = nil
       @index_var = nil
       @until_condition = nil
@@ -5625,8 +5633,10 @@ module Krikri
                                 [safe_yaml_to_string(with_flattened)]
                               end
       elsif with_subelements = task_hash["with_subelements"]?.try(&.as_a?)
-        task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
+        first_subelements_term = with_subelements[0]?
+        task.loop_subelements_list = first_subelements_term.try { |v| safe_yaml_to_string(v) }
         task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
+        task.loop_subelements_literal = subelements_literal_term(first_subelements_term)
         # Both spellings of the filetree loop keyword: the collection-qualified
         # form and the bare legacy one (Ansible resolves a bare `with_filetree:`
         # to community.general's filetree lookup through the collections search
@@ -8459,8 +8469,10 @@ module Krikri
         # with_first_found does just above, or `item` stays unbound
         # throughout the included file exactly like the with_first_found
         # bug this mirrors.
-        task.loop_subelements_list = with_subelements[0]?.try { |v| safe_yaml_to_string(v) }
+        first_subelements_term = with_subelements[0]?
+        task.loop_subelements_list = first_subelements_term.try { |v| safe_yaml_to_string(v) }
         task.loop_subelements_key = with_subelements[1]?.try { |v| safe_yaml_to_string(v) }
+        task.loop_subelements_literal = subelements_literal_term(first_subelements_term)
       elsif generic_lookup = find_generic_lookup_loop(task_hash)
         # Any other with_<lookup>: source (with_url:, with_lines:, ...):
         # Ansible runs the include once per lookup result, same as
@@ -10556,6 +10568,15 @@ module Krikri
       else
         [safe_yaml_to_string(yaml)]
       end
+    end
+
+    # The first with_subelements: term when it is a list/dict literal, or nil
+    # for anything else (which reaches the lookup as the literal text
+    # written). See Task#loop_subelements_literal.
+    private def self.subelements_literal_term(term : YAML::Any?) : JSON::Any?
+      return nil unless term
+      return nil unless term.as_a? || term.as_h?
+      JSON.parse(term.to_json)
     end
 
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String

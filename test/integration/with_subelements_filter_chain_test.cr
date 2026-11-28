@@ -167,3 +167,71 @@ describe "with_subelements: parent dict shape" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end
+
+# ansible templates a lookup term only when the term carries template
+# syntax, so a bare `my_list` reaches the subelements lookup as the literal
+# string "my_list" and is refused as "first a dict or a list" (issue #1957).
+# krikri resolved the bare name against the variable context and iterated
+# the list it names, so a playbook real ansible fails ran with ok=1 here.
+# The templated spelling of the same source is the form real accepts, and
+# must keep iterating.
+describe "with_subelements: a bare first term" do
+  it "fails the subelements lookup instead of resolving the name as a variable" do
+    playbook = File.tempname("with-subelements-bare", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          my_list:
+            - name: alice
+              keys:
+                - a
+        tasks:
+          - name: subelements consume
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_subelements:
+              - my_list
+              - keys
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("The lookup plugin 'subelements' failed: subelements lookup expects a list of two or three items, first a dict or a list, second a string pointing to the subkey")
+    output.to_s.wont_include("ok: [localhost]")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "still iterates the templated spelling of the same source" do
+    playbook = File.tempname("with-subelements-templated", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          my_list:
+            - name: alice
+              keys:
+                - a
+        tasks:
+          - name: subelements consume
+            ansible.builtin.debug:
+              msg: "{{ item }}"
+            with_subelements:
+              - "{{ my_list }}"
+              - keys
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("ok: [localhost] => (item=[{'name': 'alice'}, 'a'])")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+end

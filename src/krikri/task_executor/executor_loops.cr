@@ -712,6 +712,23 @@ module Krikri
       list_template = task.loop_subelements_list
       return nil unless key && list_template
 
+      # An untemplated first term written as a list/dict literal reaches the
+      # lookup as that container, never through the templar.
+      if (literal = task.loop_subelements_literal) &&
+         (list = literal.as_a? || literal.as_h?.try(&.values))
+        return LoopResolver.with_subelements(list, key)
+      end
+
+      # Ansible templates every lookup term, but only one that carries
+      # template syntax: a bare `my_list` stays the literal string "my_list"
+      # into the subelements lookup, which refuses it as "first a dict or a
+      # list" (issue #1957). Evaluating it against the variable context
+      # instead iterated the list the name refers to, accepting a playbook
+      # real ansible fails.
+      unless templated_term?(list_template)
+        raise subelements_terms_error
+      end
+
       value = resolve_template_value(list_template, vars_context)
 
       # resolve_template_value only understands a bare/dotted variable
@@ -764,9 +781,30 @@ module Krikri
       # configuration" loop was skipped whole where Ansible asserted once
       # per DNS entry (issue #1018). The filter-chain fallback below
       # already handled the dict shape - this is the bare-variable path.
-      list = value.as_a? || value.as_h?.try(&.values) || [] of JSON::Any
+      #
+      # Any other resolved shape is the lookup's own type refusal, not an
+      # empty iteration: `"{{ some_string }}"` fails the task, it does not
+      # resolve to zero items.
+      list = value.as_a? || value.as_h?.try(&.values)
+      raise subelements_terms_error unless list
 
       LoopResolver.with_subelements(list, key)
+    end
+
+    # The subelements lookup's first-term refusal, verbatim from
+    # lookup/subelements.py plus the lookup-failure prefix ansible's
+    # _invoke_lookup adds around it.
+    private def subelements_terms_error : LoopLookupError
+      LoopLookupError.new(
+        "The lookup plugin 'subelements' failed: subelements lookup expects a list of " \
+        "two or three items, first a dict or a list, second a string pointing to the subkey")
+    end
+
+    # Whether a with_subelements: term carries its own template syntax - the
+    # only form ansible evaluates before handing the term to the lookup.
+    private def templated_term?(term : String) : Bool
+      stripped = term.strip
+      stripped.includes?("{{") || stripped.includes?("{%") || stripped.includes?("{#")
     end
 
     # with_community.general.flattened: resolve each raw source string
