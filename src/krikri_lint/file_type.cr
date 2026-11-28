@@ -118,6 +118,12 @@ module Krikri
             type = role_subdir_type(parts[-2])
             return type if type
           end
+        when "runtime.yml", "runtime.yaml"
+          # Upstream's `**/meta/runtime.{yml,yaml}` kind pattern (kind
+          # meta-runtime) matches anywhere, which is how a collection's
+          # own meta/runtime.yml - never under roles/ - reaches the
+          # meta-runtime rule.
+          return META if parts.size >= 2 && parts[-2] == "meta"
         end
         # Upstream's default `**/*.{yaml,yml}` assignment keeps a yaml
         # file lintable when no more specific pattern names it; krikri
