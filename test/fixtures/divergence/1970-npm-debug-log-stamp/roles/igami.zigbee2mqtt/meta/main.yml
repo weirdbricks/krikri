@@ -1,0 +1,20 @@
+galaxy_info:
+  role_name: zigbee2mqtt
+  author: igami
+  description: zigbee2mqtt on Raspbian
+
+  license: BSD
+
+  min_ansible_version: 2.4
+
+  platforms:
+    - name: Debian
+      versions:
+        - buster
+
+  galaxy_tags:
+  - zigbee2mqtt
+  - raspbian
+  - raspberrypi
+  - zigbee
+  - mqtt

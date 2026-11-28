@@ -1,0 +1,13 @@
+---
+# The task igami.zigbee2mqtt failed in round round29930907; only the play is
+# adapted to run it against localhost (the round ran it as the zigbee user on
+# its testhost). The failure is the point: npm names its debug log after the
+# moment the install started and repeats that path in the error, so the task's
+# whole result moves by a few hundred milliseconds between runs.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Install zigbee2mqtt via npm.
+      npm:
+        path: "{{ playbook_dir }}/node"

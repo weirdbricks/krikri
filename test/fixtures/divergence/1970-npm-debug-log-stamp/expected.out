@@ -1,0 +1,26 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [Install zigbee2mqtt via npm.] ********************************************
+[ERROR]: Task failed: Module failed: npm ERR! code ENOENT
+npm ERR! syscall open
+npm ERR! path <WORK>/node/does-not-exist-1970/package.json
+npm ERR! errno -2
+npm ERR! enoent ENOENT: no such file or directory, open '<WORK>/node/does-not-exist-1970/package.json'
+npm ERR! enoent This is related to npm not being able to find a file.
+npm ERR! enoent 
+
+npm ERR! A complete log of this run can be found in:
+npm ERR!     <WORK>/home/.npm/_logs/<NPM_LOG_TIME>-debug-0.log
+Origin: <WORK>/playbook.yml:11:7
+
+ 9   gather_facts: false
+10   tasks:
+11     - name: Install zigbee2mqtt via npm.
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "cmd": "/usr/bin/npm install", "msg": "npm ERR! code ENOENT\nnpm ERR! syscall open\nnpm ERR! path <WORK>/node/does-not-exist-1970/package.json\nnpm ERR! errno -2\nnpm ERR! enoent ENOENT: no such file or directory, open '<WORK>/node/does-not-exist-1970/package.json'\nnpm ERR! enoent This is related to npm not being able to find a file.\nnpm ERR! enoent \n\nnpm ERR! A complete log of this run can be found in:\nnpm ERR!     <WORK>/home/.npm/_logs/<NPM_LOG_TIME>-debug-0.log", "rc": 254, "stderr": "npm ERR! code ENOENT\nnpm ERR! syscall open\nnpm ERR! path <WORK>/node/does-not-exist-1970/package.json\nnpm ERR! errno -2\nnpm ERR! enoent ENOENT: no such file or directory, open '<WORK>/node/does-not-exist-1970/package.json'\nnpm ERR! enoent This is related to npm not being able to find a file.\nnpm ERR! enoent \n\nnpm ERR! A complete log of this run can be found in:\nnpm ERR!     <WORK>/home/.npm/_logs/<NPM_LOG_TIME>-debug-0.log\n", "stderr_lines": ["npm ERR! code ENOENT", "npm ERR! syscall open", "npm ERR! path <WORK>/node/does-not-exist-1970/package.json", "npm ERR! errno -2", "npm ERR! enoent ENOENT: no such file or directory, open '<WORK>/node/does-not-exist-1970/package.json'", "npm ERR! enoent This is related to npm not being able to find a file.", "npm ERR! enoent ", "", "npm ERR! A complete log of this run can be found in:", "npm ERR!     <WORK>/home/.npm/_logs/<NPM_LOG_TIME>-debug-0.log"], "stdout": "", "stdout_lines": []}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

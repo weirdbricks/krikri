@@ -995,7 +995,10 @@ because anyone intends to fix them.
   krikri gap: the generator needs a mask for the `_logs/<timestamp>-debug-0.log` component, like the ones
   it has for its other per-run values. The rest of the diff this issue originally showed (krikri's raw,
   unsanitized `msg` and a bare `install` as `cmd`) was a real engine gap, fixed with the sanitiser in
-  issue #1372.
+  issue #1372. The same value turned up in a real-role round (#1970, `igami.zigbee2mqtt`), where the
+  round harness still needs its own `Compare::MASKS` entry; krikri's divergence corpus normalizes the
+  stamp through `Krikri::DivergenceTranscript` instead, so a case can pin the rest of an npm failure's
+  transcript without pinning the wall clock of its capture.
 
 - **`file:` with `state: touch` diffs wall-clock timestamps (kpg file cases, issues #1503/#1759/#1807).**
   Under `--diff` the module prints `initial_diff()`'s payload, and its `atime`/`mtime` entries are the

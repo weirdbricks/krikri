@@ -1,0 +1,54 @@
+---
+# tasks file for igami.zigbee2mqtt
+
+- name: Install zigbee2mqtt dependencies.
+  package:
+    name:
+      - git
+      - npm
+
+- name: Create zigbee2mqtt user.
+  user:
+    name: "{{ zigbee_user }}"
+    groups: "{{ zigbee_user_groups }}"
+    append: "{{ zigbee_user_append }}"
+
+- name: Create zigbee2mqtt directory.
+  file:
+    path: "{{ zigbee_dir }}"
+    state: directory
+    owner: "{{ zigbee_user }}"
+
+- name: Clone zigbee2mqtt repository.
+  git:
+    repo: "{{ zigbee_repository }}"
+    depth: 1
+    dest: "{{ zigbee_dir }}"
+    update: no
+  become: yes
+  become_user: "{{ zigbee_user }}"
+
+- name: Install zigbee2mqtt via npm.
+  npm:
+    path: "{{ zigbee_dir }}"
+  become: yes
+  become_user: "{{ zigbee_user }}"
+
+- name: Install configuration template.
+  template:
+    src: configuration.yaml.j2
+    dest: "{{ zigbee_dir }}/data/configuration.yaml"
+    owner: "{{ zigbee_user }}"
+
+- name: Install systemd service template.
+  template:
+    src: zigbee2mqtt.service.j2
+    dest: /etc/systemd/system/zigbee2mqtt.service
+    owner: "{{ zigbee_user }}"
+
+- name: Start zigbee2mqtt service.
+  systemd:
+    name: zigbee2mqtt
+    enabled: true
+    state: restarted
+    daemon_reload: true

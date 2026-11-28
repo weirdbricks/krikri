@@ -72,6 +72,31 @@ describe "divergence transcript" do
       "\"atime\": \"2026-11-24 20:17:42.849890\", \"finished_at\": \"2026-11-24 20:17:42.849890\"\n")
   end
 
+  it "masks npm's debug-log stamp, which is the moment that install started" do
+    # npm writes its log to `$HOME/.npm/_logs/<stamp>-debug-0.log` and repeats
+    # that path in the failure, so two runs of real ansible disagree on it
+    # exactly like the two engines do (issue #1970: ansible's own runs printed
+    # ...T08_30_32_869Z and ...T09_29_21_959Z with every other byte equal).
+    first = "npm ERR!     /home/u/.npm/_logs/2026-11-28T08_30_32_869Z-debug-0.log\n"
+    second = "npm ERR!     /home/u/.npm/_logs/2026-11-28T09_29_21_959Z-debug-0.log\n"
+    normalized = Krikri::DivergenceTranscript.normalize(first, "")
+    normalized.must_equal(Krikri::DivergenceTranscript.normalize(second, ""))
+    normalized.must_equal("npm ERR!     /home/u/.npm/_logs/<NPM_LOG_TIME>-debug-0.log\n")
+  end
+
+  it "masks only npm's log stamp, not the log path around it" do
+    line = "npm ERR!     /home/u/.npm/_logs/2026-11-28T08_30_32_869Z-debug-0.log\n"
+    # The log directory and the log number are compared: a case has to keep
+    # catching a wrong path or a wrong suffix, and a bare stamp that is not a
+    # log file name is not volatile at all.
+    Krikri::DivergenceTranscript.normalize(line.sub("/home/u/.npm", "/root/.npm"), "")
+      .must_equal("npm ERR!     /root/.npm/_logs/<NPM_LOG_TIME>-debug-0.log\n")
+    Krikri::DivergenceTranscript.normalize(line.sub("-debug-0.log", "-debug-1.log"), "")
+      .wont_equal(Krikri::DivergenceTranscript.normalize(line, ""))
+    Krikri::DivergenceTranscript.normalize("started 2026-11-28T08_30_32_869Z\n", "")
+      .must_equal("started 2026-11-28T08_30_32_869Z\n")
+  end
+
   it "concatenates stdout then stderr and normalizes both" do
     stdout = "PLAY [/tmp/case/play.yml] ***\nok: [localhost]\n"
     stderr = "[WARNING]: /tmp/case/roles/r/defaults/main.yml:2:22\n"

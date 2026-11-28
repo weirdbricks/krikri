@@ -1,0 +1,7 @@
+{
+  "name": "krikri-issue-1970",
+  "version": "1.0.0",
+  "dependencies": {
+    "krikri-missing-dependency": "file:./does-not-exist-1970"
+  }
+}
