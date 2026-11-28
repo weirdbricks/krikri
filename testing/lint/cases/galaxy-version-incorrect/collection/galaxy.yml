@@ -1,0 +1,12 @@
+namespace: acme
+name: demo
+version: 0.9.0
+readme: README.md
+description: Minimal collection fixture
+authors:
+  - Acme <acme@example.com>
+license:
+  - GPL-3.0-or-later
+repository: https://example.com/acme/demo
+tags:
+  - tools
