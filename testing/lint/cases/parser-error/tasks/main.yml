@@ -1,0 +1,2 @@
+- name: no action at all
+  become: true

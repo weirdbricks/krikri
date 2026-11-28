@@ -26,24 +26,23 @@ module Krikri
         # syntax-check match upstream has for it; anything the failed
         # check never loaded is not linted at all (see SyntaxCheck).
         syntax_check = @syntax_check || SyntaxCheck.new(paths, targets, @config.kinds)
+        # Upstream raises the parser-error match from inside the task
+        # pipeline its matchtask rules share (ansiblelint.utils'
+        # normalize_task_v2, reached whenever one of them walks the file's
+        # tasks), so it appears whenever this run loaded a rule that goes
+        # through it. The internal families (load-failure, warning - the
+        # ones upstream never unloads) run outside that pipeline, so a run
+        # left with nothing but them reports no parser error (verified
+        # against ansible-lint 25.2.1: `-t opt-in` without --enable-list
+        # prints nothing for a rejected task).
+        parser_error_possible = rules.any? { |rule| !rule.unloadable? }
         paths.each do |path|
           next if excluded?(path)
           next if syntax_check.suppressed?(path)
           file = PositionedFile.load(path, @config.kinds)
           mark_explicit(file, explicit)
-          if (match = syntax_match(file, syntax_check))
-            violations << match
-            next
-          end
-          check_failed = syntax_check.failed?(file)
-          source = File.exists?(path) ? File.read(path) : ""
-          noqa_maps[path] = Noqa.build_map(source)
-          collect_task_metadata(file, task_spans, task_names) if needs_tasks
-          rules.each do |rule|
-            next unless rule.applies?(file)
-            next if check_failed && rule.id != "syntax-check"
-            rule.check(file, violations)
-          end
+          lint_file(file, rules, syntax_check, parser_error_possible, needs_tasks,
+            violations, noqa_maps, task_spans, task_names)
         end
 
         # A role directory target is a lintable of its own upstream (kind
@@ -73,11 +72,52 @@ module Krikri
         end
       end
 
-      # The match upstream's syntax check has for this file, unless the
-      # path matched no kind pattern: such a lintable runs no rule
-      # upstream, the syntax check included.
-      private def syntax_match(file : PositionedFile, syntax_check : SyntaxCheck) : Violation?
-        file.file_type.unknown? ? nil : syntax_check.violation(file)
+      # The single match upstream reports for a file it refuses to lint
+      # at all, or nil when every rule may inspect it. A path that
+      # matched no kind pattern runs no rule upstream, the syntax check
+      # included, and a failed playbook syntax check abandons the whole
+      # lintable before any rule runs.
+      private def gate_match(file : PositionedFile, syntax_check : SyntaxCheck) : Violation?
+        return if file.file_type.unknown?
+        syntax_check.violation(file)
+      end
+
+      # Lints one lintable into `violations`. The gate's match is the
+      # file's only one. A parser failure differs: it aborts only the
+      # task pipeline, so the file reports parser-error while its
+      # YAML-level rules (matchyaml/matchlines) still run over it.
+      private def lint_file(file : PositionedFile, rules : Array(Rule),
+                            syntax_check : SyntaxCheck, parser_error_possible : Bool,
+                            needs_tasks : Bool, violations : Array(Violation),
+                            noqa_maps : Hash(String, Hash(Int32, Noqa::Entry)),
+                            task_spans : Hash(String, Array({Int32, Int32})),
+                            task_names : Hash(String, Hash(Int32, String))) : Nil
+        if (match = gate_match(file, syntax_check))
+          violations << match
+          return
+        end
+        parser_error = parser_error_possible ? ParserErrorRule.violation(file) : nil
+        violations << parser_error if parser_error
+        check_failed = syntax_check.failed?(file)
+        noqa_maps[file.path] = Noqa.build_map(readable_source(file.path))
+        collect_task_metadata(file, task_spans, task_names) if needs_tasks
+        rules.each do |rule|
+          next unless rule.applies?(file)
+          next if check_failed && rule.id != "syntax-check"
+          next if parser_error && skips_broken_pipeline?(rule)
+          rule.check(file, violations)
+        end
+      end
+
+      private def readable_source(path : String) : String
+        File.exists?(path) ? File.read(path) : ""
+      end
+
+      # The parser failure already produced the file's one match, and
+      # every task-level rule is downstream of the pipeline it broke; the
+      # parser-error rule itself would duplicate the match.
+      private def skips_broken_pipeline?(rule : Rule) : Bool
+        rule.task_scoped? || rule.id == "parser-error"
       end
 
       # Whether the run was pointed at this file itself (a target, or a

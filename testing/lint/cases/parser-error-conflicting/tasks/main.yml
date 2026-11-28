@@ -1,0 +1,3 @@
+- name: two actions
+  ansible.builtin.command: echo one
+  ansible.builtin.shell: echo two

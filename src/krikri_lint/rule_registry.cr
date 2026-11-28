@@ -12,6 +12,7 @@ module Krikri
           LoadFailureRule.new,
           InternalErrorRule.new,
           OutdatedTagRule.new,
+          ParserErrorRule.new,
           SyntaxCheckRule.new,
           CommandInsteadOfShellRule.new,
           CommandInsteadOfModuleRule.new,
