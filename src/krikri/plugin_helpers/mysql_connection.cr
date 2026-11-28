@@ -20,6 +20,12 @@ module Krikri
       # pass explicitly.
       DEFAULT_OPTION_FILE = "~/.my.cnf"
 
+      # community.mysql/ansible.mysql's mysql_common_argument_spec default
+      # for connect_timeout (module_utils mysql.py: "default=30"), which
+      # every mysql_* module passes to its driver even when the task omits
+      # the parameter.
+      DEFAULT_CONNECT_TIMEOUT = "30"
+
       # ansible.mysql's get_server_implementation() runs right after the
       # connection in mysql_db/mysql_info/mysql_query/mysql_variables and
       # module.warn()s whenever SELECT VERSION() contains "mariadb": the
@@ -353,20 +359,37 @@ module Krikri
       # be established (an unresolvable host through the MySQLdb wording,
       # whose CR_UNKNOWN_HOST text is not verified here, or a connect that
       # never answered), and the caller keeps its previous empty tail.
+      #
+      # `connect_timed_out` (the shard's connect-timeout marker: its
+      # ConnectionRefused carries the IO::TimeoutError as its cause) short-
+      # circuits the probe for the PyMySQL wording real words a connect
+      # timeout with (live-verified vs ansible-core 2.21.6, issue #1961):
+      #   (2003, "Can't connect to MySQL server on '<host>' (timed out)")
+      # - Python's str(TimeoutError('timed out')) as the parenthesized
+      # tail. The MySQLdb connector's own timeout wording is not verified
+      # here, so that branch keeps the probe (and its empty tail when the
+      # probe learns nothing).
       def self.connect_error_detail(
         login_host : String? = nil,
         login_port : String? = nil,
         login_unix_socket : String? = nil,
         config_file : String? = nil,
         os_family : String? = nil,
+        connect_timed_out : Bool = false,
         mysqldb : Bool = mysqldb_connector_on_host?,
         exists : String -> Bool = ->(path : String) { File.exists?(path) },
         tcp_errno : String, String -> Int32? = ->(host : String, port : String) { tcp_connect_errno(host, port) },
       ) : String?
         host = login_host || "localhost"
+        return tcp_timeout_detail(host) if connect_timed_out && !mysqldb
         socket = error_dial_socket(login_host, login_unix_socket, config_file, os_family, mysqldb, exists)
         return socket_failure_detail(socket, host, mysqldb, exists) if socket
         tcp_failure_detail(host, login_port || "3306", mysqldb, tcp_errno)
+      end
+
+      # The 2003 wording for a connect that outlived connect_timeout.
+      private def self.tcp_timeout_detail(host : String) : String
+        %((2003, "Can't connect to MySQL server on '#{host}' (timed out)"))
       end
 
       # The transport real's driver dials for these params: the socket path
@@ -441,13 +464,14 @@ module Krikri
       # #connect_error_detail fed from a plugin's raw task params - the ones
       # real hands its driver - plus the target family, which decides whether
       # a `localhost` login dials a socket (MySQLdb) or TCP (PyMySQL).
-      def self.connect_failure_detail(params : Hash(String, String), vars : Hash(String, JSON::Any)?) : String?
+      def self.connect_failure_detail(params : Hash(String, String), vars : Hash(String, JSON::Any)?, connect_timed_out : Bool = false) : String?
         connect_error_detail(
           login_host: params["login_host"]?,
           login_port: params["login_port"]?,
           login_unix_socket: params["login_unix_socket"]?,
           config_file: params["config_file"]? || DEFAULT_OPTION_FILE,
           os_family: vars.try(&.["ansible_os_family"]?).try(&.as_s?),
+          connect_timed_out: connect_timed_out,
         )
       end
 
@@ -480,9 +504,11 @@ module Krikri
         params : Hash(String, String),
         vars : Hash(String, JSON::Any)?,
         check_option_file : Bool = false,
+        connect_timed_out : Bool = false,
+        detail_override : String? = nil,
       ) : PluginResult
         config_file = params["config_file"]?
-        detail = connect_failure_detail(params, vars)
+        detail = detail_override || connect_failure_detail(params, vars, connect_timed_out)
         msg = if check_option_file && !File.exists?(option_file_display(config_file))
                 missing_option_file_message(config_file, detail)
               else
@@ -496,9 +522,33 @@ module Krikri
         params : Hash(String, String),
         vars : Hash(String, JSON::Any)?,
         connector : ConnectorIdentity,
+        connect_timed_out : Bool = false,
+        detail_override : String? = nil,
       ) : PluginResult
         PluginResult.new(changed: false, failed: true,
-          msg: connect_failure_message(params["config_file"]?, connect_failure_detail(params, vars), connector))
+          msg: connect_failure_message(params["config_file"]?, detail_override || connect_failure_detail(params, vars, connect_timed_out), connector))
+      end
+
+      # PyMySQL rejects a connect_timeout outside (0, 31536000] with
+      # ValueError("connect_timeout should be >0 and <=31536000") before any
+      # socket exists (connections.py's __init__ range check), live-verified
+      # vs ansible-core 2.21.6: both `connect_timeout: 0` and `: -5` fail the
+      # task in milliseconds with that exact text as the connection-failure
+      # wrapper's "Exception message:" tail. The shard silently drops such a
+      # value instead (no socket timeout at all), which would hang for the
+      # OS's own connect timeout - the very hang issue #1961 is about - so
+      # the plugins short-circuit here first. A NON-INTEGER value is out of
+      # this check's scope: the module's own argument spec (type='int')
+      # rejects it with a different failure, which the plugins that carry
+      # argument validation already produce (mysql_db/mysql_user, which
+      # validate nothing, are a separate known gap).
+      CONNECT_TIMEOUT_RANGE_MSG = "connect_timeout should be >0 and <=31536000"
+
+      def self.connect_timeout_out_of_range?(params : Hash(String, String)) : Bool
+        raw = params["connect_timeout"]? || return false
+        seconds = raw.to_i?
+        return false if seconds.nil?
+        seconds < 1 || seconds > 31536000
       end
 
       private def self.build_base_uri(socket : String?, host : String?, port : String?) : URI
@@ -551,6 +601,7 @@ module Krikri
         config_file : String? = nil,
         db : String? = nil,
         tls : TlsOptions = TlsOptions.new,
+        connect_timeout : String? = nil,
       ) : String
         defs = option_file_defaults(config_file)
 
@@ -604,9 +655,26 @@ module Krikri
           query_params["ssl-key"] = key
         end
         query_params["database"] = db if db && !db.empty?
+        append_connect_timeout(query_params, connect_timeout)
+
         uri.query = query_params.to_s
 
         uri.to_s
+      end
+
+      # The connect_timeout the module's argument spec threads into
+      # PyMySQL (issue #1961): bounds the TCP connect, exactly like
+      # real's - and, like real's, nothing else (see the shard's own
+      # note: PyMySQL's handshake read runs on read_timeout, nil by
+      # default, so a silent peer blocks both engines forever). The
+      # argument-spec default is 30 (ansible.mysql's module_utils
+      # mysql.py), applied here because the plugin call sites pass the
+      # task's raw param and real defaults it inside the module.
+      private def self.append_connect_timeout(query_params : URI::Params, connect_timeout : String?)
+        raw = connect_timeout || DEFAULT_CONNECT_TIMEOUT
+        if (seconds = raw.to_i?) && seconds > 0
+          query_params["connect_timeout"] = seconds.to_s
+        end
       end
 
       # Parses a MySQL option file (my.cnf-format) for the [client]

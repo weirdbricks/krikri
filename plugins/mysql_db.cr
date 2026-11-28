@@ -147,6 +147,7 @@ module Krikri
         unix_socket: @params["login_unix_socket"]?,
         config_file: @params["config_file"]? || "~/.my.cnf",
         tls: PluginHelpers::MysqlConnection.tls_options(@params),
+        connect_timeout: @params["connect_timeout"]?,
       )
 
       DB.open(uri) do |dbcon|
@@ -168,14 +169,15 @@ module Krikri
         PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
         PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
       end
-    rescue DB::ConnectionRefused
+    rescue ex : DB::ConnectionRefused
       # The connector warn fires inside mysql_connect, before the driver's
       # own connect raises, so a refused connection's fail_json carries it
       # in real too. mysql_db.py also branches on
       # os.path.exists(config_file), naming the missing option file instead
       # of the credentials.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
-        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true))
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true,
+          connect_timed_out: ex.cause.is_a?(IO::TimeoutError)))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
@@ -196,6 +198,17 @@ module Krikri
 
       unless @params["name"]? || @params["db"]?
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+      end
+
+      # PyMySQL fails a connect_timeout outside (0, 31536000] from its own
+      # __init__ range check, before any socket exists; the shard would
+      # otherwise drop such a value and hang for the OS's connect timeout
+      # (see MysqlConnection.connect_timeout_out_of_range?). Real connects
+      # before its state branches, so this also covers dump/import.
+      if PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(@params)
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true,
+            detail_override: PluginHelpers::MysqlConnection::CONNECT_TIMEOUT_RANGE_MSG))
       end
 
       nil

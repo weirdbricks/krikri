@@ -25,6 +25,10 @@ deleted from here.
   suites and tears them down (they skip silently without a server, so use the script
   rather than a bare `scripts/minitest.sh` when touching the DB drivers).
 - `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
+- The `1961-mysql-connect-timeout` corpus case replays against `192.0.2.1:3306` (RFC 5737
+  TEST-NET-1) and needs that address to BLACKHOLE: a host whose egress REJECTS it (ICMP
+  unreachable / RST) fails the replay with the errno wording instead of `(timed out)`, which
+  is the environment, not a wording bug.
 - **A machine that runs out of disk space diverges by runtime footprint, not by behavior.** When a
   role fills the disk mid-run, each engine fails at whatever its own runtime writes next - ansible's
   python-apt cache save (`apt.Cache()`) and module payload transfer, krikri's plugin upload - with
@@ -318,6 +322,41 @@ details remain the vendored drivers' limits:
 Both require driver changes (a fork release for mysql, an upstream patch for
 pg). Decided 2026-11-11: wire what the drivers support, do not silently
 pretend to verify.
+
+### mysql `connect_timeout` bounds only the TCP connect, never the handshake read (issue #1961)
+
+The mysql shard (our fork, `crystal-ansible-0.9.343`) takes a
+`connect_timeout=N` URI param that bounds the TCP connect and nothing else.
+That is deliberately PyMySQL's shape, live-verified against ansible-core
+2.21.6 + ansible.mysql 5.2.0 + PyMySQL 2.2.8: PyMySQL passes
+`connect_timeout` only to `socket.create_connection` and then resets the
+socket timeout to `read_timeout` (None by default), so real Ansible also
+blocks forever on a peer that accepts and never sends the server greeting
+(strace showed its module parked in a bare blocking `recvfrom`). Making
+krikri time out there would be a divergence in the other direction, so the
+silent-peer hang stays as-is. Two smaller gaps ride along, both accepted:
+
+- The AF_UNIX connect is not bounded (PyMySQL wraps the unix connect in the
+  same timeout). Reaching it needs a unix listener with an exhausted accept
+  backlog, which no corpus case can pin; a stale socket file fails with
+  ECONNREFUSED instantly either way.
+- On a timed-out connect, the MySQLdb (libmariadb) connector's failure
+  wording is unverified, so that branch keeps the errno probe (and its
+  empty tail when the probe learns nothing) - and the same is true of its
+  handshake-read behavior, which was never checked; only the PyMySQL path
+  was live-verified. The PyMySQL wording -
+  `(2003, "Can't connect to MySQL server on '<host>' (timed out)")` - is
+  live-verified and pinned by the `1961-mysql-connect-timeout` corpus case.
+
+A connect_timeout OUTSIDE `(0, 31536000]` is not dropped silently either:
+PyMySQL's own `__init__` range check rejects it with
+`connect_timeout should be >0 and <=31536000` before any socket exists
+(live-verified for 0 and -5, same corpus case), and the plugins short-
+circuit with that text. A NON-INTEGER connect_timeout on mysql_db/mysql_user
+(the two plugins that carry no argument validation, so no type failure)
+still reaches neither: it is dropped by the URI builder and the connect runs
+unbounded - tracked as #1975 (the two plugins' missing argument
+validation), alongside the dump/import connect gap in #1976.
 
 ### `password_mechanism=sshpass` is not implemented (askpass is always the fallback)
 

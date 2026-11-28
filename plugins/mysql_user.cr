@@ -127,6 +127,7 @@ module Krikri
         unix_socket: @params["login_unix_socket"]?,
         config_file: @params["config_file"]? || "~/.my.cnf",
         tls: PluginHelpers::MysqlConnection.tls_options(@params),
+        connect_timeout: @params["connect_timeout"]?,
       )
 
       @salt = @params["salt"]?
@@ -144,12 +145,13 @@ module Krikri
     rescue ex : ModuleFailError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
         PluginResult.new(changed: false, failed: true, msg: ex.message || ""))
-    rescue DB::ConnectionRefused
+    rescue ex : DB::ConnectionRefused
       # community.mysql's own connection-failure wrapper, with the driver's
       # own exception repr as its tail (see
       # MysqlConnection.connection_failed_result).
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
-        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars))
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars,
+          connect_timed_out: ex.cause.is_a?(IO::TimeoutError)))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
@@ -283,6 +285,16 @@ module Krikri
                             update_password : String, priv : String?, append_privs : Bool, plugin : String?,
                             plugin_hash_string : String?, plugin_auth_string : String?,
                             check_mode : Bool, host_all : Bool) : PluginResult
+      # PyMySQL fails a connect_timeout outside (0, 31536000] from its own
+      # __init__ range check, before any socket exists; the shard would
+      # otherwise drop such a value and hang for the OS's connect timeout
+      # (see MysqlConnection.connect_timeout_out_of_range?).
+      if PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(@params)
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars,
+            detail_override: PluginHelpers::MysqlConnection::CONNECT_TIMEOUT_RANGE_MSG))
+      end
+
       DB.open(uri) do |connection|
         if host_all
           run_host_all(connection, name, state, password, update_password, host,

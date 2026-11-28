@@ -1,0 +1,57 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1961's repro: each module's TCP connect to 192.0.2.1:3306
+  # (RFC 5737 TEST-NET-1, blackholed) outlives connect_timeout: 1. Real's
+  # driver (PyMySQL 2.2.8) bounds ONLY the connect and fails there with
+  # OperationalError(2003, "... (timed out)"); krikri pre-fix hung for the
+  # OS's ~2-minute connect timeout and reported an empty Exception-message
+  # tail. ignore_errors keeps the play going so every connection-failure
+  # wrapper lands in one transcript.
+  #
+  # mysql_info is not in this case: its wrapper names the connector version
+  # the TARGET's Python has installed ("using pymysql 1.2.3"), so recording
+  # it would pin this box's PyMySQL build and no other host could replay it
+  # (same reasoning as 1962).
+  #
+  # The last task pins the range check: PyMySQL's own __init__ rejects
+  # connect_timeout outside (0, 31536000] before any socket exists, so real
+  # fails it in milliseconds with the ValueError text as the wrapper's tail.
+  tasks:
+    - name: mysql_query against a blackholed host
+      mysql_query:
+        login_host: 192.0.2.1
+        login_port: 3306
+        login_user: dbuser
+        login_password: s3cretpass
+        connect_timeout: 1
+        query: SELECT 1
+      ignore_errors: true
+
+    - name: mysql_db against a blackholed host
+      mysql_db:
+        login_host: 192.0.2.1
+        login_port: 3306
+        login_user: dbuser
+        login_password: s3cretpass
+        connect_timeout: 1
+        name: krikri_db
+        state: present
+      ignore_errors: true
+
+    - name: mysql_variables against a blackholed host
+      mysql_variables:
+        login_host: 192.0.2.1
+        login_port: 3306
+        login_user: dbuser
+        login_password: s3cretpass
+        connect_timeout: 1
+        variable: max_connections
+      ignore_errors: true
+
+    - name: mysql_query with a zero connect_timeout
+      mysql_query:
+        login_host: 127.0.0.1
+        login_port: 33399
+        connect_timeout: 0
+        query: SELECT 1
+      ignore_errors: true

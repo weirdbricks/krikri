@@ -16,7 +16,7 @@ dependencies:
     tag: v1.0.0
   mysql:
     github: weirdbricks/crystal-mysql
-    tag: crystal-ansible-0.9.342
+    tag: crystal-ansible-0.9.343
   pg:
     github: will/crystal-pg
     version: 0.31.0
