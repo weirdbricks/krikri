@@ -1,0 +1,30 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_user with an integral float login_port] ****************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, "Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)")
+Origin: <WORK>/playbook.yml:13:7
+
+11   # errno that depends on what listens there.
+12   tasks:
+13     - name: mysql_user with an integral float login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, \"Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)\")"}
+...ignoring
+
+TASK [mysql_user with a fractional login_port] *********************************
+[ERROR]: Task failed: Module failed: argument 'login_port' is of type float and we were unable to convert to int: "1.5" cannot be converted to an int
+Origin: <WORK>/playbook.yml:20:7
+
+18       ignore_errors: true
+19
+20     - name: mysql_user with a fractional login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "argument 'login_port' is of type float and we were unable to convert to int: \"1.5\" cannot be converted to an int"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=2   
+

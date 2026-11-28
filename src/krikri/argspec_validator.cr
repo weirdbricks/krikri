@@ -1843,9 +1843,13 @@ module Krikri
     private def int_type_error(name : String, raw : String, kind : Symbol, native : JSON::Any?) : String?
       # A marked non-string YAML literal keeps its own class, which the
       # demoted wire text alone cannot express: an int (and a bool, being
-      # an int subclass) converts, a float does not.
+      # an int subclass) converts. A float converts when it has no
+      # significant decimal part - check_type_int is Decimal-based, so
+      # Decimal("3306.0") equals its own truncation and reaches the module
+      # (issue #1978).
       if native
-        return nil unless native.raw.is_a?(Float64)
+        return nil unless (value = native.raw.as?(Float64))
+        return nil if value.finite? && value == value.trunc
         return "argument '#{name}' is of type float and we were unable to convert to int: " \
                "\"#{python_value_repr(native)}\" cannot be converted to an int"
       end
@@ -2115,6 +2119,10 @@ module Krikri
     # must reach the module (and its own range check) instead of failing
     # the type conversion here (issue #1977).
     private def int_like?(raw : String) : Bool
+      # A BIGINT_SENTINEL_PREFIX-marked string is a YAML int too wide for
+      # Int64, so it IS a Python int: real has no width and converts it
+      # (issue #1979).
+      return true if Krikri.bigint_digits(raw)
       s = raw.strip
       begin
         bd = BigDecimal.new(s)

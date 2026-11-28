@@ -32,6 +32,9 @@ module Krikri
       # spellings) where a bare /[+-]?\d+/ spelling check rejects it
       # (issue #1977).
       def int_convertible?(raw : String) : Bool
+        # A BIGINT_SENTINEL_PREFIX-marked string stands for a YAML int too
+        # wide for Int64, which Decimal has no trouble with (issue #1979).
+        return true if Krikri.bigint_digits(raw)
         bd = BigDecimal.new(raw.strip)
         bd == BigDecimal.new(bd.to_big_i)
       rescue

@@ -1,0 +1,26 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1979: a YAML int wider than Int64 travels through krikri as a
+  # BIGINT_SENTINEL_PREFIX-marked string. Real ansible parses it into a
+  # Python int (no width), so the module gets it and fails in its own
+  # wording; krikri's type check could not read the marker and failed the
+  # argument spec instead.
+  #
+  # A 24-digit port is refused by getaddrinfo with EAI_SERVICE (its low 32
+  # bits have bit 31 set), not dialled by its residue, so real's wrapper text
+  # is host independent. The connect_timeout task pins PyMySQL's own range
+  # check, which also runs before any socket exists.
+  tasks:
+    - name: mysql_user with a BIGINT login_port
+      mysql_user:
+        name: krikri_user
+        state: present
+        login_port: 999999999999999999999999
+      ignore_errors: true
+
+    - name: mysql_user with a BIGINT connect_timeout
+      mysql_user:
+        name: krikri_user
+        state: present
+        connect_timeout: 999999999999999999999999
+      ignore_errors: true

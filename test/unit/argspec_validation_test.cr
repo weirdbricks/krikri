@@ -231,6 +231,30 @@ describe Krikri::ArgspecValidator do
     ).must_be_nil
   end
 
+  # check_type_int converts with decimal.Decimal, so a native float with no
+  # significant decimal part converts (3306.0 -> 3306) and only a fractional
+  # one fails (issue #1978). A YAML int past Int64 arrives marked, not
+  # truncated, and is still a Python int to real's width-free conversion
+  # (issue #1979).
+  it "converts an integral native float and a marked bigint for int options" do
+    Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"name" => "x", "lock_timeout" => Krikri::NON_STRING_PARAM_PREFIX + JSON::Any.new(60.0).to_json}, vars
+    ).must_be_nil
+    Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"name" => "x", "lock_timeout" => Krikri.bigint_sentinel("999999999999999999999999")}, vars
+    ).must_be_nil
+
+    failure = Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"name" => "x", "lock_timeout" => Krikri::NON_STRING_PARAM_PREFIX + JSON::Any.new(1.5).to_json}, vars
+    )
+    failure.as(Failure).msg.must_equal(
+      "argument 'lock_timeout' is of type float and we were unable to convert to int: " \
+      "\"1.5\" cannot be converted to an int")
+  end
+
   it "emits Ansible's exact invalid-choices wording, in the spec's own order" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",

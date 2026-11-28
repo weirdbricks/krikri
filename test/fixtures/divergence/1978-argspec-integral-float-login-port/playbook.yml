@@ -1,0 +1,25 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1978: ansible-core's check_type_int is Decimal-based, so a YAML
+  # float with no significant decimal part converts (3306.0 -> 3306) and only
+  # a fractional one fails the argument spec. krikri rejected every native
+  # float, so the integral task never reached the module.
+  #
+  # The integral value is negative on purpose: a negative port never reaches
+  # a socket (getaddrinfo refuses the service with EAI_SERVICE), so real's
+  # wrapper text is the same on every host. A dialling port would pin an
+  # errno that depends on what listens there.
+  tasks:
+    - name: mysql_user with an integral float login_port
+      mysql_user:
+        name: krikri_user
+        state: present
+        login_port: -5.0
+      ignore_errors: true
+
+    - name: mysql_user with a fractional login_port
+      mysql_user:
+        name: krikri_user
+        state: present
+        login_port: 1.5
+      ignore_errors: true
