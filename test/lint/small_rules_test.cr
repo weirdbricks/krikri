@@ -138,4 +138,61 @@ module Krikri::Lint
       v.must_be_empty
     end
   end
+
+  describe EmptyStringCompareRule do
+    private def rule
+      EmptyStringCompareRule.new
+    end
+
+    it "flags comparisons to empty string at the task line" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: eq\n      when: var == \"\"\n    - name: B\n      debug:\n        msg: ne\n      when: var != \"\"\n", FileType::PLAYBOOK)
+      v.size.must_equal(2)
+      v.map(&.line).must_equal([5, 9])
+      v.each { |violation| violation.column.must_equal(0) }
+      v.first.message.must_equal("Don't compare to empty string.")
+    end
+
+    it "accepts single quotes and a missing space" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: sq\n      when: var == ''\n    - name: B\n      debug:\n        msg: nospace\n      when: var!=\"\"\n", FileType::PLAYBOOK)
+      v.map(&.line).must_equal([5, 9])
+    end
+
+    it "reports the block and the nested task, like upstream's nested walk" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: Block\n      block:\n        - name: Inner\n          debug:\n            msg: inner\n          when: var == \"\"\n", FileType::PLAYBOOK)
+      v.map(&.line).must_equal([5, 7])
+    end
+
+    it "flags any list item comparing to empty string" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: list\n      when:\n        - var\n        - var != \"\"\n", FileType::PLAYBOOK)
+      v.size.must_equal(1)
+    end
+
+    it "allows plain conditions and real comparisons" do
+      v = lint_yaml(rule, "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: plain\n      when: var\n    - name: B\n      debug:\n        msg: other\n      when: var == \"x\"\n    - name: C\n      debug:\n        msg: bool\n      when: true\n", FileType::PLAYBOOK)
+      v.must_be_empty
+    end
+
+    it "declares upstream's severity, tags and opt-in gate" do
+      rule.severity.must_equal(Severity::HIGH)
+      rule.tags.must_equal(["idiom", "opt-in"])
+      rule.opt_in?.must_equal(true)
+      rule.task_scoped?.must_equal(true)
+    end
+
+    it "stays off until --enable-list names it" do
+      yaml = "---\n- name: Play\n  hosts: all\n  tasks:\n    - name: A\n      debug:\n        msg: eq\n      when: var == \"\"\n"
+      rules = [EmptyStringCompareRule.new] of Rule
+      run_rules_yaml(yaml, rules).must_be_empty
+      enabled = run_rules_yaml(yaml, rules,
+        LintConfig.new(enable_list: ["empty-string-compare"]))
+      enabled.size.must_equal(1)
+      enabled.first.line.must_equal(5)
+    end
+
+    it "is registered for --list-rules" do
+      registered = RuleRegistry.default.find("empty-string-compare")
+      raise "empty-string-compare is not registered" unless registered
+      registered.tags.must_equal(["idiom", "opt-in"])
+    end
+  end
 end
