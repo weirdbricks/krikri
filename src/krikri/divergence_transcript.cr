@@ -11,9 +11,10 @@
 module Krikri
   module DivergenceTranscript
     # What a case's scratch directory is rewritten to. The scratch path, the
-    # order of convert_bool's boolean enumeration and the values of
-    # command/shell's three timing fields below are the only normalized things;
-    # everything else in a transcript has to match byte for byte.
+    # order of convert_bool's boolean enumeration, the values of command/shell's
+    # three timing fields and the stamp in npm's own debug-log file name below
+    # are the only normalized things; everything else in a transcript has to
+    # match byte for byte.
     WORK = "<WORK>"
 
     # command/shell report `start`/`end`/`delta`, and all three are the wall
@@ -36,17 +37,32 @@ module Krikri
     # `"}` must stay outside the sort.
     BOOLEAN_ENUMERATION = /(Valid booleans include: )((?:'[^']*'|True|False|\d+(?:\.\d+)?)(?:, (?:'[^']*'|True|False|\d+(?:\.\d+)?))*)(?=\n|"|\z)/
 
+    # npm names its debug log after the wall-clock moment it started
+    # (`$HOME/.npm/_logs/<stamp>-debug-0.log`) and repeats that path in the
+    # failure's msg, stderr and stderr_lines, so two runs of EITHER engine
+    # disagree on it (issue #1970: two real ansible runs printed
+    # `...T08_30_32_869Z` and `...T09_29_21_959Z` while every other byte of the
+    # task matched). Only the stamp inside an `_logs/` file name is replaced:
+    # the directory, the `-debug-<n>.log` suffix and the wording around it stay
+    # in the transcript, which is what still catches a wrong log path.
+    NPM_LOG_STAMP = /(\.npm\/_logs\/)\d{4}-\d\d-\d\dT\d\d_\d\d_\d\d_\d+Z(?=-debug-)/
+    NPM_LOG_TIME  = "<NPM_LOG_TIME>"
+
     # Rewrite *work_dir* (and everything under it) to `<WORK>`, sort the
-    # boolean enumeration and blank the command timing values. A transcript can
-    # name the case directory dozens of times (Origin blocks, `included:` lines,
-    # every copied role path) and each run happens in a fresh directory, so the
-    # path is the one path that cannot be pinned verbatim.
+    # boolean enumeration, blank the command timing values and mask npm's
+    # debug-log stamp. A transcript can name the case directory dozens of times
+    # (Origin blocks, `included:` lines, every copied role path) and each run
+    # happens in a fresh directory, so the path is the one path that cannot be
+    # pinned verbatim.
     def self.normalize(text : String, work_dir : String) : String
       text = text.gsub(BOOLEAN_ENUMERATION) do |_match, captures|
         "#{captures[1]}#{captures[2].to_s.split(", ").sort!.join(", ")}"
       end
       text = text.gsub(TIMING_FIELD) do |_match, captures|
         "#{captures[1]}#{TIME}#{captures[2]}"
+      end
+      text = text.gsub(NPM_LOG_STAMP) do |_match, captures|
+        "#{captures[1]}#{NPM_LOG_TIME}"
       end
       return text if work_dir.empty?
       # Only rewrite *work_dir* when it is a whole path, not a prefix of a

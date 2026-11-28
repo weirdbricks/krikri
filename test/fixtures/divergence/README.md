@@ -75,12 +75,22 @@ the normalized transcript to `expected.out`. Capture rules:
   and concatenated. A `2>&1` capture is not reproducible: python's stdout is
   block-buffered when redirected, so real ansible's stderr lands in one block
   after stdout while krikri's stream is line-buffered and interleaves.
-- Normalize the scratch directory to `<WORK>` and nothing else, except the
-  ORDER of the `Valid booleans include:` enumeration: convert_bool builds it
-  from a Python frozenset, so its iteration order changes with each module
-  process (string hash randomization) and two real ansible runs already
-  disagree. `DivergenceTranscript` sorts only that list's members;
-  membership, quoting and every surrounding word still have to match.
+- Normalize the scratch directory to `<WORK>` and, besides that, only the values
+  that move between two runs of the SAME engine (each one is a spec in
+  `test/unit/divergence_transcript_test.cr`, and each replacement is narrow
+  enough that the wording around it still has to match):
+  - the ORDER of the `Valid booleans include:` enumeration: convert_bool builds
+    it from a Python frozenset, so its iteration order changes with each module
+    process (string hash randomization) and two real ansible runs already
+    disagree. `DivergenceTranscript` sorts only that list's members;
+    membership, quoting and every surrounding word still have to match.
+  - command/shell's `start`/`end`/`delta`, which are the module process's own
+    clock, so two real runs disagree on them like the two engines do.
+  - the stamp in npm's debug-log file name (`$HOME/.npm/_logs/<stamp>-debug-0.log`,
+    issue #1970): npm names the log after the moment it started and repeats that
+    path in the failure, so the recording could otherwise only pin the wall
+    clock of its own capture. The log directory, the `-debug-<n>.log` suffix and
+    the message around it are still compared.
 - A case whose trigger lives in the RUNNING process's environment rather than in
   the play (issue #1643: the synchronize module's `get_bin_path` probe only fails
   when no rsync is on PATH, and the play's `environment:` keyword reaches only
