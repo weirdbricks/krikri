@@ -34,6 +34,7 @@ module Krikri
           SchemaMetaRule.new,
           MetaNoTagsRule.new,
           MetaVideoLinksRule.new,
+          MetaRuntimeRule.new,
           KeyOrderRule.new,
           LiteralCompareRule.new,
           YamlTrailingSpacesRule.new,
