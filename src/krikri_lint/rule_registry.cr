@@ -46,6 +46,7 @@ module Krikri
           MetaNoTagsRule.new,
           MetaVideoLinksRule.new,
           MetaRuntimeRule.new,
+          GalaxyRule.new,
           KeyOrderRule.new,
           LiteralCompareRule.new,
           EmptyStringCompareRule.new,
