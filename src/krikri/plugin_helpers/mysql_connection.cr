@@ -445,11 +445,11 @@ module Krikri
 
       # The kernel errno of a fresh connect, or EAI_NONAME when the host does
       # not resolve, or nil when the probe learned nothing (the target
-      # blackholed the SYN). A negative login_port never reaches a socket in
-      # Python: getaddrinfo refuses the service, so EAI_SERVICE is reported
-      # without a dial (issue #1977).
+      # blackholed the SYN). A service getaddrinfo refuses never reaches a
+      # socket in Python, so EAI_SERVICE is reported without a dial (issues
+      # #1977, #1979).
       private def self.tcp_connect_errno(host : String, port : String) : Int32?
-        return EAI_SERVICE_ERRNO if (value = python_int(port)) && value < 0
+        return EAI_SERVICE_ERRNO if eai_service?(port)
         dial = wire_port(port)
         begin
           Socket::Addrinfo.tcp(host, dial)
@@ -568,6 +568,12 @@ module Krikri
       # (`inf` included - real dies with an unhandled OverflowError there,
       # which is not worth reproducing).
       private def self.integer_value(raw : String) : BigInt?
+        # A BIGINT_SENTINEL_PREFIX-marked string is the decimal integer it
+        # stands for: the controller marks a YAML int too wide for Int64
+        # rather than truncating it (issue #1979).
+        if digits = Krikri.bigint_digits(raw)
+          return BigInt.new(digits)
+        end
         bd = BigDecimal.new(raw.strip)
         value = bd.to_big_i
         bd == BigDecimal.new(value) ? value : nil
@@ -584,22 +590,47 @@ module Krikri
         value.to_i64
       end
 
+      # Python hands getaddrinfo the converted port as an unsigned 64-bit
+      # value cast to a C int, which decides both the dial and its errno
+      # (measured against CPython 3.13's socket module): a value that does
+      # not fit in 64 unsigned bits, a negative one, or one whose low 32
+      # bits have bit 31 set is refused as EAI_SERVICE; anything else
+      # reaches the socket as the low 16 bits. A 24-digit login_port is
+      # therefore refused outright instead of dialling its residue - the
+      # reading issue #1979's "wire_port reduces it modulo 65536 like any
+      # other port" misses for this value.
+      private def self.getaddrinfo_service(raw : String) : {Bool, Int32}?
+        value = integer_value(raw) || return nil
+        return {true, 0} if value < 0
+        return {true, 0} if value >= (BigInt.new(1) << 64)
+        low = value & ((BigInt.new(1) << 32) - 1)
+        return {true, 0} if low >= (BigInt.new(1) << 31)
+        {false, (low % 65536).to_i32}
+      end
+
+      # True when real's getaddrinfo refuses the service with EAI_SERVICE.
+      # Integer text only - anything else never reaches this check.
+      def self.eai_service?(raw : String?) : Bool
+        return false unless raw
+        service = getaddrinfo_service(raw) || return false
+        service[0]
+      end
+
       # The port a dial actually reaches. PyMySQL hands the converted int to
       # getaddrinfo, which truncates a non-negative service to the 16 bits
-      # sockaddr_in carries - 70000 dials 4464, and a value past Int64 wraps
-      # by its true residue - while Crystal's own getaddrinfo rejects a
-      # number outside 0-65535, so the number has to be reduced here for the
-      # dial (and the errno it fails with) to match real. The reduction runs
-      # on the BigInt, never on the saturated Int64. A negative port is
-      # getaddrinfo's EAI_SERVICE and never reaches a listener: a connect to
-      # port 0 is always refused (bind(0) picks an ephemeral port instead),
-      # so the placeholder fails the dial immediately while
-      # #tcp_connect_errno reports the getaddrinfo errno real shows (issue
-      # #1977).
+      # sockaddr_in carries - 70000 dials 4464 - while Crystal's own
+      # getaddrinfo rejects a number outside 0-65535, so the number has to
+      # be reduced here for the dial (and the errno it fails with) to match
+      # real. The reduction runs on the BigInt, never on the saturated
+      # Int64. A service getaddrinfo refuses is EAI_SERVICE and never
+      # reaches a listener: a connect to port 0 is always refused (bind(0)
+      # picks an ephemeral port instead), so the placeholder fails the dial
+      # immediately while #tcp_connect_errno reports the getaddrinfo errno
+      # real shows (issue #1977, #1979).
       def self.wire_port(raw : String?) : Int32
-        value = raw.try { |text| integer_value(text) } || return 3306
-        return 0 if value < 0
-        (value % 65536).to_i32
+        return 3306 unless raw
+        service = getaddrinfo_service(raw) || return 3306
+        service[1]
       end
 
       def self.connect_timeout_out_of_range?(params : Hash(String, String)) : Bool

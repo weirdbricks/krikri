@@ -807,15 +807,21 @@ describe Krikri::PluginHelpers::MysqlConnection do
       wire.call("1_000").must_equal(1000)
       wire.call("1__0").must_equal(10)
       # Real hands the converted int to getaddrinfo, which truncates it to
-      # the 16 bits sockaddr_in holds - 70000 dials 4464, larger values wrap
-      # the same way (99999999999999 is 16383). Checked against Python's own
-      # socket module: it connected to a listener bound on the truncated port.
+      # the 16 bits sockaddr_in holds - 70000 dials 4464 - and the residue is
+      # taken on the BigInt, so a value past Int64 is not saturated first
+      # (real's conversion has no width). Checked against Python's own socket
+      # module: it connected to a listener bound on the truncated port.
       wire.call("70000").must_equal(4464)
       wire.call("99999999999999").must_equal(16383)
-      # The residue is taken on the BigInt: a value past Int64 must not be
-      # saturated first (real's conversion has no width), or the dial would
-      # land on Int64::MAX % 65536.
-      wire.call("999999999999999999998").must_equal(65534)
+      # ...except when the cast to a C int leaves bit 31 set: getaddrinfo
+      # refuses the service with EAI_SERVICE and nothing is dialled, so these
+      # are NOT their 16-bit residues (measured against CPython 3.13's socket
+      # module, issue #1979).
+      wire.call("999999999999999999998").must_equal(0)
+      wire.call("2147483648").must_equal(0)
+      wire.call(Krikri.bigint_sentinel("999999999999999999999999")).must_equal(0)
+      # The low 32 bits decide, so one past 2**32 is port 1.
+      wire.call("4294967297").must_equal(1)
       # A negative port is never dialled (getaddrinfo's EAI_SERVICE); 0 is
       # the placeholder no socket ever accepts.
       wire.call("-5").must_equal(0)

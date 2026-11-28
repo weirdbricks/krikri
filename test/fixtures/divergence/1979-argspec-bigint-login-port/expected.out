@@ -1,0 +1,30 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_user with a BIGINT login_port] *************************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, "Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)")
+Origin: <WORK>/playbook.yml:14:7
+
+12   # check, which also runs before any socket exists.
+13   tasks:
+14     - name: mysql_user with a BIGINT login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, \"Can't connect to MySQL server on 'localhost' ([Errno -8] Servname not supported for ai_socktype)\")"}
+...ignoring
+
+TASK [mysql_user with a BIGINT connect_timeout] ********************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000
+Origin: <WORK>/playbook.yml:21:7
+
+19       ignore_errors: true
+20
+21     - name: mysql_user with a BIGINT connect_timeout
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=2   
+

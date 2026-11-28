@@ -110,4 +110,19 @@ describe "mysql_* login_port text Ansible's int conversion accepts (issue #1977)
     output.must_include("'1.5'")
     output.must_include("login_port must be a valid unix port number (0-65535)")
   end
+
+  # A YAML int past Int64 reaches the plugin marked
+  # (Krikri::BIGINT_SENTINEL_PREFIX). Real parses it as a Python int, which
+  # has no width, so the module runs and fails in its own wording (issue
+  # #1979). A 24-digit port's low 32 bits have bit 31 set, so getaddrinfo
+  # refuses the service and never dials; the connect_timeout arm pins
+  # PyMySQL's own range check, which also runs before any socket exists.
+  it "reads a marked bigint login_port and connect_timeout as real's int" do
+    bigint = Krikri.bigint_sentinel("999999999999999999999999")
+    msg = PluginSpecHelper.run("mysql_user", {"name" => "alice", "login_port" => bigint})["msg"].as_s
+    msg.ends_with?(EAI_SERVICE_TAIL).must_equal(true, msg)
+
+    msg = PluginSpecHelper.run("mysql_user", {"name" => "alice", "connect_timeout" => bigint})["msg"].as_s
+    msg.ends_with?("Exception message: connect_timeout should be >0 and <=31536000").must_equal(true, msg)
+  end
 end
