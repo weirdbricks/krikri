@@ -64,6 +64,7 @@ module Krikri
           NoSameOwnerRule.new,
           ComplexityRule.new,
           SanityRule.new,
+          GalaxyVersionIncorrectRule.new,
         ])
       end
 

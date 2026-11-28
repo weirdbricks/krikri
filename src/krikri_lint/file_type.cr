@@ -17,6 +17,10 @@ module Krikri
       # dedicated "meta-runtime" kind, so that rule sees it instead of
       # whatever a role's meta/ dir would give any other file.
       META_RUNTIME
+      # A collection's galaxy.yml. Upstream gives it a kind of its own
+      # because every galaxy rule gates on `file.kind == "galaxy"`, and
+      # because the playbook syntax check must never load it as a play.
+      GALAXY
       ROLE
       YAML
       # A collection's tests/sanity/ignore-*.txt. Plain text, never YAML.
@@ -64,6 +68,13 @@ module Krikri
         (name == "runtime.yml" || name == "runtime.yaml") && parts[-2] == "meta"
       end
 
+      # Upstream's `**/galaxy.yml` default pattern. Its only spelling is
+      # the .yml one: a galaxy.yaml falls through to the generic yaml
+      # assignment and is linted as a playbook there.
+      def self.galaxy_path?(path : String) : Bool
+        File.basename(path) == "galaxy.yml"
+      end
+
       # The role's directory name for a file under roles/<name>/..., nil
       # when the path is outside any roles/ directory. Upstream's
       # Lintable.role walks up to the innermost enclosing roles/ dir, so
@@ -94,6 +105,9 @@ module Krikri
         kinds.each do |entry|
           return from_kind_name(entry.kind) if File.match?(entry.pattern, absolute)
         end
+        # Upstream's galaxy pattern sits ahead of its role/vars/tasks ones,
+        # so a galaxy.yml keeps the galaxy kind even inside a role subdir.
+        return GALAXY if galaxy_path?(path)
         return SANITY_IGNORE if sanity_ignore_path?(path)
         return META_RUNTIME if meta_runtime_path?(path)
         parts = path.split('/')
@@ -108,9 +122,9 @@ module Krikri
       end
 
       # A kind name krikri has no dedicated rules for (upstream's text,
-      # python, inventory, galaxy, ... kinds, or a project's own name)
-      # runs nothing here: every rule distinguishes those kinds from the
-      # ones above, and krikri does not implement any of them.
+      # python, inventory, ... kinds, or a project's own name) runs
+      # nothing here: every rule distinguishes those kinds from the ones
+      # above, and krikri does not implement any of them.
       private def self.from_kind_name(name : String) : FileType
         case name
         when "playbook"           then PLAYBOOK
@@ -119,6 +133,7 @@ module Krikri
         when "vars"               then VARS
         when "meta"               then META
         when "meta-runtime"       then META_RUNTIME
+        when "galaxy"             then GALAXY
         when "role"               then ROLE
         when "yaml"               then YAML
         when "sanity-ignore-file" then SANITY_IGNORE
