@@ -1,3 +1,5 @@
+require "yaml"
+
 module Krikri
   module Lint
     # One entry from a project's `kinds:` config: a kind name and the
@@ -171,6 +173,30 @@ module Krikri
         # ones that then apply. Anything else matches no default pattern
         # and is unknown upstream.
         yaml_extension?(parts.last) ? PLAYBOOK : UNKNOWN
+      end
+
+      # Upstream's playbook kind patterns that need no content:
+      # `**/playbooks/*.{yml,yaml}` and `**/*playbook*.{yml,yaml}`.
+      def self.playbook_path?(path : String) : Bool
+        name = File.basename(path)
+        File.basename(File.dirname(path)) == "playbooks" ||
+          (name.includes?("playbook") && yaml_extension?(name))
+      end
+
+      # Upstream's kind guess for a lintable its path patterns left as the
+      # generic yaml kind (file_utils.py Lintable._guess_kind): a list
+      # whose first entry is a mapping naming hosts/import_playbook, and
+      # not a rulebook's `rules:` entry. krikri folds the generic yaml
+      # kind into PLAYBOOK, so this is what keeps a vars/tasks file from
+      # being validated as a playbook. (::YAML because this enum has a
+      # YAML member that would otherwise capture the lookup.)
+      def self.playbook_document?(root : ::YAML::Nodes::Node?) : Bool
+        sequence = root.as?(::YAML::Nodes::Sequence) || return false
+        first = sequence.nodes.first?.try(&.as?(::YAML::Nodes::Mapping)) || return false
+        return false if NodeUtil.entry(first, "rules")
+        !NodeUtil.entry(first, "hosts").nil? ||
+          !NodeUtil.entry(first, "import_playbook").nil? ||
+          !NodeUtil.entry(first, "ansible.builtin.import_playbook").nil?
       end
     end
   end
