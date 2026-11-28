@@ -1,0 +1,11 @@
+---
+# Issue #1967's failing task, taken from dotstrap.sensible's tasks/main.yml.
+# The role's `setup` include_vars task is dropped: its own fact read printed
+# the deprecation block BOTH engines agree on, and the shell-specific vars file
+# it loads depends on the running user's shell. The block below is the task
+# whose `when:` diverged.
+- hosts: localhost
+  connection: local
+  gather_facts: true
+  roles:
+    - dotstrap.sensible

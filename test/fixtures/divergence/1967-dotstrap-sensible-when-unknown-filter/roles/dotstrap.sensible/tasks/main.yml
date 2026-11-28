@@ -1,0 +1,16 @@
+---
+- block:
+  - name: bash/zsh | configure | aliases
+    blockinfile:
+      dest: "{{ sensible_config_file }}"
+      create: yes
+      backup: no
+      state: "{{ sensible_configure_state }}"
+      marker: "{{ sensible_marker }}"
+      block: "{{ sensible_config_block }}"
+  when: ansible_user_shell | match(".*\/(bash|zsh)")
+  tags:
+    - bootstrap
+    - bootstrap_sensible
+    - configure
+    - configure_sensible
