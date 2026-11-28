@@ -1,6 +1,7 @@
 require "./host"
 require "./passwords"
 require "./ansible_config"
+require "./admin_users"
 require "./connection_types"
 require "./ssm_settings"
 require "./run_options"
@@ -75,6 +76,10 @@ module Krikri
     # SSHManager, which also registers this value per connection spec so
     # its connection-less later calls reuse it; issue #1682).
     getter host_key_checking : Bool?
+    # ansible-core's `admin_users` shell option for this task - the list
+    # that decides whether _fixup_perms2 words a refused become-chown as
+    # its privileged-user failure (see AdminUsers).
+    getter admin_users : Array(String)
 
     # Every variable name that can change the actual SSH connection (or
     # its escalation) for a task. TaskBatcher solos any task whose own
@@ -128,7 +133,8 @@ module Krikri
                    @common_args : Array(String), @extra_args : Array(String),
                    @ssh_executable : String? = nil, @host_name : String = "",
                    @connection_type : String? = nil, @ssm : SsmSettings? = nil,
-                   @host_key_checking : Bool? = nil)
+                   @host_key_checking : Bool? = nil,
+                   @admin_users : Array(String) = AdminUsers::DEFAULT)
     end
 
     def self.resolve(host : Host, vars : Hash(String, JSON::Any)?) : ConnectionSettings
@@ -169,7 +175,8 @@ module Krikri
       host_key_checking = resolved_host_key_checking_var(vars, host)
       new(conn_host, user, port, identity_file, password, common_args, extra_args,
         executable_setting(vars, host), host.name, connection_type,
-        ssm_settings_for(host, vars, connection_type), host_key_checking)
+        ssm_settings_for(host, vars, connection_type), host_key_checking,
+        AdminUsers.resolve(vars, host.vars))
     end
 
     # The vars-layer host_key_checking of one connection: the deprecated

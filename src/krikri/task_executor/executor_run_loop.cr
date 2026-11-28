@@ -2868,12 +2868,12 @@ module Krikri
       script_results.each do |idx, step_result|
         step = steps[idx]
         become = !step.become_user.nil?
-        # ansible fails the task itself when the connection user is root
-        # and the become_user does not exist (see become_chown_failure_result);
+        # ansible fails the task itself when an admin connection user
+        # cannot chown to the become_user (see become_chown_failure_result);
         # the batch path must word it the same way the one-shot
         # PluginManager path does, before the generic parse gets a look in.
         failure = if PluginManager.become_needed?(become, step.become_user, conn.become_baseline_user)
-                    PluginManager.become_chown_failure_result(step_result.exit_code, step_result.stderr, step.become_user, conn.become_baseline_user)
+                    PluginManager.become_chown_failure_result(step_result.exit_code, step_result.stderr, step.become_user, conn.become_baseline_user, conn.admin_users)
                   end
         interpreted[idx] = failure || PluginManager.interpret_remote_result(step_result.exit_code, step_result.stdout, step_result.stderr)
       end
