@@ -32,6 +32,33 @@ module Krikri
         end
       end
 
+      # The schema[playbook] wording: jsonschema's own message for the
+      # keyword, prefixed with its json_path. Upstream then appends the
+      # documentation URL the failing schema (or the schema root) carries
+      # in its description/markdownDescription, when there is one.
+      def upstream_message(error : JsonSchema::UpstreamError, root : JSON::Any) : String
+        message = "#{error.json_path} #{error.message}"
+        return message unless url = documentation_url(error.clause, root)
+        message += "." unless message.ends_with?('.')
+        message + " See #{url}"
+      end
+
+      # ansiblelint.schemas.main.RE_MD_URLS: a markdown link target, else
+      # the first bare http(s) URL.
+      DOCUMENTATION_URL = /\[.{0,256}?\]\((https?:\/\/[^\s]+)\)|(https?:\/\/[^\s]+)/
+
+      private def documentation_url(clause : JSON::Any, root : JSON::Any) : String?
+        {clause, root}.each do |schema|
+          obj = schema.as_h? || next
+          {"description", "markdownDescription"}.each do |key|
+            text = obj[key]?.try(&.as_s?) || next
+            match = DOCUMENTATION_URL.match(text) || next
+            return match[1]? || match[2]?
+          end
+        end
+        nil
+      end
+
       # The YAML tree as the JSON value jsonschema would see: pyyaml's
       # safe loader resolves plain scalars by their YAML 1.1 types, which
       # matters for booleans and for a version: 1.0 scalar that must
@@ -55,20 +82,27 @@ module Krikri
         end
       end
 
+      # PyYAML's YAML 1.1 implicit resolvers for the types a schema can
+      # observe: the whole-word bool spellings (a bare y/n stays a string)
+      # and the null forms.
+      TRUE_SCALARS = Set{
+        "yes", "Yes", "YES", "true", "True", "TRUE", "on", "On", "ON",
+      }
+      FALSE_SCALARS = Set{
+        "no", "No", "NO", "false", "False", "FALSE", "off", "Off", "OFF",
+      }
+      NULL_SCALARS = Set{"~", "null", "Null", "NULL", ""}
+
       private def scalar_to_json(node : YAML::Nodes::Scalar) : JSON::Any
         value = node.value || ""
-        case node.style
-        when YAML::ScalarStyle::PLAIN
-          case value
-          when "true", "True", "yes", "on"   then return JSON::Any.new(true)
-          when "false", "False", "no", "off" then return JSON::Any.new(false)
-          when "null", "Null", "~", ""       then return JSON::Any.new(nil)
-          else
-            if value.matches?(/^-?\d+$/)
-              return JSON::Any.new(value.to_i64)
-            elsif value.matches?(/^-?\d*\.\d+$/)
-              return JSON::Any.new(value.to_f64)
-            end
+        if node.style == YAML::ScalarStyle::PLAIN
+          return JSON::Any.new(true) if TRUE_SCALARS.includes?(value)
+          return JSON::Any.new(false) if FALSE_SCALARS.includes?(value)
+          return JSON::Any.new(nil) if NULL_SCALARS.includes?(value)
+          if value.matches?(/^-?\d+$/)
+            return JSON::Any.new(value.to_i64)
+          elsif value.matches?(/^-?\d*\.\d+$/)
+            return JSON::Any.new(value.to_f64)
           end
         end
         JSON::Any.new(value)

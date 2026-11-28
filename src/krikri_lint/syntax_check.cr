@@ -221,20 +221,7 @@ module Krikri
       # rulebook instead). Only playbook-kind lintables get a syntax
       # check of their own.
       private def playbook_kind?(file : PositionedFile) : Bool
-        return true if playbook_path?(file.path)
-        root = file.root.as?(YAML::Nodes::Sequence) || return false
-        first = root.nodes.first?.try(&.as?(YAML::Nodes::Mapping)) || return false
-        return false if NodeUtil.entry(first, "rules")
-        !NodeUtil.entry(first, "hosts").nil? ||
-          !NodeUtil.entry(first, "import_playbook").nil? ||
-          !NodeUtil.entry(first, "ansible.builtin.import_playbook").nil?
-      end
-
-      private def playbook_path?(path : String) : Bool
-        name = File.basename(path)
-        File.basename(File.dirname(path)) == "playbooks" ||
-          (name.includes?("playbook") && name.ends_with?(".yml")) ||
-          (name.includes?("playbook") && name.ends_with?(".yaml"))
+        FileType.playbook_path?(file.path) || FileType.playbook_document?(file.root)
       end
 
       # The canonical role directory a file lives in (…/roles/<name>/),
