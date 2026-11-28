@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: say hi locally via dict local_action
+      local_action:
+        module: debug
+        msg: hello-dict
+    - name: say hi locally via string local_action
+      local_action: debug msg=hello-string

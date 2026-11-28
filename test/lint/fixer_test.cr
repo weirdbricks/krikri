@@ -245,6 +245,22 @@ module Krikri::Lint
       fixed.must_equal("---\n- name: p\n  hosts: all\n  tasks:\n    - name: t\n      ansible.builtin.command: echo hi\n      changed_when: false\n")
     end
 
+    # The violation for an aliased action sits on the alias value, which
+    # may open with a quote before the module token.
+    it "fqcn[action-core] rewrites a quoted action alias's module token" do
+      fix_plain_yaml(
+        "---\n- name: p\n  hosts: all\n  tasks:\n    - name: t\n      local_action: \"debug msg=hi\"\n",
+        FqcnActionCoreRule.new
+      ).must_equal("---\n- name: p\n  hosts: all\n  tasks:\n    - name: t\n      local_action: \"ansible.builtin.debug msg=hi\"\n")
+    end
+
+    it "fqcn[action-core] rewrites a mapping alias's module value" do
+      fix_plain_yaml(
+        "---\n- name: p\n  hosts: all\n  tasks:\n    - name: t\n      local_action:\n        module: debug\n        msg: hi\n",
+        FqcnActionCoreRule.new
+      ).must_equal("---\n- name: p\n  hosts: all\n  tasks:\n    - name: t\n      local_action:\n        module: ansible.builtin.debug\n        msg: hi\n")
+    end
+
     it "yaml[trailing-spaces] strips trailing whitespace including blank-only lines" do
       fix_plain_yaml(
         "---\n- name: t  \n  hosts: all\n  \n  vars:\n    msg: hello   \n",

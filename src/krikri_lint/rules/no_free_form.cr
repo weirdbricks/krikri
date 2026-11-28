@@ -65,6 +65,11 @@ module Krikri
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
           next if INCLUSION_ACTIONS.includes?(task.module_name)
+          # Upstream reads the free form from `task["__raw_task__"]` under
+          # the RESOLVED action name, which an `action:`/`local_action:`
+          # task never carries as a key, so an alias's value is never
+          # seen as a free-form module call.
+          next if task.alias_action?
           next unless (value = task.action_node).is_a?(YAML::Nodes::Scalar)
           raw = value.value
           next unless raw && raw.includes?("=")
