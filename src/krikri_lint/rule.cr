@@ -1,6 +1,11 @@
 module Krikri
   module Lint
     abstract class Rule
+      # Project configuration, assigned by the Runner before any check:
+      # a rule that reads a `.ansible-lint` option (loop_var_prefix)
+      # must see the run's config, not a fresh default.
+      property config : LintConfig = LintConfig.new
+
       abstract def id : String
       abstract def severity : Severity
       abstract def tags : Array(String)

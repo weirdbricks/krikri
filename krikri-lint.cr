@@ -186,7 +186,8 @@ module Krikri::Lint
       end
       config = LintConfig.new(config.skip_list, config.warn_list,
         config.enable_list, config.tags, config.exclude_paths, p,
-        config.config_dir, config.file_warn_list, config.kinds)
+        config.config_dir, config.file_warn_list, config.kinds,
+        config.loop_var_prefix)
     end
     # Upstream's merge_config: a --warn-list on the command line extends
     # the config file's own list; with no file list, the CLI list
@@ -199,7 +200,7 @@ module Krikri::Lint
     config = LintConfig.new(config.skip_list + cli_skip, warn_list,
       config.enable_list + cli_enable, config.tags + cli_tags,
       config.exclude_paths, config.profile, config.config_dir,
-      config.file_warn_list, config.kinds)
+      config.file_warn_list, config.kinds, config.loop_var_prefix)
 
     if (write_list = cli_fix) && (unknown = unknown_fix_tags(registry, write_list))
       STDERR.puts "krikri-lint: Found invalid value(s) (#{unknown}) for --fix arguments, must be one of: all, none, #{(registry.rules.flat_map(&.tags) + registry.rules.map(&.id)).uniq.join(", ")}"

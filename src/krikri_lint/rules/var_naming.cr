@@ -75,7 +75,7 @@ module Krikri
           # "vars") like vars files: full checks on the top-level keys,
           # with the role's directory name as the expected prefix
           # (var-naming[no-role-prefix]).
-          prefix, from_fqcn = role_prefix(file.path)
+          prefix, from_fqcn = FileType.role_name(file.path), false
           NodeUtil.each_entry(mapping) do |k, _|
             next unless key = k.as?(YAML::Nodes::Scalar).try(&.value)
             check_ident(violations, file, key, line: NodeUtil.line(k),
@@ -191,15 +191,6 @@ module Krikri
         else
           {fqcn.split("/").last, false}
         end
-      end
-
-      # The role's directory name for a file under roles/<name>/...;
-      # nil outside any roles/ directory.
-      private def role_prefix(path : String) : {String?, Bool}
-        parts = path.split('/')
-        idx = parts.rindex("roles") || return {nil, false}
-        role = parts[idx + 1]? || return {nil, false}
-        {role, false}
       end
 
       private def check_ident(violations : Array(Violation), file : PositionedFile, ident : String, line : Int32,

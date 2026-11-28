@@ -15,6 +15,10 @@ module Krikri
       # Project-declared kind assignments, in file order. Upstream
       # prepends them to its default patterns, so the first match wins.
       getter kinds : Array(KindPattern)
+      # Opt-in regex a role loop's loop_control.loop_var must match, with
+      # `{role}` standing for the role's toidentifier'd name. nil (the
+      # upstream default) disables loop-var-prefix entirely.
+      getter loop_var_prefix : String?
       # The warn_list a config file defined, nil when it had none (and
       # the defaults stand); lets the CLI merge reproduce upstream's
       # "CLI list, extended with the file's" behavior exactly.
@@ -33,7 +37,8 @@ module Krikri
                      @exclude_paths = [] of String, @profile = "production",
                      @config_dir = ".",
                      @file_warn_list : Array(String)? = nil,
-                     @kinds = [] of KindPattern)
+                     @kinds = [] of KindPattern,
+                     @loop_var_prefix : String? = nil)
       end
 
       # Excluded paths are dropped before linting, so they are neither
@@ -78,37 +83,22 @@ module Krikri
       end
 
       private def self.apply_config(data : Hash(YAML::Any, YAML::Any), dir : String) : LintConfig
-        config = LintConfig.new(config_dir: dir)
-        if (v = data["exclude_paths"]?) && v.as_a?
-          config = LintConfig.new(config.skip_list, config.warn_list,
-            config.enable_list, config.tags,
-            v.as_a.map(&.as_s), config.profile, config.config_dir,
-            config.file_warn_list, config.kinds)
-        end
-        if (v = data["skip_list"]?) && v.as_a?
-          config = LintConfig.new(v.as_a.map(&.as_s), config.warn_list,
-            config.enable_list, config.tags, config.exclude_paths,
-            config.profile, config.config_dir, config.file_warn_list,
-            config.kinds)
-        end
-        if (v = data["warn_list"]?) && v.as_a?
-          list = v.as_a.map(&.as_s)
-          config = LintConfig.new(config.skip_list, list,
-            config.enable_list, config.tags, config.exclude_paths,
-            config.profile, config.config_dir, list, config.kinds)
-        end
-        if (v = data["profile"]?) && v.as_s?
-          config = LintConfig.new(config.skip_list, config.warn_list,
-            config.enable_list, config.tags, config.exclude_paths,
-            v.as_s, config.config_dir, config.file_warn_list, config.kinds)
-        end
-        if (v = data["kinds"]?) && v.as_a?
-          config = LintConfig.new(config.skip_list, config.warn_list,
-            config.enable_list, config.tags, config.exclude_paths,
-            config.profile, config.config_dir, config.file_warn_list,
-            parse_kinds(v.as_a))
-        end
-        config
+        # A config file's own warn_list replaces the defaults wholesale,
+        # and file_warn_list keeps it so the CLI merge can extend it.
+        file_warn_list = string_list(data["warn_list"]?)
+        LintConfig.new(
+          skip_list: string_list(data["skip_list"]?) || [] of String,
+          warn_list: file_warn_list || DEFAULT_WARN_LIST.dup,
+          exclude_paths: string_list(data["exclude_paths"]?) || [] of String,
+          profile: data["profile"]?.try(&.as_s?) || "production",
+          config_dir: dir,
+          file_warn_list: file_warn_list,
+          kinds: data["kinds"]?.try(&.as_a?).try { |list| parse_kinds(list) } || [] of KindPattern,
+          loop_var_prefix: data["loop_var_prefix"]?.try(&.as_s?))
+      end
+
+      private def self.string_list(value : YAML::Any?) : Array(String)?
+        value.try(&.as_a?).try(&.map(&.as_s))
       end
 
       # `kinds:` is a list of one-entry mappings (upstream's shape):

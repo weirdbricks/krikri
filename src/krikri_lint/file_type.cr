@@ -64,6 +64,16 @@ module Krikri
         (name == "runtime.yml" || name == "runtime.yaml") && parts[-2] == "meta"
       end
 
+      # The role's directory name for a file under roles/<name>/..., nil
+      # when the path is outside any roles/ directory. Upstream's
+      # Lintable.role walks up to the innermost enclosing roles/ dir, so
+      # a nested roles/ tree reports the innermost role.
+      def self.role_name(path : String) : String?
+        parts = path.split('/')
+        idx = parts.rindex("roles") || return nil
+        parts[idx + 1]?
+      end
+
       # Upstream's BASE_KINDS assign text/yaml from the name alone: the
       # yaml extensions plus the two config-file names. The base kind,
       # not the kind, decides whether yaml/task rules run.
