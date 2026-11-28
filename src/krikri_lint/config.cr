@@ -82,23 +82,32 @@ module Krikri
         end
       end
 
+      # Each recognized key is applied once, over the struct's own
+      # defaults: upstream's config reader only touches the keys a file
+      # actually carries, so an absent key keeps its default.
       private def self.apply_config(data : Hash(YAML::Any, YAML::Any), dir : String) : LintConfig
-        # A config file's own warn_list replaces the defaults wholesale,
-        # and file_warn_list keeps it so the CLI merge can extend it.
-        file_warn_list = string_list(data["warn_list"]?)
+        warn_list = string_list(data, "warn_list")
         LintConfig.new(
-          skip_list: string_list(data["skip_list"]?) || [] of String,
-          warn_list: file_warn_list || DEFAULT_WARN_LIST.dup,
-          exclude_paths: string_list(data["exclude_paths"]?) || [] of String,
-          profile: data["profile"]?.try(&.as_s?) || "production",
+          skip_list: string_list(data, "skip_list") || [] of String,
+          warn_list: warn_list || DEFAULT_WARN_LIST.dup,
+          exclude_paths: string_list(data, "exclude_paths") || [] of String,
+          profile: string_value(data, "profile") || "production",
           config_dir: dir,
-          file_warn_list: file_warn_list,
-          kinds: data["kinds"]?.try(&.as_a?).try { |list| parse_kinds(list) } || [] of KindPattern,
-          loop_var_prefix: data["loop_var_prefix"]?.try(&.as_s?))
+          file_warn_list: warn_list,
+          kinds: kind_patterns(data),
+          loop_var_prefix: string_value(data, "loop_var_prefix"))
       end
 
-      private def self.string_list(value : YAML::Any?) : Array(String)?
-        value.try(&.as_a?).try(&.map(&.as_s))
+      private def self.string_list(data : Hash(YAML::Any, YAML::Any), key : String) : Array(String)?
+        data[key]?.try(&.as_a?).try(&.map(&.as_s))
+      end
+
+      private def self.string_value(data : Hash(YAML::Any, YAML::Any), key : String) : String?
+        data[key]?.try(&.as_s?)
+      end
+
+      private def self.kind_patterns(data : Hash(YAML::Any, YAML::Any)) : Array(KindPattern)
+        data["kinds"]?.try(&.as_a?).try { |list| parse_kinds(list) } || [] of KindPattern
       end
 
       # `kinds:` is a list of one-entry mappings (upstream's shape):

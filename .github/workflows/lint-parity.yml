@@ -57,7 +57,14 @@ jobs:
         # catalogue diff while any upstream rule is still missing (issue
         # #1930); the report is what matters, so don't fail the job on it.
         run: |
-          python3 testing/lint/parity.py | tee parity-report.txt
+          # `|| true` keeps the report-producing commands from aborting the
+          # step (the shell runs with -e): both are expected to exit 1 while
+          # upstream ids are still missing.
+          python3 testing/lint/parity.py | tee parity-report.txt || true
+          # A case that carries its own .ansible-lint is only compared when
+          # its directory is named explicitly, since the walk above lints
+          # with the repository's own config discovery.
+          python3 testing/lint/parity.py testing/lint/cases/loop-var-prefix | tee -a parity-report.txt || true
           echo "Parity report written (exit code ignored; triage the report)."
 
       - name: Upload report

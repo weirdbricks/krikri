@@ -1,5 +1,9 @@
-# loop-var-prefix is disabled unless a project opts in with this regex,
-# so the fixture has to carry its own config and be linted explicitly
-# (the harness passes the nearest .ansible-lint as -c):
-#   testing/lint/parity.py testing/lint/cases/loop-var-prefix/roles
+---
+# loop-var-prefix only fires for tasks inside a role and only when the
+# project sets loop_var_prefix (upstream leaves the rule disabled by
+# default), so this case carries its own config. Lint the case directory
+# explicitly so the harness picks it up:
+#   testing/lint/parity.py testing/lint/cases/loop-var-prefix
+# Both arms live here: an unprefixed loop_control.loop_var ([wrong]) and
+# an implicit-`item` loop ([missing]).
 loop_var_prefix: "^(__|{role}_)"

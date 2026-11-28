@@ -6,7 +6,6 @@ module Krikri
 
       def initialize(@registry, @config = LintConfig.new,
                      @syntax_check : SyntaxCheck? = nil)
-        @registry.rules.each { |rule| rule.config = @config }
       end
 
       def run(paths : Array(String), targets : Array(String) = paths,
@@ -14,6 +13,9 @@ module Krikri
               explicit : Set(String)? = nil) : Array(Violation)
         rules = active_rules
         return [] of Violation if rules.empty?
+        # Rules that read a config key (loop-var-prefix's
+        # `loop_var_prefix`) get this run's config before any check.
+        rules.each { |rule| rule.config = @config }
 
         violations = [] of Violation
         noqa_maps = {} of String => Hash(Int32, Noqa::Entry)

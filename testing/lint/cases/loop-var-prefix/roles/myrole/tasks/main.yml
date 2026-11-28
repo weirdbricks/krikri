@@ -8,6 +8,13 @@
   loop_control:
     loop_var: my_item
 
+- name: Loop over values without a loop_var
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop:
+    - one
+    - two
+
 - name: Loop over values with the role's loop_var prefix
   ansible.builtin.debug:
     msg: "{{ myrole_item }}"
