@@ -1,0 +1,19 @@
+---
+# Issue #1971: kevinmagni.zabbix_agent2's "Install Zabbix Agent 2 and
+# plugins" task, from its tasks/ubuntu.yml verbatim except for the
+# wildcard name. Real apt.py fnmatches any NAME carrying `*?[]!`
+# against the apt cache and installs each match, so on a host whose
+# repos carry the plugin packages `zabbix-agent2-plugin-*` installs
+# them. That repo is not on this box, so the same expansion is pinned
+# with fnmatch's bracket class over a package every Debian host already
+# has: one match, already installed, no apt-get call at all.
+- name: Install Zabbix Agent 2 and plugins
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Install Zabbix Agent 2 and plugins
+      ansible.builtin.apt:
+        name:
+          - bash
+          - "[b]ash"
+        state: present

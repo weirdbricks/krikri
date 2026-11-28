@@ -1265,6 +1265,103 @@ module Krikri
       end
     end
 
+    # apt.py's expand_pkgspec_from_fnmatches, which every install/remove
+    # path runs over its specs before resolving anything: a NAME carrying
+    # any of `*?[]!` is fnmatched against the apt cache's own package
+    # names, and each match is acted on in its place. A role's
+    # `name: zabbix-agent2-plugin-*` therefore installs every plugin
+    # package the configured repos carry. This engine used to look the
+    # raw pattern up as a literal package name and fail the task with
+    # "No package(s) matching ... available" where Ansible installed the
+    # matches (kevinmagni.zabbix_agent2, issue #1971). A pattern that
+    # matches nothing IS that same plural failure, and it fires before
+    # any apt-get call - real fails it inside install()/remove().
+    private def expand_package_globs(packages : Array(String)) : PluginResult | Array(String)
+      expanded = [] of String
+      packages.each do |spec|
+        base_name, _pinned_version = split_name_version(spec)
+        unless base_name.matches?(/[*?\[\]!]/)
+          expanded << spec
+          next
+        end
+        matches = apt_cache_names_matching(base_name)
+        if matches.empty?
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: no_package_msg(base_name)
+          )
+        end
+        # Real's fnmatch.filter collects bare names out of the cache and
+        # extends the spec list with those - a `=version` pin on the
+        # pattern is dropped, never re-applied to the matches.
+        expanded.concat(matches)
+      end
+      expanded
+    end
+
+    # apt.py's fnmatch target: python-apt's cache keys. `apt-cache
+    # pkgnames` is the same cache's name listing, in the cache's own
+    # (sorted) order, and `--all-names` keeps the purely virtual names
+    # python-apt's iteration also yields. Real excludes every
+    # arch-qualified name (`pkg:arch`) unless the pattern itself carries
+    # a `:arch`, so `apt*` can only select native packages while
+    # `apt*:i386` still works.
+    private def apt_cache_names_matching(pattern : String) : Array(String)
+      probe = remote_exec("apt-cache pkgnames --all-names")
+      return [] of String if probe[:exit_code] != 0
+      regex = Regex.new("\\A#{apt_glob_regex_source(pattern)}\\z")
+      names = [] of String
+      probe[:stdout].to_s.each_line do |line|
+        name = line.strip
+        next if name.empty?
+        next if !pattern.includes?(':') && name.includes?(':')
+        names << name if name.matches?(regex)
+      end
+      names
+    end
+
+    # Python fnmatch.translate for the apt name match: `*`, `?` and a
+    # bracketed class are the only specials (a leading `!` inside the
+    # brackets negates it, as in shell), everything else is literal -
+    # `!` outside a class included.
+    private def apt_glob_regex_source(pattern : String) : String
+      String.build do |out_io|
+        i = 0
+        while i < pattern.size
+          char = pattern[i]
+          case char
+          when '*'
+            out_io << ".*"
+            i += 1
+          when '?'
+            out_io << "."
+            i += 1
+          when '['
+            close = pattern.index(']', i + 1)
+            body = close ? pattern[(i + 1)...close] : ""
+            # An empty (`[]`) or negated-but-empty (`[!]`) class is not
+            # a class at all in fnmatch - the bracket is literal there.
+            if close && !body.empty? && body != "!"
+              if body.starts_with?('!')
+                out_io << "[^" << body.lchop('!')
+              else
+                out_io << '[' << body
+              end
+              out_io << ']'
+              i = close + 1
+            else
+              out_io << "\\["
+              i += 1
+            end
+          else
+            out_io << Regex.escape(char.to_s)
+            i += 1
+          end
+        end
+      end
+    end
+
     # Ansible's apt module supports real apt's own `name=version`
     # pinning syntax (e.g. `rabbitmq-server={{ rabbitmq_version }}-1`,
     # geerlingguy.rabbitmq's own install task) - `dpkg -l` doesn't
@@ -1520,6 +1617,21 @@ module Krikri
     # defaults) while fail_on_autoremove and the allow_* flags still
     # travel through.
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32, build_dep : Bool = false, fixed_state : Bool = false, deb_deps : Bool = false) : PluginResult
+      # Real apt.py's main() drops a bare `*` from the name list for
+      # every state but latest's own upgrade-all path, where "*" is its
+      # "upgrade everything" spelling rather than a package pattern - so
+      # `state: present`/`build-dep`/`fixed` with `name: "*"` is a
+      # no-package no-op there (live-verified vs ansible-playbook
+      # 2.21.6: ok, changed=0).
+      packages = packages.reject { |pkg| pkg.strip == "*" }
+
+      # Real install() expands glob names against the apt cache before
+      # anything else, so a role's wildcard name list (and its no-match
+      # failure) lands here first.
+      expanded = expand_package_globs(packages)
+      return expanded if expanded.is_a?(PluginResult)
+      packages = expanded
+
       # An empty package name (from `name: ""` or an empty comma
       # segment - parse_package_names keeps those now) is a hard failure
       # in Ansible's apt module, same as any other name missing
@@ -1884,6 +1996,20 @@ module Krikri
 
     # Handle removing packages
     private def handle_remove(packages : Array(String), lock_timeout : Int32) : PluginResult
+      # Real main() drops a bare `*` from the name list for every state
+      # but latest's own upgrade-all path - `state: absent` with
+      # `name: "*"` is a no-package no-op there (live-verified vs
+      # ansible-playbook 2.21.6: ok, changed=0), never a remove of the
+      # whole archive.
+      packages = packages.reject { |pkg| pkg.strip == "*" }
+
+      # Real remove() runs the same cache expansion as install(), so
+      # `state: absent` with a wildcard name removes every cache match -
+      # and fails the plural no-match message for a pattern with none.
+      expanded = expand_package_globs(packages)
+      return expanded if expanded.is_a?(PluginResult)
+      packages = expanded
+
       to_remove = [] of String
 
       # Check which packages need removal - state: absent removes by
@@ -2084,6 +2210,12 @@ module Krikri
 
     # Handle upgrading packages to latest
     private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
+      # state: latest flows through real install() too, so a wildcard
+      # name is expanded into the cache's matches before any resolution.
+      expanded = expand_package_globs(packages)
+      return expanded if expanded.is_a?(PluginResult)
+      packages = expanded
+
       # Same empty-name hard failure Ansible's apt module produces
       # for state: latest as for state: present (live-verified, see
       # handle_install's guard) - only handle_remove's absent path
