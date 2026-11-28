@@ -1,0 +1,45 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [bmeme.percona_xtradb_cluster : IPs assertions] ***************************
+included: <WORK>/roles/bmeme.percona_xtradb_cluster/tasks/ip.yml for localhost
+
+TASK [bmeme.percona_xtradb_cluster : assert | set multiple facts when clustering] ***
+ok: [localhost]
+
+TASK [bmeme.percona_xtradb_cluster : ip addr | set fact for all ip addressess] ***
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'all_ips': object of type 'HostVarsVars' has no attribute 'percona_cluster'
+
+Task failed.
+Origin: <WORK>/roles/bmeme.percona_xtradb_cluster/tasks/ip.yml:11:3
+
+ 9     #   {{ 'percona-xtradb-cluster-garbd' in ansible_facts.packages }}
+10
+11 - name: ip addr | set fact for all ip addressess
+     ^ column 3
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.set_fact' failed.
+Origin: <WORK>/roles/bmeme.percona_xtradb_cluster/tasks/ip.yml:12:3
+
+10
+11 - name: ip addr | set fact for all ip addressess
+12   ansible.builtin.set_fact:
+     ^ column 3
+
+<<< caused by >>>
+
+Error while resolving value for 'all_ips': object of type 'HostVarsVars' has no attribute 'percona_cluster'
+Origin: <WORK>/roles/bmeme.percona_xtradb_cluster/tasks/ip.yml:13:14
+
+11 - name: ip addr | set fact for all ip addressess
+12   ansible.builtin.set_fact:
+13     all_ips: >-
+                ^ column 14
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.set_fact' failed: Error while resolving value for 'all_ips': object of type 'HostVarsVars' has no attribute 'percona_cluster'"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

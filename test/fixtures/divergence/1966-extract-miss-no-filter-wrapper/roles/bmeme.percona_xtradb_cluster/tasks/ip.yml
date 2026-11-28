@@ -1,0 +1,71 @@
+---
+# @see https://github.com/csuka/ansible_role_percona_xtradb_cluster
+
+- name: assert | set multiple facts when clustering
+  ansible.builtin.set_fact:
+    bootstrapper: "{{ percona_cluster.bootstrapper }}"
+    arbiter: "{{ percona_cluster.role == 'arbiter' }}"
+    # arbiter_installed: >-
+    #   {{ 'percona-xtradb-cluster-garbd' in ansible_facts.packages }}
+
+- name: ip addr | set fact for all ip addressess
+  ansible.builtin.set_fact:
+    all_ips: >-
+      {{ ansible_play_hosts |
+      map('extract', hostvars, ['percona_cluster', 'ip_address']) |
+      join(',') }}
+
+- name: ip addr | convert all ip addressess fact to a list
+  ansible.builtin.set_fact:
+    all_ip_list: "{{ all_ips.split(',') }}"
+
+- name: ip addr | lookup arbiter ip and set fact to list
+  ansible.builtin.set_fact:
+    arbiter_ip: "{{ item.value.split() }}"
+  loop: "{{ lookup('dict', percona_cluster) }}"
+  when:
+    - "'ip_address' in item.key"
+    - arbiter
+
+- name: ip addr | difference the two lists on the arbiter
+  ansible.builtin.set_fact:
+    ip_without_arbiter: "{{ all_ip_list | difference(arbiter_ip) }}"
+  when: arbiter
+
+- name: ip addr | set fact for dynamic host variable sharing
+  ansible.builtin.set_fact:
+    run_on: "{{ item }}"
+  with_items: "{{ inventory_hostname }}"
+  when: run_on is undefined and hostvars[item].arbiter
+  run_once: true
+
+- name: ip addr | ensure all hosts have the same var when arbiter is present
+  ansible.builtin.set_fact:
+    ip_without_arbiter: "{{ hostvars[run_on]['ip_without_arbiter'] }}"
+  when: run_on is defined
+
+- name: ip addr | ensure all hosts have the same variable when arbiter is absent
+  ansible.builtin.set_fact:
+    ip_without_arbiter: "{{ all_ips.split(',') }}"
+  when: run_on is undefined
+
+- name: ip addr | determine bootstrap host
+  ansible.builtin.set_fact:
+    pxc_bootstrap_host: "{{ item }}"
+  loop: "{{ ansible_play_hosts_all }}"
+  when: >
+    (
+      hostvars[item].percona_cluster is defined and
+      (hostvars[item].percona_cluster.bootstrapper | default(false) | bool)
+    )
+    or
+    (hostvars[item].bootstrapper | default(false) | bool)
+  run_once: true
+  delegate_to: localhost
+
+- name: Fail if no bootstrap host was found
+  ansible.builtin.fail:
+    msg: "Cannot determine pxc_bootstrap_host (no host with bootstrapper=true)."
+  when: pxc_bootstrap_host is not defined
+  run_once: true
+  delegate_to: localhost
