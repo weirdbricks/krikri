@@ -1,0 +1,17 @@
+
+PLAY [Install Zabbix Agent 2 and plugins] **************************************
+
+TASK [Install Zabbix Agent 2 and plugins] **************************************
+[ERROR]: Task failed: Module failed: No package(s) matching 'vim-gnome*' available
+Origin: <WORK>/playbook.yml:20:7
+
+18   gather_facts: false
+19   tasks:
+20     - name: Install Zabbix Agent 2 and plugins
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "No package(s) matching 'vim-gnome*' available"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+

@@ -18,25 +18,39 @@ private def with_apt_glob_expansion_shims(dpkg_installed : String = "", &)
   Dir.mkdir_p(dir)
 
   # `apt-cache pkgnames --all-names` is the expansion probe; `policy` then
-  # answers the per-name candidate resolution the install path runs for
-  # every match. The arch-qualified name stands for the multiarch entries
-  # real filters out of its fnmatch cache unless the pattern carries one.
+  # answers both the cache-membership filter (a purely virtual name has no
+  # Version table rows) and the per-name candidate resolution the install
+  # path runs for every match. The arch-qualified name stands for the
+  # multiarch entries real filters out of its fnmatch cache unless the
+  # pattern carries one; `krikri-glob-virtual` stands for a name the cache
+  # only references (trixie's vim-gnome) that real's fnmatch never yields.
   File.write(File.join(dir, "apt-cache"), <<-SHIM)
     #!/bin/sh
     if [ "$1" = pkgnames ]; then
       echo "krikri-glob-one"
       echo "krikri-glob-two"
       echo "krikri-glob-two:i386"
+      echo "krikri-glob-virtual"
       echo "krikri-unrelated"
     elif [ "$1" = policy ]; then
-      case "$2" in
-        krikri-glob-one|krikri-glob-two)
-          echo "$2:"
-          echo "  Installed: (none)"
-          echo "  Candidate: 1.0"
-          echo "  Version table:"
-          ;;
-      esac
+      shift
+      for name in "$@"; do
+        case "$name" in
+          krikri-glob-one|krikri-glob-two)
+            echo "$name:"
+            echo "  Installed: (none)"
+            echo "  Candidate: 1.0"
+            echo "  Version table:"
+            echo "     1.0 500"
+            ;;
+          krikri-glob-virtual)
+            echo "$name:"
+            echo "  Installed: (none)"
+            echo "  Candidate: (none)"
+            echo "  Version table:"
+            ;;
+        esac
+      done
     fi
     exit 0
     SHIM
@@ -111,6 +125,39 @@ describe "apt wildcard name expansion (issue 1971)" do
       calls.must_include(" remove ")
       calls.must_include("krikri-glob-two")
       calls.includes?("krikri-glob-one").must_equal(false)
+    end
+  end
+
+  # Issue #1974: `apt-cache pkgnames --all-names` lists names the cache only
+  # REFERENCES (trixie's vim-gnome lives only in gtimelog's Depends:), and
+  # real's fnmatch over python-apt's cache never yields those. Expanding to
+  # one made a check-mode role task fail "No package matching 'vim-gnome' is
+  # available" where ansible installed the pattern's real matches.
+  it "leaves out a wildcard match the cache only references" do
+    with_apt_glob_expansion_shims do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "krikri-glob-*",
+        "state"        => "present",
+        "_environment" => env,
+      })
+
+      result["failed"]?.nil?.must_equal(true)
+      calls = File.read(log)
+      calls.includes?("krikri-glob-virtual").must_equal(false)
+    end
+  end
+
+  it "fails a wildcard whose only cache matches are names the cache only references" do
+    with_apt_glob_expansion_shims do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "krikri-glob-v*",
+        "state"        => "present",
+        "_environment" => env,
+      })
+
+      result["failed"]?.try(&.as_bool).must_equal(true)
+      result["msg"].as_s.must_equal("No package(s) matching 'krikri-glob-v*' available")
+      File.exists?(log).must_equal(false)
     end
   end
 
