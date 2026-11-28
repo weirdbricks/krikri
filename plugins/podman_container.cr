@@ -368,12 +368,6 @@ module Krikri
       nil
     end
 
-    # check_type_int on the wire's string form: Python int() accepts
-    # optional sign/whitespace and nothing else.
-    private def int_convertible?(raw : String) : Bool
-      !!raw.strip.match(/^[+-]?\d+$/)
-    end
-
     private def check_suboption_dict_type(param : String, raw : String) : PluginResult?
       case value = (JSON.parse(raw) rescue nil).try(&.raw)
       when Hash

@@ -1,0 +1,54 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [apt update_cache with a BIGINT] ******************************************
+[ERROR]: Task failed: Module failed: argument 'update_cache' is of type int and we were unable to convert to bool: The value '999999999999999999999999' is not a valid boolean. Valid booleans include: '0', '1', 'f', 'false', 'n', 'no', 'off', 'on', 't', 'true', 'y', 'yes', 0, 1
+Origin: <WORK>/playbook.yml:10:7
+
+ 8   # package, socket or file is ever touched.
+ 9   tasks:
+10     - name: apt update_cache with a BIGINT
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "argument 'update_cache' is of type int and we were unable to convert to bool: The value '999999999999999999999999' is not a valid boolean. Valid booleans include: '0', '1', 'f', 'false', 'n', 'no', 'off', 'on', 't', 'true', 'y', 'yes', 0, 1"}
+...ignoring
+
+TASK [debug var with a BIGINT] *************************************************
+[ERROR]: Task failed: argument 'var' is of type int and we were unable to convert to _check_type_str_no_conversion: '999999999999999999999999' is not a string and conversion is not allowed
+Origin: <WORK>/playbook.yml:16:7
+
+14       ignore_errors: true
+15
+16     - name: debug var with a BIGINT
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"msg": "argument 'var' is of type int and we were unable to convert to _check_type_str_no_conversion: '999999999999999999999999' is not a string and conversion is not allowed"}
+...ignoring
+
+TASK [apt state choice with a BIGINT] ******************************************
+[ERROR]: Task failed: Module failed: value of state must be one of: absent, build-dep, fixed, latest, present, got: 999999999999999999999999
+Origin: <WORK>/playbook.yml:21:7
+
+19       ignore_errors: true
+20
+21     - name: apt state choice with a BIGINT
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "value of state must be one of: absent, build-dep, fixed, latest, present, got: 999999999999999999999999"}
+...ignoring
+
+TASK [uri headers dict with a BIGINT] ******************************************
+[ERROR]: Task failed: Module failed: argument 'headers' is of type int and we were unable to convert to dict: <class 'int'> cannot be converted to a dict
+Origin: <WORK>/playbook.yml:27:7
+
+25       ignore_errors: true
+26
+27     - name: uri headers dict with a BIGINT
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "argument 'headers' is of type int and we were unable to convert to dict: <class 'int'> cannot be converted to a dict"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=4   
+

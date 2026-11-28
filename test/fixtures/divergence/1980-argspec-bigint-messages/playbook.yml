@@ -1,0 +1,31 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1980: a YAML int wider than Int64 travels through krikri as a
+  # BIGINT_SENTINEL_PREFIX-marked string, but real ansible parses it into a
+  # Python int (no width), so every non-int argument-spec message names the
+  # class "int" and prints the bare digits. krikri printed the marker and
+  # said "str". Every task fails in the argument-spec check itself, so no
+  # package, socket or file is ever touched.
+  tasks:
+    - name: apt update_cache with a BIGINT
+      apt:
+        name: cowsay
+        update_cache: 999999999999999999999999
+      ignore_errors: true
+
+    - name: debug var with a BIGINT
+      debug:
+        var: 999999999999999999999999
+      ignore_errors: true
+
+    - name: apt state choice with a BIGINT
+      apt:
+        name: cowsay
+        state: 999999999999999999999999
+      ignore_errors: true
+
+    - name: uri headers dict with a BIGINT
+      uri:
+        url: http://127.0.0.1:1/
+        headers: 999999999999999999999999
+      ignore_errors: true

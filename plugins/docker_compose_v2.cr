@@ -48,9 +48,12 @@ require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/docker_client"
 require "../src/krikri/plugin_helpers/docker_cli_probe"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
   class DockerComposeV2Plugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
     # Resolved in #execute: the project dir (given or the temp dir a
     # definition: was written to) - compose_base_args/capture_cmd need it
     # after the definition/proj_src mutual-exclusion logic ran.
@@ -217,15 +220,6 @@ module Krikri
         end
       end
       nil
-    end
-
-    private def int_convertible?(raw : String) : Bool
-      parsed = JSON.parse(raw) rescue nil
-      return raw.to_i32? != nil if parsed.nil? || parsed.as_s?
-      case parsed.raw
-      when Int64, Float64 then true
-      else                     false
-      end
     end
 
     # Incoming YAML type of a param value as it arrives on the wire (a

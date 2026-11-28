@@ -486,6 +486,52 @@ module Krikri
       "Unable to change directory before execution: #{errno}: b'#{path}'"
     end
 
+    # One wire param value as the plugin process should see it, recording
+    # the native forms the plugins that mirror Ansible's type checking ask
+    # about (see #non_string_param and #non_string_param_members).
+    private def demote_wire_param(key : String, value : JSON::Any) : String
+      # An explicit JSON null on the wire (or the executor's NONE_SENTINEL
+      # for a template that natively resolved to Python None) records as a
+      # null param and demotes to "" - NOT value.to_s, which would erase
+      # the null-vs-empty-string distinction Ansible's argspec coercion
+      # cares about.
+      if value.raw.nil? || value.as_s? == NONE_SENTINEL
+        @null_params << key
+        ""
+      elsif (text = value.as_s?) && text.starts_with?(BINARY_WIRE_PREFIX)
+        # A binary (invalid-UTF-8) param value the executor base64-wrapped
+        # under BINARY_WIRE_PREFIX before the config JSON was built: the
+        # JSON round trip is only lossless for the ASCII-encoded form, so
+        # the bytes are restored HERE, at the first parse after the wire.
+        Krikri.decode_binary_wire_value(text)
+      elsif (text = value.as_s?) && (digits = Krikri.bigint_digits(text))
+        # A YAML int wider than Int64 rides the wire as a
+        # BIGINT_SENTINEL_PREFIX-marked string, but real's module process
+        # receives a Python int - so every plugin-side read (an int argspec
+        # check, a subprocess flag such as cpu_shares, a port) sees the
+        # decimal digits (issue #1980).
+        digits
+      elsif (native = Krikri.non_string_scalar(value.as_s?))
+        # A parser-marked non-string YAML literal: demote to the same plain
+        # string stringify_value always produced (no plugin that never asks
+        # changes behavior) and remember the native value for
+        # #non_string_param.
+        @non_string_params[key] = native
+        Krikri.non_string_param_text(native)
+      elsif (text = value.as_s?) && (text.includes?(Krikri::NON_STRING_PARAM_PREFIX) || text.includes?(Krikri::NON_STRING_MEMBER_PREFIX))
+        # Marked non-string MEMBERS inside a parser comma-joined list (see
+        # parse_module_params's list branch): demote them the same way, so
+        # every plugin's own split(',') keeps seeing the plain member text
+        # it always did.
+        if members = Krikri.non_string_list_members(text)
+          @non_string_member_lists[key] = members
+        end
+        Krikri.strip_non_string_markers_in_value(text)
+      else
+        value.to_s
+      end
+    end
+
     def initialize(@config : JSON::Any)
       @host = Host.from_json(@config["host"])
 
@@ -493,39 +539,7 @@ module Krikri
       @params = Hash(String, String).new
       if params_json = @config["params"]?
         params_json.as_h.each do |key, value|
-          # An explicit JSON null on the wire (or the executor's
-          # NONE_SENTINEL for a template that natively resolved to
-          # Python None) records as a null param and demotes to "" -
-          # NOT value.to_s, which would erase the null-vs-empty-string
-          # distinction Ansible's argspec coercion cares about.
-          if value.raw.nil? || value.as_s? == NONE_SENTINEL
-            @null_params << key
-            @params[key] = ""
-          elsif (text = value.as_s?) && text.starts_with?(BINARY_WIRE_PREFIX)
-            # A binary (invalid-UTF-8) param value the executor base64-wrapped
-            # under BINARY_WIRE_PREFIX before the config JSON was built: the
-            # JSON round trip is only lossless for the ASCII-encoded form, so
-            # the bytes are restored HERE, at the first parse after the wire.
-            @params[key] = Krikri.decode_binary_wire_value(text)
-          elsif (native = Krikri.non_string_scalar(value.as_s?))
-            # A parser-marked non-string YAML literal: demote to the same
-            # plain string stringify_value always produced (no plugin that
-            # never asks changes behavior) and remember the native value
-            # for #non_string_param.
-            @non_string_params[key] = native
-            @params[key] = Krikri.non_string_param_text(native)
-          elsif (text = value.as_s?) && (text.includes?(Krikri::NON_STRING_PARAM_PREFIX) || text.includes?(Krikri::NON_STRING_MEMBER_PREFIX))
-            # Marked non-string MEMBERS inside a parser comma-joined list
-            # (see parse_module_params's list branch): demote them the
-            # same way, so every plugin's own split(',') keeps seeing the
-            # plain member text it always did.
-            if members = Krikri.non_string_list_members(text)
-              @non_string_member_lists[key] = members
-            end
-            @params[key] = Krikri.strip_non_string_markers_in_value(text)
-          else
-            @params[key] = value.to_s
-          end
+          @params[key] = demote_wire_param(key, value)
         end
       end
 

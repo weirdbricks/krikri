@@ -65,6 +65,17 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       )
       uri.must_equal("postgres://postgres@/postgres?host=%2Fvar%2Frun%2Fpostgresql&port=9999")
     end
+
+    # AnsibleModule's type='int' conversion is Decimal-based, so a YAML
+    # `port: 5432.0` reaches real as the Python int 5432 and the URI must
+    # carry 5432 (issue #1980).
+    it "reads an integral float port as the int Ansible converts it to" do
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(port: "5432.0").must_equal(
+        Krikri::PluginHelpers::PostgresqlConnection.build_uri(port: "5432"))
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(
+        host: "db.example.com", port: "5433.0", dbname: "mydb"
+      ).must_equal("postgres://db.example.com:5433/mydb")
+    end
   end
 
   describe ".resolve_login_params" do
@@ -88,6 +99,16 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       resolved[:port].must_equal("6543")
       resolved[:user].must_equal("aliased-user")
       resolved[:unix_socket].must_equal("/aliased/socket")
+    end
+
+    # Every socket filename and libpq error text quotes this value, so the
+    # conversion has to happen here, not only in the URI builder (issue
+    # #1980).
+    it "returns an integral float port as its integer digits" do
+      resolved = Krikri::PluginHelpers::PostgresqlConnection.resolve_login_params({
+        "login_port" => "5432.0",
+      })
+      resolved[:port].must_equal("5432")
     end
 
     it "prefers the canonical login_* form over the alias when both are set" do

@@ -108,6 +108,18 @@ describe "docker_compose_v2 plugin argument validation" do
     result["msg"].as_s.wont_include("unable to convert")
   end
 
+  # A YAML int past Int64 is a native Python int, and real's int conversion
+  # is Decimal-based, so it passes and reaches the CLI (issue #1980).
+  it "accepts a marked bigint timeout" do
+    result = PluginSpecHelper.run("docker_compose_v2", {
+      "project_src" => "/nonexistent-krikri-dir",
+      "timeout"     => Krikri.bigint_sentinel("999999999999999999999999"),
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.wont_include("unable to convert")
+  end
+
   it "fails a non-dict scale with the type-conversion wording" do
     result = PluginSpecHelper.run("docker_compose_v2", {
       "project_src" => "/tmp/x",

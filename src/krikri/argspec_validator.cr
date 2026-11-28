@@ -927,6 +927,12 @@ module Krikri
           collect_no_log_json(native, secrets)
         else
           collect_no_log_strings(raw, secrets)
+          # A marked bigint is a Python int whose str() is its bare digits,
+          # and that is the text remove_values censors - the marker itself
+          # never reaches a message (issue #1980).
+          if digits = Krikri.bigint_digits(raw)
+            secrets << digits
+          end
         end
       end
       return msg if secrets.empty?
@@ -958,7 +964,11 @@ module Krikri
     private def collect_no_log_json(value : JSON::Any, into : Array(String))
       case inner = value.raw
       when String
-        into << inner unless inner.empty?
+        if digits = Krikri.bigint_digits(inner)
+          into << digits
+        else
+          into << inner unless inner.empty?
+        end
       when Array
         value.as_a.each { |item| collect_no_log_json(item, into) }
       when Hash
@@ -1572,14 +1582,21 @@ module Krikri
         return nil if list.all?(&.as_s?)
         return "argument '#{name}' is of type list and we were unable to convert to str_or_list_of_str: #{tail}"
       end
-      kind = case (native || typed).try(&.raw)
-             when Int64, Int32 then "int"
-             when Float64      then "float"
-             when Bool         then "bool"
-             else                   "str"
-             end
+      # A marked bigint is a Python int, which this callable rejects too.
+      kind = Krikri.bigint_digits(raw) ? "int" : python_kind_name(native || typed)
       return nil if kind == "str"
       "argument '#{name}' is of type #{kind} and we were unable to convert to str_or_list_of_str: #{tail}"
+    end
+
+    # The Python class name parameters.py's wrapper reports for a wire
+    # value's decoded native type, in the messages that embed one.
+    private def python_kind_name(native : JSON::Any?) : String
+      case native.try(&.raw)
+      when Int64, Int32 then "int"
+      when Float64      then "float"
+      when Bool         then "bool"
+      else                   "str"
+      end
     end
 
     # Ansible's _list_no_log_values walk: for every provided option that is
@@ -1741,6 +1758,7 @@ module Krikri
       when Bool                    then raw ? "True" : "False"
       when Int64                   then raw.to_s
       when Float64                 then raw.to_s
+      when String                  then bigint_text(raw)
       when Array(JSON::Any)        then "[#{raw.map { |item| python_value_repr(item) }.join(", ")}]"
       when Hash(String, JSON::Any) then "{#{raw.map { |k, v| "'#{k}': #{python_value_repr(v)}" }.join(", ")}}"
       else                              raw.to_s
@@ -1748,11 +1766,12 @@ module Krikri
     end
 
     private def python_class_name(value : JSON::Any) : String
-      case value.raw
+      case raw = value.raw
       when Nil              then "NoneType"
       when Bool             then "bool"
       when Int64            then "int"
       when Float64          then "float"
+      when String           then Krikri.bigint_digits(raw) ? "int" : "str"
       when Array(JSON::Any) then "list"
       else                       "str"
       end
@@ -1778,7 +1797,7 @@ module Krikri
       end
 
       json = (JSON.parse(raw) rescue nil)
-      kind = value_kind(raw, json) # Observed behavior: str | :bool | :list | :dict
+      kind = value_kind(raw, json) # Observed behavior: str | :int | :bool | :list | :dict
 
       conversion_type_error(name, wanted, raw, kind, native)
     end
@@ -1832,6 +1851,12 @@ module Krikri
         return "argument '#{name}' is of type str and we were unable to convert to bool: " \
                "The value '#{raw}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}"
       end
+      # A marked bigint is a native Python int, so convert_bool's boolean()
+      # reports its digits and parameters.py names its class (issue #1980).
+      if kind == :int
+        return "argument '#{name}' is of type int and we were unable to convert to bool: " \
+               "The value '#{bigint_text(raw)}' is not a valid boolean. Valid booleans include: #{BOOLEANS_REPR.join(", ")}"
+      end
       if kind == :list || kind == :dict
         return "argument '#{name}' is of type #{kind} and we were unable to convert to bool: " \
                "<class '#{kind}'> cannot be converted to a bool"
@@ -1856,6 +1881,8 @@ module Krikri
       case kind
       when :bool
         nil # bool IS an int in Python
+      when :int
+        nil # the marked value IS the Python int
       when :str
         return nil if int_like?(raw)
         "argument '#{name}' is of type str and we were unable to convert to int: " \
@@ -1881,6 +1908,8 @@ module Krikri
       case kind
       when :bool
         nil
+      when :int
+        nil
       when :str
         return nil if int_like?(raw)
         "argument '#{name}' is of type str and we were unable to convert to int: " \
@@ -1903,7 +1932,16 @@ module Krikri
       # A marked non-string YAML literal keeps its own class; an unmarked
       # wire value that is not a plain string is a container.
       return nil if native.nil? && kind == :str
-      reported = native ? python_value_repr(native) : (kind == :list || kind == :dict ? python_repr(kind, raw) : raw)
+      reported =
+        if native
+          python_value_repr(native)
+        elsif kind == :int
+          bigint_text(raw)
+        elsif kind == :list || kind == :dict
+          python_repr(kind, raw)
+        else
+          raw
+        end
       "argument '#{name}' is of type #{native ? python_class_name(native) : kind} and we were unable to convert to " \
       "_check_type_str_no_conversion: '#{reported}' is not a string and conversion is not allowed"
     end
@@ -1912,6 +1950,8 @@ module Krikri
       case kind
       when :bool
         nil
+      when :int
+        nil # float() of a Python int cannot fail until it overflows
       when :str
         return nil if float_like?(raw)
         "argument '#{name}' is of type str and we were unable to convert to float: " \
@@ -2045,9 +2085,15 @@ module Krikri
     end
 
     private def jsonarg_type_error(name : String, kind : Symbol) : String?
-      return nil unless kind == :bool
-      "argument '#{name}' is of type bool and we were unable to convert to jsonarg: " \
-      "<class 'bool'> cannot be converted to a json string"
+      case kind
+      when :bool
+        "argument '#{name}' is of type bool and we were unable to convert to jsonarg: " \
+        "<class 'bool'> cannot be converted to a json string"
+      when :int
+        # json.dumps only accepts str/bytes/list/tuple/dict.
+        "argument '#{name}' is of type int and we were unable to convert to jsonarg: " \
+        "<class 'int'> cannot be converted to a json string"
+      end
     end
 
     private def size_type_error(name : String, wanted : String, raw : String, kind : Symbol) : String?
@@ -2059,6 +2105,10 @@ module Krikri
     end
 
     private def value_kind(raw : String, json : JSON::Any?) : Symbol
+      # A BIGINT_SENTINEL_PREFIX-marked value is a Python int too wide for
+      # Int64, not the wire string carrying it (issue #1980), so every
+      # type checker sees the class real does.
+      return :int if Krikri.bigint_digits(raw)
       return :bool if raw == "true" || raw == "false"
       return :list if json && json.as_a?
       return :dict if json && json.as_h?
@@ -2093,7 +2143,17 @@ module Krikri
     end
 
     private def python_repr_value(value : JSON::Any) : String
-      value.as_s? || python_value_repr(value)
+      if text = value.as_s?
+        return bigint_text(text)
+      end
+      python_value_repr(value)
+    end
+
+    # The bare digits a BIGINT_SENTINEL_PREFIX-marked wire value stands for
+    # (a Python int str()s as its own digits). Anything else is returned
+    # unchanged.
+    private def bigint_text(raw : String) : String
+      Krikri.bigint_digits(raw) || raw
     end
 
     private def python_word(wanted : String) : String
@@ -2175,13 +2235,13 @@ module Krikri
             raw.split(',')
           end
         if members
-          missing = members.map(&.to_s).reject { |item| allowed.includes?(item) }
+          missing = members.map { |item| bigint_text(item.to_s) }.reject { |item| allowed.includes?(item) }
           unless missing.empty?
             return "value of #{name} must be one or more of: #{allowed.join(", ")}. " \
                    "Got no match for: #{missing.join(", ")}"
           end
         else
-          value = raw == Krikri::NONE_SENTINEL ? "None" : raw
+          value = raw == Krikri::NONE_SENTINEL ? "None" : bigint_text(raw)
           unless allowed.includes?(value) || rewrites_to_bool_choice?(name, value, allowed, provided)
             return "value of #{name} must be one of: #{allowed.join(", ")}, got: #{value}"
           end

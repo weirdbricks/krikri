@@ -1,5 +1,6 @@
 require "uri"
 require "socket"
+require "big"
 
 {% if flag?(:linux) && !LibC.has_constant?("Pollfd") && !LibC.has_method?(:poll) %}
   # poll(2) is not in Crystal's Linux LibC bindings (the event loop uses
@@ -306,6 +307,7 @@ module Krikri
         ssl_cert : String? = nil,
         ssl_key : String? = nil,
       ) : String
+        port = integer_port_text(port)
         path = "/#{dbname || "postgres"}"
 
         # Real libpq (and psycopg2, which every postgresql_db/
@@ -674,7 +676,7 @@ module Krikri
       def self.resolve_login_params(params : Hash(String, String)) : {host: String?, port: String?, user: String?, password: String?, unix_socket: String?, ssl_mode: String?, ca_cert: String?, ssl_cert: String?, ssl_key: String?}
         {
           host:        params["login_host"]? || params["host"]?,
-          port:        params["login_port"]? || params["port"]?,
+          port:        integer_port_text(params["login_port"]? || params["port"]?),
           user:        params["login_user"]? || params["login"]?,
           password:    params["login_password"]?,
           unix_socket: params["login_unix_socket"]? || params["unix_socket"]?,
@@ -683,6 +685,22 @@ module Krikri
           ssl_cert:    params["ssl_cert"]?,
           ssl_key:     params["ssl_key"]?,
         }
+      end
+
+      # AnsibleModule's type='int' conversion runs through
+      # decimal.Decimal, so an integral float literal (`port: 5432.0`)
+      # reaches the real module as the Python int 5432 - and the URI, the
+      # Unix socket filename and libpq's own error text all print "5432"
+      # (issue #1980). Text that is not an integral decimal is left
+      # untouched, keeping the caller's existing failure for anything the
+      # executor-side type check let through.
+      private def self.integer_port_text(raw : String?) : String?
+        return nil unless raw
+        bd = BigDecimal.new(raw.strip)
+        digits = bd.to_big_i
+        bd == BigDecimal.new(digits) ? digits.to_s : raw
+      rescue
+        raw
       end
     end
   end
