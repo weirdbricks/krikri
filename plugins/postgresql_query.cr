@@ -166,21 +166,26 @@ module Krikri
 
       search_path = @params["search_path"]?
 
-      login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
-      uri = PluginHelpers::PostgresqlConnection.build_uri(
-        host: login[:host],
-        port: login[:port],
-        user: login[:user] || "postgres",
-        password: login[:password],
-        unix_socket: login[:unix_socket],
-        dbname: db,
-        sslmode: login[:ssl_mode],
-        ca_cert: login[:ca_cert],
-        ssl_cert: login[:ssl_cert],
-        ssl_key: login[:ssl_key],
-      )
-
+      # login/URI construction sits inside the rescue below on purpose:
+      # a port option libpq's own parse refuses (#1981) fails before any
+      # connection method is chosen, and real's connect_to_db() wraps
+      # that stage in the same "unable to connect to database: %s"
+      # fail_json as a refused socket - not the engine's generic plugin
+      # crash.
       outcome = begin
+        login = PluginHelpers::PostgresqlConnection.resolve_login_params(@params)
+        uri = PluginHelpers::PostgresqlConnection.build_uri(
+          host: login[:host],
+          port: login[:port],
+          user: login[:user] || "postgres",
+          password: login[:password],
+          unix_socket: login[:unix_socket],
+          dbname: db,
+          sslmode: login[:ssl_mode],
+          ca_cert: login[:ca_cert],
+          ssl_cert: login[:ssl_cert],
+          ssl_key: login[:ssl_key],
+        )
         PluginHelpers::PostgresqlConnection.open(uri, @params) do |conn|
           if autocommit
             run_queries(conn, queries, positional, named, search_path)

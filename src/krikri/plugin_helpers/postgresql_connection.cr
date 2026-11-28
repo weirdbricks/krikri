@@ -125,6 +125,27 @@ module Krikri
         getter timeout : Time::Span
       end
 
+      # Exception cause marker for a port connection option libpq's own
+      # option parse refuses before any connection method is chosen:
+      # strtol overflows on an integral value outside Int32's range and
+      # the connect fails with libpq's wording
+      #   invalid integer value "<digits>" for connection option "port"
+      # regardless of TCP vs Unix socket (issue #1981; live-verified
+      # against ansible-core 2.21.6 + community.postgresql 4.2.0).
+      # krikri's URI used to parse the port with Int32's #to_i, so the
+      # same value escaped as the engine's generic plugin failure
+      # instead. Nested inside DB::ConnectionRefused, like
+      # ConnectTimeoutCause, so the plugins' existing single rescue
+      # type carries it to the wording - no socket was ever touched,
+      # but the wording is what real's fail_json wraps either way.
+      class InvalidPortCause < ::Exception
+        def initialize(@digits : String)
+          super(%(invalid integer value "#{@digits}" for connection option "port"))
+        end
+
+        getter digits : String
+      end
+
       # Resolves the effective connect timeout for a module run, the two
       # ways community.postgresql lets one be set (it has no top-level
       # `connect_timeout` option): `connect_params: {connect_timeout: N}`
@@ -308,6 +329,7 @@ module Krikri
         ssl_key : String? = nil,
       ) : String
         port = integer_port_text(port)
+        assert_int32_port(port)
         path = "/#{dbname || "postgres"}"
 
         # Real libpq (and psycopg2, which every postgresql_db/
@@ -413,6 +435,12 @@ module Krikri
       # / #libpq_connect_error below.
       def self.libpq_connect_error(ex : DB::ConnectionRefused, target : {host: String?, port: String, unix_socket: String?}, timeout_set : Bool = false) : String
         case cause = unwrap(ex.cause)
+        when InvalidPortCause
+          # libpq's option-parse wording for a port outside Int32's
+          # range (issue #1981). Its PQerrorMessage buffer always ends
+          # in a newline, and no target prefix or hint line precedes
+          # it - the failure never reached a connection method.
+          "#{cause.message}\n"
         when ConnectTimeoutCause
           # libpq's connect_timeout wording (fe-connect.c), for the
           # connect attempt the deadline killed: no errno was ever
@@ -685,6 +713,42 @@ module Krikri
           ssl_cert:    params["ssl_cert"]?,
           ssl_key:     params["ssl_key"]?,
         }
+      end
+
+      # libpq parses the port connection option with strtol before it
+      # ever picks a connection method, so an integral value outside
+      # Int32's range fails the option parse itself - whether the target
+      # is TCP, an explicit Unix socket, or the no-host default socket
+      # path (issue #1981; live-verified against ansible-core 2.21.6 +
+      # community.postgresql 4.2.0 for 999999999999999999999999 and
+      # 3000000000, negative included). The parse is width-free and
+      # marker-aware, exactly like the mysql side's integer_value: a
+      # BIGINT_SENTINEL_PREFIX-marked string is the decimal integer it
+      # stands for. The wording always quotes the marker-stripped digits:
+      # an unmarked direct-plugin invocation can still hand over a marked
+      # string, and real (a width-free Python int) would print its bare
+      # decimal digits, never the private-use marker. Non-integral text
+      # never reaches a connect past the argspec's own int conversion in
+      # either engine, so it is left untouched here (the pre-existing URI
+      # behavior applies).
+      private def self.assert_int32_port(port : String?) : Nil
+        return unless port
+        digits = Krikri.bigint_digits(port)
+        # The rescue covers only the parse - a raise here must never be
+        # swallowed by it (a method-level rescue would catch the raise
+        # below too).
+        value = begin
+          digits ? BigInt.new(digits) : begin
+            bd = BigDecimal.new(port.strip)
+            parsed = bd.to_big_i
+            bd == BigDecimal.new(parsed) ? parsed : nil
+          end
+        rescue
+          nil
+        end
+        return unless value
+        return if value >= Int32::MIN && value <= Int32::MAX
+        raise DB::ConnectionRefused.new(cause: InvalidPortCause.new(digits || port))
       end
 
       # AnsibleModule's type='int' conversion runs through

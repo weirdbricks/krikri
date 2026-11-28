@@ -128,12 +128,34 @@ describe "community.postgresql.* connection-failure messages (127.0.0.1:35433)" 
       "unable to connect to database: connection to server at \"127.0.0.1\", port 35433 failed: FATAL:  database \"nosuchdb\" does not exist\n")
   end
 
-  it "postgresql_db wrong password reports the server's own FATAL text" do
-    skip "no PostgreSQL server at 127.0.0.1:35433" unless pg2_reachable?
-    result = PluginSpecHelper.run("postgresql_db",
-      CONN_LOGIN.merge({"login_port" => "35433", "login_password" => "wrongpw", "name" => "connfail_db2", "state" => "present"}))
-    assert_conn_failure(result,
-      "unable to connect to database: connection to server at \"127.0.0.1\", port 35433 failed: FATAL:  password authentication failed for user \"postgres\"\n")
+  # The option-parse failure is host independent (no socket is ever
+  # touched), so both shapes run against no server at all. Pinned real
+  # 2.21.6 + community.postgresql 4.2.0 registers the libpq wording with
+  # NO `warnings` key - its default-database warning stays on stderr
+  # only, unlike the 2.19.11 behavior the refused-port tests above pin
+  # (that gap is pre-existing and outside this fix) - so these assert the
+  # failure shape without the strict key-list helper.
+  def self.assert_port_option_failure(result : JSON::Any)
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal(
+      "unable to connect to database: invalid integer value \"999999999999999999999999\" for connection option \"port\"\n")
+  end
+
+  it "postgresql_query huge login_port reports libpq's option-parse error" do
+    result = PluginSpecHelper.run("postgresql_query",
+      {"login_host" => "127.0.0.1", "login_port" => "999999999999999999999999", "query" => "SELECT 1"})
+    self.class.assert_port_option_failure(result)
+  end
+
+  it "postgresql_query huge login_port without login_host fails the same way" do
+    # The reported bug's actual shape: no login_host means krikri's
+    # default Unix-socket path, and libpq's option parse runs before
+    # TCP-vs-socket is decided, so the wording is identical there too
+    # (issue #1981).
+    result = PluginSpecHelper.run("postgresql_query",
+      {"login_port" => "999999999999999999999999", "query" => "SELECT 1"})
+    self.class.assert_port_option_failure(result)
   end
 end
 

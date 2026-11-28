@@ -1,0 +1,16 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1981: a YAML int wider than Int64 reaches the plugin as bare
+  # digits (the BIGINT_SENTINEL_PREFIX marker is demoted plugin-side,
+  # issue #1980). Real libpq parses the port connection option with
+  # strtol before any connection method is chosen, so the connect fails
+  # with libpq's own "invalid integer value ... for connection option
+  # \"port\"" wording - host independent, no socket is ever touched.
+  tasks:
+    - name: postgresql_db with a BIGINT login_port
+      community.postgresql.postgresql_db:
+        name: testdb
+        state: present
+        login_host: 127.0.0.1
+        login_port: 999999999999999999999999
+      ignore_errors: true

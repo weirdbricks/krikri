@@ -393,4 +393,88 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       )
     end
   end
+
+  # libpq parses the port connection option with strtol before it ever
+  # picks a connection method, so an integral value outside Int32's
+  # range fails the option parse itself - host independent, no socket
+  # is ever touched (issue #1981, live-verified against ansible-core
+  # 2.21.6 + community.postgresql 4.2.0). krikri's URI used to parse
+  # the port with Int32's #to_i, escaping as the engine's generic
+  # plugin crash.
+  describe "a port outside Int32's range" do
+    def self.refused_for(host : String?, port : String) : DB::ConnectionRefused
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(
+        host: host, port: port
+      )
+      raise "build_uri did not refuse port #{port}"
+    rescue e : DB::ConnectionRefused
+      e
+    end
+
+    it "refuses a 24-digit login_port with libpq's option-parse wording" do
+      self.class.refused_for("127.0.0.1", "999999999999999999999999").cause
+        .as?(Krikri::PluginHelpers::PostgresqlConnection::InvalidPortCause)
+        .try(&.digits).must_equal("999999999999999999999999")
+    end
+
+    it "refuses a value that merely overflows Int32 the same way" do
+      self.class.refused_for("127.0.0.1", "3000000000").cause
+        .as?(Krikri::PluginHelpers::PostgresqlConnection::InvalidPortCause)
+        .try(&.digits).must_equal("3000000000")
+    end
+
+    it "refuses a negative value past Int32 the same way" do
+      self.class.refused_for("127.0.0.1", "-999999999999999999999999").cause
+        .as?(Krikri::PluginHelpers::PostgresqlConnection::InvalidPortCause)
+        .try(&.digits).must_equal("-999999999999999999999999")
+    end
+
+    it "refuses the same port on the Unix-socket path too" do
+      # libpq's option parse runs before TCP-vs-socket is decided, so
+      # the default (no-host) socket path must refuse it as well, not
+      # skip the parse the way the URI's TCP branch used to.
+      self.class.refused_for(nil, "3000000000").cause
+        .as?(Krikri::PluginHelpers::PostgresqlConnection::InvalidPortCause)
+        .try(&.digits).must_equal("3000000000")
+    end
+
+    it "still accepts every port inside Int32's range, boundaries included" do
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(
+        host: "db.example.com", port: "70000", dbname: "mydb"
+      ).must_equal("postgres://db.example.com:70000/mydb")
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(
+        host: "db.example.com", port: "2147483647", dbname: "mydb"
+      ).must_equal("postgres://db.example.com:2147483647/mydb")
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(
+        host: "db.example.com", port: "-2147483648", dbname: "mydb"
+      ).must_equal("postgres://db.example.com:-2147483648/mydb")
+    end
+
+    it "refuses the first value past each boundary" do
+      self.class.refused_for("127.0.0.1", "2147483648").cause
+        .as?(Krikri::PluginHelpers::PostgresqlConnection::InvalidPortCause)
+        .try(&.digits).must_equal("2147483648")
+      self.class.refused_for("127.0.0.1", "-2147483649").cause
+        .as?(Krikri::PluginHelpers::PostgresqlConnection::InvalidPortCause)
+        .try(&.digits).must_equal("-2147483649")
+    end
+
+    it "lets an in-range negative port through to the connect path" do
+      # libpq's strtol accepts an in-range negative (the wording for its
+      # own connect-stage refusal is a different one, issue #1982's
+      # family), so the option-parse wording must not fire here.
+      Krikri::PluginHelpers::PostgresqlConnection.build_uri(
+        host: "db.example.com", port: "-1", dbname: "mydb"
+      ).must_equal("postgres://db.example.com:-1/mydb")
+    end
+
+    it "words the refusal through libpq_connect_error exactly like real's fail_json" do
+      ex = self.class.refused_for("127.0.0.1", "999999999999999999999999")
+      Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+        ex, {host: "127.0.0.1", port: "999999999999999999999999", unix_socket: nil}
+      ).must_equal(
+        "invalid integer value \"999999999999999999999999\" for connection option \"port\"\n"
+      )
+    end
+  end
 end
