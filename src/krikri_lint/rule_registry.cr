@@ -27,6 +27,7 @@ module Krikri
           YamlLineLengthRule.new,
           VarNamingRule.new,
           LoopVarPrefixRule.new,
+          DeprecatedBareVarsRule.new,
           NoHandlerRule.new,
           NoRelativePathsRule.new,
           NoJinjaWhenRule.new,

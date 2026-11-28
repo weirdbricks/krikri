@@ -1,0 +1,36 @@
+---
+# Parity fixture for the deprecated-bare-vars rule: only a bare name in a
+# `with_*` loop term is flagged. `loop:`, `when:` and a templated term are
+# not bare variables, and every task is skipped so the play stays safe to
+# run.
+- name: Deprecated bare vars triage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    my_list:
+      - one
+      - two
+  tasks:
+    - name: Bare variable in a with_nested loop
+      ansible.builtin.debug:
+        var: item
+      with_nested: my_list
+      when: false
+
+    - name: Full variable syntax is not a bare variable
+      ansible.builtin.debug:
+        var: item
+      with_nested: "{{ my_list }}"
+      when: false
+
+    - name: A loop keyword is out of scope
+      ansible.builtin.debug:
+        var: item
+      loop: "{{ my_list }}"
+      when: false
+
+    - name: A bare when condition is out of scope
+      ansible.builtin.debug:
+        msg: skipped
+      when: my_flag
