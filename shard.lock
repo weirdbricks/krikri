@@ -38,7 +38,7 @@ shards:
 
   minitest:
     git: https://github.com/weirdbricks/minitest.cr.git
-    version: 1.8.1+git.commit.770a4ee113ae649c8182e08b174b2b51c36c8834
+    version: 1.8.2+git.commit.07ca8dab675476c7ee5a274d684faa8e7954f434
 
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git

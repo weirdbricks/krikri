@@ -534,6 +534,10 @@ if [ "$shards" -ge 2 ]; then
     sed 's/^stats: /test: /' "$RUN_TMP/slices.log" >&2 || true
   fi
   [ -s "$slice_map" ] || : > "$slice_map"
+  # The same measured weights order each shard's batches heaviest first
+  # (Minitest::Weights), so a long describe never starts last and finishes
+  # alone on an otherwise idle shard.
+  [ -s "$slice_dir/weights.tsv" ] && export MINITEST_WEIGHTS="$slice_dir/weights.tsv"
 
   echo "test: running $shards shards in parallel ($fibers fibers each, one binary)" >&2
   run_start=$(date +%s)
