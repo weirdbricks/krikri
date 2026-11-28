@@ -280,7 +280,15 @@ describe Krikri::PluginHelpers::MysqlConnection do
         Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
           {"connect_timeout" => value}).must_equal(true, value)
       end
-      {"1", "30", "31536000"}.each do |value|
+      # Python's int() has no width: such a value passes the argument spec
+      # (type='int') and PyMySQL's range check is what rejects it, so a
+      # 32-bit parse must not read it as "not an integer" and let the shard
+      # drop it (issue #1975).
+      {"99999999999999", "999999999999999999999"}.each do |value|
+        Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
+          {"connect_timeout" => value}).must_equal(true, value)
+      end
+      {"1", "30", "31536000", "+5"}.each do |value|
         Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
           {"connect_timeout" => value}).must_equal(false, value)
       end

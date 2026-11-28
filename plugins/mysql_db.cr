@@ -124,10 +124,7 @@ module Krikri
           db_list: JSON::Any.new([] of JSON::Any), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
       end
 
-      # mysql_db.py's os.chdir(chdir) sits after the empty-name exit but
-      # before the state/target checks and the connect, so a bad chdir:
-      # fails dump/import and check-mode runs too.
-      if err = chdir_failure
+      if err = pre_state_failure
         return err
       end
 
@@ -560,6 +557,36 @@ module Krikri
       end
       raise "zstd decompression failed (exit #{status.exit_code}) - is the zstd binary installed?" unless status.success?
       tmp_path
+    end
+
+    # The two main() checks real runs after the empty-name exit and before the
+    # state/target branches - hence before the check-mode branch and the
+    # connect, so either failure applies to dump/import and check mode too -
+    # in its own order: the login_port range check (mysql_db.py:665-667),
+    # then os.chdir(chdir:). The port is still validated when
+    # login_unix_socket: is what actually gets used; real's int() has no
+    # width, so a value past Int64 is out of range as well (issue #1975;
+    # mysql_user has no such check - there PyMySQL's own connect is what
+    # fails).
+    private def pre_state_failure : PluginResult?
+      if err = login_port_range_error
+        return err
+      end
+      chdir_failure
+    end
+
+    # mysql_db.py:665-667's range check. `login_port:` reaches the module as
+    # an int (the argument spec's type conversion), so this only ever sees
+    # integer text: a non-integer spelling is rejected by the argument-spec
+    # validator before the plugin starts.
+    private def login_port_range_error : PluginResult?
+      raw = @params["login_port"]? || return nil
+      value = raw.strip
+      return nil unless value.matches?(PluginHelpers::MysqlConnection::INTEGER_TEXT)
+      port = value.to_i64?
+      return nil if port && port >= 0 && port <= 65535
+      PluginResult.new(changed: false, failed: true,
+        msg: "login_port must be a valid unix port number (0-65535)")
     end
 
     # `chdir:` is type='path', so check_type_path stringifies the raw

@@ -1,0 +1,54 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_db with a login_port above the port range] *************************
+[ERROR]: Task failed: Module failed: login_port must be a valid unix port number (0-65535)
+Origin: <WORK>/playbook.yml:11:7
+
+ 9   # needs a server: real fails every one of them from the range check alone.
+10   tasks:
+11     - name: mysql_db with a login_port above the port range
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "login_port must be a valid unix port number (0-65535)"}
+...ignoring
+
+TASK [mysql_db with a negative login_port] *************************************
+[ERROR]: Task failed: Module failed: login_port must be a valid unix port number (0-65535)
+Origin: <WORK>/playbook.yml:18:7
+
+16       ignore_errors: true
+17
+18     - name: mysql_db with a negative login_port
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "login_port must be a valid unix port number (0-65535)"}
+...ignoring
+
+TASK [mysql_db with a login_port past I64] *************************************
+[ERROR]: Task failed: Module failed: login_port must be a valid unix port number (0-65535)
+Origin: <WORK>/playbook.yml:25:7
+
+23       ignore_errors: true
+24
+25     - name: mysql_db with a login_port past I64
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "login_port must be a valid unix port number (0-65535)"}
+...ignoring
+
+TASK [mysql_db dump with a bad port and no target] *****************************
+[ERROR]: Task failed: Module failed: login_port must be a valid unix port number (0-65535)
+Origin: <WORK>/playbook.yml:34:7
+
+32     # The range check runs before the state branches, so a dump run fails on
+33     # the port rather than on the missing target:.
+34     - name: mysql_db dump with a bad port and no target
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "login_port must be a valid unix port number (0-65535)"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=4   
+

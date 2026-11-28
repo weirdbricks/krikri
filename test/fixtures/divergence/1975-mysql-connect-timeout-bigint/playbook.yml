@@ -1,0 +1,38 @@
+- hosts: localhost
+  gather_facts: false
+  # Issue #1975: Python's int() has no width, so a connect_timeout of
+  # 99999999999999 passes the modules' argument spec (type='int') and it is
+  # PyMySQL's own range check - before any socket exists - that rejects it.
+  # krikri's range check parsed with Crystal's #to_i? (Int32), so this value
+  # looked non-integer, fell through to the shard's silent drop (an unbounded
+  # connect) and reported a connection failure instead of the range message.
+  # config_file: is pinned to a path that does not exist so the wrapper's
+  # option-file wording is machine-independent, and no task needs a server.
+  tasks:
+    - name: mysql_db with a connect_timeout past I64
+      mysql_db:
+        name: krikri_db
+        config_file: /nonexistent/krikri.cnf
+        connect_timeout: 99999999999999
+      ignore_errors: true
+
+    - name: mysql_user with a connect_timeout past I64
+      mysql_user:
+        name: krikri_user
+        config_file: /nonexistent/krikri.cnf
+        connect_timeout: 99999999999999
+      ignore_errors: true
+
+    - name: mysql_query with a connect_timeout past I64
+      mysql_query:
+        query: SELECT 1
+        config_file: /nonexistent/krikri.cnf
+        connect_timeout: 99999999999999
+      ignore_errors: true
+
+    - name: mysql_variables with a connect_timeout past I64
+      mysql_variables:
+        variable: max_connections
+        config_file: /nonexistent/krikri.cnf
+        connect_timeout: 99999999999999
+      ignore_errors: true

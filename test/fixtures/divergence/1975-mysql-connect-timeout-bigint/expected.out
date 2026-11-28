@@ -1,0 +1,54 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_db with a connect_timeout past I64] ********************************
+[ERROR]: Task failed: Module failed: unable to find /nonexistent/krikri.cnf. Exception message: connect_timeout should be >0 and <=31536000
+Origin: <WORK>/playbook.yml:12:7
+
+10   # option-file wording is machine-independent, and no task needs a server.
+11   tasks:
+12     - name: mysql_db with a connect_timeout past I64
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find /nonexistent/krikri.cnf. Exception message: connect_timeout should be >0 and <=31536000"}
+...ignoring
+
+TASK [mysql_user with a connect_timeout past I64] ******************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or /nonexistent/krikri.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000
+Origin: <WORK>/playbook.yml:19:7
+
+17       ignore_errors: true
+18
+19     - name: mysql_user with a connect_timeout past I64
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or /nonexistent/krikri.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000"}
+...ignoring
+
+TASK [mysql_query with a connect_timeout past I64] *****************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or /nonexistent/krikri.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000
+Origin: <WORK>/playbook.yml:26:7
+
+24       ignore_errors: true
+25
+26     - name: mysql_query with a connect_timeout past I64
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or /nonexistent/krikri.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000"}
+...ignoring
+
+TASK [mysql_variables with a connect_timeout past I64] *************************
+[ERROR]: Task failed: Module failed: unable to find /nonexistent/krikri.cnf. Exception message: connect_timeout should be >0 and <=31536000
+Origin: <WORK>/playbook.yml:33:7
+
+31       ignore_errors: true
+32
+33     - name: mysql_variables with a connect_timeout past I64
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find /nonexistent/krikri.cnf. Exception message: connect_timeout should be >0 and <=31536000"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=4   
+
