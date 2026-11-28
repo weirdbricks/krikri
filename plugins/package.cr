@@ -546,11 +546,30 @@ module Krikri
         name.starts_with?("/")
     end
 
+    # A REMOTE rpm-file spec - the same "what would dnf do with this
+    # FILE" question as a local one applies, because real's dnf module
+    # fetch_file()s the URL first and hands the LOCAL file to the
+    # transaction (see dnf_check_mode_file_plan).
+    private def remote_rpm_url?(name : String) : Bool
+      stripped = name.strip
+      stripped.starts_with?("http://") ||
+        stripped.starts_with?("https://") ||
+        stripped.starts_with?("ftp://")
+    end
+
+    # Every spec real hands the transaction as a FILE - a local path or a
+    # fetched URL - which is what the already-installed no-op verdict
+    # below applies to.
+    private def rpm_file_spec?(name : String) : Bool
+      local_rpm_file?(name) || remote_rpm_url?(name)
+    end
+
     # A LOCAL rpm-file spec - real's dnf.py filename handling keys off
     # the `.rpm` suffix (with `://` naming a fetched URL instead, whose
     # results entry is a random fetch temp path this engine never
     # invents). Every "what would dnf do with this FILE" answer below
-    # applies to these and nothing else.
+    # applies to these and nothing else, except the already-installed
+    # verdict, which rpm_file_spec? widens to URLs (issue #1973).
     private def local_rpm_file?(name : String) : Bool
       stripped = name.strip
       stripped.ends_with?(".rpm") &&
@@ -563,7 +582,9 @@ module Krikri
     # carries, nil when the header cannot be read. Plain `rpm -q <path>`
     # cannot answer this: rpm treats a path argument as a package FILE
     # to query and reports the header's NEVRA with exit 0 whether or not
-    # that package is installed (see handle_dnf's own comment).
+    # that package is installed (see handle_dnf's own comment). An
+    # http(s)/ftp spec is passed through as-is: rpm reads the header off
+    # the URL itself, the same file real's fetch_file would have staged.
     private def rpm_file_header_nevra(pkg : String) : String?
       path = pkg.strip.lchop("file://")
       result = remote_exec("rpm -qp --qf '#{DNF_NEVRA_QF}' #{shell_single_quote(path)} 2>/dev/null")
@@ -579,7 +600,8 @@ module Krikri
     # dnf:/yum: plugins; issue #1187's zhan9san.jenkins, whose
     # /tmp/jenkins-*.rpm was already installed at the very NEVRA its
     # header carried - ansible-playbook --check said ok where this
-    # engine's check-mode plan said changed). The lookup compares the
+    # engine's check-mode plan said changed; issue #1973's fetched URL,
+    # which rpm reads the same header from). The lookup compares the
     # full NEVRA, because `rpm -q` parses only a name-version-release
     # spec - an "epoch:name-..." spelling is read as a literal NAME and
     # matches nothing - and an epoch-only difference must still count
@@ -1289,8 +1311,17 @@ module Krikri
     # (a file whose own header NEVRA is already installed resolves to
     # dnf's empty transaction and drops out - see
     # rpm_file_already_installed?).
+    #
+    # A remote URL drops out on the same verdict: real's dnf module
+    # fetch_file()s it and installs the LOCAL file, so a converged host's
+    # --check is real's empty transaction, "Nothing to do" (issue #1973,
+    # ihmels.rpmfusion_repo's `package: name: <rpmfusion-release URL>`
+    # read changed where ansible-playbook said ok - the check phase runs
+    # on the host the role's own earlier phases converged). It owns no
+    # file_entries row: real's entry names the random fetch temp path it
+    # staged the file at, which this engine does not invent.
     private def dnf_check_mode_file_plan(names : Array(String)) : NamedTuple(file_entries: Array(String), pending_specs: Array(String))
-      noop_files = names.select { |pkg| local_rpm_file?(pkg) && rpm_file_already_installed?(pkg) }
+      noop_files = names.select { |pkg| rpm_file_spec?(pkg) && rpm_file_already_installed?(pkg) }
       file_entries = names.select { |pkg| local_rpm_file?(pkg) }.map { |pkg| "Installed #{pkg.strip}" }
       {file_entries: file_entries, pending_specs: names - noop_files}
     end
