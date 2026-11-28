@@ -12,15 +12,6 @@ module Krikri
       SCHEMA_TEXT = {{ read_file("#{__DIR__}/../schemas/meta.json") }}
       SCHEMA      = JSON.parse(SCHEMA_TEXT)
 
-      # Printed as the match's details: schema errors carry no line
-      # numbers, and the rule is not skippable.
-      DETAILS = " Errors from schema validation do not include exact line numbers.\n" \
-                "The schema name appears as a tag, like ``schema[meta]``.\n\n" \
-                "This rule cannot be skipped and stops further processing of the file.\n\n" \
-                "If the wrong schema was picked, either:\n\n" \
-                "* move the file to its standard location so it is detected correctly.\n" \
-                "* use ``kinds:`` in the linter config to set the file type.\n"
-
       def id : String
         "schema[meta]"
       end
@@ -42,19 +33,12 @@ module Krikri
         root = file.root
         return if root.nil? || file.parse_error
         return unless root.is_a?(YAML::Nodes::Mapping)
-        instance = yaml_node_to_json(root)
-        result = JsonSchema.validate(instance, SCHEMA)
+        result = JsonSchema.validate(SchemaValidation.instance(root), SCHEMA)
         return if result.valid?
         err = result.error || raise "expected error"
-        message = case err.keyword
-                  when "required", "pattern", "minLength"
-                    "#{err.formatted_path} #{err.message}"
-                  else
-                    "#{err.formatted_path} #{err.formatted_instance} should not be valid under #{err.formatted_clause}"
-                  end
         violations << Violation.new(file.path, 1, 0, id, severity,
-          "#{message}. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies",
-          nil, false, DETAILS)
+          "#{SchemaValidation.message(err)}. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies",
+          nil, false, SchemaValidation::DETAILS)
       end
 
       # Upstream only schema-validates meta when the file belongs to a
@@ -69,44 +53,6 @@ module Krikri
         # a <dir>/meta/main.yml file marks the dir as a role, even
         # without tasks/ yet (matches upstream's classification)
         parts.size >= 2 && parts[-2] == "meta"
-      end
-
-      private def yaml_node_to_json(node : YAML::Nodes::Node) : JSON::Any
-        case node
-        when YAML::Nodes::Mapping
-          obj = {} of String => JSON::Any
-          NodeUtil.each_entry(node) do |k, v|
-            key = k.as?(YAML::Nodes::Scalar).try(&.value)
-            next unless key
-            obj[key] = yaml_node_to_json(v)
-          end
-          JSON::Any.new(obj)
-        when YAML::Nodes::Sequence
-          JSON::Any.new(node.nodes.map { |child| yaml_node_to_json(child) })
-        when YAML::Nodes::Scalar
-          scalar_to_json(node)
-        else
-          JSON::Any.new(nil)
-        end
-      end
-
-      private def scalar_to_json(node : YAML::Nodes::Scalar) : JSON::Any
-        value = node.value || ""
-        case node.style
-        when YAML::ScalarStyle::PLAIN
-          case value
-          when "true", "True", "yes", "on"   then return JSON::Any.new(true)
-          when "false", "False", "no", "off" then return JSON::Any.new(false)
-          when "null", "Null", "~", ""       then return JSON::Any.new(nil)
-          else
-            if value.matches?(/^-?\d+$/)
-              return JSON::Any.new(value.to_i64)
-            elsif value.matches?(/^-?\d*\.\d+$/)
-              return JSON::Any.new(value.to_f64)
-            end
-          end
-        end
-        JSON::Any.new(value)
       end
     end
   end
