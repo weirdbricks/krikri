@@ -120,9 +120,20 @@ module Krikri
         unix_socket: @params["login_unix_socket"]?,
         config_file: @params["config_file"]? || "~/.my.cnf",
         tls: PluginHelpers::MysqlConnection.tls_options(@params),
+        connect_timeout: @params["connect_timeout"]?,
       )
 
       server_version = ""
+      # PyMySQL fails a connect_timeout outside (0, 31536000] from its own
+      # __init__ range check, before any socket exists; the shard would
+      # otherwise drop such a value and hang for the OS's connect timeout
+      # (see MysqlConnection.connect_timeout_out_of_range?).
+      if PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(@params)
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true,
+            detail_override: PluginHelpers::MysqlConnection::CONNECT_TIMEOUT_RANGE_MSG))
+      end
+
       result = DB.open(uri) do |connection|
         # Upstream's get_server_implementation warns about MariaDB right
         # after the connection, before the variable is even read.
@@ -158,12 +169,13 @@ module Krikri
       # every post-connect outcome here carries it, failures included.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
       PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
-    rescue DB::ConnectionRefused
+    rescue ex : DB::ConnectionRefused
       # mysql_variables.py branches on os.path.exists(config_file) in its
       # except clause, so a task with no option file to point at gets the
       # "unable to find ..." wording instead of the credentials one.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
-        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true))
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars, check_option_file: true,
+          connect_timed_out: ex.cause.is_a?(IO::TimeoutError)))
     rescue ex : MySql::Connection::PacketError
       # A SET GLOBAL failing after the connect still carries both warns real
       # recorded before it ran (get_server_implementation's MariaDB notice

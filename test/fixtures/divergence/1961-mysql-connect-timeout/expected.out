@@ -1,0 +1,54 @@
+
+PLAY [localhost] ***************************************************************
+
+TASK [mysql_query against a blackholed host] ***********************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")
+Origin: <WORK>/playbook.yml:20:7
+
+18   # fails it in milliseconds with the ValueError text as the wrapper's tail.
+19   tasks:
+20     - name: mysql_query against a blackholed host
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: (2003, \"Can't connect to MySQL server on '192.0.2.1' (timed out)\")"}
+...ignoring
+
+TASK [mysql_db against a blackholed host] **************************************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")
+Origin: <WORK>/playbook.yml:30:7
+
+28       ignore_errors: true
+29
+30     - name: mysql_db against a blackholed host
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on '192.0.2.1' (timed out)\")"}
+...ignoring
+
+TASK [mysql_variables against a blackholed host] *******************************
+[ERROR]: Task failed: Module failed: unable to find <WORK>/home/.my.cnf. Exception message: (2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")
+Origin: <WORK>/playbook.yml:41:7
+
+39       ignore_errors: true
+40
+41     - name: mysql_variables against a blackholed host
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to find <WORK>/home/.my.cnf. Exception message: (2003, \"Can't connect to MySQL server on '192.0.2.1' (timed out)\")"}
+...ignoring
+
+TASK [mysql_query with a zero connect_timeout] *********************************
+[ERROR]: Task failed: Module failed: unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000
+Origin: <WORK>/playbook.yml:51:7
+
+49       ignore_errors: true
+50
+51     - name: mysql_query with a zero connect_timeout
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to connect to database, check login_user and login_password are correct or <WORK>/home/.my.cnf has the credentials. Exception message: connect_timeout should be >0 and <=31536000"}
+...ignoring
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=4   
+

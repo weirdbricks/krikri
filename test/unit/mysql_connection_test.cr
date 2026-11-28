@@ -239,7 +239,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
         original_user = ENV["USER"]?
         ENV["USER"] = "specuser"
         begin
-          Krikri::PluginHelpers::MysqlConnection.build_uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
+          Krikri::PluginHelpers::MysqlConnection.build_uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled&connect_timeout=30")
         ensure
           if original_user
             ENV["USER"] = original_user
@@ -252,12 +252,69 @@ describe Krikri::PluginHelpers::MysqlConnection do
 
     it "builds a TCP URI with host/port/user/password" do
       uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", port: "3307", user: "root", password: "secret")
-      uri.must_equal("mysql://root:secret@db.example.com:3307?ssl-mode=disabled")
+      uri.must_equal("mysql://root:secret@db.example.com:3307?ssl-mode=disabled&connect_timeout=30")
+    end
+
+    it "threads connect_timeout into the URI, defaulting to the argument spec's 30 (issue #1961)" do
+      Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", connect_timeout: "3")
+        .must_include("connect_timeout=3")
+      # The module's own argument-spec default, applied when the task omits
+      # the parameter (real defaults it inside the module).
+      Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com")
+        .must_include("connect_timeout=30")
+      # A non-positive or non-integer value never reaches the driver: an
+      # out-of-range integer fails the task before build_uri (PyMySQL's own
+      # range check, see .connect_timeout_out_of_range?), and a non-integer
+      # is rejected by the plugins that carry argument validation.
+      Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", connect_timeout: "abc")
+        .wont_include("connect_timeout=")
+      Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", connect_timeout: "0")
+        .wont_include("connect_timeout=")
+    end
+
+    it "flags an integer connect_timeout outside PyMySQL's (0, 31536000] range (issue #1961)" do
+      # Live-verified vs ansible-core 2.21.6: real fails both cases in
+      # milliseconds with CONNECT_TIMEOUT_RANGE_MSG as the wrapper's tail,
+      # where the shard's own parse drops the value and would hang.
+      {"0", "-5", "31536001"}.each do |value|
+        Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
+          {"connect_timeout" => value}).must_equal(true, value)
+      end
+      {"1", "30", "31536000"}.each do |value|
+        Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
+          {"connect_timeout" => value}).must_equal(false, value)
+      end
+      # Not this check's scope: a non-integer (or the param's absence) is
+      # the module argument validation's business.
+      Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(
+        {"connect_timeout" => "abc"}).must_equal(false)
+      Krikri::PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(Hash(String, String).new).must_equal(false)
+    end
+
+    it "composes the connection-failure wrappers with a detail override" do
+      params = {"login_host" => "127.0.0.1", "login_port" => "33399"} of String => String
+      result = Krikri::PluginHelpers::MysqlConnection.connection_failed_result(params, nil,
+        detail_override: Krikri::PluginHelpers::MysqlConnection::CONNECT_TIMEOUT_RANGE_MSG)
+      result.failed?.must_equal(true)
+      cnf = Krikri::PluginHelpers::MysqlConnection.option_file_display(nil)
+      result.msg.must_equal("unable to connect to database, check login_user and login_password are correct or #{cnf} has the credentials. " \
+                            "Exception message: connect_timeout should be >0 and <=31536000")
+      # mysql_info's variant names the connector (the corpus case excludes
+      # it for pinning the connector version; the composition is pinned here).
+      connector = Krikri::PluginHelpers::MysqlConnection::ConnectorIdentity.new("pymysql", "1.2.3")
+      info = Krikri::PluginHelpers::MysqlConnection.info_connection_failed_result(params, nil, connector,
+        detail_override: Krikri::PluginHelpers::MysqlConnection::CONNECT_TIMEOUT_RANGE_MSG)
+      info.msg.must_equal("unable to connect to database using pymysql 1.2.3, check login_user and login_password are correct or #{cnf} has the credentials. " \
+                          "Exception message: connect_timeout should be >0 and <=31536000")
+      # The timed-out tail rides the info wrapper too (live-verified #1961).
+      timed_out = Krikri::PluginHelpers::MysqlConnection.info_connection_failed_result(params, nil, connector,
+        connect_timed_out: true)
+      timed_out.msg.must_include("Exception message: (2003, \"Can't connect to MySQL server on '127.0.0.1' (timed out)\")")
     end
 
     it "builds a unix socket URI, ignoring host/port" do
       uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "ignored", port: "9999", user: "root", unix_socket: "/var/run/mysqld/mysqld.sock")
-      uri.must_equal("mysql://root@/var/run/mysqld/mysqld.sock?ssl-mode=disabled")
+      uri.must_equal("mysql://root@/var/run/mysqld/mysqld.sock?ssl-mode=disabled&connect_timeout=30")
     end
 
     it "falls back to 'root' as the connection username when neither user: nor $USER is available" do
@@ -265,7 +322,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
         original_user = ENV["USER"]?
         ENV.delete("USER")
         begin
-          Krikri::PluginHelpers::MysqlConnection.build_uri(host: "localhost").must_equal("mysql://root@localhost:3306?ssl-mode=disabled")
+          Krikri::PluginHelpers::MysqlConnection.build_uri(host: "localhost").must_equal("mysql://root@localhost:3306?ssl-mode=disabled&connect_timeout=30")
         ensure
           ENV["USER"] = original_user if original_user
         end
@@ -273,7 +330,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
 
     it "keeps TLS disabled when no TLS parameter is given (PyMySQL's own default)" do
-      Krikri::PluginHelpers::MysqlConnection.build_uri.must_include("ssl-mode=disabled")
+      Krikri::PluginHelpers::MysqlConnection.build_uri.must_include("ssl-mode=disabled&connect_timeout=30")
       Krikri::PluginHelpers::MysqlConnection.tls_options({} of String => String).mode.must_equal("disabled")
     end
 
@@ -334,12 +391,12 @@ describe Krikri::PluginHelpers::MysqlConnection do
       # 2026-09-13 ad-hoc CLI sweep: mysql_query dropped login_db entirely,
       # so every unqualified query failed with "No database selected".
       uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "127.0.0.1", user: "compat", password: "pw", db: "compatdb")
-      uri.must_equal("mysql://compat:pw@127.0.0.1:3306?ssl-mode=disabled&database=compatdb")
+      uri.must_equal("mysql://compat:pw@127.0.0.1:3306?ssl-mode=disabled&database=compatdb&connect_timeout=30")
     end
 
     it "keeps the database param working over a unix socket" do
       uri = Krikri::PluginHelpers::MysqlConnection.build_uri(unix_socket: "/var/run/mysqld/mysqld.sock", user: "root", db: "compatdb")
-      uri.must_equal("mysql://root@/var/run/mysqld/mysqld.sock?ssl-mode=disabled&database=compatdb")
+      uri.must_equal("mysql://root@/var/run/mysqld/mysqld.sock?ssl-mode=disabled&database=compatdb&connect_timeout=30")
     end
 
     it "omits the database param when no db: is given" do
@@ -487,6 +544,26 @@ describe Krikri::PluginHelpers::MysqlConnection do
         login_host: "db.example.com", mysqldb: false, tcp_errno: NO_PROBE
       ).must_be_nil
     end
+
+    it "words a PyMySQL connect timeout with Python's TimeoutError text, no re-probe (live-verified, issue #1961)" do
+      # Real fails the task AT connect_timeout with
+      #   (2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")
+      # - str(TimeoutError('timed out')) as the parenthesized tail. The
+      # tcp_errno probe must not run at all: the connect already burned the
+      # task's timeout and a second one would double the failure latency.
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "192.0.2.1", connect_timed_out: true, mysqldb: false, tcp_errno: NO_PROBE
+      ).must_equal(%((2003, "Can't connect to MySQL server on '192.0.2.1' (timed out)")))
+      # The MySQLdb connector's timeout wording is not verified; it keeps
+      # the probe (and the empty tail when the probe learns nothing).
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "192.0.2.1", connect_timed_out: true, mysqldb: true, tcp_errno: NO_PROBE
+      ).must_be_nil
+      # A refused connect is not a timed-out one: the probe decides the tail.
+      Krikri::PluginHelpers::MysqlConnection.connect_error_detail(
+        login_host: "127.0.0.1", connect_timed_out: false, mysqldb: false, tcp_errno: REFUSED
+      ).must_equal(%((2003, "Can't connect to MySQL server on '127.0.0.1' ([Errno 111] Connection refused)")))
+    end
   end
 
   describe ".connector_identity" do
@@ -578,7 +655,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
       p = setup("[client]\nuser=\"root\"\npassword=\"supersecret\"\n")
       begin
         uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
-        uri.must_equal("mysql://root:supersecret@localhost:3306?ssl-mode=disabled")
+        uri.must_equal("mysql://root:supersecret@localhost:3306?ssl-mode=disabled&connect_timeout=30")
       ensure
         teardown(p)
       end
@@ -588,7 +665,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
       p = setup("[client]\nuser=\"root\"\npassword=\"fromfile\"\n")
       begin
         uri = Krikri::PluginHelpers::MysqlConnection.build_uri(user: "bob", password: "explicit", config_file: p)
-        uri.must_equal("mysql://bob:explicit@localhost:3306?ssl-mode=disabled")
+        uri.must_equal("mysql://bob:explicit@localhost:3306?ssl-mode=disabled&connect_timeout=30")
       ensure
         teardown(p)
       end
@@ -600,7 +677,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
         # login_host given => socket from the file is ignored, host honored,
         # but user/password still come from the file.
         uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db.example.com", config_file: p)
-        uri.must_equal("mysql://root:pw@db.example.com:3306?ssl-mode=disabled")
+        uri.must_equal("mysql://root:pw@db.example.com:3306?ssl-mode=disabled&connect_timeout=30")
       ensure
         teardown(p)
       end
@@ -615,7 +692,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
           # login_host given => socket ignored, host honored; no user in the
           # file, so the connection username falls back to the OS user.
           uri = Krikri::PluginHelpers::MysqlConnection.build_uri(host: "db", config_file: p)
-          uri.must_equal("mysql://specuser@db:3306?ssl-mode=disabled")
+          uri.must_equal("mysql://specuser@db:3306?ssl-mode=disabled&connect_timeout=30")
         ensure
           teardown(p)
           ENV["USER"] = original_user if original_user
@@ -629,7 +706,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
         ENV["USER"] = "specuser"
         begin
           uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "/no/such/my.cnf")
-          uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
+          uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled&connect_timeout=30")
         ensure
           ENV["USER"] = original_user if original_user
         end
@@ -640,7 +717,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
       p = setup("#comment\n[client]\n!includedir /etc/mysql/conf.d/\nuser=root\npassword='letmein'\nsocket=/tmp/mysql.sock\n")
       begin
         uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
-        uri.must_equal("mysql://root:letmein@/tmp/mysql.sock?ssl-mode=disabled")
+        uri.must_equal("mysql://root:letmein@/tmp/mysql.sock?ssl-mode=disabled&connect_timeout=30")
       ensure
         teardown(p)
       end
@@ -653,7 +730,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
         p = setup("[mysqld]\nuser=someuser\npassword=whatever\n")
         begin
           uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: p)
-          uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled")
+          uri.must_equal("mysql://specuser@localhost:3306?ssl-mode=disabled&connect_timeout=30")
         ensure
           teardown(p)
           ENV["USER"] = original_user if original_user
@@ -681,7 +758,7 @@ describe Krikri::PluginHelpers::MysqlConnection do
         # DEFAULT_OPTION_FILE is "~/.my.cnf" - must resolve via $HOME, not
         # against the CWD (Crystal's File.expand_path does not expand ~).
         uri = Krikri::PluginHelpers::MysqlConnection.build_uri(config_file: "~/.my.cnf")
-        uri.must_equal("mysql://root:tildehome@localhost:3306?ssl-mode=disabled")
+        uri.must_equal("mysql://root:tildehome@localhost:3306?ssl-mode=disabled&connect_timeout=30")
       ensure
         File.delete?(File.join(home, ".my.cnf"))
         Dir.delete?(home)

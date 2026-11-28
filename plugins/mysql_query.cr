@@ -171,6 +171,7 @@ module Krikri
         config_file: @params["config_file"]? || "~/.my.cnf",
         db: @params["login_db"]?,
         tls: PluginHelpers::MysqlConnection.tls_options(@params),
+        connect_timeout: @params["connect_timeout"]?,
       )
 
       query_results = [] of JSON::Any
@@ -179,6 +180,16 @@ module Krikri
       execution_times = [] of JSON::Any
       changed = false
       server_version = ""
+
+      # PyMySQL fails a connect_timeout outside (0, 31536000] from its own
+      # __init__ range check, before any socket exists; the shard would
+      # otherwise drop such a value and hang for the OS's connect timeout
+      # (see MysqlConnection.connect_timeout_out_of_range?).
+      if PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(@params)
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars,
+            detail_override: PluginHelpers::MysqlConnection::CONNECT_TIMEOUT_RANGE_MSG))
+      end
 
       DB.open(uri) do |connection|
         # Upstream's get_server_implementation warns about MariaDB right
@@ -222,12 +233,13 @@ module Krikri
       # mysql_connect, so even a refused connection's result carries it.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
       PluginHelpers::MysqlConnection.add_mariadb_warning(result, server_version)
-    rescue DB::ConnectionRefused
+    rescue ex : DB::ConnectionRefused
       # mysql_query.py's own connection-failure wrapper (no option-file
       # existence branch, unlike mysql_db/mysql_variables), with the driver's
       # exception repr as its tail.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
-        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars))
+        PluginHelpers::MysqlConnection.connection_failed_result(@params, @vars,
+          connect_timed_out: ex.cause.is_a?(IO::TimeoutError)))
     rescue ex : MySql::Connection::PacketError
       # A statement failing after the connect still carries both warns real
       # recorded before it ran (get_server_implementation's MariaDB notice

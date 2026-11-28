@@ -147,6 +147,7 @@ module Krikri
         unix_socket: @params["login_unix_socket"]?,
         config_file: @params["config_file"]? || "~/.my.cnf",
         tls: PluginHelpers::MysqlConnection.tls_options(@params),
+        connect_timeout: @params["connect_timeout"]?,
       )
 
       wanted = resolve_filter(filters.reject { |entry| unknown.includes?(entry) })
@@ -171,6 +172,17 @@ module Krikri
       # in that record order.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(result)
 
+      # PyMySQL fails a connect_timeout outside (0, 31536000] from its own
+      # __init__ range check, before any socket exists; the shard would
+      # otherwise drop such a value and hang for the OS's connect timeout
+      # (see MysqlConnection.connect_timeout_out_of_range?).
+      if PluginHelpers::MysqlConnection.connect_timeout_out_of_range?(@params)
+        return PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
+          PluginHelpers::MysqlConnection.info_connection_failed_result(@params, @vars,
+            PluginHelpers::MysqlConnection.connector_identity(@vars),
+            detail_override: PluginHelpers::MysqlConnection::CONNECT_TIMEOUT_RANGE_MSG))
+      end
+
       DB.open(uri) do |connection|
         version = server_version(connection)
         engine_name = implementation_of(connection)
@@ -193,13 +205,14 @@ module Krikri
       end
 
       result
-    rescue DB::ConnectionRefused
+    rescue ex : DB::ConnectionRefused
       # mysql_info.py builds its "unable to connect" fail_json after
       # mysql_connect raised, so the connector warn (already recorded by
       # module.warn inside mysql_connect) rides this failure result there.
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(
         PluginHelpers::MysqlConnection.info_connection_failed_result(@params, @vars,
-          PluginHelpers::MysqlConnection.connector_identity(@vars)))
+          PluginHelpers::MysqlConnection.connector_identity(@vars),
+          connect_timed_out: ex.cause.is_a?(IO::TimeoutError)))
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::MysqlConnection.add_mysqldb_connector_warning(PluginHelpers::DbErrors.query_failed(ex, "MySQL"))
     end
